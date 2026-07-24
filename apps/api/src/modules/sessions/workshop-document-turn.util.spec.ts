@@ -9,16 +9,20 @@ import {
 } from "./workshop-document-turn.util.js";
 
 describe("workshop-document-turn.util", () => {
-  it("shouldAllowDocumentPersist solo en edit_document", () => {
-    assert.equal(shouldAllowDocumentPersist("edit_document"), true);
-    assert.equal(shouldAllowDocumentPersist("chat_only"), false);
-    assert.equal(shouldAllowDocumentPersist("confirm_then_edit"), false);
+  it("shouldAllowDocumentPersist solo en edit_document y tabs permitidos", () => {
+    assert.equal(shouldAllowDocumentPersist("edit_document", "mdd"), true);
+    assert.equal(shouldAllowDocumentPersist("edit_document", "ux-ui-guide"), true);
+    assert.equal(shouldAllowDocumentPersist("edit_document", "spec"), false);
+    assert.equal(shouldAllowDocumentPersist("chat_only", "mdd"), false);
+    assert.equal(shouldAllowDocumentPersist("confirm_then_edit", "mdd"), false);
   });
 
-  it("applyIntentPersistGate anula flags en chat_only", () => {
-    const gated = applyIntentPersistGate("chat_only", { hasMdd: true, hasSpec: true });
-    assert.equal(gated.hasMdd, false);
-    assert.equal(gated.hasSpec, false);
+  it("applyIntentPersistGate anula flags en chat_only y tabs congelados", () => {
+    const gatedChat = applyIntentPersistGate("chat_only", { hasMdd: true, hasSpec: true }, "mdd");
+    assert.equal(gatedChat.hasMdd, false);
+    assert.equal(gatedChat.hasSpec, false);
+    const gatedFrozen = applyIntentPersistGate("edit_document", { hasSpec: true }, "spec");
+    assert.equal(gatedFrozen.hasSpec, false);
   });
 
   it("sanitizeLlmResponse elimina bloques thinking", () => {

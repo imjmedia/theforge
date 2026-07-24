@@ -395,6 +395,7 @@ export async function processSessionChatTurnOutcome(
   const gatedFlags = applyIntentPersistGate(
     wantsDocumentEdit ? "edit_document" : intentRoute.action,
     docFlagsBeforeGate,
+    tab,
   );
   hasMdd = Boolean(gatedFlags.hasMdd);
   hasSpec = Boolean(gatedFlags.hasSpec);

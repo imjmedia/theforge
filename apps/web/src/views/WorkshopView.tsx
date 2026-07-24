@@ -78,6 +78,7 @@ import {
   printMarkdownDocument,
 } from "../utils/printDocument";
 import { isTabVisibleForComplexity, type WorkshopDocTab } from "../utils/complexityTabs";
+import { isWorkshopFrozenDeliverableTab } from "@theforge/shared-types";
 import { evaluateTasksGenerationPrerequisites } from "../utils/tasksGenerationPrerequisites";
 import { isWorkshopAgentActivityPanel } from "../utils/workshopDocNav";
 import { fetchPluginArtifacts } from "../utils/pluginApi";
@@ -132,8 +133,10 @@ export default function WorkshopView({
     () => workshopStagesList.find((s) => s.id === activeStageId),
     [workshopStagesList, activeStageId],
   );
+  const workshopActiveDocPanel = useWorkshopStore((s) => s.workshopActiveDocPanel);
   const { view: stageDeliverableView } = useStageDeliverableView(projectId ?? null, activeStageId);
-  const deliverablesReadOnly = stageDeliverableView?.readOnly === true;
+  const ssotFrozenPanel = isWorkshopFrozenDeliverableTab(workshopActiveDocPanel);
+  const deliverablesReadOnly = stageDeliverableView?.readOnly === true || ssotFrozenPanel;
   const patchWorkshopStage = useWorkshopStore((s) => s.patchWorkshopStage);
   const generateMddFromBenchmark = useWorkshopStore((s) => s.generateMddFromBenchmark);
   const generateMddUpstreamSync = useWorkshopStore((s) => s.generateMddUpstreamSync);

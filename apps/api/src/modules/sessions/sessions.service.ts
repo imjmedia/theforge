@@ -72,6 +72,10 @@ import {
   buildSessionChatGenerateOptions,
   type SessionChatTurnOptions,
 } from "./session-chat-llm-options.util.js";
+import {
+  maybeAppendUpstreamPropagateOffer,
+} from "./upstream-propagate-chat.util.js";
+import { isWorkshopFrozenDeliverableTab, workshopFrozenTabUserMessage } from "@theforge/shared-types";
 import { parseWorkshopAssistantResponse } from "./session-chat-response-parse.util.js";
 import {
   appendSessionChatLogPair,
@@ -739,6 +743,34 @@ export class SessionsService {
     });
   }
 
+  /** Par usuario/asistente sin LLM (p. ej. confirmación de propagación upstream). */
+  async recordTabChatTurn(
+    sessionId: string,
+    userMessage: string,
+    assistantContent: string,
+    tab: string,
+    stageId?: string,
+  ): Promise<Session | null> {
+    const session = await this.prisma.session.findFirst({
+      where: this.sessionScope(sessionId),
+    });
+    if (!session) throw new NotFoundException("Session not found");
+    const fullLog = (session.chatLog as ChatMessage[]) ?? [];
+    const userEntry = buildSessionChatUserLogEntry(
+      { promptForModel: userMessage, contentForLog: userMessage },
+      tab,
+      stageId,
+    );
+    return this.persistSessionChatTurn(
+      sessionId,
+      fullLog,
+      userEntry,
+      assistantContent,
+      tab,
+      stageId,
+    );
+  }
+
   private async completeSessionChatTurn(
     ready: SessionChatTurnReady,
     safeResponse: string,
@@ -758,24 +790,48 @@ export class SessionsService {
       intentRoute: ready.intentRoute,
       options: ready.options,
     });
-    const session = await this.persistSessionChatTurn(
-      ready.sessionId,
-      ready.fullLog,
-      ready.userEntry,
-      outcome.assistantContent,
-      ready.tab,
-      ready.stageId,
-    );
+    let assistantContent = outcome.assistantContent;
+    const documentPersisted = isDocumentTurnPersisted(ready.tab, outcome.parts);
+    if (documentPersisted) {
+      assistantContent = maybeAppendUpstreamPropagateOffer(
+        assistantContent,
+        ready.tab,
+        documentPersisted,
+      );
+    } else if (
+      isWorkshopFrozenDeliverableTab(ready.tab) &&
+      ready.intentRoute.action === "edit_document"
+    ) {
+      assistantContent = `${assistantContent.trim()}\n\n⚠️ ${workshopFrozenTabUserMessage(ready.tab)}`;
+    }
+    const sessionOut =
+      assistantContent !== outcome.assistantContent
+        ? await this.persistSessionChatTurn(
+            ready.sessionId,
+            ready.fullLog,
+            ready.userEntry,
+            assistantContent,
+            ready.tab,
+            ready.stageId,
+          )
+        : await this.persistSessionChatTurn(
+            ready.sessionId,
+            ready.fullLog,
+            ready.userEntry,
+            outcome.assistantContent,
+            ready.tab,
+            ready.stageId,
+          );
     logDocumentTurnMetrics(this.logger, {
       tab: ready.tab,
       action: ready.intentRoute.action,
       source: ready.intentRoute.source,
       confidence: ready.intentRoute.confidence,
       hadDelimiter: outcome.hadDelimiter,
-      persisted: isDocumentTurnPersisted(ready.tab, outcome.parts),
+      persisted: documentPersisted,
       retried: outcome.docRetried,
     });
-    return { outcome, session };
+    return { outcome: { ...outcome, assistantContent }, session: sessionOut };
   }
 
   private async resolveUserTurnForLlm(

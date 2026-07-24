@@ -40,6 +40,7 @@ import { ProjectSddReconcileService } from "./project-sdd-reconcile.service.js";
 import { ProjectLifecycleService } from "./project-lifecycle.service.js";
 import { ProjectPhase0Service } from "./project-phase0.service.js";
 import { ProjectNotionPortabilityService } from "./project-notion-portability.service.js";
+import { UpstreamPropagateService } from "./upstream-propagate.service.js";
 import { PluginModule } from "../../plugins/plugin.module.js";
 
 @Module({
@@ -87,7 +88,8 @@ import { PluginModule } from "../../plugins/plugin.module.js";
     ProjectPhase0Service,
     ProjectSddReconcileService,
     ProjectLifecycleService,
+    UpstreamPropagateService,
   ],
-  exports: [ProjectsService, ProjectIntegrationService, IntegrationAgentService, ProjectMergeService, PROJECTS_ORCHESTRATOR_PORT, DeliverablesQueueService, ProjectGenerationGuardService, PlanValidationService],
+  exports: [ProjectsService, ProjectIntegrationService, IntegrationAgentService, ProjectMergeService, PROJECTS_ORCHESTRATOR_PORT, DeliverablesQueueService, ProjectGenerationGuardService, PlanValidationService, UpstreamPropagateService],
 })
 export class ProjectsModule { }

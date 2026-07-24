@@ -68,7 +68,8 @@ export type GenerationJobType =
   | "use-cases"
   | "user-stories"
   | "doc-reconcile-partial"
-  | "plugin-artifact";
+  | "plugin-artifact"
+  | "upstream-propagate";
 
 export const GENERATION_JOB_TYPE_LABELS: Record<GenerationJobType, string> = {
   cascade: "Cascada de entregables",
@@ -86,6 +87,7 @@ export const GENERATION_JOB_TYPE_LABELS: Record<GenerationJobType, string> = {
   "user-stories": "Historias de usuario",
   "doc-reconcile-partial": "Reconciliación parcial",
   "plugin-artifact": "Artifact de plugin",
+  "upstream-propagate": "Propagación upstream (Paso 0/BRD/Benchmark)",
 };
 
 /** Mapeo job → entregable (null = especial / no aplica campo único). */

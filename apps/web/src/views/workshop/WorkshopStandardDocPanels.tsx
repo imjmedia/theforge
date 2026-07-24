@@ -58,6 +58,7 @@ export function WorkshopStandardDocPanels({
         isLoading={loading}
         placeholder="# Arquitectura del sistema\n\nMódulos, datos, APIs y flujos del producto (según MDD y codebase)..."
         onBlur={architecture.onBlur}
+        readOnly={deliverablesReadOnly}
         documentTimestamps={docTs(architecture.timestampField)}
         clarification={buildDocClarification(architecture.clarifyField, (c) =>
           architecture.onContentChange(c),
@@ -82,6 +83,7 @@ export function WorkshopStandardDocPanels({
         isLoading={loading}
         placeholder="# Casos de Uso\n\nDescribe los escenarios de interacción y flujos transaccionales..."
         onBlur={useCases.onBlur}
+        readOnly={deliverablesReadOnly}
         documentTimestamps={docTs(useCases.timestampField)}
         clarification={buildDocClarification(useCases.clarifyField, (c) =>
           useCases.onContentChange(c),
@@ -106,6 +108,7 @@ export function WorkshopStandardDocPanels({
         isLoading={loading}
         placeholder="# Historias de Usuario\n\nDefine los requisitos en formato Agile (Como... quiero... para...)..."
         onBlur={userStories.onBlur}
+        readOnly={deliverablesReadOnly}
         documentTimestamps={docTs(userStories.timestampField)}
         clarification={buildDocClarification(userStories.clarifyField, (c) =>
           userStories.onContentChange(c),
@@ -163,6 +166,7 @@ export function WorkshopStandardDocPanels({
         generateLabel="Generar Tasks (MDD + Spec + Blueprint + API + pantallas)"
         placeholder="# Task Breakdown\n\nUser Story: US-001 …\n\n- [ ] Tarea…"
         onBlur={tasks.onBlur}
+        readOnly={deliverablesReadOnly}
         legacyGenerateLabel={
           canGenerateFromCodebase ? "Generar Tasks desde MDD Inicial" : undefined
         }

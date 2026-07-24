@@ -49,7 +49,8 @@ export type GenerateJobType =
   | "use-cases"
   | "user-stories"
   | "doc-reconcile-partial"
-  | "plugin-artifact";
+  | "plugin-artifact"
+  | "upstream-propagate";
 
 export interface GenerateJobData {
   type: GenerateJobType;
