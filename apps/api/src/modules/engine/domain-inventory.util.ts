@@ -34,7 +34,7 @@ export function isStructuralBrdCapabilityTitle(title: string): boolean {
 }
 
 const ENTITY_HINT_RE =
-  /\b(tenant|canal|conversaci[oó]n|mensaje|solicitud|embedding|mcp|bit[aá]cora|tarea\s+programada|scheduled|whatsapp|wasender|bitrix|lead|plugin|tool|memoria|agente|llm|configuraci[oó]n)\b/gi;
+  /\b(tenant|canal|conversaci[oó]n|solicitud|embedding|mcp|bit[aá]cora|tarea\s+programada|scheduled|whatsapp|wasender|bitrix|lead|plugin|tool|agente|llm|configuraci[oó]n)\b/gi;
 
 /** Map Spanish / product nouns → suggested snake_case table names. */
 const ENTITY_ALIASES: Record<string, string> = {
@@ -42,7 +42,6 @@ const ENTITY_ALIASES: Record<string, string> = {
   canal: "channels",
   conversación: "conversations",
   conversacion: "conversations",
-  mensaje: "messages",
   solicitud: "requests",
   embedding: "message_embeddings",
   mcp: "mcp_plugins",
@@ -54,7 +53,6 @@ const ENTITY_ALIASES: Record<string, string> = {
   lead: "leads",
   plugin: "mcp_plugins",
   tool: "mcp_tools",
-  memoria: "conversation_memory",
   agente: "agent_runs",
   llm: "llm_configs",
   configuración: "llm_configs",

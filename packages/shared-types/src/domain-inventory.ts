@@ -17,7 +17,7 @@ export const AUTH_ENTITY_FAMILY = new Set([
   "mfa_devices",
 ]);
 
-/** Tablas plataforma/chat que requieren justificación explícita en BRD/DBGA si aparecen en §3. */
+/** Tablas plataforma/chat que requieren justificación explícita en BRD/DBGA (no basta §1 MDD/orquestación). */
 export const PLATFORM_ORPHAN_TABLES = new Set([
   "messages",
   "mcp_plugins",

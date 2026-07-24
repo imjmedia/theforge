@@ -33,7 +33,7 @@ describe("domain-inventory-conformance.util", () => {
     assert.ok(missing.includes("users"));
   });
 
-  it("does not flag platform tables when BRD mentions MCP/agente", () => {
+  it("does not flag mcp_plugins when BRD mentions MCP; flags conversation_memory without RAG anchor", () => {
     const mdd = `
 ## 3. Modelo de Datos
 \`\`\`sql
@@ -45,6 +45,26 @@ CREATE TABLE conversation_memory (id UUID PRIMARY KEY);
 ## 3. Capacidades
 ### Integración MCP y agente IA
 Orquestación de herramientas MCP con memoria del contexto conversacional.
+`;
+    const orphans = checkPlatformTablesOutsideBrd({
+      brdMarkdown: brd,
+      dbgaMarkdown: DBGA,
+      mddMarkdown: mdd,
+    });
+    assert.deepEqual(orphans, ["conversation_memory"]);
+  });
+
+  it("accepts messages when BRD anchors WhatsApp messaging", () => {
+    const mdd = `
+## 3. Modelo de Datos
+\`\`\`sql
+CREATE TABLE messages (id UUID PRIMARY KEY);
+\`\`\`
+`;
+    const brd = `
+## 3. Capacidades
+### Canal WhatsApp
+Historial de mensajes persistidos del canal de mensajería con clientes.
 `;
     const orphans = checkPlatformTablesOutsideBrd({
       brdMarkdown: brd,
