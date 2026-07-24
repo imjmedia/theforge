@@ -142,7 +142,7 @@ export class MddManualAuditService {
       maxPreguntas: questionPlan.length,
       historial: [],
       status: "interviewing",
-      mddComplexity: (project.complexity as MddComplexityLevel) ?? "MEDIUM",
+      mddComplexity: (projectRow.complexity as MddComplexityLevel) ?? "MEDIUM",
     };
 
     this.rememberState(state);

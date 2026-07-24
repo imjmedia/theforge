@@ -129,7 +129,7 @@ function buildStructuralAuditorResult(
 export function createMddAuditorNode(
   llm: BaseChatModel,
   tools: StructuredToolInterface[] = [],
-  precisionCalculator?: LivePrecisionCalculator | null,
+  _precisionCalculator?: LivePrecisionCalculator | null,
 ) {
   return async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
     const allowed = state.currentStepAllowedTools;
