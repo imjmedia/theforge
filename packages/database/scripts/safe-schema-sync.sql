@@ -195,7 +195,7 @@ END
 $$;
 
 -- 10. TokenUsage (telemetría de tokens LLM; migración 20260724_add_token_usage).
--- La migración está en prisma/migrations/, pero en deploys donde la BD tiene
+-- La migración está en migrations/, pero en deploys donde la BD tiene
 -- drift (workspace image stale, image sin la migración aplicada a _prisma_migrations),
 -- esta entrada idempotente la recrea sin DROP. El entrypoint añade
 -- `resolve_applied_if_table "20260724_add_token_usage" "TokenUsage"` justo
