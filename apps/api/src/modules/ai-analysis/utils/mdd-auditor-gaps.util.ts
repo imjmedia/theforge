@@ -53,6 +53,28 @@ export function computeDeterministicAuditorScore(
   return Math.max(0, Math.min(100, score));
 }
 
+/** Gaps estructurales mínimos (solo secciones canónicas faltantes) — fallback si el LLM no responde. */
+export function synthesizeStructuralAuditorGaps(
+  validation: ValidateMddStructureResult,
+): AuditorGapsState {
+  const critical_gaps: AuditorGapsState["critical_gaps"] = [];
+  for (const sec of validation.missingSections) {
+    critical_gaps.push({
+      sections: [sec],
+      issue: `Falta la sección obligatoria: ${sec}`,
+      fix: `Generar la sección «${sec}» con contenido sustancial según la plantilla canónica del MDD.`,
+    });
+  }
+  const score = validation.missingSections.length > 0 ? Math.min(84, 70 - validation.missingSections.length * 5) : 0;
+  return {
+    score: Math.max(0, score),
+    status: "RECHAZADO",
+    critical_gaps,
+    syntax_errors: [],
+    infrastructure_ready: false,
+  };
+}
+
 /**
  * Builds structured auditorGaps when the LLM auditor is skipped or as a merge baseline.
  */

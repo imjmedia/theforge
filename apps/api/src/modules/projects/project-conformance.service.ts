@@ -27,12 +27,21 @@ import { buildSemaphoreBaseFromProject } from "./project-mdd-persist.util.js";
 import { mddJsonStringForSemaphore } from "./project-semaphore.util.js";
 import { UNIFIED_AUDIT_GAP_LIMIT } from "@theforge/shared-types";
 
+export type ConformanceLlmVerification = {
+  blueprint: ConformanceResult;
+  api: ApiConformanceResult;
+  logicFlows: ConformanceResult;
+  infra: ConformanceResult;
+};
+
 export type ConformanceWithReadiness = {
   blueprint: ConformanceResult;
   blueprintDataModel: ConformanceResult;
   api: ApiConformanceResult;
   logicFlows: ConformanceResult;
   infra: ConformanceResult;
+  /** Opinión LLM adicional; no anula los badges heurísticos de conformidad. */
+  llmVerification?: ConformanceLlmVerification;
   readiness?: UnifiedAuditReport;
 };
 
@@ -70,6 +79,7 @@ export class ProjectConformanceService {
     const unified = await this.buildUnifiedAudit(projectId, options);
     return {
       ...unified.conformance,
+      llmVerification: unified.llmVerification,
       readiness: unified,
     };
   }
@@ -83,7 +93,12 @@ export class ProjectConformanceService {
     const mdd = buildConstitutionMarkdown(project);
     const complexity = project.complexity ?? ComplexityLevel.HIGH;
     const deliverableSource = buildProjectDeliverableSource(project, stage);
-    const conformance = await this.resolveConformanceHeuristicOrLlm(projectId, mdd, project, options);
+    const { conformance, llmVerification } = await this.resolveConformanceHeuristicOrLlm(
+      projectId,
+      mdd,
+      project,
+      options,
+    );
     const useLowMediumPath =
       complexity === ComplexityLevel.LOW || complexity === ComplexityLevel.MEDIUM;
     const conformanceSummary = useLowMediumPath
@@ -107,6 +122,7 @@ export class ProjectConformanceService {
 
     return buildUnifiedAuditReport({
       conformance,
+      llmVerification,
       conformanceSummary,
       crossArtifactGaps,
       compositeReadiness: compositeEval.composite,
@@ -120,9 +136,12 @@ export class ProjectConformanceService {
     mdd: string,
     project: Awaited<ReturnType<typeof loadAccessibleProjectWithStages>>,
     options?: { useLlm?: boolean },
-  ): Promise<ConformanceWithReadiness> {
+  ): Promise<{
+    conformance: ConformanceWithReadiness;
+    llmVerification?: ConformanceLlmVerification;
+  }> {
     const blueprintDataModel = this.conformance.checkBlueprintDataModel(mdd, project.blueprintContent);
-    const heuristic = {
+    const heuristic: ConformanceWithReadiness = {
       blueprint: this.conformance.checkBlueprint(mdd, project.blueprintContent),
       blueprintDataModel,
       api: this.conformance.checkApi(mdd, project.apiContractsContent),
@@ -130,10 +149,14 @@ export class ProjectConformanceService {
       infra: this.conformance.checkInfra(mdd, project.infraContent),
     };
 
-    if (!options?.useLlm) return heuristic;
+    if (!options?.useLlm) {
+      return { conformance: heuristic };
+    }
 
     const mddTrim = mdd.trim();
-    if (mddTrim.length < 200) return heuristic;
+    if (mddTrim.length < 200) {
+      return { conformance: heuristic };
+    }
 
     const [blueprintLlm, apiLlm, logicFlowsLlm, infraLlm] = await Promise.all([
       this.ai.conformanceCheck(mddTrim, (project.blueprintContent ?? "").trim(), "blueprint"),
@@ -143,13 +166,15 @@ export class ProjectConformanceService {
     ]);
 
     return {
-      blueprint: blueprintLlm.ok ? { ok: true, gaps: [] } : { ok: false, gaps: blueprintLlm.gaps },
-      blueprintDataModel,
-      api: apiLlm.ok
-        ? { ok: true, missingInApi: [], extraInApi: [] }
-        : { ok: false, missingInApi: apiLlm.gaps, extraInApi: [] },
-      logicFlows: logicFlowsLlm.ok ? { ok: true, gaps: [] } : { ok: false, gaps: logicFlowsLlm.gaps },
-      infra: infraLlm.ok ? { ok: true, gaps: [] } : { ok: false, gaps: infraLlm.gaps },
+      conformance: heuristic,
+      llmVerification: {
+        blueprint: blueprintLlm.ok ? { ok: true, gaps: [] } : { ok: false, gaps: blueprintLlm.gaps },
+        api: apiLlm.ok
+          ? { ok: true, missingInApi: [], extraInApi: [] }
+          : { ok: false, missingInApi: apiLlm.gaps, extraInApi: [] },
+        logicFlows: logicFlowsLlm.ok ? { ok: true, gaps: [] } : { ok: false, gaps: logicFlowsLlm.gaps },
+        infra: infraLlm.ok ? { ok: true, gaps: [] } : { ok: false, gaps: infraLlm.gaps },
+      },
     };
   }
 

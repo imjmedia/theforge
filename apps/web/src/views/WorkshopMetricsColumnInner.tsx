@@ -207,9 +207,26 @@ export function WorkshopMetricsColumnInner({
   const documentCompleteness = useWorkshopStore((s) => s.documentCompleteness);
   const consistencyScore = useWorkshopStore((s) => s.consistencyScore);
   const crossDocumentGaps = useWorkshopStore((s) => s.crossDocumentGaps);
+  const sddAuditSummary = useMemo(() => {
+    const gapTotal = readinessAudit?.gapSummary.total ?? 0;
+    const crossDoc = crossDocumentGaps?.length ?? 0;
+    const derivadosIssue =
+      !!conformance &&
+      (!conformance.blueprint.ok ||
+        conformance.blueprintDataModel?.ok === false ||
+        !conformance.api.ok ||
+        !conformance.logicFlows.ok ||
+        !conformance.infra.ok);
+    return {
+      gapTotal,
+      crossDoc,
+      derivadosIssue,
+      hasIssues: gapTotal > 0 || crossDoc > 0 || derivadosIssue,
+    };
+  }, [readinessAudit, crossDocumentGaps, conformance]);
   const apiBlueprintDmBlocked = conformance?.blueprintDataModel?.ok === false;
   const apiBlueprintBlockedHint =
-    "El Blueprint no cubre el §3 Modelo de datos del MDD. Corrige o regenera el Blueprint; revisa el panel Conformance.";
+    "El Blueprint no cubre el §3 Modelo de datos del MDD. Corrige o regenera el Blueprint; revisa Auditoría SDD.";
 
   const auditorFeedback = useWorkshopStore((s) => s.auditorFeedback);
   const auditFeedbackStatusLabel = useMemo(() => {
@@ -554,101 +571,6 @@ export function WorkshopMetricsColumnInner({
                 ) : null}
               </div>
             ) : null}
-            {readinessAudit && readinessAudit.gapSummary.total > 0 ? (
-              <div
-                className={cn(
-                  WORKSHOP_METRICS_CARD,
-                  "space-y-1.5 p-2.5 text-[11px] leading-snug text-[color-mix(in_oklch,var(--muted-foreground)_96%,var(--foreground))]",
-                )}
-              >
-                <p className="font-semibold text-[var(--foreground)]">Brechas SDD</p>
-                <p>
-                  {readinessAudit.gapSummary.auto} auto · {readinessAudit.gapSummary.llm} LLM ·{" "}
-                  {readinessAudit.gapSummary.human} humano
-                  {readinessAudit.gapSummary.truncated ? " (+ más)" : ""}
-                </p>
-                {readinessAudit.compositeReadiness?.reasons?.length ? (
-                  <ul className="list-disc space-y-0.5 pl-4 text-[10px]">
-                    {readinessAudit.compositeReadiness.reasons.slice(0, 3).map((reason) => (
-                      <li key={reason}>{reason}</li>
-                    ))}
-                  </ul>
-                ) : null}
-                {(readinessAudit.gapSummary.items?.length ?? 0) > 0 ? (
-                  <ul className="max-h-28 space-y-1 overflow-y-auto border-t border-[color-mix(in_oklch,var(--border)_80%,transparent)] pt-1.5 text-[10px]">
-                    {readinessAudit.gapSummary.items.slice(0, 6).map((item, idx) => (
-                      <li key={`${item.kind}-${idx}`} className="flex gap-1.5">
-                        <span
-                          className={cn(
-                            "shrink-0 rounded px-1 py-px font-semibold uppercase tracking-wide",
-                            item.kind === "auto" &&
-                              "bg-[color-mix(in_oklch,var(--success)_14%,transparent)] text-[color-mix(in_oklch,var(--success)_90%,var(--foreground))]",
-                            item.kind === "llm" &&
-                              "bg-[color-mix(in_oklch,var(--primary)_14%,transparent)] text-[color-mix(in_oklch,var(--primary)_88%,var(--foreground))]",
-                            item.kind === "human" &&
-                              "bg-[color-mix(in_oklch,var(--warning)_14%,transparent)] text-[color-mix(in_oklch,var(--warning)_88%,var(--foreground))]",
-                          )}
-                        >
-                          {item.kind}
-                        </span>
-                        <span className="min-w-0 line-clamp-2" title={item.message}>
-                          {item.message}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-                <div className="flex flex-col gap-1.5 border-t border-[color-mix(in_oklch,var(--border)_80%,transparent)] pt-1.5">
-                  {readinessAudit.gapSummary.auto + readinessAudit.gapSummary.llm > 0 ? (
-                    <button
-                      type="button"
-                      disabled={!projectId || brechasBusy}
-                      onClick={() => {
-                        if (!projectId) return;
-                        void repairSddGaps(projectId, {
-                          acknowledgeGaps: deliveryGate != null && !deliveryGate.ok,
-                        });
-                      }}
-                      className="inline-flex min-h-8 w-full items-center justify-center gap-1.5 rounded-md bg-[color-mix(in_oklch,var(--primary)_14%,var(--card))] px-2 text-[11px] font-semibold text-[var(--primary)] transition-colors hover:bg-[color-mix(in_oklch,var(--primary)_22%,var(--card))] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {repairSddRunning ? (
-                        <>
-                          <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden />
-                          Corrigiendo…
-                        </>
-                      ) : (
-                        "Corregir auto/LLM"
-                      )}
-                    </button>
-                  ) : null}
-                  {readinessAudit.gapSummary.human > 0 ? (
-                    <div className="space-y-1">
-                      <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--warning)_88%,var(--foreground))]">
-                        Los gaps humanos requieren decisión en el BRD / decision log.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => setWorkshopActiveDocPanel("brd")}
-                        className="inline-flex min-h-7 w-full items-center justify-center rounded-md px-2 text-[11px] font-medium text-[var(--foreground)] underline-offset-2 hover:underline"
-                      >
-                        Abrir BRD
-                      </button>
-                    </div>
-                  ) : null}
-                  <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--muted-foreground)_96%,var(--foreground))]">
-                    Gaps LLM también se pueden regenerar uno a uno en Conformance vs MDD.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => onOpenAuditModal()}
-                    className="inline-flex min-h-7 w-full items-center justify-center gap-1.5 rounded-md px-2 text-[11px] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[color-mix(in_oklch,var(--muted)_48%,transparent)] hover:text-[var(--primary)]"
-                  >
-                    <FileText className="h-3 w-3 shrink-0" aria-hidden />
-                    Ver logs y desglose
-                  </button>
-                </div>
-              </div>
-            ) : null}
             {deliveryGate && !deliveryGate.ok ? (
               <div
                 role="status"
@@ -699,8 +621,26 @@ export function WorkshopMetricsColumnInner({
               <div className="flex flex-col gap-2">
                 <h3 className="flex items-center gap-1.5 text-sm font-semibold tracking-tight text-[var(--foreground)]">
                   <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[var(--muted-foreground)]" aria-hidden />
-                  <span className="min-w-0 truncate">Conformance vs MDD</span>
+                  <span className="min-w-0 truncate">Auditoría SDD</span>
                 </h3>
+                <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--muted-foreground)_96%,var(--foreground))]">
+                  {[
+                    readinessAudit
+                      ? `${readinessAudit.gapSummary.total} brecha(s) · ${readinessAudit.gapSummary.auto} auto · ${readinessAudit.gapSummary.llm} LLM · ${readinessAudit.gapSummary.human} humano`
+                      : null,
+                    consistencyScore != null ? `Trazabilidad ${consistencyScore}%` : null,
+                    sddAuditSummary.hasIssues ? "Revisar derivados y MDD" : "Sin brechas críticas detectadas",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+                {readinessAudit?.compositeReadiness?.reasons?.length ? (
+                  <ul className="list-disc space-y-0.5 pl-4 text-[10px] text-[color-mix(in_oklch,var(--muted-foreground)_96%,var(--foreground))]">
+                    {readinessAudit.compositeReadiness.reasons.slice(0, 3).map((reason) => (
+                      <li key={reason}>{reason}</li>
+                    ))}
+                  </ul>
+                ) : null}
                 {logicFlowsCoverageGateActive && logicFlowsS5Coverage ? (
                   <div
                     role="status"
@@ -732,9 +672,9 @@ export function WorkshopMetricsColumnInner({
                     className="h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] bg-[var(--background)] text-[var(--primary)] accent-[var(--primary)] focus:outline-none"
                   />
                   <span className="min-w-0 leading-tight">
-                    Incluir verificación con IA
+                    Opinión IA adicional (no cambia badges)
                     <span className="mt-0.5 block font-normal text-[color-mix(in_oklch,var(--muted-foreground)_98%,var(--foreground))]">
-                      Regenerar desde cada pestaña de documento.
+                      Los badges usan chequeo determinista MDD↔derivados; la IA añade contexto opcional.
                     </span>
                   </span>
                 </label>
@@ -1035,10 +975,92 @@ export function WorkshopMetricsColumnInner({
                   </details>
                 )}
               </div>
+              {(readinessAudit?.gapSummary.items?.length ?? 0) > 0 ? (
+                <div className={cn(WORKSHOP_METRICS_CARD, "space-y-1.5 p-2.5")}>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+                    Brechas transversales
+                  </p>
+                  <ul className="max-h-36 space-y-1 overflow-y-auto text-[10px]">
+                    {readinessAudit!.gapSummary.items.slice(0, 12).map((item, idx) => (
+                      <li key={`${item.kind}-${idx}`} className="flex gap-1.5">
+                        <span
+                          className={cn(
+                            "shrink-0 rounded px-1 py-px font-semibold uppercase tracking-wide",
+                            item.kind === "auto" &&
+                              "bg-[color-mix(in_oklch,var(--success)_14%,transparent)] text-[color-mix(in_oklch,var(--success)_90%,var(--foreground))]",
+                            item.kind === "llm" &&
+                              "bg-[color-mix(in_oklch,var(--primary)_14%,transparent)] text-[color-mix(in_oklch,var(--primary)_88%,var(--foreground))]",
+                            item.kind === "human" &&
+                              "bg-[color-mix(in_oklch,var(--warning)_14%,transparent)] text-[color-mix(in_oklch,var(--warning)_88%,var(--foreground))]",
+                          )}
+                        >
+                          {item.kind}
+                        </span>
+                        <span className="min-w-0 line-clamp-3" title={item.message}>
+                          {item.message}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {crossDocumentGaps && crossDocumentGaps.length > 0 ? (
+                <div className={cn(WORKSHOP_METRICS_CARD, "space-y-1.5 p-2.5")}>
+                  <p className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--warning)]">
+                    <AlertTriangle className="h-3 w-3" aria-hidden />
+                    Trazabilidad BRD → MDD ({crossDocumentGaps.length})
+                  </p>
+                  <div className="max-h-48 overflow-y-auto rounded-md border border-[color-mix(in_oklch,var(--warning)_35%,var(--border))] bg-[color-mix(in_oklch,var(--warning)_10%,var(--card))] p-2">
+                    <TraceabilityGapList
+                      gaps={crossDocumentGaps}
+                      projectId={projectId}
+                      stageId={activeStageId}
+                      mddContent={effectiveMddTrimmed}
+                      maxVisible={8}
+                      compact
+                    />
+                  </div>
+                </div>
+              ) : null}
+              {readinessAudit && readinessAudit.gapSummary.total > 0 ? (
+                <div className="flex flex-col gap-1.5">
+                  {readinessAudit.gapSummary.auto + readinessAudit.gapSummary.llm > 0 ? (
+                    <button
+                      type="button"
+                      disabled={!projectId || brechasBusy}
+                      onClick={() => {
+                        if (!projectId) return;
+                        void repairSddGaps(projectId, {
+                          acknowledgeGaps: deliveryGate != null && !deliveryGate.ok,
+                        });
+                      }}
+                      className="inline-flex min-h-8 w-full items-center justify-center gap-1.5 rounded-md bg-[color-mix(in_oklch,var(--primary)_14%,var(--card))] px-2 text-[11px] font-semibold text-[var(--primary)] transition-colors hover:bg-[color-mix(in_oklch,var(--primary)_22%,var(--card))] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {repairSddRunning ? (
+                        <>
+                          <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden />
+                          Corrigiendo…
+                        </>
+                      ) : (
+                        "Corregir auto/LLM"
+                      )}
+                    </button>
+                  ) : null}
+                  {readinessAudit.gapSummary.human > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setWorkshopActiveDocPanel("brd")}
+                      className="inline-flex min-h-7 w-full items-center justify-center rounded-md px-2 text-[11px] font-medium text-[var(--foreground)] underline-offset-2 hover:underline"
+                    >
+                      Abrir BRD (gaps humanos)
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           )}
 
-          {(documentCompleteness || (crossDocumentGaps && crossDocumentGaps.length > 0)) && (
+          {documentCompleteness ? (
             <details className="min-w-0 shrink-0 rounded-lg border border-[var(--border)] bg-[color-mix(in_oklch,var(--card)_40%,transparent)] px-2 py-1.5">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-[11px] font-semibold text-[var(--foreground)] marker:content-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-1 focus-visible:ring-offset-[color-mix(in_oklch,var(--card)_40%,var(--background))] rounded [&::-webkit-details-marker]:hidden">
                 <span className="flex min-w-0 items-center gap-1.5">
@@ -1046,12 +1068,7 @@ export function WorkshopMetricsColumnInner({
                   <span className="truncate">Más métricas</span>
                 </span>
                 <span className="shrink-0 text-right text-[10px] font-normal leading-tight text-[var(--muted-foreground)]">
-                  {[
-                    documentCompleteness ? `${documentCompleteness.overall}% docs` : null,
-                    crossDocumentGaps && crossDocumentGaps.length > 0 ? `${crossDocumentGaps.length} brechas` : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
+                  {documentCompleteness ? `${documentCompleteness.overall}% docs` : null}
                 </span>
               </summary>
               <div className="mt-2 space-y-3 border-t border-[var(--border)]/70 pt-2">
@@ -1093,24 +1110,6 @@ export function WorkshopMetricsColumnInner({
                           </div>
                         );
                       })}
-                    </div>
-                  </div>
-                )}
-                {crossDocumentGaps && crossDocumentGaps.length > 0 && (
-                  <div>
-                    <p className="mb-1.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--warning)]">
-                      <AlertTriangle className="h-3 w-3" aria-hidden />
-                      Trazabilidad BRD → MDD ({crossDocumentGaps.length})
-                    </p>
-                    <div className="max-h-56 overflow-y-auto rounded-md border border-[color-mix(in_oklch,var(--warning)_35%,var(--border))] bg-[color-mix(in_oklch,var(--warning)_10%,var(--card))] p-2">
-                      <TraceabilityGapList
-                        gaps={crossDocumentGaps}
-                        projectId={projectId}
-                        stageId={activeStageId}
-                        mddContent={effectiveMddTrimmed}
-                        maxVisible={8}
-                        compact
-                      />
                     </div>
                   </div>
                 )}
