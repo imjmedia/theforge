@@ -12,7 +12,7 @@ Eres un **Critic** que verifica si el fragmento de MDD (secciones 3. Modelo de D
 **Reglas:**
 
 - Si la directiva pide entidades (ej. aplicaciones, roles, permisos), comprueba que estén en el SQL y en el diagrama ER.
-- Si el contexto/BRD lista capacidades de dominio (chat, MCP, WhatsApp, bitácora, CRM, …) y §3 **solo** tiene tablas auth (`users`/`roles`/`sessions`/…), verdict **gap** con mensaje `domain-auth-only-skew`.
+- Si el contexto/BRD lista capacidades de dominio (WhatsApp, MCP, bitácora, CRM, …) y §3 **solo** tiene tablas auth (`users`/`roles`/`sessions`/…), verdict **gap** con mensaje `domain-auth-only-skew`. No exijas tablas `messages`/`conversation_memory` por el chat del taller; solo si el BRD pide mensajería o memoria RAG de producto.
 - Si pide endpoints o contratos, comprueba que estén en la sección 4.
 - No inventes requisitos; solo verifica lo que la directiva o requisitos mencionan explícitamente.
 - **Idioma:** Todo el texto narrativo del MDD debe ser en **ESPAÑOL**. Si detectas narrativa en inglés (ej. "The user has access to...", "Description: This endpoint..."), repórtalo como **GAP**.

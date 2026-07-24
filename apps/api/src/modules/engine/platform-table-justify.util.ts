@@ -11,12 +11,25 @@ import { extractEntities } from "./conformance.service.js";
 import { extractBrdCapabilities } from "./domain-inventory.util.js";
 import { extractSectionByNumber } from "./mdd-markdown-parser.js";
 
-/** Patrones de negocio/plataforma que anclan cada tabla huérfana. */
+/** Tablas que exigen ancla en BRD/DBGA/Spec — no basta §1 MDD (orquestación Workshop). */
+const PLATFORM_BRD_ANCHORED_TABLES = new Set(["messages", "conversation_memory"]);
+
+/** Patrones fuertes de producto (BRD/DBGA/Spec). Evitan falsos positivos por “chat” de taller. */
 const PLATFORM_ANCHOR_PATTERNS: Record<string, RegExp> = {
-  messages: /\b(mensajes?|messages?|chat|conversaci[oó]n|whatsapp|canal\s+de\s+mensajer[ií]a|inbox)\b/i,
+  messages:
+    /\b(whatsapp|wasender|inbox|mensajer[ií]a|canal\s+de\s+mensajer[ií]a|historial\s+de\s+mensajes|conversaciones\s+con\s+(?:clientes|usuarios|pacientes)|mensajes\s+(?:entrantes|salientes|persistidos|del\s+canal))\b/i,
   mcp_plugins: /\b(mcp\b|model\s+context\s+protocol|plugins?\b|herramientas?\s+(?:mcp|externas)|integraci[oó]n\s+mcp|multi[- ]?agente|agente\s+ia|bitrix|tooling)\b/i,
-  conversation_memory: /\b(memoria\b|contexto\s+(?:de\s+)?conversaci[oó]n|historial\s+de\s+chat|rag\b|embeddings?|recuperaci[oó]n\s+sem[aá]ntica|contexto\s+del\s+agente)\b/i,
+  conversation_memory:
+    /\b(rag\b|embeddings?\s+(?:vectoriales|sem[aá]nticos)|recuperaci[oó]n\s+sem[aá]ntica|memoria\s+(?:conversacional|de\s+agente)\s+persistente|almacenamiento\s+de\s+contexto\s+(?:rag|conversacional)|base\s+de\s+conocimiento\s+conversacional)\b/i,
 };
+
+function businessCorpus(params: {
+  brdMarkdown?: string | null;
+  dbgaMarkdown?: string | null;
+  specMarkdown?: string | null;
+}): string {
+  return [params.brdMarkdown, params.dbgaMarkdown, params.specMarkdown].filter(Boolean).join("\n");
+}
 
 function corpus(params: {
   brdMarkdown?: string | null;
@@ -28,9 +41,7 @@ function corpus(params: {
     ? extractSectionByNumber(params.mddMarkdown, 1) ?? ""
     : "";
   // Solo prosa de negocio — no §3 SQL (los nombres CREATE TABLE no son ancla).
-  return [params.brdMarkdown, params.dbgaMarkdown, params.specMarkdown, section1]
-    .filter(Boolean)
-    .join("\n");
+  return [businessCorpus(params), section1].filter(Boolean).join("\n");
 }
 
 function brdCapabilitiesAnchor(table: string, brdMarkdown?: string | null): boolean {
@@ -72,11 +83,20 @@ export function isPlatformTableJustified(
     extractSectionByNumber(params.mddMarkdown ?? "", 3) || params.mddMarkdown || "";
   if (mddSection3HasPlatformTag(section3, table)) return true;
 
-  const text = corpus(params);
   const pattern = PLATFORM_ANCHOR_PATTERNS[table];
-  if (pattern?.test(text)) return true;
-
   if (brdCapabilitiesAnchor(table, params.brdMarkdown)) return true;
+
+  if (PLATFORM_BRD_ANCHORED_TABLES.has(table)) {
+    const business = businessCorpus(params);
+    if (pattern?.test(business)) return true;
+    if (params.inventory?.suggestedEntities?.includes(table) && pattern?.test(business)) {
+      return true;
+    }
+    return false;
+  }
+
+  const text = corpus(params);
+  if (pattern?.test(text)) return true;
 
   if (params.inventory?.suggestedEntities?.includes(table)) {
     const invPattern = pattern ?? new RegExp(table.replace(/_/g, "[\\s_-]*"), "i");
