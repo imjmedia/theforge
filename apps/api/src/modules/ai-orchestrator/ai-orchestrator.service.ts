@@ -29,6 +29,14 @@ import {
   shouldReportMissingMddDelimiter,
   type OrchestratorDocumentPersist,
 } from "./orchestrator-document-persist.util.js";
+import {
+  orchestratorTabAllowsDocPersist,
+} from "./orchestrator-doc-policy.util.js";
+import { UpstreamPropagateService } from "../projects/upstream-propagate.service.js";
+import {
+  detectUpstreamPropagateConfirmation,
+  upstreamPropagateQueuedAssistantMessage,
+} from "../sessions/upstream-propagate-chat.util.js";
 
 export type OrchestratorClientDeliverables = {
   architectureContent?: string;
@@ -83,6 +91,7 @@ export class AiOrchestratorService {
     private readonly agentSupervisor: AgentSupervisorService,
     private readonly sddIngestor: SddIngestorService,
     private readonly agentEvaluator: AgentEvaluatorService,
+    private readonly upstreamPropagate: UpstreamPropagateService,
   ) { }
 
   private scheduleSddIngest(projectId: string, ingestMdd: boolean): void {
@@ -564,6 +573,36 @@ export class AiOrchestratorService {
 
     const tab = activeTab?.trim() ?? "mdd";
     const isUxUiGuideStream = tab === "ux-ui-guide";
+    const tabAllowsDocPersist = orchestratorTabAllowsDocPersist(tab);
+
+    const historyForPropagate = filterChatByTab((session.chatLog ?? []) as ChatMessage[], tab);
+    const propagateConfirm = detectUpstreamPropagateConfirmation(message, historyForPropagate, tab);
+    if (propagateConfirm.confirmed) {
+      const enqueued = await this.upstreamPropagate.enqueue(
+        projectId,
+        propagateConfirm.originTab,
+        routeStream.stageId,
+      );
+      const assistantContent = upstreamPropagateQueuedAssistantMessage(enqueued.plan.summary);
+      const updatedSession = await this.sessions.recordTabChatTurn(
+        session.id,
+        hitlLineStream,
+        assistantContent,
+        tab,
+        routeStream.stageId,
+      );
+      yield { event: "chunk", data: { content: assistantContent } };
+      yield {
+        event: "done",
+        data: {
+          session: updatedSession,
+          project: await this.projects.findOne(projectId),
+          upstreamPropagateJobId: enqueued.jobId,
+        },
+      };
+      return;
+    }
+
     const fullMddForUxStream = isUxUiGuideStream
       ? mddContextForUxGuide(project, routeStream.stageId, mddContentFromClient)
       : "";
@@ -732,7 +771,7 @@ export class AiOrchestratorService {
           );
           updatedProject = await this.projects.update(projectId, { uxUiGuideContent: uxWithAttribution });
         }
-        if (tab === "benchmark" && msg.dbgaContent != null && msg.dbgaContent.length > 0) {
+        if (tab === "benchmark" && tabAllowsDocPersist && msg.dbgaContent != null && msg.dbgaContent.length > 0) {
           const prevDbga = (currentDbga ?? project.dbgaContent ?? "").trim();
           if (prevDbga && wouldShrinkDbgaDangerously(prevDbga, msg.dbgaContent)) {
             console.warn(
@@ -743,40 +782,40 @@ export class AiOrchestratorService {
             updatedProject = await this.projects.update(projectId, { dbgaContent: msg.dbgaContent });
           }
         }
-        if (tab === "phase0" && msg.phase0SummaryContent != null && msg.phase0SummaryContent.length > 0) {
+        if (tab === "phase0" && tabAllowsDocPersist && msg.phase0SummaryContent != null && msg.phase0SummaryContent.length > 0) {
           updatedProject = await this.projects.update(projectId, {
             phase0SummaryContent: msg.phase0SummaryContent,
           });
         }
-        if (tab === "spec" && msg.specContent != null && msg.specContent.length > 0) {
+        if (tabAllowsDocPersist && tab === "spec" && msg.specContent != null && msg.specContent.length > 0) {
           updatedProject = await this.projects.update(projectId, { specContent: msg.specContent });
         }
-        if (tab === "brd" && msg.brdContent != null && msg.brdContent.length > 0) {
+        if (tabAllowsDocPersist && tab === "brd" && msg.brdContent != null && msg.brdContent.length > 0) {
           await this.projects.patchStage(projectId, routeStream.stageId, { brdContent: msg.brdContent });
           updatedProject = await this.projects.findOne(projectId);
         }
-        if (tab === "blueprint" && msg.blueprintContent != null && msg.blueprintContent.length > 0) {
+        if (tabAllowsDocPersist && tab === "blueprint" && msg.blueprintContent != null && msg.blueprintContent.length > 0) {
           updatedProject = await this.projects.update(projectId, { blueprintContent: msg.blueprintContent });
         }
-        if (tab === "api-contracts" && msg.apiContractsContent != null && msg.apiContractsContent.length > 0) {
+        if (tabAllowsDocPersist && tab === "api-contracts" && msg.apiContractsContent != null && msg.apiContractsContent.length > 0) {
           updatedProject = await this.projects.update(projectId, { apiContractsContent: msg.apiContractsContent });
         }
-        if (tab === "logic-flows" && msg.logicFlowsContent != null && msg.logicFlowsContent.length > 0) {
+        if (tabAllowsDocPersist && tab === "logic-flows" && msg.logicFlowsContent != null && msg.logicFlowsContent.length > 0) {
           updatedProject = await this.projects.update(projectId, { logicFlowsContent: msg.logicFlowsContent });
         }
-        if (tab === "tasks" && msg.tasksContent != null && msg.tasksContent.length > 0) {
+        if (tabAllowsDocPersist && tab === "tasks" && msg.tasksContent != null && msg.tasksContent.length > 0) {
           updatedProject = await this.projects.update(projectId, { tasksContent: msg.tasksContent });
         }
-        if (tab === "infra" && msg.infraContent != null && msg.infraContent.length > 0) {
+        if (tabAllowsDocPersist && tab === "infra" && msg.infraContent != null && msg.infraContent.length > 0) {
           updatedProject = await this.projects.update(projectId, { infraContent: msg.infraContent });
         }
-        if (tab === "architecture" && msg.architectureContent != null && msg.architectureContent.length > 0) {
+        if (tabAllowsDocPersist && tab === "architecture" && msg.architectureContent != null && msg.architectureContent.length > 0) {
           updatedProject = await this.projects.update(projectId, { architectureContent: msg.architectureContent } as any);
         }
-        if (tab === "use-cases" && msg.useCasesContent != null && msg.useCasesContent.length > 0) {
+        if (tabAllowsDocPersist && tab === "use-cases" && msg.useCasesContent != null && msg.useCasesContent.length > 0) {
           updatedProject = await this.projects.update(projectId, { useCasesContent: msg.useCasesContent } as any);
         }
-        if (tab === "user-stories" && msg.userStoriesContent != null && msg.userStoriesContent.length > 0) {
+        if (tabAllowsDocPersist && tab === "user-stories" && msg.userStoriesContent != null && msg.userStoriesContent.length > 0) {
           updatedProject = await this.projects.update(projectId, { userStoriesContent: msg.userStoriesContent } as any);
         }
         const finalProject =

@@ -12,6 +12,7 @@ import {
   isExplicitContext7ChatRequest,
 } from "@theforge/shared-types";
 import { appendTechDocsToSystemPrompt } from "../technology-docs-mcp/tech-docs-context.util.js";
+import { frozenTabSystemPromptBlock } from "../sessions/workshop-document-turn.util.js";
 import {
   buildUserDeclaredStackPromptBlock,
   collectUserStackSources,
@@ -152,9 +153,11 @@ function appendSyncWorkshopInstructions(
   
       // Contexto de documento activo
       s += `\n\n[Contexto de documento activo:] El usuario está trabajando en: **${label}**. Adapta tu respuesta a ese documento (preguntas, sugerencias o ediciones relevantes para ese contexto).\n`;
-  
-      // Instrucción de cambio según intención
-      if (intent === "explore") {
+
+      const frozenBlock = frozenTabSystemPromptBlock(at);
+      if (frozenBlock) {
+        s += `\n\n${frozenBlock}`;
+      } else if (intent === "explore") {
         s +=
           `\n**ATENCIÓN — MODO EXPLORACIÓN:** El usuario está **preguntando o explorando ideas** sobre el documento. ` +
           `NO hagas cambios al documento. Responde de forma conversacional, explica conceptos, discute alternativas. ` +
@@ -164,7 +167,7 @@ function appendSyncWorkshopInstructions(
         if (at === "benchmark") {
           s += `\n\n${WORKSHOP_DBGA_APPROVAL_BEFORE_EDIT_INSTRUCTION}`;
         }
-      } else {
+      } else if (!frozenBlock) {
         // direct_edit o mixed — mantener detección de cambios pero con matiz
         s +=
           `\n**INSTRUCCIÓN — DETECCIÓN DE CAMBIOS:** Si el usuario da una **instrucción directa** ` +
@@ -180,7 +183,7 @@ function appendSyncWorkshopInstructions(
         }
       }
   
-      if (tag && !options?.welcomeBrief) {
+      if (tag && !options?.welcomeBrief && !frozenBlock) {
         s += `\n\n${workshopFinDelimiterCovenant(tag, label)}`;
         if (at === "benchmark") {
           s += `\n\n${WORKSHOP_DBGA_EDIT_COVENANT}`;
@@ -308,8 +311,11 @@ function appendStreamWorkshopInstructions(
     const tag = tagMap[at];
   
     s += `\n\n[Contexto de documento activo:] El usuario está trabajando en: **${label}**. Adapta tu respuesta a ese documento (preguntas, sugerencias o ediciones relevantes para ese contexto).\n`;
-  
-    if (intent === "explore") {
+
+    const frozenBlock = frozenTabSystemPromptBlock(at);
+    if (frozenBlock) {
+      s += `\n\n${frozenBlock}`;
+    } else if (intent === "explore") {
       s +=
         `\n**ATENCIÓN — MODO EXPLORACIÓN:** El usuario está **preguntando o explorando ideas** sobre el documento. ` +
         `NO hagas cambios al documento. Responde de forma conversacional, explica conceptos, discute alternativas. ` +
@@ -319,7 +325,7 @@ function appendStreamWorkshopInstructions(
       if (at === "benchmark") {
         s += `\n\n${WORKSHOP_DBGA_APPROVAL_BEFORE_EDIT_INSTRUCTION}`;
       }
-    } else {
+    } else if (!frozenBlock) {
       s +=
         `\n**INSTRUCCIÓN — DETECCIÓN DE CAMBIOS:** Si el usuario da una **instrucción directa** ` +
         `(ej. "agrega", "cambia", "modifica", "actualiza", "corrige", "elimina") es una solicitud de modificación. ` +
@@ -335,7 +341,7 @@ function appendStreamWorkshopInstructions(
       }
     }
   
-    if (tag && !options?.welcomeBrief) {
+    if (tag && !options?.welcomeBrief && !frozenBlock) {
       s += `\n\n**Instrucción DE delimitador (OBLIGATORIO):** Cuando generes o actualices el documento de ${label} (completo o solo una sección), DEBES escribir el contenido y TERMINAR con la línea exacta \`---FIN_${tag}---\`. Lo que vaya después se mostrará como mensaje en el chat. Sin ese delimitador, el sistema NO persiste ningún cambio y el usuario no ve nada en el panel del documento.`;
       if (at === "benchmark") {
         s +=

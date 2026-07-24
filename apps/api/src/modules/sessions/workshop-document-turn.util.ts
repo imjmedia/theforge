@@ -1,6 +1,11 @@
 import type { ChatMessage } from "@theforge/shared-types";
 import { workshopFinDelimiterCovenant } from "@theforge/shared-types";
 import type { WorkshopChatAction } from "../ai/intent-route.types.js";
+import {
+  canPersistChatDocumentEdit,
+  isWorkshopFrozenDeliverableTab,
+  workshopFrozenTabChatSystemNote,
+} from "@theforge/shared-types";
 import { stripThinkingTags } from "../ai-analysis/utils/mdd-security-parse.js";
 import type { DocPersistFlags } from "./orchestrator-doc-guard.util.js";
 
@@ -22,8 +27,16 @@ export const WORKSHOP_TAB_FIN_TAG: Record<string, string> = {
   phase0: "PHASE0",
 };
 
-export function shouldAllowDocumentPersist(action: WorkshopChatAction): boolean {
-  return action === "edit_document";
+export function shouldAllowDocumentPersist(
+  action: WorkshopChatAction,
+  tab?: string,
+): boolean {
+  return canPersistChatDocumentEdit(tab ?? "mdd", action);
+}
+
+export function frozenTabSystemPromptBlock(tab: string): string | null {
+  if (!isWorkshopFrozenDeliverableTab(tab)) return null;
+  return workshopFrozenTabChatSystemNote(tab);
 }
 
 export function sanitizeLlmResponse(raw: string): string {
@@ -56,8 +69,9 @@ export function getLastAssistantMessage(history: ChatMessage[]): string | undefi
 export function applyIntentPersistGate(
   action: WorkshopChatAction,
   flags: DocPersistFlags,
+  tab?: string,
 ): DocPersistFlags {
-  if (shouldAllowDocumentPersist(action)) return flags;
+  if (shouldAllowDocumentPersist(action, tab)) return flags;
   return {
     hasMdd: false,
     hasSpec: false,

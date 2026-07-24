@@ -26,6 +26,10 @@ import { cn } from "@/lib/utils";
 import type { ChatImagePart } from "@theforge/shared-types";
 import { VISION_CONTEXT_HEADER } from "@theforge/shared-types/session";
 import { MDD_LONG_PASTE_WARN_CHARS } from "@theforge/shared-types/mdd-pipeline-limits";
+import {
+  isWorkshopFrozenDeliverableTab,
+  workshopFrozenTabUserMessage,
+} from "@theforge/shared-types";
 import { handleChatComposerEnterKeyDown } from "../utils/chatComposerEnter";
 import {
   Button,
@@ -508,6 +512,7 @@ export default function ChatContainer({
 }: ChatContainerProps) {
   const { messages, loading, error, sendMessage } = useInterview(projectId, activeTab);
   const contextLabel = ACTIVE_TAB_LABELS[activeTab];
+  const frozenDeliverableChat = isWorkshopFrozenDeliverableTab(activeTab);
   const clearChat = useWorkshopStore((s) => s.clearChat);
   const fetchWelcome = useWorkshopStore((s) => s.fetchWelcome);
   const session = useWorkshopStore((s) => s.session);
@@ -1151,6 +1156,14 @@ export default function ChatContainer({
               >
                 Apagar
               </button>
+            </div>
+          )}
+          {frozenDeliverableChat && (
+            <div
+              className="shrink-0 mx-3 mt-2 mb-1 px-3 py-2 rounded-lg border border-[color-mix(in_oklch,var(--warning)_35%,var(--border))] bg-[color-mix(in_oklch,var(--warning)_8%,var(--card))] text-[color-mix(in_oklch,var(--warning)_70%,var(--foreground))] text-xs leading-snug"
+              role="status"
+            >
+              {workshopFrozenTabUserMessage(activeTab)}
             </div>
           )}
           <AlertDialog open={showClearConfirm} onOpenChange={setShowClearConfirm}>

@@ -1321,6 +1321,9 @@ export const createSessionChatSlice: StateCreator<WorkshopState, [], [], Session
                 if (tab === "ux-ui-guide" && freshUx && !docUnchangedError) {
                   get().persistUxUiGuideContent(freshUx).catch(() => {});
                 }
+                if (typeof data.upstreamPropagateJobId === "string" && data.upstreamPropagateJobId.trim()) {
+                  void get().fetchGenerationStatus(requestProjectId, get().activeStageId ?? undefined);
+                }
               } else if (event === "error" && data.error) {
                 set({
                   error: String(data.error),

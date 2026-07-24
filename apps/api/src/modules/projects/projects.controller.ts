@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -38,6 +39,8 @@ import {
 import { SddIntegrationService } from "./sdd-integration.service.js";
 import { PlanValidationService } from "./plan-validation.service.js";
 import { ProjectNotionPortabilityService } from "./project-notion-portability.service.js";
+import { UpstreamPropagateService } from "./upstream-propagate.service.js";
+import { isWorkshopUpstreamLevelTab } from "@theforge/shared-types";
 
 @Controller("projects")
 export class ProjectsController {
@@ -50,6 +53,7 @@ export class ProjectsController {
     private readonly planValidation: PlanValidationService,
     private readonly mddQueue: MddQueueService,
     private readonly notionPortability: ProjectNotionPortabilityService,
+    private readonly upstreamPropagate: UpstreamPropagateService,
   ) {}
 
   @Post("merge")
@@ -496,6 +500,23 @@ export class ProjectsController {
       jobId,
       statusPath: `/projects/${id}/deliverables-jobs/${jobId}`,
     };
+  }
+
+  /**
+   * Propaga cambios desde un nivel upstream (Paso 0/DBGA, BRD, Benchmark) hacia hermanos + sync MDD.
+   * Job en background — no bloquea el Workshop (consultar generation-status).
+   */
+  @Post(":id/upstream-propagate")
+  async enqueueUpstreamPropagate(
+    @Param("id") id: string,
+    @Body() body: { originTab?: string; stageId?: string },
+  ) {
+    const originTab = (body?.originTab ?? "").trim();
+    if (!isWorkshopUpstreamLevelTab(originTab)) {
+      throw new BadRequestException("originTab debe ser benchmark, brd o phase0");
+    }
+    const stageId = typeof body?.stageId === "string" ? body.stageId : undefined;
+    return this.upstreamPropagate.enqueue(id, originTab, stageId);
   }
 
   /** Cascada parcial según `pendingCascadeDelta` tras edición/regeneración MDD. */
