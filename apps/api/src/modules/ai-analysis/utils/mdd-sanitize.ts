@@ -59,7 +59,7 @@ export {
   stripIndexesOnCommentedSqlColumns,
   stripMonthlyPartitionStubTables,
 } from "./mdd-sanitize/sql-repair.js";
-export type { ValidateMddStructureResult } from "./mdd-sanitize/section-merge.js";
+export type { ValidateMddStructureResult, MergeSingleArchitectSectionResult, MergeArchitectSectionRejectReason, MddSection3Status } from "./mdd-sanitize/section-merge.js";
 export {
   applyDeploymentStackDirectiveToDraft,
   deduplicateAndReorderMddSections,
@@ -95,6 +95,7 @@ export {
   replaceMddSection4Body,
   replaceMddSection5Body,
   mergeSingleArchitectSectionIntoDraft,
+  tryMergeSingleArchitectSectionIntoDraft,
   replaceSection6Or7InDraft,
   restoreArquitecturaSectionFromBaselineIfMissing,
   restoreContextSectionFromBaselineIfMissing,

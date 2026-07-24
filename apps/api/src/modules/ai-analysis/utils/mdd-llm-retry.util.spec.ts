@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { extractLlmText, invokeLlmWithRetry } from "./mdd-llm-retry.util.js";
+import {
+  extractLlmText,
+  extractLlmToolCalls,
+  invokeLlmWithRetry,
+  llmResponseHasUsableToolCalls,
+} from "./mdd-llm-retry.util.js";
 
 class FakeLlm {
   /** Cola de respuestas a devolver en orden; si se agota, repite la última. */
@@ -27,6 +32,45 @@ describe("extractLlmText", () => {
   });
   it("plain string passes through", () => {
     expect(extractLlmText("foo")).toBe("foo");
+  });
+
+  it("content blocks with type text", () => {
+    expect(extractLlmText({ content: [{ type: "text", text: "hola" }] })).toBe("hola");
+  });
+});
+
+describe("extractLlmToolCalls", () => {
+  it("lee tool_calls en raíz AIMessage", () => {
+    const calls = extractLlmToolCalls({
+      content: "",
+      tool_calls: [{ id: "tc1", name: "validate_mdd_structure", args: { draft: "x" } }],
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.name).toBe("validate_mdd_structure");
+  });
+
+  it("lee tool_calls en additional_kwargs (OpenAI-compat)", () => {
+    const calls = extractLlmToolCalls({
+      content: "",
+      additional_kwargs: {
+        tool_calls: [
+          {
+            id: "tc2",
+            function: { name: "validate_sql_syntax", arguments: "{}" },
+          },
+        ],
+      },
+    });
+    expect(calls[0]?.name).toBe("validate_sql_syntax");
+  });
+
+  it("llmResponseHasUsableToolCalls con content vacío", () => {
+    expect(
+      llmResponseHasUsableToolCalls({
+        content: "",
+        tool_calls: [{ name: "x", args: {} }],
+      }),
+    ).toBe(true);
   });
 });
 
@@ -96,5 +140,18 @@ describe("invokeLlmWithRetry", () => {
     });
     expect(extractLlmText(r)).toContain("sustancial");
     expect(llm.callCount).toBe(2);
+  });
+
+  it("acepta tool_calls sin content cuando acceptToolCallsWithoutContent", async () => {
+    const llm = new FakeLlm([
+      { content: "", tool_calls: [{ name: "probe", args: {} }] },
+    ]);
+    const r = await invokeLlmWithRetry(llm as never, [], {
+      tag: "test",
+      acceptToolCallsWithoutContent: true,
+      isResponseValid: (t) => t.trim().length > 0,
+    });
+    expect(llmResponseHasUsableToolCalls(r)).toBe(true);
+    expect(llm.callCount).toBe(1);
   });
 });

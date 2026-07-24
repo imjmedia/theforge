@@ -4,6 +4,7 @@ import {
   countContratosEndpointRows,
   isContratosSectionRegression,
   isContratosSubstantial,
+  repairStrayFencesInContratosTable,
 } from "./contratos-format.js";
 
 describe("isContratosSectionRegression", () => {
@@ -26,5 +27,27 @@ describe("isContratosSectionRegression", () => {
   it("countContratosEndpointRows cuenta métodos HTTP", () => {
     assert.equal(countContratosEndpointRows("GET /a\nPOST /b\n"), 2);
     assert.equal(countContratosEndpointRows("| GET | /a |\n| POST | /b |\n"), 2);
+  });
+});
+
+describe("repairStrayFencesInContratosTable", () => {
+  it("quita fence huérfano entre filas de tabla", () => {
+    const raw = `| Método | Ruta | Descripción | Auth |
+|--------|------|-------------|------|
+| GET | \`/api/v1/keys\` | Listar | Bearer |
+\`\`\`
+| POST | \`/api/v1/keys\` | Crear | Bearer |`;
+    const out = repairStrayFencesInContratosTable(raw);
+    assert.doesNotMatch(out, /\n```\n\| POST/);
+    assert.match(out, /\| POST \|/);
+  });
+
+  it("separa ```json pegado al final de fila de tabla", () => {
+    const raw =
+      "| GET | `/api/v1/secrets` | Detalle | Bearer | ```json";
+    const out = repairStrayFencesInContratosTable(raw);
+    assert.match(out, /\| GET \|/);
+    assert.match(out, /```json/);
+    assert.doesNotMatch(out, /Bearer \| ```json/);
   });
 });

@@ -4,7 +4,8 @@ import { CLARIFIER_MDD_PROMPT, CLARIFIER_QUESTIONS_ONLY_MDD_PROMPT } from "../pr
 import type { MDDStateType } from "../state/index.js";
 import { getMddTemplatePlaceholder } from "../state/mdd-structured.schema.js";
 import { mergeMddStructured } from "../utils/mdd-merge-structured.js";
-import { getMddDraftSummary, extractAlreadyDocumentedTopics, extractIdentifiedInfraFromText, logMddNodeOutput, deduplicateMddDraftSections } from "../utils/mdd-sanitize.js";
+import { getMddDraftSummary, extractAlreadyDocumentedTopics, extractIdentifiedInfraFromText, logMddNodeOutput, deduplicateMddDraftSections, mergeSection1IntoDraft } from "../utils/mdd-sanitize.js";
+import { draftIsSubstantialForScopedRepair } from "../utils/mdd-section-preserve.util.js";
 import { getUserBrief } from "../utils/mdd-user-brief.js";
 import { buildUserDeclaredStackPromptBlock } from "../utils/user-declared-stack.util.js";
 import { extractFirstJsonObject, parseJsonOrThrow } from "../utils/parse-json.js";
@@ -123,7 +124,9 @@ export function createMddClarifierNode(llm: BaseChatModel) {
     try {
       const brief = getUserBrief(state);
       const draftTrimmed = (state.mddDraft ?? "").trim();
-      const hasSubstantialDraft = draftTrimmed.length > 500 && /##\s*2\.\s*Arquitectura/i.test(draftTrimmed);
+      const hasSubstantialDraft =
+        draftIsSubstantialForScopedRepair(draftTrimmed) ||
+        (draftTrimmed.length > 500 && /##\s*2\.\s*Arquitectura/i.test(draftTrimmed));
       const briefBlock = brief && !hasSubstantialDraft
         ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Elaborar la sección 1. Contexto para una aplicación que cumple este objetivo; las secciones 2–7 son placeholders de una línea.\n\n---\n\n`
         : brief && hasSubstantialDraft
@@ -271,10 +274,16 @@ export function createMddClarifierNode(llm: BaseChatModel) {
       // que el usuario pidió (ej. "cambia Argon2id por bcrypt"). El structured solo se usa para
       // downstream nodes (graph_populator), no para el documento final.
       const mddDraftRaw = (draft && draft.length > 80 ? draft : (getMddTemplatePlaceholder(scope)));
-      const mddDraft = deduplicateMddDraftSections(mddDraftRaw);
+      const mergedDraft = hasSubstantialDraft && draftTrimmed.length > 200
+        ? mergeSection1IntoDraft(draftTrimmed, mddDraftRaw)
+        : mddDraftRaw;
+      if (hasSubstantialDraft && mergedDraft !== mddDraftRaw) {
+        LOG("draft sustancial: merge §1 only, preservadas §2–§7 (len %s→%s)", mddDraftRaw.length, mergedDraft.length);
+      }
+      const mddDraft = deduplicateMddDraftSections(mergedDraft);
       const outStructured = merged ?? (slice ? mergeMddStructured(undefined, slice) : undefined);
       const sum = getMddDraftSummary(mddDraft);
-      LOG("ok clarifiedScopeLen=%s mddDraftLen=%s section2=%s", scope.length, sum.length, sum.section2);
+      LOG("ok clarifiedScopeLen=%s mddDraftLen=%s section3=%s", scope.length, sum.length, sum.section3);
       logMddNodeOutput("Clarifier", mddDraft);
       const out: Partial<MDDStateType> = {
         clarifiedScope: scope,

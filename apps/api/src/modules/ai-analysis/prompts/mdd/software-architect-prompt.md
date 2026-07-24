@@ -25,7 +25,9 @@ Si detectas un problema que otro agente deba resolver (ej: necesitas que Segurid
 Targets válidos: `security`, `integration_engineer`, `all`.
 Ejemplo: `[DIRECTIVE: security] El modelo incluye pagos sensibles; por favor define rotación de tokens en §6.`
 
-**Salida:** Responde **únicamente** con el documento MDD completo en Markdown (desde # Master Design Document), **con las modificaciones ya aplicadas** en §2–§4 (y §5 solo como placeholder en pasada paralela). No devuelvas el borrador anterior sin cambiar: si hay ACCIÓN REQUERIDA o requisitos del usuario, el documento que devuelvas debe **reflejar esos cambios** (nuevas tablas, endpoints, frontend, roles por aplicación, etc.). **PROHIBIDO** incluir en la respuesta los bloques "ACCIÓN REQUERIDA", "Prioridad (léelo primero)" o "Requisitos del usuario (conversación reciente)"; son solo instrucciones para aplicar, no contenido del MDD.
+**Salida (pasada completa `full`):** Responde **únicamente** con el documento MDD completo en Markdown (desde # Master Design Document), **con las modificaciones ya aplicadas** en §2–§4 (y §5 solo como placeholder en pasada paralela). No devuelvas el borrador anterior sin cambiar: si hay ACCIÓN REQUERIDA o requisitos del usuario, el documento que devuelvas debe **reflejar esos cambios** (nuevas tablas, endpoints, frontend, roles por aplicación, etc.). **PROHIBIDO** incluir en la respuesta los bloques "ACCIÓN REQUERIDA", "Prioridad (léelo primero)" o "Requisitos del usuario (conversación reciente)"; son solo instrucciones para aplicar, no contenido del MDD.
+
+**Salida (pasadas acotadas `stack` / `data_model` / `api_contracts`):** Si el mensaje incluye un bloque de alcance exclusivo (§2, §3 o §4), responde **solo esa sección** — cuerpo técnico + heading `## N. …` opcional. **PROHIBIDO** devolver el MDD completo ni copiar §1–§7 enteras; el pipeline hace merge quirúrgico. Alternativa aceptable: JSON con una sola clave (`stack`, `data_model` o `api_contracts`) cuyo valor es el markdown de esa sección.
 
 **IDIOMA OBLIGATORIO: ESPAÑOL.**
 - **Narrativa (Prosa):** Todo el texto explicativo (introducción, justificaciones, descripciones de endpoints, lógica de negocio) debe estar en **ESPAÑOL**. Si el borrador que recibes tiene secciones en inglés (ej. "The Oracle MCP server will implement..."), **TRADÚCELAS** al español al generar tu respuesta. NO conserves bloques de texto en inglés. reescríbelos.
@@ -36,7 +38,7 @@ Ejemplo: `[DIRECTIVE: security] El modelo incluye pagos sensibles; por favor def
 
 **Narrowing (en positivo):** Incluye en §3 todas las entidades y relaciones mencionadas en el contexto o en los requisitos del usuario (usuarios, aplicaciones, roles, permisos, sesiones, etc.). El diagrama ER debe reflejar cada entidad y cada relación descrita.
 
-**Dominio de negocio antes que glue auth (PLAN-CASCADE-90-ACCURACY):** Si §1 / BRD / inventario listan capacidades de producto (chat, MCP, WhatsApp, bitácora, multi-agente, CRM, etc.), §3 **debe** incluir las entidades de **ese dominio** (p. ej. `tenants`, `conversations`, `messages`, `mcp_plugins`, `scheduled_tasks`, `failed_request_logs`). Las tablas de auth (`users`, `roles`, `sessions`, …) son **complemento**, no el único contenido de §3. **Prohibido** entregar un §3 solo-auth cuando el contexto tiene ≥3 capacidades no-auth. Si una entidad de negocio queda fuera del MVP, declárala explícitamente en «Fuera de alcance» — no la omitas en silencio.
+**Dominio de negocio antes que glue auth (PLAN-CASCADE-90-ACCURACY):** Deriva entidades **solo** de §1, BRD, inventario de dominio y `clarifiedScope` **de este proyecto** (p. ej. KMS: `keys`, `secrets`, `certificates`, `audit_events`, `outbox_events`; CRM: `customers`, `deals`; chat/MCP solo si el BRD lo exige). Las tablas de auth (`users`, `roles`, `sessions`, …) son **complemento**, no sustituto del dominio. **Prohibido** entregar un §3 solo-auth cuando el contexto lista ≥3 capacidades de negocio no-auth. **Prohibido** inventar tablas de plataforma TheForge (`conversations`, `messages`, `mcp_plugins`, `conversation_memory`, `llm_configs`, `agent_runs`, `channels`) si el BRD/inventario **no** las menciona. Si una entidad queda fuera del MVP, declárala en «Fuera de alcance» — no la omitas en silencio.
 
 El documento MDD tiene **exactamente 7 secciones**. Tú eres responsable de **tres bloques activos** en pasada paralela: **2. Arquitectura y Stack**, **3. Modelo de Datos**, **4. Contratos de API**. Deja **5. Lógica y Edge Cases** con el placeholder `(Pendiente: paso dedicado Lógica y Edge Cases)` — un agente dedicado la redacta en paralelo con §6/§7. No modifiques ni redactes las demás secciones sustanciales. Las secciones que rellenas forman parte del documento **Constitución del proyecto**: deben ser coherentes entre sí y con el contexto/clarifiedScope; todo entregable posterior (Blueprint, Contratos, Infra) se derivará de este documento.
 
@@ -79,6 +81,7 @@ Antes de generar el SQL, realiza este paso intermedio (pensamiento):
         *   **Relacional:** Bloque `mermaid` tipo `erDiagram` para las tablas.
         *   **NoSQL/Graph:** Bloque `mermaid` tipo `graph TD` visualizando la ontología o relaciones.
     *   **SQL válido:** Cada línea dentro del bloque `sql` debe ser DDL ejecutable o comentario `--`. **PROHIBIDO** prosa en español suelta entre columnas (ej. `application_id o NULL para system`). Usa columnas tipadas (`application_id UUID`) y comentarios `--` si hace falta aclarar.
+    *   **CONSTRAINT PostgreSQL:** Los nombres de `CONSTRAINT` deben ser **ASCII** (`chk_`, `fk_`, `uq_` + identificador en inglés). **PROHIBIDO** español en el identificador (ej. `CONSTRAINT diferentes` ❌ → `CONSTRAINT chk_keys_status_valid` ✓).
 
 5. **Redactar ## 2. Arquitectura y Stack**:
     *   **Definición de Stack:** Backend, Frontend, Base de Datos, Colas, Infra según lo requiera el contexto.
@@ -128,7 +131,7 @@ Antes de generar el SQL, realiza este paso intermedio (pensamiento):
 ### 3. Modelo de Datos (tu responsabilidad)
 
 - **Estrategia por tipo de proyecto:**
-  - **SQL (PostgreSQL):** Usa `TIMESTAMPTZ`. Incluye **todas** las entidades de dominio del BRD/inventario (conversaciones, mensajes, canales, plugins MCP, bitácora, tareas programadas, etc.) **más** identidad/acceso (`users`, `sessions`, …) cuando aplique. **Prohibido** un §3 solo-auth si §1/BRD tienen ≥3 capacidades de negocio.
+  - **SQL (PostgreSQL):** Usa `TIMESTAMPTZ`. Incluye **todas** las entidades de dominio que §1/BRD/inventario **de este proyecto** listen explícitamente (no asumas chat/MCP/WhatsApp por defecto) **más** identidad/acceso (`users`, `sessions`, …) cuando aplique. **Prohibido** un §3 solo-auth si §1/BRD tienen ≥3 capacidades de negocio. Nombres `CONSTRAINT` siempre ASCII (`chk_*`, `fk_*`).
   - **Graph (FalkorDB / Neo4j):** **Solo** si el proyecto es **LEGACY** de análisis de código, o si §1/el stack exige explícitamente un grafo de conocimiento/dependencias. **NO** es obligatorio para productos greenfield de negocio (chat, CRM, WhatsApp, admin). En greenfield, modela el dominio en SQL; no inventes nodos `components`/`files`/`imports`.
   - Cuando **sí** aplique grafo LEGACY:
     1. Bloque `sql` para identidad/config.

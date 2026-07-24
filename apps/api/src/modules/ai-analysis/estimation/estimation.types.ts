@@ -118,9 +118,30 @@ export interface LiveMetricsResult {
   conformanceSummary?: import("../../engine/mdd-quality-audit.util.js").ConformanceSummary;
 }
 
+/** Origen de una mutación registrada en el edit log del MDD. */
+export type MddAgentEditKind = "llm" | "merge" | "deterministic";
+
+/** Entrada del log mínimo de modificaciones de agentes al MDD (§1–§7). */
+export type MddAgentEditLogEntry = {
+  ts: string;
+  node: string;
+  kind: MddAgentEditKind;
+  /** Secciones canónicas tocadas: "1" … "7". */
+  sectionsTouched: string[];
+  /** goal / acceptedProposalDirective / auditorFeedback (truncado). */
+  why?: string;
+  directivesIn?: Array<{ from: string; to: string; message: string }>;
+  directivesOut?: Array<{ from: string; to: string; message: string }>;
+  beforeLen?: number;
+  afterLen?: number;
+  sectionLens?: Partial<Record<string, { before: number; after: number }>>;
+};
+
 /** Snapshot persistido del último pipeline MDD (audit trail + auditor LLM). */
 export type MddAuditSnapshot = {
   auditTrail?: string[];
+  /** Log estructurado de mutaciones por nodo/sección (últimas ~100 entradas). */
+  mddAgentEditLog?: MddAgentEditLogEntry[];
   precisionBreakdown?: PrecisionBreakdown;
   auditorGaps?: AuditorGaps;
   updatedAt?: string;

@@ -1,5 +1,9 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
+import {
+  isChatLlmPlatformScope,
+  THEFORGE_PLATFORM_NOISE_TABLES,
+} from "../../engine/mdd-platform-table-strip.util.js";
 import { injectMddDiagrams, suggestMddDiagrams } from "../utils/mdd-diagram-suggestions.js";
 import { validateMddStructure } from "../utils/mdd-sanitize.js";
 
@@ -181,10 +185,16 @@ export function createGetProjectTablesTool() {
       }
       let filtered = tables;
       if (Array.isArray(tableNames) && tableNames.length > 0) {
-        const filterSet = new Set(tableNames.map(n => n.toLowerCase()));
-        filtered = tables.filter(t => filterSet.has(t.name.toLowerCase()));
+        const filterSet = new Set(tableNames.map((n) => n.toLowerCase()));
+        filtered = tables.filter((t) => filterSet.has(t.name.toLowerCase()));
         if (filtered.length === 0) {
-          return `El proyecto ${projectId} tiene ${tables.length} tabla(s) (${tables.map(t => t.name).join(", ")}), pero ninguna coincide con: ${tableNames.join(", ")}.`;
+          return `El proyecto ${projectId} tiene ${tables.length} tabla(s) (${tables.map((t) => t.name).join(", ")}), pero ninguna coincide con: ${tableNames.join(", ")}.`;
+        }
+      } else {
+        const section1 = mddContent.match(/(?:^|\n)##\s*1\.[\s\S]*?(?=\n##\s|\n#\s|$)/i)?.[0] ?? "";
+        const scopeCorpus = `${section1}\n${mddContent.slice(0, 2500)}`;
+        if (!isChatLlmPlatformScope(scopeCorpus)) {
+          filtered = tables.filter((t) => !THEFORGE_PLATFORM_NOISE_TABLES.has(t.name));
         }
       }
       const header = `Tablas de proyecto de referencia (${projectId}):${filtered.length < tables.length ? ` ${filtered.length}/${tables.length} filtradas` : ` ${tables.length} tabla(s)`}`;
@@ -195,7 +205,13 @@ export function createGetProjectTablesTool() {
       description: "Importa definiciones de tablas SQL de otro proyecto en TheForge (cross-project). Útil cuando un proyecto nuevo necesita tablas compartidas de un proyecto existente. Parámetros: projectId (requerido) y opcional tableNames (array de strings) para filtrar solo tablas específicas. El SA debe integrarlas en §3 (Modelo de Datos) del proyecto nuevo.",
       schema: z.object({
         projectId: z.string().describe("ID del proyecto de referencia"),
-        tableNames: z.array(z.string()).optional().describe("Lista opcional de nombres de tablas (ej. ['usuarios', 'pagos']). Si se omite, importa todas."),
+        tableNames: z
+          .array(z.string())
+          .optional()
+          .nullable()
+          .describe(
+            "Lista opcional de nombres de tablas (ej. ['usuarios', 'pagos']). Si se omite, importa todas salvo tablas ruido plataforma chat/MCP.",
+          ),
       }),
     }
   );

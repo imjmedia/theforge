@@ -1,6 +1,15 @@
 import type { MddComplexityLevel } from "../state/mdd-state.schema.js";
 import type { MDDStateType } from "../state/index.js";
 import { isMddTailParallelEnabled } from "./mdd-tail-parallel.config.js";
+import {
+  extractArquitecturaSectionBody,
+  extractSection3Body,
+  extractSection4Body,
+} from "./mdd-sanitize/section-merge.js";
+
+const SCOPED_ARCHITECT_STREAM_NODES = new Set(["stack_architect", "data_model", "api_contracts"]);
+
+const CANONICAL_MDD_SECTION_HEADING = /^##\s*([1-7])\./gm;
 
 /** Alcance del nodo arquitecto en el pipeline MDD. */
 export type MddSoftwareArchitectScope = "full" | "stack" | "data_model" | "api_contracts";
@@ -35,23 +44,30 @@ export function shouldDecoupleSection5FromArchitect(
   return true;
 }
 
+const SCOPED_SECTION_ONLY_OUTPUT = `**FORMATO DE SALIDA (pasada acotada — ahorra tokens):**
+Responde con **solo el cuerpo de tu sección** (mín. 80 caracteres técnicos). Puedes incluir el heading \`## N. …\` de tu sección.
+**NO** generes el MDD completo ni copies §1–§7 enteras. **PROHIBIDO** "(Pendiente: Arquitecto)" u otros placeholders.`;
+
 const SCOPE_BLOCKS: Record<MddSoftwareArchitectScope, string> = {
   full: "",
   stack: `# Arquitecto de Stack (MDD §2)
 
-**Alcance exclusivo:** Redacta **solo ## 2. Arquitectura y Stack**. Copia ## 1. Contexto del borrador sin cambios.
-**Prohibido** modificar §3, §4 ni redactar §5 (deja §5 con placeholder \`(Pendiente: paso dedicado Lógica y Edge Cases)\`).
-Las decisiones de stack (frontend, backend, ORM, colas, despliegue base) alimentan los agentes de modelo de datos y contratos API.`,
+**Alcance exclusivo:** Redacta **solo ## 2. Arquitectura y Stack** (stack, capas, despliegue base).
+**Prohibido** modificar §3/§4 ni redactar §5.
+${SCOPED_SECTION_ONLY_OUTPUT}
+Las decisiones de stack alimentan modelo de datos y contratos API.`,
   data_model: `# Experto en Modelo de Datos (MDD §3)
 
 **Alcance exclusivo:** Redacta **solo ## 3. Modelo de Datos** (SQL PostgreSQL, erDiagram Mermaid, TechnicalMetadata si aplica).
-Copia ## 1 y ## 2 del borrador. **No** modifiques §4 ni redactes §5 (placeholder de paso dedicado).
-Deriva entidades y relaciones de §1, §2 y requisitos explícitos del usuario.`,
+**No** modifiques §4 ni redactes §5.
+${SCOPED_SECTION_ONLY_OUTPUT}
+Deriva entidades de §1, §2 y requisitos del usuario.`,
   api_contracts: `# Experto en Contratos de API (MDD §4)
 
 **Alcance exclusivo:** Redacta **solo ## 4. Contratos de API** (tabla GFM + endpoints con request/response JSON).
-Copia ## 1–§3 del borrador. **No** redactes §5 (placeholder de paso dedicado).
-Cada entidad/recurso de §3 que requiera API debe tener operación documentada; alinea rutas con el stack de §2.`,
+**No** redactes §5.
+${SCOPED_SECTION_ONLY_OUTPUT}
+Cada entidad de §3 con API debe tener operación documentada; alinea rutas con §2.`,
 };
 
 export function architectScopePromptPrefix(scope: MddSoftwareArchitectScope): string {
@@ -94,4 +110,185 @@ export function agentsForArchitectSection(
   if (section === 2) return ["stack_architect"];
   if (section === 3) return ["data_model"];
   return ["api_contracts"];
+}
+
+const SCOPED_SECTION_HEADINGS: Record<Exclude<MddSoftwareArchitectScope, "full">, string> = {
+  stack: "## 2. Arquitectura y Stack",
+  data_model: "## 3. Modelo de Datos",
+  api_contracts: "## 4. Contratos de API",
+};
+
+/** Heading canónico de la sección en pasadas scoped (stack/data_model/api_contracts). */
+export function architectScopedSectionHeading(scope: MddSoftwareArchitectScope): string | null {
+  if (scope === "full") return null;
+  return SCOPED_SECTION_HEADINGS[scope];
+}
+
+export type ArchitectMergeBaselineSource =
+  | "draftTrimmed"
+  | "previousMddDraftForMerge"
+  | "draftTrimmed_fallback";
+
+/**
+ * Baseline para merge quirúrgico: en HIGH scoped usa el draft actual del grafo;
+ * `previousMddDraftForMerge` solo en executor / regen manager (sections, clarifier_only).
+ */
+export function resolveArchitectMergeBaseline(
+  state: Pick<MDDStateType, "executorControlled" | "delegateTarget" | "previousMddDraftForMerge">,
+  scope: MddSoftwareArchitectScope,
+  draftTrimmed: string,
+): { baseline: string; source: ArchitectMergeBaselineSource } {
+  const previous = (state.previousMddDraftForMerge ?? "").trim();
+  const usePrevious =
+    state.executorControlled === true ||
+    state.delegateTarget === "sections" ||
+    state.delegateTarget === "clarifier_only";
+
+  if (usePrevious && previous) {
+    return { baseline: previous, source: "previousMddDraftForMerge" };
+  }
+  if (scope !== "full" && draftTrimmed) {
+    return { baseline: draftTrimmed, source: "draftTrimmed" };
+  }
+  if (previous) {
+    return { baseline: previous, source: "previousMddDraftForMerge" };
+  }
+  return { baseline: draftTrimmed, source: "draftTrimmed_fallback" };
+}
+
+/** Detecta respuesta scoped que parece MDD completo (no solo §N). */
+export function looksLikeFullMddArchitectResponse(
+  text: string,
+  scope: MddSoftwareArchitectScope,
+): boolean {
+  const trimmed = (text ?? "").trim();
+  if (!trimmed || scope === "full") return false;
+  if (/^#\s*Master\s+Design\s+Document/im.test(trimmed)) return true;
+
+  const targetSection = architectScopeSectionNumber(scope);
+  if (targetSection === null) return false;
+
+  const sections = new Set<number>();
+  for (const match of trimmed.matchAll(CANONICAL_MDD_SECTION_HEADING)) {
+    const n = Number(match[1]);
+    if (n >= 1 && n <= 7) sections.add(n);
+  }
+  const beyondTarget = [...sections].filter((n) => n !== targetSection);
+  return beyondTarget.length >= +2 || (beyondTarget.length >= 1 && sections.size >= 3);
+}
+
+/** Extrae solo la sección objetivo de un MDD completo devuelto en pasada scoped. */
+export function extractTargetSectionFragmentFromFullMdd(
+  text: string,
+  scope: Exclude<MddSoftwareArchitectScope, "full">,
+): string | null {
+  const section = architectScopeSectionNumber(scope);
+  const heading = architectScopedSectionHeading(scope);
+  if (!section || !heading) return null;
+
+  const body =
+    section === 2
+      ? extractArquitecturaSectionBody(text)
+      : section === 3
+        ? extractSection3Body(text)
+        : extractSection4Body(text);
+  if (!body?.trim()) return null;
+  return `${heading}\n\n${body.trim()}`;
+}
+
+export type ScopedArchitectResponseProcessResult = {
+  fragment: string;
+  extractedFromFullMdd: boolean;
+};
+
+/**
+ * Normaliza respuesta scoped: envuelve cuerpo sin heading; si el LLM devolvió MDD completo,
+ * extrae solo la sección objetivo (no propagar el documento entero antes del merge).
+ */
+export function processScopedArchitectResponse(
+  text: string,
+  scope: MddSoftwareArchitectScope,
+): ScopedArchitectResponseProcessResult {
+  const trimmed = (text ?? "").trim();
+  if (!trimmed || scope === "full") {
+    return { fragment: trimmed, extractedFromFullMdd: false };
+  }
+
+  if (looksLikeFullMddArchitectResponse(trimmed, scope)) {
+    const extracted = extractTargetSectionFragmentFromFullMdd(trimmed, scope);
+    if (extracted) {
+      return { fragment: extracted, extractedFromFullMdd: true };
+    }
+  }
+
+  return { fragment: normalizeScopedArchitectResponse(trimmed, scope), extractedFromFullMdd: false };
+}
+
+/**
+ * Normaliza respuesta scoped: si el LLM devolvió solo el cuerpo (sin heading), lo envuelve
+ * para que los extractores de merge quirúrgico funcionen.
+ */
+export function normalizeScopedArchitectResponse(
+  text: string,
+  scope: MddSoftwareArchitectScope,
+): string {
+  const trimmed = (text ?? "").trim();
+  if (!trimmed || scope === "full") return trimmed;
+  const heading = architectScopedSectionHeading(scope);
+  if (!heading) return trimmed;
+  if (trimmed.includes(heading)) return trimmed;
+  if (/^##\s+[1-7]\./m.test(trimmed)) return trimmed;
+  return `${heading}\n\n${trimmed}`;
+}
+
+/** Feedback tras detectar MDD completo en pasada scoped. */
+export function formatScopedArchitectFullMddRejectFeedback(scope: MddSoftwareArchitectScope): string {
+  const section = architectScopeSectionNumber(scope);
+  const label =
+    section === 2 ? "§2 Arquitectura y Stack" : section === 3 ? "§3 Modelo de Datos" : "§4 Contratos de API";
+  return `PROHIBIDO MDD completo; solo cuerpo ${label}. Responde únicamente con el contenido de tu sección asignada.`;
+}
+
+const STREAM_NODE_TO_SCOPE: Record<string, MddSoftwareArchitectScope> = {
+  stack_architect: "stack",
+  data_model: "data_model",
+  api_contracts: "api_contracts",
+};
+
+/**
+ * Evita publicar en vivo un MDD completo sin merge (Frankenstein con §2 Pendiente, etc.).
+ */
+export function resolveLiveDraftForScopedArchitectStream(
+  nodeName: string | undefined,
+  draft: string,
+  stableDraft: string,
+): string {
+  if (!nodeName || !SCOPED_ARCHITECT_STREAM_NODES.has(nodeName)) return draft;
+  const scope = STREAM_NODE_TO_SCOPE[nodeName];
+  if (!scope) return draft;
+  if (looksLikeFullMddArchitectResponse(draft, scope)) {
+    return stableDraft.trim() || draft;
+  }
+  return draft;
+}
+
+/** Feedback en español tras merge rechazado (reintento scoped único). */
+export function formatScopedArchitectMergeRejectFeedback(
+  section: 2 | 3 | 4,
+  reason: "empty" | "placeholder" | "short" | "regression",
+): string {
+  const label =
+    section === 2 ? "§2 Arquitectura y Stack" : section === 3 ? "§3 Modelo de Datos" : "§4 Contratos de API";
+  const detail =
+    reason === "placeholder"
+      ? 'devolviste placeholder o "(Pendiente: Arquitecto)"'
+      : reason === "short"
+        ? "el cuerpo es demasiado corto (<80 caracteres)"
+        : reason === "regression"
+          ? "§4 regresó respecto al baseline"
+          : "no se extrajo cuerpo usable";
+  return (
+    `REINTENTO OBLIGATORIO — ${label}: ${detail}. ` +
+    `PROHIBIDO "Pendiente: Arquitecto"; escribe contenido técnico real **solo para ${label}** ahora.`
+  );
 }

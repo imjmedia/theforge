@@ -112,6 +112,8 @@ export const MDDStateAnnotation = Annotation.Root({
   deliveryGateLoopActive: Annotation<boolean | undefined>(),
   /** Destino del auto-loop cuando deliveryGateLoopActive. */
   deliveryGateFixTarget: Annotation<DeliveryGateFixTarget | undefined>(),
+  /** Fingerprint placeholder blockers (circuit breaker). */
+  deliveryGatePlaceholderFingerprint: Annotation<string | undefined>(),
 });
 
 export type MDDStateType = typeof MDDStateAnnotation.State;

@@ -1,4 +1,5 @@
 import { extractMddSectionBody } from "./section-body.util.js";
+import { corpusExcludesMultiTenantSaaS } from "../../../engine/mdd-brd-scope.util.js";
 
 /** True si LDAP/AD es autenticación principal de usuarios humanos (§1, §2 o §6). */
 export function draftUsesLdapPrimaryAuth(draft: string): boolean {
@@ -78,6 +79,10 @@ export function fixSecurityManifestCoherence(draft: string): string {
 
 /** True si el MDD exige multi-tenant (TechnicalMetadata, §2, §3 o §6). */
 function mddRequiresMultiTenant(draft: string): boolean {
+  const sec1 =
+    extractMddSectionBody(draft, "## 1. Contexto y alcance") ??
+    extractMddSectionBody(draft, "## 1. Contexto");
+  if (sec1?.body && corpusExcludesMultiTenantSaaS(sec1.body)) return false;
   if (/\[multi_tenant\]/i.test(draft)) return true;
   if (/```TechnicalMetadata[\s\S]*?\[multi_tenant\]/i.test(draft)) return true;
   const sec2 = extractMddSectionBody(draft, "## 2. Arquitectura y Stack");

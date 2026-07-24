@@ -28,10 +28,12 @@ import { createMddFormatSecIntNode } from "../nodes/mdd-format-sec-int.node.js";
 import { createMddPrepareOutputNode } from "../nodes/mdd-prepare-output.node.js";
 import { createMddBlackboardNode } from "../nodes/mdd-blackboard.node.js";
 import { draftHasSubstantialSections6And7 } from "../utils/mdd-delivery-gate-loop.util.js";
+import { draftIsSubstantialForScopedRepair } from "../utils/mdd-section-preserve.util.js";
 import { mddStateHasDomainAuthSkew } from "../utils/mdd-domain-prompt.util.js";
 import { GraphMemoryService } from "../graph-memory/graph-memory.service.js";
 import { detectSection3CompositionBlockers } from "../utils/schema-owner.util.js";
-import { createDbgaLLM, createMddAuditorLLM, createMddHighComplexityLLM } from "../llm/create-dbga-llm.js";
+import type { UserLLMRuntime } from "../../ai/providers/llm-runtime.types.js";
+import { createDbgaLLM, createDbgaLLMFromRuntime, createMddAuditorLLM, createMddHighComplexityLLM } from "../llm/create-dbga-llm.js";
 import type { AIFactory } from "../../ai/ai.factory.js";
 import { getMddAuditorTools, getMddArchitectTools } from "../tools/tool-registry.js";
 import type { TheForgeService } from "../../theforge/theforge.service.js";
@@ -127,6 +129,8 @@ export type MddGraphCompileOptions = {
   uiMcpFrontendLibraryLabel?: string | null;
   /** Emite progreso «activo» al iniciar cada nodo (polling MDD). */
   onNodeStart?: (nodeName: string) => void;
+  /** Runtime tras sonda MDD (modelo reordenado si el principal falló). */
+  preflightRuntime?: UserLLMRuntime | null;
 };
 
 /**
@@ -140,10 +144,12 @@ export async function createMddGraph(
   graphMemory: GraphMemoryService,
   options?: MddGraphCompileOptions,
 ) {
-  const llm = await createDbgaLLM(aiFactory, userId);
-  // LLM estructural (temp baja) para architect/security/integration → decisiones de diseño
-  // reproducibles (stack, modelo de datos, aprobación dual) entre generaciones.
-  const structuralLlm = await createDbgaLLM(aiFactory, userId, { temperature: STRUCTURAL_TEMPERATURE });
+  const llm = options?.preflightRuntime
+    ? createDbgaLLMFromRuntime(options.preflightRuntime)
+    : await createDbgaLLM(aiFactory, userId);
+  const structuralLlm = options?.preflightRuntime
+    ? createDbgaLLMFromRuntime(options.preflightRuntime, { temperature: STRUCTURAL_TEMPERATURE })
+    : await createDbgaLLM(aiFactory, userId, { temperature: STRUCTURAL_TEMPERATURE });
   const highComplexityLlm = await createMddHighComplexityLLM(aiFactory, userId, {
     temperature: STRUCTURAL_TEMPERATURE,
   });
@@ -311,7 +317,11 @@ export async function createMddGraph(
   }
 
   function routeAuditor(state: MDDStateType): string {
-    if (state.auditorDecision === "clarifier" && (state.mddIteration ?? 0) < MAX_MDD_ITERATIONS) {
+    if (
+      state.auditorDecision === "clarifier" &&
+      (state.mddIteration ?? 0) < MAX_MDD_ITERATIONS &&
+      !draftIsSubstantialForScopedRepair(state.mddDraft ?? "")
+    ) {
       return "clarifier";
     }
     return "prepare_output";
@@ -443,9 +453,12 @@ export async function createMddGraphWithManager(
   managerToolDeps?: MddManagerToolDeps | null,
   compileOptions?: MddGraphCompileOptions,
 ) {
-  const llm = await createDbgaLLM(aiFactory, userId);
-  // LLM estructural (temp baja) para architect/security/integration → reproducibilidad de diseño.
-  const structuralLlm = await createDbgaLLM(aiFactory, userId, { temperature: STRUCTURAL_TEMPERATURE });
+  const llm = compileOptions?.preflightRuntime
+    ? createDbgaLLMFromRuntime(compileOptions.preflightRuntime)
+    : await createDbgaLLM(aiFactory, userId);
+  const structuralLlm = compileOptions?.preflightRuntime
+    ? createDbgaLLMFromRuntime(compileOptions.preflightRuntime, { temperature: STRUCTURAL_TEMPERATURE })
+    : await createDbgaLLM(aiFactory, userId, { temperature: STRUCTURAL_TEMPERATURE });
   const highComplexityLlm = await createMddHighComplexityLLM(aiFactory, userId, {
     temperature: STRUCTURAL_TEMPERATURE,
   });

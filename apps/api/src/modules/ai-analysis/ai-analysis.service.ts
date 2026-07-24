@@ -15,7 +15,8 @@ import {
 import { CheckpointerService } from "./checkpoint/checkpointer.service.js";
 import { NodeCacheService } from "./checkpoint/node-cache.service.js";
 import { EstimationService } from "./estimation/estimation.service.js";
-import type { AuditorGaps } from "./estimation/estimation.types.js";
+import type { AuditorGaps, MddAgentEditLogEntry } from "./estimation/estimation.types.js";
+import { MddStreamEditLogTracker } from "./utils/mdd-agent-edit-log.util.js";
 import { stateToMarkdown, getAgentLabel } from "./state/state-to-markdown.js";
 import { getMddNodeProgressMessage } from "./utils/mdd-progress-messages.js";
 import {
@@ -24,12 +25,14 @@ import {
 } from "./utils/mdd-stream-progress.util.js";
 import {
   extractContextSectionBody,
+  extractSection5Body,
   logSection3Debug,
   mergeSingleArchitectSectionIntoDraft,
   replaceSection1BodyFromAnyHeading,
   restoreContextSectionFromBaselineIfMissing,
   restoreMddSectionsFromBaselineStrict,
 } from "./utils/mdd-sanitize.js";
+import { guardTailSectionsForPersist } from "./utils/mdd-section-preserve.util.js";
 import { GraphMemoryService } from "./graph-memory/graph-memory.service.js";
 import { ProjectsService } from "../projects/projects.service.js";
 import { pickPrimaryStage } from "../projects/stage-helpers.js";
@@ -41,6 +44,7 @@ import { formatVisionContextBlock, mergeUserTextWithVisionBlock } from "../ai/ut
 import { markdownToMddStructured } from "./utils/mdd-markdown-to-structured.js";
 import { HumanMessage } from "@langchain/core/messages";
 import { createDbgaLLM } from "./llm/create-dbga-llm.js";
+import { resolveMddRuntimeWithPreflight } from "./llm/mdd-llm-preflight.util.js";
 import { AIFactory } from "../ai/ai.factory.js";
 import { getRequestUserId } from "../../common/request-user.store.js";
 import { CONTEXT_SYNTHESIZER_PROMPT } from "./prompts/load-prompts.js";
@@ -50,6 +54,7 @@ import { createMddSection5Node } from "./nodes/mdd-section5.node.js";
 import { createMddSoftwareArchitectNode } from "./nodes/mdd-software-architect.node.js";
 import {
   agentsForArchitectSection,
+  resolveLiveDraftForScopedArchitectStream,
   type MddSoftwareArchitectScope,
 } from "./utils/mdd-architect-pipeline.util.js";
 import { createMddClarifierNode } from "./nodes/mdd-clarifier.node.js";
@@ -58,6 +63,13 @@ import { contextSynthesizerComplexityAppendix } from "./utils/mdd-complexity-rig
 import { formatDbgaStreamError } from "./utils/dbga-stream-error.util.js";
 import { awaitWithNdjsonHeartbeat } from "./utils/ndjson-heartbeat.util.js";
 import { MddRegenTracer } from "./utils/mdd-regen-tracer.js";
+import {
+  demoteCanonicalSectionHeadingsInSection1Body,
+  isContextSynthesizerBodySubstantial,
+  MIN_SECTION1_REGEN_BODY_LENGTH,
+  normalizeContextSynthesizerBody,
+  resolveUpstreamSyncSection1Body,
+} from "./utils/mdd-section1-regen.util.js";
 import {
   INSUFFICIENT_DBGA_IDEA_MESSAGE,
   isInsufficientDbgaIdea,
@@ -142,6 +154,7 @@ export type StreamProgressEvent =
     auditorFeedback?: string;
     precisionBreakdown?: PrecisionBreakdown;
     auditTrail?: string[];
+    mddAgentEditLog?: MddAgentEditLogEntry[];
   }
   | { type: "error"; message: string; code?: string; replanning?: boolean };
 
@@ -166,6 +179,7 @@ export type StreamMddManagerEvent =
     precisionBreakdown?: PrecisionBreakdown;
     auditorFeedback?: string;
     auditTrail?: string[];
+    mddAgentEditLog?: MddAgentEditLogEntry[];
   };
 
 /**
@@ -283,6 +297,33 @@ export class AiAnalysisService {
         ? options.uiMcpLibraryLabel
         : await this.getUiMcpLibraryLabel();
     return prepareMddForOutputCore(input, { ...options, resolver, uiMcpLibraryLabel });
+  }
+
+  /** Evita persistir MDD con §2–§7 borradas por prepare/dedupe tras borrador sustancial. */
+  private guardMarkdownTailForPersist(
+    prePrepareDraft: string,
+    markdown: string,
+  ): { markdown: string; errorMessage?: string } {
+    const guard = guardTailSectionsForPersist(prePrepareDraft, markdown, "PersistCheck");
+    if (guard.restored) {
+      this.logger.warn(
+        `[MDD:PersistCheck] §2–§7 restaurada(s) tras prepare (draftLen=${prePrepareDraft.length})`,
+      );
+    }
+    if (guard.failedSections.length > 0) {
+      const preS5Len = extractSection5Body(prePrepareDraft)?.length ?? 0;
+      const postS5Len = extractSection5Body(guard.markdown)?.length ?? 0;
+      this.logger.error(
+        `[MDD:PersistCheck] §${guard.failedSections.join("/§")} wipe post-prepare (§5 pre=${preS5Len} post=${postS5Len})`,
+      );
+      return {
+        markdown: guard.markdown,
+        errorMessage:
+          `El borrador final perdió contenido sustancial en §${guard.failedSections.join(", §")} tras prepare-output. ` +
+          "No se persistió la versión dañada; reintenta la generación del MDD.",
+      };
+    }
+    return { markdown: guard.markdown };
   }
 
   private async resolveUserId(projectId?: string): Promise<string> {
@@ -610,11 +651,13 @@ export class AiAnalysisService {
     let graph: Awaited<ReturnType<typeof createMddGraph>>;
     try {
       const userId = await this.resolveUserId(projectId);
+      const preflightRuntime = await resolveMddRuntimeWithPreflight(this.aiFactory, userId);
       graph = await createMddGraph(this.aiFactory, userId, this.graphMemory, {
         theforge: this.theforge,
         nodeCache: this.nodeCacheService,
         uiMcpFrontendLibraryLabel,
         onNodeStart: nodeStart.onNodeStart,
+        preflightRuntime,
       });
     } catch (err) {
       const formatted = formatDbgaStreamError(err);
@@ -644,6 +687,10 @@ export class AiAnalysisService {
 
     let lastState: MDDState = initialState;
     const auditTrail: string[] = [];
+    const editLogTracker = new MddStreamEditLogTracker(
+      initialState.mddDraft ?? "",
+      initialState.internalDirectives,
+    );
 
     try {
       const stream = await graph.stream(initialState, {
@@ -661,6 +708,7 @@ export class AiAnalysisService {
           const dataRecord = data as Record<string, unknown>;
           const nodeName = Object.keys(dataRecord)[0];
           if (nodeName) {
+            editLogTracker.noteNodeUpdate(nodeName);
             const nodeData = dataRecord[nodeName] as Partial<MDDState> | undefined;
             const draftLen = nodeData?.mddDraft?.length;
             const scopeLen = nodeData?.clarifiedScope?.length;
@@ -672,8 +720,15 @@ export class AiAnalysisService {
           }
         }
         if (mode === "values" && data && typeof data === "object") {
+          const stableDraft = editLogTracker.getLastDraft();
+          const pendingNode = editLogTracker.peekPendingNode();
           lastState = data as MDDState;
-          const draft = (lastState.mddDraft ?? "").trim();
+          editLogTracker.noteValuesState(lastState);
+          const draft = resolveLiveDraftForScopedArchitectStream(
+            pendingNode ?? undefined,
+            (lastState.mddDraft ?? "").trim(),
+            stableDraft,
+          );
           if (projectId?.trim() && draft) {
             this.estimationService.setLiveDraft(projectId.trim(), draft, estimationStage);
             if (lastState.auditorGaps) {
@@ -694,15 +749,21 @@ export class AiAnalysisService {
         }
       }
 
-      const raw = (lastState.mddDraft || "").trim() || "# Master Design Document\n\n(Sin contenido generado.)";
-      const markdown = await this.runPrepareMddForOutput(
+      const mddDraftRaw = (lastState.mddDraft ?? "").trim();
+      const raw = mddDraftRaw || "# Master Design Document\n\n(Sin contenido generado.)";
+      let markdown = await this.runPrepareMddForOutput(
         {
           mddStructured: lastState.mddStructured,
           mddDraft: raw || lastState.mddDraft,
         },
-        prepareOpts,
+        { ...prepareOpts, baselineDraft: mddDraftRaw || undefined },
       );
-      const mddDraftRaw = (lastState.mddDraft ?? "").trim();
+      const tailPersistGuard = this.guardMarkdownTailForPersist(mddDraftRaw, markdown);
+      markdown = tailPersistGuard.markdown;
+      if (tailPersistGuard.errorMessage) {
+        yield { type: "error", message: tailPersistGuard.errorMessage };
+        return;
+      }
       this.logger.log(`[MDD:PersistCheck] mddDraft len=${mddDraftRaw.length} first200=${JSON.stringify(mddDraftRaw.slice(0, 200))}`);
       this.logger.log(`[MDD:PersistCheck] markdown post-prepare len=${markdown.length} first200=${JSON.stringify(markdown.slice(0, 200))}`);
       logSection3Debug("final (stream done)", markdown);
@@ -712,6 +773,7 @@ export class AiAnalysisService {
       const precisionBreakdown = this.estimationService.getPrecisionBreakdown(markdown, estOptsDone);
       this.persistMddAuditSnapshot(projectId, estimationStage, {
         auditTrail,
+        mddAgentEditLog: editLogTracker.log,
         precisionBreakdown,
         auditorGaps: lastState.auditorGaps ?? undefined,
       });
@@ -725,6 +787,7 @@ export class AiAnalysisService {
         auditorFeedback: lastState.auditorFeedback?.trim() || undefined,
         precisionBreakdown,
         auditTrail,
+        mddAgentEditLog: editLogTracker.log.length > 0 ? editLogTracker.log : undefined,
       };
     } catch (err) {
       if (projectId?.trim()) this.estimationService.clearLiveDraft(projectId.trim(), estimationStage);
@@ -792,6 +855,7 @@ export class AiAnalysisService {
     let graph: Awaited<ReturnType<typeof createMddGraphWithManager>>;
     try {
       const mddUserId = await this.resolveUserId(projectId);
+      const preflightRuntime = await resolveMddRuntimeWithPreflight(this.aiFactory, mddUserId);
       const uiMcpFrontendLibraryLabel = await this.getUiMcpLibraryLabel();
       graph = await createMddGraphWithManager(
         this.aiFactory,
@@ -804,7 +868,12 @@ export class AiAnalysisService {
           theforge: this.theforge,
           ai: this.ai,
         },
-        { theforge: this.theforge, nodeCache: this.nodeCacheService, uiMcpFrontendLibraryLabel },
+        {
+          theforge: this.theforge,
+          nodeCache: this.nodeCacheService,
+          uiMcpFrontendLibraryLabel,
+          preflightRuntime,
+        },
       );
     } catch (err) {
       const formatted = formatDbgaStreamError(err);
@@ -861,6 +930,10 @@ export class AiAnalysisService {
     let lastState: MDDState = initialState;
     let lastNonEmptyDraft = (initialState.mddDraft ?? "").trim() || "";
     const auditTrail: string[] = [];
+    const editLogTracker = new MddStreamEditLogTracker(
+      initialState.mddDraft ?? "",
+      initialState.internalDirectives,
+    );
 
     try {
       const stream = await graph.stream(initialState, {
@@ -874,6 +947,7 @@ export class AiAnalysisService {
           const dataRecord = data as Record<string, unknown>;
           const nodeName = Object.keys(dataRecord)[0];
           if (nodeName && nodeName !== "__interrupt__") {
+            editLogTracker.noteNodeUpdate(nodeName);
             const nodeData = dataRecord[nodeName] as Partial<MDDState> | undefined;
             const draftLen = nodeData?.mddDraft?.length;
             const scopeLen = nodeData?.clarifiedScope?.length;
@@ -916,6 +990,7 @@ export class AiAnalysisService {
             }
             this.persistMddAuditSnapshot(projectId, estimationStageId, {
               auditTrail,
+              mddAgentEditLog: editLogTracker.log,
               precisionBreakdown,
               auditorGaps: lastState?.auditorGaps ?? undefined,
             });
@@ -935,6 +1010,7 @@ export class AiAnalysisService {
               precisionBreakdown,
               auditorFeedback: lastState?.auditorFeedback?.trim() || undefined,
               auditTrail,
+              mddAgentEditLog: editLogTracker.log.length > 0 ? editLogTracker.log : undefined,
             };
             return;
           }
@@ -945,8 +1021,15 @@ export class AiAnalysisService {
           }
         }
         if (mode === "values" && data && typeof data === "object") {
+          const stableDraft = editLogTracker.getLastDraft();
+          const pendingNode = editLogTracker.peekPendingNode();
           lastState = data as MDDState;
-          const draft = (lastState.mddDraft ?? "").trim();
+          editLogTracker.noteValuesState(lastState);
+          const draft = resolveLiveDraftForScopedArchitectStream(
+            pendingNode ?? undefined,
+            (lastState.mddDraft ?? "").trim(),
+            stableDraft,
+          );
           if (draft) {
             lastNonEmptyDraft = draft;
             this.estimationService.setLiveDraft(projectId.trim(), draft, estimationStageId);
@@ -984,8 +1067,14 @@ export class AiAnalysisService {
           mddStructured: lastState?.mddStructured,
           mddDraft: rawMarkdown,
         },
-        managerPrepareOpts,
+        { ...managerPrepareOpts, baselineDraft: finalDraft || undefined },
       );
+      const managerTailGuard = this.guardMarkdownTailForPersist(finalDraft, markdown);
+      markdown = managerTailGuard.markdown;
+      if (managerTailGuard.errorMessage) {
+        yield { type: "error", message: managerTailGuard.errorMessage };
+        return;
+      }
       logSection3Debug("final (stream/manager done)", markdown);
       
       if (projectId?.trim()) {
@@ -998,6 +1087,7 @@ export class AiAnalysisService {
       this.logger.log(`[MDD stream/manager] done markdownLen=${markdown.length} finalDraftLen=${finalDraft.length} lastNonEmptyLen=${lastNonEmptyDraft.length} auditTrail=${auditTrail.length}`);
       this.persistMddAuditSnapshot(projectId, estimationStageId, {
         auditTrail,
+        mddAgentEditLog: editLogTracker.log,
         precisionBreakdown,
         auditorGaps: lastState?.auditorGaps ?? undefined,
       });
@@ -1011,6 +1101,7 @@ export class AiAnalysisService {
         auditorFeedback: lastState?.auditorFeedback?.trim() || undefined,
         precisionBreakdown,
         auditTrail,
+        mddAgentEditLog: editLogTracker.log.length > 0 ? editLogTracker.log : undefined,
       };
     } catch (err) {
       if (isGraphInterrupt(err) && err.interrupts?.length > 0) {
@@ -1065,6 +1156,7 @@ export class AiAnalysisService {
           precisionBreakdown,
           auditorFeedback,
           auditTrail: [],
+          mddAgentEditLog: editLogTracker.log.length > 0 ? editLogTracker.log : undefined,
         };
         return;
       }
@@ -1133,6 +1225,7 @@ export class AiAnalysisService {
     let graph: Awaited<ReturnType<typeof createMddGraphWithManager>>;
     try {
       const resumeUserId = await this.resolveUserId(projectId);
+      const preflightRuntime = await resolveMddRuntimeWithPreflight(this.aiFactory, resumeUserId);
       const uiMcpFrontendLibraryLabel = await this.getUiMcpLibraryLabel();
       graph = await createMddGraphWithManager(
         this.aiFactory,
@@ -1145,7 +1238,12 @@ export class AiAnalysisService {
           theforge: this.theforge,
           ai: this.ai,
         },
-        { theforge: this.theforge, nodeCache: this.nodeCacheService, uiMcpFrontendLibraryLabel },
+        {
+          theforge: this.theforge,
+          nodeCache: this.nodeCacheService,
+          uiMcpFrontendLibraryLabel,
+          preflightRuntime,
+        },
       );
     } catch (err) {
       const formatted = formatDbgaStreamError(err);
@@ -1175,6 +1273,18 @@ export class AiAnalysisService {
     const { opts: resumePrepareOpts, gateRef: resumeGateRef } = createPrepareOptsWithGate({
       preservedGovernance: extractGovernanceSection(clientDraft ?? ""),
     });
+
+    let resumeInitialDraft = clientDraft ?? "";
+    let resumeInitialDirectives: MDDState["internalDirectives"];
+    try {
+      const cpSnapshot = await graph.getState(config);
+      const cpValues = cpSnapshot?.values as MDDState | undefined;
+      if (cpValues?.mddDraft?.trim()) resumeInitialDraft = cpValues.mddDraft.trim();
+      resumeInitialDirectives = cpValues?.internalDirectives;
+    } catch {
+      /* usar clientDraft o vacío */
+    }
+    const editLogTracker = new MddStreamEditLogTracker(resumeInitialDraft, resumeInitialDirectives);
 
     try {
       // `resume` entrega el texto a interrupt(); el nodo reanudado aplica su propio update (p. ej. lastUserMessage).
@@ -1278,12 +1388,14 @@ export class AiAnalysisService {
               precisionBreakdown,
               auditorFeedback: stateForMarkdown?.auditorFeedback?.trim() || undefined,
               auditTrail,
+              mddAgentEditLog: editLogTracker.log.length > 0 ? editLogTracker.log : undefined,
             };
             return;
           }
           if (nodeName) {
             const label = nodeName === "auditor" ? getAgentLabel("auditor", "mdd") : nodeName === "manager" ? "Manager (entrevista)" : getAgentLabel(nodeName);
 
+            editLogTracker.noteNodeUpdate(nodeName);
             const nodeData = dataRecord[nodeName] as Partial<MDDState> | undefined;
             const draftLen = nodeData?.mddDraft?.length;
             const scopeLen = nodeData?.clarifiedScope?.length;
@@ -1297,8 +1409,15 @@ export class AiAnalysisService {
           }
         }
         if (mode === "values" && data && typeof data === "object") {
+          const stableDraft = editLogTracker.getLastDraft();
+          const pendingNode = editLogTracker.peekPendingNode();
           lastState = data as MDDState;
-          const draft = (lastState.mddDraft ?? "").trim();
+          editLogTracker.noteValuesState(lastState);
+          const draft = resolveLiveDraftForScopedArchitectStream(
+            pendingNode ?? undefined,
+            (lastState.mddDraft ?? "").trim(),
+            stableDraft,
+          );
           if (draft) {
             lastNonEmptyDraft = draft;
             if (projectId?.trim()) {
@@ -1360,8 +1479,14 @@ export class AiAnalysisService {
             mddStructured: lastState?.mddStructured,
             mddDraft: raw,
           },
-          resumePrepareOpts,
+          { ...resumePrepareOpts, baselineDraft: finalDraft || undefined },
         );
+        const resumeTailGuard = this.guardMarkdownTailForPersist(finalDraft, markdown);
+        markdown = resumeTailGuard.markdown;
+        if (resumeTailGuard.errorMessage) {
+          yield { type: "error", message: resumeTailGuard.errorMessage };
+          return;
+        }
         logSection3Debug("final (stream/resume done)", markdown);
         
         if (projectId?.trim()) {
@@ -1375,6 +1500,7 @@ export class AiAnalysisService {
         this.logger.log(`[MDD stream/resume] Audit Trail: ${auditTrail.join(" -> ")}`);
         this.persistMddAuditSnapshot(projectId, estimationStage, {
           auditTrail,
+          mddAgentEditLog: editLogTracker.log,
           precisionBreakdown,
           auditorGaps: lastState?.auditorGaps ?? undefined,
         });
@@ -1388,6 +1514,7 @@ export class AiAnalysisService {
           auditorFeedback: lastState?.auditorFeedback?.trim() || undefined,
           precisionBreakdown,
           auditTrail,
+          mddAgentEditLog: editLogTracker.log.length > 0 ? editLogTracker.log : undefined,
         };
       }
     } catch (err) {
@@ -1448,6 +1575,8 @@ export class AiAnalysisService {
           deliveryGate: resumeCatchGate.deliveryGate,
           precisionBreakdown,
           auditorFeedback,
+          auditTrail,
+          mddAgentEditLog: editLogTracker.log.length > 0 ? editLogTracker.log : undefined,
         };
         return;
       }
@@ -1461,11 +1590,12 @@ export class AiAnalysisService {
   }
 
   /**
-   * Regenera solo una sección del MDD (2–7) usando el resto del documento como contexto.
-   * Entrada alternativa: comandos / en el chat (ej. /infraestructura). No reemplaza el flujo
+   * Regenera solo una sección del MDD (1–7) usando el resto del documento como contexto.
+   * Entrada alternativa: comandos / en el chat (ej. /infraestructura, /contexto). No reemplaza el flujo
    * con Manager (streamMddAnalysisWithManager / streamMddResume): si el usuario escribe texto
    * normal, el frontend sigue usando manager/resume; este método solo se invoca cuando el
-   * cliente envía explícitamente section 2–7 (regenerate-section). NDJSON: progress | done | error.
+   * cliente envía explícitamente section 1–7 (regenerate-section). NDJSON: progress | done | error.
+   * §1: sintetizador de contexto; aborta con error si el cuerpo queda < 200 chars (no hace done falso).
    */
   async *streamMddRegenerateSection(
     projectId: string,
@@ -1565,35 +1695,85 @@ export class AiAnalysisService {
           tracer,
         );
         const text = (typeof response.content === "string" ? response.content : "").trim();
-        // Peel stamps y residuo de stamp del output del LLM antes de usarlo como body de §1.
-        // El LLM a veces copia el stamp del documento de contexto o genera `# Master Design Document`.
-        const cleanedText = peelDocumentBodyForPersist(text);
-        let newBody = (cleanedText && extractContextSectionBody(cleanedText)) || cleanedText || "(Contexto sintetizado desde el documento.)";
-        const firstOtherSection = newBody.search(/\n##\s+(?:2|3|4|5|6|7)[.\s]/);
-        if (firstOtherSection !== -1) {
-          newBody = newBody.slice(0, firstOtherSection).trim();
+        const synthesized = normalizeContextSynthesizerBody(text);
+        this.logger.log(
+          `[MDD regenerate-section] §1 llm rawLen=${synthesized.rawLen} bodyLen=${synthesized.cleanedLen} ` +
+            `fullDump=${synthesized.fromFullMddDump} truncatedH2=${synthesized.truncatedAtOtherSection} projectId=${pid}`,
+        );
+        if (!isContextSynthesizerBodySubstantial(synthesized.body)) {
+          this.logger.warn(
+            `[MDD regenerate-section] §1 sin sustancia (bodyLen=${synthesized.cleanedLen}; mín ${MIN_SECTION1_REGEN_BODY_LENGTH}) projectId=${pid}`,
+          );
+          tracer.summary(false, {
+            reason: "section1-insubstantial",
+            rawLen: synthesized.rawLen,
+            bodyLen: synthesized.cleanedLen,
+          });
+          yield {
+            type: "error",
+            message:
+              "La regeneración de §1 no produjo contenido suficiente (respuesta vacía, solo separador, " +
+              "placeholder, o truncada al volcar §2–§7). Reintenta o usa un modelo más capaz; " +
+              "si persiste, regenera el MDD completo.",
+          };
+          return;
         }
-        // Strip `# Master Design Document` heading que el LLM copia del contexto
-        newBody = newBody.replace(/^#\s*Master\s+Design\s+Document\s*\n+/im, "").trim();
-        const headingFragmentLine = /^\s*(?:y|and)\s+alcance\s*(?:del\s+)?mdd\s*\.?\s*$/i;
-        newBody = newBody
-          .split(/\r?\n/)
-          .filter((line) => !headingFragmentLine.test(line.trim()))
-          .join("\n")
-          .replace(/^\s*[\r\n]+/, "")
-          .replace(/^```[\w]*\s*\n?/, "")
-          .replace(/\n?```\s*$/, "")
-          .trim() || newBody;
+        const newBody = demoteCanonicalSectionHeadingsInSection1Body(synthesized.body);
         const finalDraft = extractContextSectionBody(mddContent)
           ? replaceSection1BodyFromAnyHeading(mddContent, newBody)
           : restoreContextSectionFromBaselineIfMissing(
               `## 1. Contexto\n\n${newBody}`,
               mddContent,
             );
-        const markdown = await tracer.step("prepare-output", async () => this.runPrepareMddForOutput(finalDraft, regenPrepareOpts), { draftLen: finalDraft.length });
+        const mergedBody = extractContextSectionBody(finalDraft) ?? "";
+        if (!isContextSynthesizerBodySubstantial(mergedBody)) {
+          this.logger.warn(
+            `[MDD regenerate-section] §1 merge no aplicó sustancia (mergedLen=${mergedBody.length}) projectId=${pid}`,
+          );
+          tracer.summary(false, { reason: "section1-merge-failed", bodyLen: mergedBody.length });
+          yield {
+            type: "error",
+            message:
+              "La regeneración de §1 produjo texto pero no se pudo fusionar en el MDD (heading §1 ausente o merge fallido). " +
+              "Revisa que exista `## 1. Contexto` y reintenta.",
+          };
+          return;
+        }
+        let markdown = await tracer.step(
+          "prepare-output",
+          async () => this.runPrepareMddForOutput(finalDraft, regenPrepareOpts),
+          { draftLen: finalDraft.length, section1Len: mergedBody.length },
+        );
+        // prepare (repairGlued/dedupe) a veces promueve `2. Arquitectura…` → ## 2 y parte §1.
+        let afterPrepBody = extractContextSectionBody(markdown) ?? "";
+        if (!isContextSynthesizerBodySubstantial(afterPrepBody)) {
+          this.logger.warn(
+            `[MDD regenerate-section] §1 wipe post-prepare (pre=${mergedBody.length} post=${afterPrepBody.length}); reinyectando projectId=${pid}`,
+          );
+          markdown = replaceSection1BodyFromAnyHeading(markdown, newBody);
+          afterPrepBody = extractContextSectionBody(markdown) ?? "";
+          if (!isContextSynthesizerBodySubstantial(afterPrepBody)) {
+            tracer.summary(false, {
+              reason: "section1-wiped-by-prepare",
+              preLen: mergedBody.length,
+              postLen: afterPrepBody.length,
+            });
+            yield {
+              type: "error",
+              message:
+                "La regeneración de §1 produjo contenido pero prepare/dedupe lo vació. " +
+                "No se persistió el borrador dañado; reintenta o regenera el MDD completo.",
+            };
+            return;
+          }
+        }
         const metrics = await tracer.step("metrics", async () => this.estimationService.calculateLiveMetrics(markdown, regenEstOpts));
         const regenGate1 = mddStreamDeliveryGateFields(regenGateRef.current, metrics.status);
-        tracer.summary(true, { mddLen: markdown.length, precision: metrics.precision });
+        tracer.summary(true, {
+          mddLen: markdown.length,
+          precision: metrics.precision,
+          section1Len: afterPrepBody.length,
+        });
         yield {
           type: "done",
           markdown,
@@ -1866,6 +2046,7 @@ export class AiAnalysisService {
           if (pre) dbgaEffective = pre + dbgaEffective;
           const clarifierNode = createMddClarifierNode(llm);
           const agentCtx = await this.buildMddAgentContext(pid, sid ?? null);
+          const prevSection1 = extractContextSectionBody(mddContent) ?? "";
           const result = await clarifierNode({
             ...defaultMDDState,
             dbgaContent: dbgaEffective,
@@ -1875,12 +2056,79 @@ export class AiAnalysisService {
             auditorFeedback: changeSummary.trim() || undefined,
             ...agentCtx,
           } as MDDStateType);
-          const scope = (result.clarifiedScope ?? result.mddDraft ?? "").trim();
-          const body =
-            scope && !scope.startsWith("#")
-              ? scope
-              : extractContextSectionBody(scope) || scope || "(Contexto actualizado desde upstream.)";
+          const body = resolveUpstreamSyncSection1Body({
+            clarifierMddDraft: result.mddDraft,
+            clarifiedScope: result.clarifiedScope,
+          });
+          if (!body) {
+            this.logger.warn(
+              `[MDD upstream-sync] §1 sin sustancia tras Clarifier (prevLen=${prevSection1.length}); se preserva §1 previa projectId=${pid}`,
+            );
+            yield {
+              type: "error",
+              message:
+                "La sincronización de §1 no produjo contenido suficiente (Clarifier JSON inválido, " +
+                "dump DBGA como scope, o cuerpo < 200 chars). Se preservó la sección anterior; " +
+                "reintenta con un modelo más capaz o regenera el MDD completo.",
+            };
+            return;
+          }
+          // Clarifier en fallback (JSON inválido) reusa mddDraft previo + scope dump `#…`.
+          // No marcar sync OK ni capturar baseline si §1 no cambió y no hay scope usable.
+          const scopeRaw = (result.clarifiedScope ?? "").trim();
+          let scopeUsable = false;
+          if (scopeRaw && !scopeRaw.startsWith("#") && !/\n##\s+/m.test(scopeRaw)) {
+            scopeUsable = isContextSynthesizerBodySubstantial(
+              normalizeContextSynthesizerBody(scopeRaw).body,
+            );
+          } else if (scopeRaw) {
+            const ex = extractContextSectionBody(scopeRaw);
+            scopeUsable = Boolean(ex && isContextSynthesizerBodySubstantial(ex));
+          }
+          if (
+            isContextSynthesizerBodySubstantial(prevSection1) &&
+            body.trim() === prevSection1.trim() &&
+            !scopeUsable
+          ) {
+            this.logger.warn(
+              `[MDD upstream-sync] Clarifier no actualizó §1 (fallback/sin scope usable) projectId=${pid}`,
+            );
+            yield {
+              type: "error",
+              message:
+                "El Clarificador no generó un §1 nuevo usable (respuesta JSON inválida o scope = dump DBGA). " +
+                "Se preservó el MDD anterior; reintenta con un modelo más capaz o regenera el documento completo.",
+            };
+            return;
+          }
+          // No degradar §1 sustancial previa con un cuerpo mucho más corto (ratio < 40%).
+          if (
+            isContextSynthesizerBodySubstantial(prevSection1) &&
+            body.length < Math.max(MIN_SECTION1_REGEN_BODY_LENGTH, Math.floor(prevSection1.length * 0.4))
+          ) {
+            this.logger.warn(
+              `[MDD upstream-sync] §1 candidato demasiado corto vs previa (prev=${prevSection1.length} new=${body.length}); abort projectId=${pid}`,
+            );
+            yield {
+              type: "error",
+              message:
+                "La sincronización de §1 habría acortado demasiado el contexto existente. " +
+                "Se preservó la sección anterior; reintenta o regenera el MDD completo.",
+            };
+            return;
+          }
           mddContent = replaceSection1BodyFromAnyHeading(mddContent, body);
+          const afterBody = extractContextSectionBody(mddContent) ?? "";
+          if (!isContextSynthesizerBodySubstantial(afterBody)) {
+            mddContent = baselineMddBeforeSync;
+            yield {
+              type: "error",
+              message:
+                "La sincronización de §1 dejó el contexto insuficiente tras el merge. " +
+                "Se restauró el MDD previo; reintenta o regenera el documento completo.",
+            };
+            return;
+          }
         } catch (err) {
           yield {
             type: "error",
@@ -2262,6 +2510,7 @@ export class AiAnalysisService {
     stageId: string | null | undefined,
     payload: {
       auditTrail?: string[];
+      mddAgentEditLog?: MddAgentEditLogEntry[];
       precisionBreakdown?: PrecisionBreakdown;
       auditorGaps?: AuditorGaps;
     },

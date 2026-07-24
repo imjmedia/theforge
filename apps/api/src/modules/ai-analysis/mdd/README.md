@@ -81,3 +81,11 @@ Progreso del job: `phase: "cache"`. Requiere haber completado al menos una gener
 ## Gates
 
 `ProjectGenerationGuardService` incluye `mddQueue.isProjectBusy()` en `mddStreamActive` para bloquear entregables downstream mientras corre un job MDD.
+
+## Reinicio del API / jobs huérfanos
+
+BullMQ persiste jobs en Redis. Si el proceso API/worker muere con un job `active`, el lock puede vivir hasta `lockDuration` (15 min) y la UI sigue mostrando «en ejecución».
+
+En `onModuleInit`, `recoverBullMqJobsAfterWorkerRestart` marca `active` como **failed** (`Proceso API reiniciado; vuelve a generar el MDD`) y elimina `waiting`/`delayed` obsoletos. El worker MDD usa `maxStalledCount=0` y en `stalled` no reencola el pipeline.
+
+**Ahora mismo (estado atascado):** reinicia el API con este fix o pulsa **Cancelar generación** en el banner (jobs huérfanos `active` sin worker local se fallan al instante). No hace falta `redis-cli FLUSHDB`.

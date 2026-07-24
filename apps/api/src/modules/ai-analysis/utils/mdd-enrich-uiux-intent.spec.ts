@@ -31,7 +31,7 @@ describe("enrichMddWithUiUxDesignIntent", () => {
     assert.match(out, /pantallas\.md/);
     assert.doesNotMatch(out, /Entity Classification/);
     assert.doesNotMatch(out, /dataSource.*GET \/api\/v1\//);
-    assert.match(out, /GET \/api\/v1\/\{tabla\}/);
+    assert.doesNotMatch(out, /quota LLM/);
     assert.ok(out.includes("CREATE TABLE orders"), "no debe borrar §3 previa");
   });
 
@@ -61,12 +61,12 @@ describe("enrichMddWithUiUxDesignIntent", () => {
     assert.equal(await enrichMddWithUiUxDesignIntent(soloEspacios), soloEspacios);
   });
 
-  it("no añade UI/UX cuando §1 declara MVP API+CLI sin panel web", () => {
+  it("no añade UI/UX cuando §1 declara MVP API+CLI sin panel web", async () => {
     const apiOnly = `${MDD_WITH_ENTITIES.replace(
       "## 1. Contexto\n\nContexto mínimo.",
       "## 1. Contexto\n\nMVP solo APIs REST y CLI; sin panel web.",
     )}`;
-    const out = enrichMddWithUiUxDesignIntent(apiOnly);
+    const out = await enrichMddWithUiUxDesignIntent(apiOnly);
     assert.ok(!/##\s*UI\/UX\s+Design\s+Intent/i.test(out));
   });
 

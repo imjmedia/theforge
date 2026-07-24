@@ -5,6 +5,7 @@
 import {
   mermaidBlockHasUsableStructure,
 } from "../../engine/mdd-pre-render.js";
+import { mddExcludesWebUiSurface } from "./mdd-sanitize/internal.js";
 
 export type GreenfieldStackSignals = {
   frontend?: string;
@@ -268,10 +269,15 @@ export function buildProposedComponentDiagramMermaid(signals: GreenfieldStackSig
   return lines.length > 1 ? lines.join("\n") : null;
 }
 
-export function formatProposedComponentDiagramMarkdown(mermaid: string): string {
+export function formatProposedComponentDiagramMarkdown(
+  mermaid: string,
+  options?: { includeNote?: boolean },
+): string {
   const note =
     "_Propuesta derivada de §2–§4: capas inferidas del stack, entidades SQL y contratos API documentados (determinista, sin servicios inventados)._";
-  return `### Diagrama de componentes propuesto\n\n\`\`\`mermaid\n${mermaid}\n\`\`\`\n\n${note}`;
+  const block = `### Diagrama de componentes propuesto\n\n\`\`\`mermaid\n${mermaid}\n\`\`\``;
+  if (options?.includeNote === false) return `${block}\n`;
+  return `${block}\n\n${note}`;
 }
 
 export function isMddProposedComponentDiagramEnabled(): boolean {
@@ -297,8 +303,12 @@ function extractProposedComponentDiagramMermaid(draft: string): string | null {
   return match?.[1]?.trim() ?? null;
 }
 
-function replaceProposedComponentDiagramSection(draft: string, mermaid: string): string {
-  const replacement = formatProposedComponentDiagramMarkdown(mermaid);
+function replaceProposedComponentDiagramSection(
+  draft: string,
+  mermaid: string,
+  options?: { includeNote?: boolean },
+): string {
+  const replacement = formatProposedComponentDiagramMarkdown(mermaid, options);
   if (!hasProposedComponentDiagramSection(draft)) {
     const section2Match = draft.match(/^##\s*2\.\s*Arquitectura[^\n]*/im);
     if (!section2Match) return draft;
@@ -343,5 +353,6 @@ export function injectProposedComponentDiagramIntoSection2(draft: string): strin
   const mermaid = buildProposedComponentDiagramMermaid(signals);
   if (!mermaid) return draft;
 
-  return replaceProposedComponentDiagramSection(mdd, mermaid);
+  const includeNote = !mddExcludesWebUiSurface(mdd);
+  return replaceProposedComponentDiagramSection(mdd, mermaid, { includeNote });
 }

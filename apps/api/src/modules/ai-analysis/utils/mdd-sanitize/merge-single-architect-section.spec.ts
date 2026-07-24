@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { mergeSingleArchitectSectionIntoDraft } from "./section-merge.js";
+import { describe, it } from "node:test";
+import assert from "node:assert";
+import { mergeSingleArchitectSectionIntoDraft, tryMergeSingleArchitectSectionIntoDraft } from "./section-merge.js";
 
 const BASELINE = `# Master Design Document
 
@@ -62,32 +63,32 @@ Architect wiped infra — BAD.
 describe("mergeSingleArchitectSectionIntoDraft", () => {
   it("§3: solo reemplaza modelo; preserva §2/§4/§5/§6/§7 del baseline", () => {
     const out = mergeSingleArchitectSectionIntoDraft(BASELINE, ARCHITECT, 3);
-    expect(out).toContain("Baseline contexto único ALPHA");
-    expect(out).toContain("Baseline stack NestJS PostgreSQL");
-    expect(out).toContain("CREATE TABLE architect_orders");
-    expect(out).not.toContain("CREATE TABLE baseline_tenants");
-    expect(out).toContain("/api/v1/baseline-only");
-    expect(out).not.toContain("/api/v1/architect-only");
-    expect(out).toContain("Baseline lógica edge cases");
-    expect(out).toContain("Baseline seguridad Argon2");
-    expect(out).toContain("Baseline infra Docker");
+    assert.ok(out.includes("Baseline contexto único ALPHA"));
+    assert.ok(out.includes("Baseline stack NestJS PostgreSQL"));
+    assert.ok(out.includes("CREATE TABLE architect_orders"));
+    assert.ok(!out.includes("CREATE TABLE baseline_tenants"));
+    assert.ok(out.includes("/api/v1/baseline-only"));
+    assert.ok(!out.includes("/api/v1/architect-only"));
+    assert.ok(out.includes("Baseline lógica edge cases"));
+    assert.ok(out.includes("Baseline seguridad Argon2"));
+    assert.ok(out.includes("Baseline infra Docker"));
   });
 
   it("§4: solo reemplaza contratos; preserva §2/§3 del baseline", () => {
     const out = mergeSingleArchitectSectionIntoDraft(BASELINE, ARCHITECT, 4);
-    expect(out).toContain("Baseline stack NestJS PostgreSQL");
-    expect(out).toContain("CREATE TABLE baseline_tenants");
-    expect(out).toContain("/api/v1/architect-only");
-    expect(out).not.toContain("/api/v1/baseline-only");
-    expect(out).toContain("Baseline lógica edge cases");
+    assert.ok(out.includes("Baseline stack NestJS PostgreSQL"));
+    assert.ok(out.includes("CREATE TABLE baseline_tenants"));
+    assert.ok(out.includes("/api/v1/architect-only"));
+    assert.ok(!out.includes("/api/v1/baseline-only"));
+    assert.ok(out.includes("Baseline lógica edge cases"));
   });
 
   it("§2: solo reemplaza arquitectura; preserva §3/§4 del baseline", () => {
     const out = mergeSingleArchitectSectionIntoDraft(BASELINE, ARCHITECT, 2);
-    expect(out).toContain("Architect NEW stack Redis Kafka");
-    expect(out).not.toContain("Baseline stack NestJS PostgreSQL");
-    expect(out).toContain("CREATE TABLE baseline_tenants");
-    expect(out).toContain("/api/v1/baseline-only");
+    assert.ok(out.includes("Architect NEW stack Redis Kafka"));
+    assert.ok(!out.includes("Baseline stack NestJS PostgreSQL"));
+    assert.ok(out.includes("CREATE TABLE baseline_tenants"));
+    assert.ok(out.includes("/api/v1/baseline-only"));
   });
 
   it("si el cuerpo del architect es placeholder, conserva el baseline entero", () => {
@@ -96,7 +97,7 @@ describe("mergeSingleArchitectSectionIntoDraft", () => {
       "## 3. Modelo de Datos\n\n(Pendiente)\n\n",
     );
     const out = mergeSingleArchitectSectionIntoDraft(BASELINE, badArchitect, 3);
-    expect(out).toContain("CREATE TABLE baseline_tenants");
+    assert.ok(out.includes("CREATE TABLE baseline_tenants"));
   });
 
   it("§4: conserva baseline cuando merge quirúrgico trunca contratos sustanciales", () => {
@@ -112,7 +113,34 @@ describe("mergeSingleArchitectSectionIntoDraft", () => {
       "## 4. Contratos de API\nGET /api/v1/journey\nPOST /api/v1/journey\n".repeat(8),
     );
     const out = mergeSingleArchitectSectionIntoDraft(richBaseline, thinArchitect, 4);
-    expect(out).toContain("/api/v1/baseline-only-endpoint");
-    expect(out).not.toContain("/api/v1/journey");
+    assert.ok(out.includes("/api/v1/baseline-only-endpoint"));
+    assert.ok(!out.includes("/api/v1/journey"));
+  });
+
+  it("tryMerge: rechaza placeholder con merged=false y rejectReason", () => {
+    const badArchitect = BASELINE.replace(
+      /## 3\. Modelo de Datos[\s\S]*?(?=\n## 4\.)/,
+      "## 3. Modelo de Datos\n\n(Pendiente: Arquitecto)\n\n",
+    );
+    const result = tryMergeSingleArchitectSectionIntoDraft(BASELINE, badArchitect, 3);
+    assert.equal(result.merged, false);
+    assert.equal(result.rejectReason, "placeholder");
+    assert.ok(result.draft.includes("CREATE TABLE baseline_tenants"));
+  });
+
+  it("tryMerge: rechaza cuerpo corto", () => {
+    const shortArchitect = BASELINE.replace(
+      /## 2\. Arquitectura y Stack[\s\S]*?(?=\n## 3\.)/,
+      "## 2. Arquitectura y Stack\n\nNestJS.\n\n",
+    );
+    const result = tryMergeSingleArchitectSectionIntoDraft(BASELINE, shortArchitect, 2);
+    assert.equal(result.merged, false);
+    assert.equal(result.rejectReason, "short");
+  });
+
+  it("tryMerge: merged=true cuando cuerpo sustancial", () => {
+    const result = tryMergeSingleArchitectSectionIntoDraft(BASELINE, ARCHITECT, 3);
+    assert.equal(result.merged, true);
+    assert.ok(result.draft.includes("CREATE TABLE architect_orders"));
   });
 });

@@ -19,6 +19,11 @@ import {
   type MddJobProgressState,
 } from "@theforge/shared-types";
 import {
+  BULLMQ_WORKER_RESTARTED_REASON,
+  forceFailBullMqActiveJob,
+  recoverBullMqJobsAfterWorkerRestart,
+} from "../../../common/bullmq-orphan-recovery.util.js";
+import {
   LONG_JOB_LOCK_DURATION_MS,
   longRunningBullmqWorkerOptions,
 } from "../../../common/bullmq-long-job.worker-options.js";
@@ -40,6 +45,12 @@ const MDD_CANCEL_KEY_PREFIX = "theforge:mdd-cancel:";
 
 /** Intervalo de poll Redis para abort cooperativo (ms). */
 const MDD_CANCEL_POLL_MS = 500;
+
+/** MDD no debe reintentar tras stall: pipeline a medias es peor que fallar y regenerar. */
+const MDD_MAX_STALLED_COUNT = 0;
+
+const MDD_JOB_STALLED_REASON =
+  "Job MDD bloqueado tras caída del worker; vuelve a generar";
 
 export type MddJobMode = "pipeline" | "manager" | "section" | "legacy" | "upstream-sync";
 
@@ -151,6 +162,7 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
   private readonly inMemoryPendingByProject = new Map<string, string[]>();
   private readonly jobAbortControllers = new Map<string, AbortController>();
   private readonly cancelRequestedJobIds = new Set<string>();
+  private readonly projectExecutionChains = new Map<string, Promise<void>>();
   private readonly MAX_ATTEMPTS = 3;
 
   constructor(
@@ -168,6 +180,22 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
 
   usesRedis(): boolean {
     return !!resolveRedisUrlOrThrow();
+  }
+
+  /** True si hay job MDD activo (excluye cancelación cooperativa). Cola waiting no bloquea. */
+  async isProjectActive(projectId: string): Promise<boolean> {
+    for (const [jobId, mem] of this.inMemoryJobs) {
+      if (mem.data.projectId !== projectId || mem.status !== "active") continue;
+      if (!(await this.isCancelRequested(jobId))) return true;
+    }
+    if (!this.queue) return false;
+    const jobs = await this.queue.getJobs(["active"], 0, 100);
+    for (const job of jobs) {
+      const data = job.data as MddJobData | undefined;
+      if (data?.projectId !== projectId) continue;
+      if (!(await this.isCancelRequested(String(job.id)))) return true;
+    }
+    return false;
   }
 
   /** True si hay job MDD en cola o ejecutándose (excluye jobs en cancelación cooperativa). */
@@ -227,15 +255,9 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
     return () => clearInterval(interval);
   }
 
-  /** True si hay job MDD bloqueante (excluye jobs en cancelación cooperativa). */
+  /** True si hay job MDD bloqueante activo (excluye cancelación cooperativa). */
   async isProjectBlocking(projectId: string): Promise<boolean> {
-    const active = await this.listActiveJobsForProject(projectId);
-    for (const job of active) {
-      if (!(await this.isCancelRequested(job.jobId))) return true;
-    }
-    const pending = this.inMemoryPendingByProject.get(projectId);
-    if (pending?.length) return true;
-    return false;
+    return this.isProjectActive(projectId);
   }
 
   /** Escaneo único de cola (dashboard / resumen batch). */
@@ -392,10 +414,31 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
       return { cancelled: true, status: "cancelled" };
     }
     if (state === "active") {
+      const localAbort = this.jobAbortControllers.get(jobId);
+      if (localAbort) {
+        await this.markCancelRequested(jobId);
+        localAbort.abort();
+        this.generationGuard.unregisterMddStream(projectId);
+        this.logger.log(
+          `BullMQ MDD job ${jobId} cancelación solicitada (active) projectId=${projectId}`,
+        );
+        return { cancelled: true, status: "cancelling" };
+      }
+      const failed = await forceFailBullMqActiveJob(
+        this.queue,
+        job,
+        "Cancelado por el usuario (worker no activo)",
+      );
+      if (failed) {
+        await this.clearCancelRequested(jobId);
+        this.generationGuard.unregisterMddStream(projectId);
+        this.logger.log(
+          `BullMQ MDD job ${jobId} fallido (huérfano activo) projectId=${projectId}`,
+        );
+        return { cancelled: true, status: "cancelled" };
+      }
       await this.markCancelRequested(jobId);
-      this.jobAbortControllers.get(jobId)?.abort();
       this.generationGuard.unregisterMddStream(projectId);
-      this.logger.log(`BullMQ MDD job ${jobId} cancelación solicitada (active) projectId=${projectId}`);
       return { cancelled: true, status: "cancelling" };
     }
     return { cancelled: false, status: state };
@@ -416,9 +459,21 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
         backoff: { type: "exponential", delay: 5_000 },
       },
     });
+    const recovered = await recoverBullMqJobsAfterWorkerRestart(this.queue, {
+      reason: BULLMQ_WORKER_RESTARTED_REASON,
+      logger: this.logger,
+    });
+    if (recovered.failedActive > 0 || recovered.removedQueued > 0) {
+      this.logger.warn(
+        `BullMQ MDD: recuperados tras reinicio — active→failed=${recovered.failedActive}, cola eliminada=${recovered.removedQueued}`,
+      );
+    }
     const concurrency = resolveMddWorkerConcurrency();
     if (shouldStartBullmqWorkers()) {
-      const workerOpts = longRunningBullmqWorkerOptions({ concurrency });
+      const workerOpts = longRunningBullmqWorkerOptions({
+        concurrency,
+        maxStalledCount: MDD_MAX_STALLED_COUNT,
+      });
       this.worker = new Worker(
         MDD_QUEUE_NAME,
         async (job: Job<MddJobData>, token?: string) => {
@@ -438,7 +493,9 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
                 // Worker timer still renews; ignore if lock already lost (logged by BullMQ).
               }
             };
-            return this.executeJob(String(job.id), job.data, onProgress);
+            return this.runWithProjectExecutionLock(job.data.projectId, () =>
+              this.executeJob(String(job.id), job.data, onProgress),
+            );
           });
         },
         { connection: { url }, ...workerOpts },
@@ -448,8 +505,11 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
           `BullMQ MDD job ${job?.id} falló: ${err instanceof Error ? err.message : err}`,
         );
       });
+      this.worker.on("stalled", (jobId) => {
+        void this.handleStalledMddJob(String(jobId));
+      });
       this.logger.log(
-        `BullMQ MDD worker activo (${MDD_QUEUE_NAME}), lockDuration=${workerOpts.lockDuration}ms, concurrency=${concurrency}`,
+        `BullMQ MDD worker activo (${MDD_QUEUE_NAME}), lockDuration=${workerOpts.lockDuration}ms, maxStalledCount=${MDD_MAX_STALLED_COUNT}, concurrency=${concurrency}`,
       );
     } else {
       this.logger.log(
@@ -463,16 +523,105 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
     await this.queue?.close();
   }
 
+  /** Stall BullMQ → no reencolar pipeline MDD; eliminar para liberar UI. */
+  private async handleStalledMddJob(jobId: string): Promise<void> {
+    if (!this.queue) return;
+    const job = await this.queue.getJob(jobId);
+    if (!job) return;
+    const state = await job.getState();
+    if (state === "active") {
+      const failed = await forceFailBullMqActiveJob(this.queue, job, MDD_JOB_STALLED_REASON);
+      if (failed) {
+        this.logger.warn(`BullMQ MDD job ${jobId} fallido tras stall`);
+        return;
+      }
+    }
+    try {
+      await job.discard();
+      await job.remove();
+      this.logger.warn(`BullMQ MDD job ${jobId} eliminado tras stall (${state})`);
+    } catch (err) {
+      this.logger.warn(
+        `BullMQ MDD job ${jobId} no pudo limpiarse tras stall: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
   private async assertCanEnqueue(projectId: string): Promise<void> {
-    if (await this.isProjectBlocking(projectId)) {
+    if (await this.isProjectActive(projectId)) {
       throw new ConflictException(
         "Ya hay una generación de MDD en curso para este proyecto. Espera a que termine o recarga el estado.",
       );
     }
   }
 
+  private cancelInMemoryQueuedForProject(projectId: string): number {
+    const pending = [...(this.inMemoryPendingByProject.get(projectId) ?? [])];
+    if (pending.length === 0) return 0;
+    let cancelled = 0;
+    for (const jobId of pending) {
+      const mem = this.inMemoryJobs.get(jobId);
+      if (!mem || mem.status !== "queued") continue;
+      mem.status = "failed";
+      mem.error = "Reemplazado por un job MDD más reciente";
+      mem.finishedAt = Date.now();
+      cancelled += 1;
+    }
+    this.inMemoryPendingByProject.delete(projectId);
+    if (cancelled > 0) {
+      this.logger.log(`In-memory MDD: cancelados ${cancelled} job(s) en cola projectId=${projectId}`);
+    }
+    return cancelled;
+  }
+
+  private async cancelQueuedBullMqJobsForProject(projectId: string): Promise<number> {
+    if (!this.queue) return 0;
+    let cancelled = 0;
+    for (const state of ["waiting", "delayed", "waiting-children"] as const) {
+      const jobs = await this.queue.getJobs([state], 0, 200);
+      for (const job of jobs) {
+        const data = job.data as MddJobData | undefined;
+        if (data?.projectId !== projectId) continue;
+        await job.remove();
+        cancelled += 1;
+      }
+    }
+    if (cancelled > 0) {
+      this.logger.log(`BullMQ MDD: cancelados ${cancelled} job(s) en cola projectId=${projectId}`);
+    }
+    return cancelled;
+  }
+
+  private async cancelQueuedSiblingsForProject(projectId: string): Promise<void> {
+    this.cancelInMemoryQueuedForProject(projectId);
+    await this.cancelQueuedBullMqJobsForProject(projectId);
+  }
+
+  private async runWithProjectExecutionLock<T>(
+    projectId: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.projectExecutionChains.get(projectId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const chain = previous.then(() => gate);
+    this.projectExecutionChains.set(projectId, chain);
+    await previous;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.projectExecutionChains.get(projectId) === chain) {
+        this.projectExecutionChains.delete(projectId);
+      }
+    }
+  }
+
   async enqueue(data: MddJobData): Promise<string> {
     await this.assertCanEnqueue(data.projectId);
+    await this.cancelQueuedSiblingsForProject(data.projectId);
     const userId = data.userId ?? getRequestUserId();
     const payload: MddJobData = { ...data, userId };
 
@@ -522,9 +671,11 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
 
     void runWithRequestUserAsync(data.userId ?? "system", async () => {
       try {
-        const result = await this.executeJob(jobId, data, (p) => {
-          pushMddJobProgress(record, p);
-        });
+        const result = await this.runWithProjectExecutionLock(data.projectId, () =>
+          this.executeJob(jobId, data, (p) => {
+            pushMddJobProgress(record, p);
+          }),
+        );
         record.status = "completed";
         record.result = result;
         record.finishedAt = Date.now();

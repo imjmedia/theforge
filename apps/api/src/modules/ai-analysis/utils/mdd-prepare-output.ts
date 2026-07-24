@@ -36,6 +36,11 @@ import {
   type UiComponentResolver,
 } from "../../ui-mcp/ui-component-resolver.js";
 import { isPlaceholderSeguridad } from "./mdd-security-parse.js";
+import {
+  draftHasSubstantialSection5,
+  preserveValidatedSectionsIfSubstantial,
+  guardValidatedSectionsForPersist,
+} from "./mdd-section-preserve.util.js";
 import { ensureMddGovernanceSection, extractGovernanceSection } from "@theforge/shared-types/mdd-governance-patterns";
 import { validateMddForDelivery, type MddDeliveryGateResult } from "./mdd-delivery-gate.util.js";
 import { composeSection3FromStructured } from "./schema-owner.util.js";
@@ -84,6 +89,7 @@ export function shouldPreferDraftOverStructured(
   const trimmed = (draft ?? "").trim();
   if (trimmed.length < 200) return false;
   if (draftHasSubstantialSection6(trimmed)) return true;
+  if (draftHasSubstantialSection5(trimmed)) return true;
   // Si el draft tiene §6 pero el structured solo tiene placeholder, preservar draft
   const s6Range = getSection6Or7Range(trimmed, 6);
   if (s6Range) {
@@ -166,6 +172,8 @@ export async function prepareMddForOutput(
   options?: PrepareMddForOutputOptions,
 ): Promise<string> {
   const resolver = options?.resolver ?? heuristicUiComponentResolver;
+  const inputDraftBaseline =
+    typeof input === "string" ? input.trim() : (input.mddDraft ?? "").trim();
   let raw: string;
   if (typeof input === "string") {
     raw = input;
@@ -265,7 +273,11 @@ export async function prepareMddForOutput(
       `[MDD:DeliveryGate] SSOT repair skipped: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-  const deliveryGate = validateMddForDelivery(finalMarkdown, {
+  const preserveBaseline = (options?.baselineDraft?.trim() || inputDraftBaseline || raw).trim();
+  const preservedMarkdown = preserveValidatedSectionsIfSubstantial(preserveBaseline, finalMarkdown);
+  const tailGuard = guardValidatedSectionsForPersist(preserveBaseline, preservedMarkdown, "prepareMddForOutput");
+  const gatedMarkdown = tailGuard.markdown;
+  const deliveryGate = validateMddForDelivery(gatedMarkdown, {
     brdMarkdown: options?.brdMarkdown,
     dbgaMarkdown: options?.dbgaMarkdown,
     specMarkdown: options?.specMarkdown,
@@ -279,5 +291,5 @@ export async function prepareMddForOutput(
       `[MDD:DeliveryGate] score=${deliveryGate.score} blockers=${deliveryGate.blockers.length}: ${deliveryGate.blockers.slice(0, 3).join("; ")}`,
     );
   }
-  return finalMarkdown;
+  return gatedMarkdown;
 }
