@@ -1115,7 +1115,7 @@ export function WorkshopMetricsColumnInner({
                 )}
               </div>
             </details>
-          )}
+          ) : null}
       </div>
       <div
         className={cn(
