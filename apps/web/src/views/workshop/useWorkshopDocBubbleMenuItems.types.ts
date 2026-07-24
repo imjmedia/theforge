@@ -68,4 +68,5 @@ export interface UseWorkshopDocBubbleMenuItemsArgs {
   handlePrintDocument: () => void;
   apiBlueprintDmBlocked: boolean;
   apiBlueprintBlockedHint: string;
+  deliverablesReadOnly: boolean;
 }

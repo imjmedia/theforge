@@ -50,6 +50,8 @@ export type WorkshopDocToolbarUiState = {
   phase0EntryModeToolbarToggle: WorkshopDocEditToolbarToggle | null;
   isLgLayout: boolean;
   lgWorkshopChatCollapsed: boolean;
+  /** SSOT freeze / stage snapshot — hide clarify + chat edit affordances. */
+  deliverablesReadOnly: boolean;
 };
 
 export type WorkshopDocToolbarActions = {

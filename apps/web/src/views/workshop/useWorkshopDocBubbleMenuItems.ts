@@ -83,6 +83,7 @@ export function useWorkshopDocBubbleMenuItems(
     handlePrintDocument,
     apiBlueprintDmBlocked,
     apiBlueprintBlockedHint,
+    deliverablesReadOnly,
   } = args;
 
   return useMemo((): WorkshopDocBubbleMenuItem[] => {
@@ -160,13 +161,15 @@ export function useWorkshopDocBubbleMenuItems(
         onClick: () => void handleRegenerateLegacyCodebaseDoc(),
       };
     } else if (centralPanel === "spec") {
-      ordered.push({
-        id: "clarify",
-        label: "Resolver clarificaciones",
-        icon: HelpCircle,
-        disabled: loading || !projectId,
-        onClick: () => setClarifySpecDialogOpen(true),
-      });
+      if (!deliverablesReadOnly) {
+        ordered.push({
+          id: "clarify",
+          label: "Resolver clarificaciones",
+          icon: HelpCircle,
+          disabled: loading || !projectId,
+          onClick: () => setClarifySpecDialogOpen(true),
+        });
+      }
       if (!!specContent?.trim()) {
         regenItem = {
           id: "regen",
@@ -385,6 +388,7 @@ export function useWorkshopDocBubbleMenuItems(
     reapplyMddFormat,
     apiBlueprintDmBlocked,
     apiBlueprintBlockedHint,
+    deliverablesReadOnly,
     uxGenProgress,
     uxGenerating,
     effectiveComplexityForTabs,

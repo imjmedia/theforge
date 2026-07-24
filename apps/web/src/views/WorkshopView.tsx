@@ -1340,6 +1340,12 @@ export default function WorkshopView({
   /** Por debajo de `lg`: una columna con control de Chat / Documentos / Semáforo. */
   const [mobileWorkshopColumn, setMobileWorkshopColumn] = useState<WorkshopMobileColumn>("workspace");
 
+  useEffect(() => {
+    if (ssotFrozenPanel && mobileWorkshopColumn === "chat") {
+      setMobileWorkshopColumn("workspace");
+    }
+  }, [ssotFrozenPanel, mobileWorkshopColumn]);
+
   /** Tras vaciar el MDD: vista por defecto (previsualización con «Sin contenido aún.»), no el editor. */
   const handleClearMddCompletely = useCallback(async () => {
     if (!projectId?.trim()) return false;
@@ -1887,6 +1893,7 @@ export default function WorkshopView({
     phase0SummaryViewMode,
     isLgLayout,
     lgWorkshopChatCollapsed,
+    deliverablesReadOnly,
     toggleDocViewMode,
     setFlowOrderModalOpen,
     setClarifySpecDialogOpen,
@@ -1978,6 +1985,7 @@ export default function WorkshopView({
     handlePrintDocument,
     apiBlueprintDmBlocked,
     apiBlueprintBlockedHint,
+    deliverablesReadOnly,
   });
 
   const workshopDocumentsForZip = useMemo(
@@ -2596,6 +2604,7 @@ export default function WorkshopView({
 
       <WorkshopLayoutShell
         chatColumn={
+          ssotFrozenPanel ? null : (
           <WorkshopChatColumn
             mobileWorkshopColumn={mobileWorkshopColumn}
             isLgLayout={isLgLayout}
@@ -2629,6 +2638,7 @@ export default function WorkshopView({
                 }
               />
           </WorkshopChatColumn>
+          )
         }
         docPanel={
           <WorkshopDocPanel
@@ -2741,6 +2751,7 @@ export default function WorkshopView({
           <WorkshopMobileNav
             mobileWorkshopColumn={mobileWorkshopColumn}
             onMobileWorkshopColumnChange={setMobileWorkshopColumn}
+            hideChat={ssotFrozenPanel}
           />
         }
         modals={

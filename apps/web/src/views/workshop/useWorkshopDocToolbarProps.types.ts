@@ -61,6 +61,7 @@ export interface UseWorkshopDocToolbarPropsArgs {
   phase0SummaryViewMode: "preview" | "source";
   isLgLayout: boolean;
   lgWorkshopChatCollapsed: boolean;
+  deliverablesReadOnly: boolean;
   toggleDocViewMode: (panel: string) => void;
   setFlowOrderModalOpen: (open: boolean) => void;
   setClarifySpecDialogOpen: (open: boolean) => void;
