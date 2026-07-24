@@ -23,20 +23,6 @@ export type MddUpstreamBaseline = {
   dbgaContentSnapshot: string;
   brdContentSnapshot: string;
   benchmarkContentSnapshot: string;
-  /**
-   * Score de calidad del MDD persistido (0-100) en el momento de la captura.
-   * Si es < 80, el cache upstream se considera de baja calidad y se fuerza
-   * regeneración en el siguiente run, aunque los hashes upstream no hayan
-   * cambiado. Esto protege contra el escenario "upstream sin cambios pero
-   * MDD persistido con modelo débil + placeholders pasó el gate".
-   */
-  mddScore?: number | null;
-  /**
-   * Provider + modelo del MDD persistido (ej. "openai/gpt-4o-mini"). Útil
-   * para que el log de invalidación muestre qué modelo produjo la versión
-   * cacheada.
-   */
-  mddModel?: string | null;
 };
 
 export type MddUpstreamChangeItem = {

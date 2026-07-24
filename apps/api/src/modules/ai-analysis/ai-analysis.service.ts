@@ -88,7 +88,7 @@ import {
   formatGovernancePatternCorrectionsNotice,
   resolveGovernancePatternIncompatibilities,
 } from "@theforge/shared-types/mdd-governance-pattern-compat";
-import { mddDeliveryGateHasBlockers, mddStreamDeliveryGateFields, validateMddForDelivery } from "./utils/mdd-delivery-gate.util.js";
+import { mddStreamDeliveryGateFields } from "./utils/mdd-delivery-gate.util.js";
 import { cleanDocumentContent } from "../sessions/document-content.util.js";
 import type { MddJobData, MddJobProgress, MddJobResult } from "./mdd/mdd-queue.service.js";
 import { MddUpstreamSyncService } from "./mdd/mdd-upstream-sync.service.js";
@@ -2146,65 +2146,12 @@ export class AiAnalysisService {
 
     switch (mode) {
       case "pipeline": {
-        const cache = await this.mddUpstreamSync.tryRestoreFromUpstreamCache(projectId, stageId).catch(() => null);
-        const forceFull = data.forceFullPipeline === true;
-        const gateBlockers =
-          cache?.canRestore && cache.mddContent.trim().length >= 48
-            ? mddDeliveryGateHasBlockers(peelDocumentBodyForPersist(cache.mddContent))
-            : false;
-        // PR #504: si el MDD persistido en el cache tenía score < 80, forzar
-        // regeneración aunque los hashes upstream no hayan cambiado. Esto
-        // protege contra el caso de un MDD de baja calidad (placeholder
-        // con excepciones, modelo débil, etc.) que pasó el gate con suerte y
-        // quedó cacheado para siempre.
-        const CACHE_QUALITY_THRESHOLD = 80;
-        const cacheIsLowQuality = cache?.mddScore != null && cache.mddScore < CACHE_QUALITY_THRESHOLD;
-        const useUpstreamCache =
-          !forceFull &&
-          !gateBlockers &&
-          !cacheIsLowQuality &&
-          cache?.canRestore &&
-          cache.mddContent.trim().length >= 48;
-
-        if (useUpstreamCache) {
-          this.logger.log(
-            `[MDD pipeline] upstream sin cambios — reutilizando MDD guardado (len=${cache.mddContent.length}, score=${cache.mddScore ?? "?"}, model=${cache.mddModel ?? "?"}), sin LLM`,
-          );
-          onProgress({
-            phase: "cache",
-            message:
-              "DBGA, BRD y Benchmark sin cambios — recuperando el último MDD guardado (reparando formato y fechas)…",
-          });
-          await persistMarkdown(cache.mddContent, true);
-          await this.mddUpstreamSync.captureBaseline(projectId, cache.stageId, {
-            mddScore: cache.mddScore ?? null,
-            mddModel: cache.mddModel ?? null,
-          }).catch((err) => {
-            this.logger.warn(
-              `[MDD pipeline] capture baseline after upstream cache failed: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          });
-          return {
-            ok: true,
-            mode,
-            projectId,
-            stageId: cache.stageId,
-            mddLength: cache.mddContent.length,
-            outcome: "done",
-          };
-        }
-
-        if (cache?.canRestore) {
-          const reasons: string[] = [];
-          if (forceFull) reasons.push("forceFull");
-          if (gateBlockers) reasons.push("gateBlockers");
-          if (cacheIsLowQuality) reasons.push(`mddScore=${cache.mddScore ?? "?"}<${CACHE_QUALITY_THRESHOLD}`);
-          this.logger.log(
-            `[MDD pipeline] omitiendo caché upstream (${reasons.join(", ")}) — pipeline LLM completo`,
-          );
-        }
-
-        const jobResult = await consume(
+        // PR #505: el cache upstream se eliminó del flujo de regeneración.
+        // El cache asumía "upstream sin cambios = MDD OK" pero la realidad
+        // es que un MDD de baja calidad (placeholder con excepciones, modelo
+        // débil) puede pasar el gate y quedar cacheado para siempre. La
+        // regeneración ahora siempre ejecuta el pipeline LLM completo.
+        return await consume(
           this.streamMddAnalysis(
             data.dbgaContent ?? "",
             projectId,
@@ -2212,33 +2159,12 @@ export class AiAnalysisService {
             data.mddContent,
           ) as AsyncGenerator<MddJobEvent>,
         );
-        if (jobResult.ok && jobResult.outcome === "done") {
-          const docs = await this.mddUpstreamSync.loadUpstreamDocuments(projectId, stageId).catch((err) => {
-            this.logger.warn(`[MDD pipeline] loadUpstreamDocuments for baseline failed: ${err instanceof Error ? err.message : String(err)}`);
-            return null;
-          });
-          if (docs?.stageId) {
-            // PR #504: persistir el score + model del MDD rec\u00e9n persistido
-            // para que el cache upstream pueda detectar MDD de baja calidad
-            // (score < 80) y forzar regeneraci\u00f3n en el siguiente run aunque
-            // los hashes upstream no hayan cambiado.
-            const finalMarkdown = docs.mddContent ?? "";
-            const gateResult = finalMarkdown.trim()
-              ? validateMddForDelivery(finalMarkdown)
-              : { score: 0 } as { score: number };
-            const persistedModel = docs.baseline?.mddModel ?? null;
-            await this.mddUpstreamSync.captureBaseline(projectId, docs.stageId, {
-              mddScore: gateResult.score,
-              mddModel: persistedModel,
-            }).catch((err) => {
-              this.logger.warn(`[MDD pipeline] capture baseline failed: ${err instanceof Error ? err.message : String(err)}`);
-            });
-          }
-        }
-        return jobResult;
       }
       case "manager": {
-        const jobResult = await consume(
+        // PR #505: el cache se eliminó del flujo de regeneración.
+        // El manager mode también siempre corre el pipeline LLM completo
+        // sin reusar contenido cacheado.
+        return await consume(
           this.streamMddAnalysisWithManager(
             data.dbgaContent ?? "",
             projectId,
@@ -2247,18 +2173,6 @@ export class AiAnalysisService {
             stageId,
           ),
         );
-        if (jobResult.ok && jobResult.outcome === "done") {
-          const docs = await this.mddUpstreamSync.loadUpstreamDocuments(projectId, stageId).catch((err) => {
-            this.logger.warn(`[MDD manager] loadUpstreamDocuments for baseline failed: ${err instanceof Error ? err.message : String(err)}`);
-            return null;
-          });
-          if (docs?.stageId) {
-            await this.mddUpstreamSync.captureBaseline(projectId, docs.stageId).catch((err) => {
-              this.logger.warn(`[MDD manager] capture baseline failed: ${err instanceof Error ? err.message : String(err)}`);
-            });
-          }
-        }
-        return jobResult;
       }
       case "section": {
         const rawSection = data.section;

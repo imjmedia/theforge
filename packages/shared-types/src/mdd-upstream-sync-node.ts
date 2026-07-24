@@ -62,10 +62,6 @@ export function buildMddUpstreamBaseline(input: {
   benchmarkContent: string | null | undefined;
   mddContent: string | null | undefined;
   capturedAt?: Date;
-  /** Score de calidad del MDD (0-100) en el momento de la captura. */
-  mddScore?: number | null;
-  /** Provider + modelo del MDD (ej. "openai/gpt-4o-mini"). */
-  mddModel?: string | null;
 }): MddUpstreamBaseline {
   const dbga = normalizeUpstreamDocumentBody(input.dbgaContent);
   const brd = normalizeUpstreamDocumentBody(input.brdContent);
@@ -84,8 +80,6 @@ export function buildMddUpstreamBaseline(input: {
     dbgaContentSnapshot: dbga.slice(0, SNAPSHOT_MAX),
     brdContentSnapshot: brd.slice(0, SNAPSHOT_MAX),
     benchmarkContentSnapshot: benchmark.slice(0, SNAPSHOT_MAX),
-    mddScore: input.mddScore ?? null,
-    mddModel: input.mddModel ?? null,
   };
 }
 

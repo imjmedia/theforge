@@ -79,20 +79,15 @@ export class MddUpstreamSyncService {
     analysis: MddUpstreamSyncAnalysis;
     mddContent: string;
     stageId: string;
-    mddScore: number | null;
-    mddModel: string | null;
   }> {
     const docs = await this.loadUpstreamDocuments(projectId, stageId);
     const analysis = this.analyzeFromDocs(docs);
     const canRestore = analysis.hasMdd && analysis.hasBaseline && !analysis.pendingSync;
-    const baseline = parseBaseline(docs.baseline);
     return {
       canRestore,
       analysis,
       mddContent: docs.mddContent,
       stageId: docs.stageId,
-      mddScore: baseline?.mddScore ?? null,
-      mddModel: baseline?.mddModel ?? null,
     };
   }
 
@@ -114,7 +109,6 @@ export class MddUpstreamSyncService {
   async captureBaseline(
     projectId: string,
     stageId: string,
-    options?: { mddScore?: number | null; mddModel?: string | null },
   ): Promise<MddUpstreamBaseline> {
     const docs = await this.loadUpstreamDocuments(projectId, stageId);
     const baseline = buildMddUpstreamBaseline({
@@ -122,16 +116,12 @@ export class MddUpstreamSyncService {
       brdContent: docs.brdContent,
       benchmarkContent: docs.benchmarkContent,
       mddContent: docs.mddContent,
-      mddScore: options?.mddScore ?? null,
-      mddModel: options?.mddModel ?? null,
     });
     await this.prisma.stage.update({
       where: { id: stageId },
       data: { mddUpstreamBaseline: baseline as object },
     });
-    this.logger.log(
-      `Baseline upstream MDD capturado stageId=${stageId} projectId=${projectId} score=${baseline.mddScore ?? "n/a"} model=${baseline.mddModel ?? "n/a"}`,
-    );
+    this.logger.log(`Baseline upstream MDD capturado stageId=${stageId} projectId=${projectId}`);
     return baseline;
   }
 
