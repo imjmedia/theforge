@@ -3,7 +3,7 @@
 | Componente | Rol |
 |------------|-----|
 | **Phase0ManualAudit** | Botón **Auditar Paso 0**: audita el **dbgaContent** visible en pestaña Fase 0 (DBGA libre o entrevista estructurada); no exige JSON de entrevista. `POST …/phase0/audit` → gaps/preguntas o `audit_complete`. |
-| **MddManualAudit** | Botón **Auditar MDD**: audita el **mddContent** visible en pestaña MDD (`POST …/mdd/audit` / `…/mdd/audit/answer`). Reutiliza nodo Auditor MDD + preguntas por gaps. |
+| **MddManualAudit** | Botón **Auditar MDD**: audita el **mddContent** con el **Auditor LLM** (siempre agente + tools; BRD/DBGA en contexto; alucinaciones §8 del prompt). `POST …/mdd/audit` / `…/mdd/audit/answer`. |
 | **Phase0InterviewPanel** | Entrevistador interactivo Paso 0 (`start` → preguntas → `answer`). Incluye auditoría manual al completar. |
 | **MddViewer** | Preview markdown (Fase 0, MDD, BRD, Blueprint): quita el stamp API del cuerpo con `peelDocumentBodyForPersist` (repara §1–§2 pegados en zona de fechas) y muestra **una sola** `WorkshopDocumentStampBar` (prop `documentTimestamps` o extracción del markdown). **KaTeX** para fórmulas `$…$` / `$$…$$` (`remark-math` + `rehype-katex`). `repairDirectoryTreeBlocks` + detección `((Root))`/`— apps/`; párrafos colapsados → `<pre>` monoespaciado. Diagramas Mermaid vía `MermaidDiagramBlock`. |
 | **WorkshopDocumentStampBar** | Cabecera visible **Creado / Última modificación** (stamp API). Fechas en zona horaria del navegador. El editor y el preview quitan el stamp del markdown; las fechas viven en la barra / `workshopStore.documentTimestamps`. El MDD usa `normalizeWorkshopDocumentForEditor` al cargar (igual que DBGA/Spec). |

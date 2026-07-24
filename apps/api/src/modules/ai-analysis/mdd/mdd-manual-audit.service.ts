@@ -16,6 +16,7 @@ import { MDD_AUDIT_UPDATE_PROMPT } from "../prompts/load-prompts.js";
 import type { MDDStateType } from "../state/index.js";
 import type { MddComplexityLevel } from "../state/mdd-state.schema.js";
 import { validateMddStructure } from "../utils/mdd-sanitize.js";
+import { synthesizeStructuralAuditorGaps } from "../utils/mdd-auditor-gaps.util.js";
 import { parseJsonOrThrow } from "../utils/parse-json.js";
 import { z } from "zod";
 import {
@@ -78,18 +79,24 @@ export class MddManualAuditService {
       };
     }
 
-    const project = await this.prisma.project.findUnique({
-      where: { id: pid },
-      select: { userId: true, complexity: true },
+    const stage = await this.prisma.stage.findUnique({
+      where: { id: resolvedStageId },
+      select: { brdContent: true },
     });
-    if (!project) return { type: "error", message: "Proyecto no encontrado" };
+    const projectRow = await this.prisma.project.findUnique({
+      where: { id: pid },
+      select: { userId: true, complexity: true, dbgaContent: true },
+    });
+    if (!projectRow) return { type: "error", message: "Proyecto no encontrado" };
 
     const auditResult = await this.runAuditor(
-      project.userId,
+      projectRow.userId,
       mddDraft,
       pid,
       resolvedStageId,
-      (project.complexity as MddComplexityLevel) ?? "MEDIUM",
+      (projectRow.complexity as MddComplexityLevel) ?? "MEDIUM",
+      stage?.brdContent ?? null,
+      projectRow.dbgaContent ?? null,
     );
 
     const validation = validateMddStructure(mddDraft);
@@ -135,7 +142,7 @@ export class MddManualAuditService {
       maxPreguntas: questionPlan.length,
       historial: [],
       status: "interviewing",
-      mddComplexity: (project.complexity as MddComplexityLevel) ?? "MEDIUM",
+      mddComplexity: (projectRow.complexity as MddComplexityLevel) ?? "MEDIUM",
     };
 
     this.rememberState(state);
@@ -275,13 +282,26 @@ export class MddManualAuditService {
     projectId: string,
     stageId: string,
     complexity: MddComplexityLevel,
+    brdContent?: string | null,
+    dbgaContent?: string | null,
   ): Promise<Partial<MDDStateType>> {
+    let brd = brdContent;
+    let dbga = dbgaContent;
+    if (brd == null || dbga == null) {
+      const [stage, project] = await Promise.all([
+        this.prisma.stage.findUnique({ where: { id: stageId }, select: { brdContent: true } }),
+        this.prisma.project.findUnique({ where: { id: projectId }, select: { dbgaContent: true } }),
+      ]);
+      brd ??= stage?.brdContent ?? null;
+      dbga ??= project?.dbgaContent ?? null;
+    }
     try {
       const llm = await createMddAuditorLLM(this.aiFactory, userId);
       const node = createMddAuditorNode(llm, getMddAuditorTools(), null);
       const partial = await node({
         mddDraft,
-        dbgaContent: "",
+        dbgaContent: dbga ?? "",
+        brdContent: brd ?? undefined,
         projectId,
         activeStageId: stageId,
         mddComplexity: complexity,
@@ -291,14 +311,12 @@ export class MddManualAuditService {
     } catch (err) {
       this.logger.error(`[MddAudit] auditor failed: ${err}`);
       const validation = validateMddStructure(mddDraft);
-      let score = 80;
-      if (!validation.section3HasPayloads) score -= 20;
-      if (validation.missingSections.length > 0) score -= validation.missingSections.length * 5;
-      score = Math.max(0, Math.min(100, score));
+      const structural = synthesizeStructuralAuditorGaps(validation);
       return {
-        auditorScore: score,
-        auditorFeedback: validation.issues.join(" ") || "Revisión determinística del MDD",
-        auditorGaps: undefined,
+        auditorScore: structural.score,
+        auditorFeedback: validation.issues.join(" ") || "Auditoría LLM no disponible",
+        auditorGaps: structural,
+        auditorDecision: "clarifier",
       };
     }
   }
