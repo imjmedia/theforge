@@ -11,6 +11,9 @@ import {
 import { computeContractGaps, computeTraceabilityGaps } from "../../engine/mdd-internal-audit.util.js";
 import { collectMddQualityIssues, isAutoRepairableDeliveryGateWarning } from "../../engine/mdd-quality-audit.util.js";
 import { applyPreDeliveryGateFixes } from "./mdd-sanitize.js";
+import {
+  evaluateBrdToMddTraceability,
+} from "../estimation/brd-mdd-traceability.util.js";
 
 export const MDD_AUDIT_PASS_THRESHOLD = 85;
 
@@ -79,6 +82,22 @@ export function synthesizeStructuralAuditorGaps(
   };
 }
 
+export function appendBrdTraceabilityAuditorGaps(
+  critical_gaps: AuditorGapsState["critical_gaps"],
+  brdMarkdown: string | null | undefined,
+  mddMarkdown: string,
+): number {
+  const { missingGaps } = evaluateBrdToMddTraceability(brdMarkdown, mddMarkdown);
+  for (const g of missingGaps.slice(0, 12)) {
+    critical_gaps.push({
+      sections: ["Sección 1", "Sección 4", "Sección 5"],
+      issue: g.hint ?? `[BRD→MDD] ${g.concept} sin traza en MDD`,
+      fix: `Añadir «${g.concept.slice(0, 80)}» en §1 (contexto), §4 (API) o §5 (lógica) según el BRD (${g.brdSection ?? "negocio"}).`,
+    });
+  }
+  return missingGaps.length;
+}
+
 /**
  * Builds structured auditorGaps when the LLM auditor is skipped or as a merge baseline.
  */
@@ -86,6 +105,7 @@ export function synthesizeDeterministicAuditorGaps(
   draft: string,
   validation: ValidateMddStructureResult,
   score: number,
+  brdMarkdown?: string | null,
 ): AuditorGapsState {
   const repairedDraft = applyPreDeliveryGateFixes((draft ?? "").trim());
   const critical_gaps: AuditorGapsState["critical_gaps"] = [];
@@ -186,6 +206,8 @@ export function synthesizeDeterministicAuditorGaps(
       syntax_errors.push(q);
     }
   }
+
+  appendBrdTraceabilityAuditorGaps(critical_gaps, brdMarkdown, repairedDraft);
 
   const infrastructure_ready = contract.infraStackGap === 0 && validation.hasTechnicalMetadata;
   const status =

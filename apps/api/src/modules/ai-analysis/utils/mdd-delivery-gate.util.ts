@@ -18,6 +18,7 @@ import { isContratosSubstantial, countContratosEndpointRows } from "./mdd-saniti
 import { collectMddQualityIssues, isAutoRepairableDeliveryGateWarning } from "../../engine/mdd-quality-audit.util.js";
 import { domainDeliveryGateFindings } from "../../engine/cascade-accuracy.util.js";
 import { checkBrdDecisionLogClosure } from "../../engine/brd-decision-log.util.js";
+import { evaluateBrdToMddTraceability } from "../estimation/brd-mdd-traceability.util.js";
 
 export type { MddDeliveryGateResult };
 
@@ -273,6 +274,14 @@ export function validateMddForDelivery(
     const brdLog = checkBrdDecisionLogClosure(options.brdMarkdown);
     blockers.push(...brdLog.blockers.map((b) => `brd-decision-log: ${b}`));
     warnings.push(...brdLog.warnings);
+
+    const trace = evaluateBrdToMddTraceability(options.brdMarkdown, trimmed);
+    blockers.push(...trace.blockers);
+    if (trace.missingGaps.length > 0) {
+      warnings.push(
+        `${trace.missingGaps.length} ítem(s) BRD sin traza completa en §1/§4/§5 (semáforo alineado).`,
+      );
+    }
   }
 
   score -= blockers.length * 8;

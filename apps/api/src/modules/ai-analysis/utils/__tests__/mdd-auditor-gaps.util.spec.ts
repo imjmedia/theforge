@@ -111,4 +111,29 @@ x
       gaps.critical_gaps.some((g) => g.issue.includes("versión Node distinta")),
     );
   });
+
+  it("synthesizeDeterministicAuditorGaps incluye brechas BRD→MDD deterministas", () => {
+    const brd = `## 1. Contexto
+Plataforma de trading con cumplimiento regulatorio y matriz de permisos detallada para cada rol operativo del negocio.
+
+## 5. Reglas de Negocio, Políticas y Fórmulas
+### Matriz de permisos
+| Capacidad | Admin |
+| ZZLiquidacionForzadaUnica999 | Sí |
+`;
+    const draft = minimalValidMdd();
+    const validation = validateMddStructure(draft);
+    const withoutBrd = synthesizeDeterministicAuditorGaps(
+      draft,
+      validation,
+      computeDeterministicAuditorScore(draft, validation),
+    );
+    const withBrd = synthesizeDeterministicAuditorGaps(
+      draft,
+      validation,
+      computeDeterministicAuditorScore(draft, validation),
+      brd,
+    );
+    assert.ok(withBrd.critical_gaps.length > withoutBrd.critical_gaps.length);
+  });
 });

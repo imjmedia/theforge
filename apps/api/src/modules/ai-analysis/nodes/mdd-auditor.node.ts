@@ -16,10 +16,13 @@ import { domainInventoryPromptBlock } from "../utils/mdd-domain-prompt.util.js";
 import { extractLlmText, extractLlmToolCalls, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
 import {
   buildAuditorFeedbackFromGaps,
+  computeDeterministicAuditorScore,
   MDD_AUDIT_PASS_THRESHOLD,
+  synthesizeDeterministicAuditorGaps,
   synthesizeStructuralAuditorGaps,
   truncateDraftForAuditorLlm,
 } from "../utils/mdd-auditor-gaps.util.js";
+import { hasBrdToMddTraceabilityBlockers } from "../estimation/brd-mdd-traceability.util.js";
 import { buildMddAuditorDeepContext } from "../utils/mdd-auditor-context.util.js";
 import type { AuditorGapsState } from "../state/mdd-state.schema.js";
 import { z } from "zod";
@@ -69,8 +72,13 @@ const MAX_TOOL_LOOPS = 3;
 function resolveAuditorDecisionForSubstantialDraft(
   draft: string,
   baseDecision: "done" | "clarifier" | "blackboard",
+  options?: { hasBrdTraceGaps?: boolean },
 ): "done" | "clarifier" | "blackboard" {
   if (baseDecision === "blackboard") return "blackboard";
+  if (options?.hasBrdTraceGaps && baseDecision === "done") {
+    LOG("brechas BRD→MDD deterministas → clarifier (no score-only)");
+    return "clarifier";
+  }
   if (draftIsSubstantialForScopedRepair(draft)) {
     LOG(
       "draft sustancial (%s chars) → score-only (gaps informativos; gate en prepare_output)",
@@ -161,7 +169,12 @@ export function createMddAuditorNode(
     LOG("entry mddDraftLen=%s tools=%s (allowed=%s)", (state.mddDraft ?? "").length, toolsToUse.length, allowed?.length ?? "all");
     const draft = applyPreDeliveryGateFixes((state.mddDraft ?? "").trim());
     const validation = validateMddStructure(draft);
-    const structuralGaps = synthesizeStructuralAuditorGaps(validation);
+    const deterministicBase = synthesizeDeterministicAuditorGaps(
+      draft,
+      validation,
+      computeDeterministicAuditorScore(draft, validation),
+      state.brdContent,
+    );
 
     try {
       const draftForLlm = truncateDraftForAuditorLlm(draft);
@@ -252,7 +265,7 @@ export function createMddAuditorNode(
         loopCount++;
       }
 
-      const structuralBase = structuralGaps;
+      const structuralBase = deterministicBase;
 
       if (!lastContent.trim()) {
         LOG("sin respuesta LLM → fallback estructural (secciones canónicas)");
@@ -324,7 +337,9 @@ export function createMddAuditorNode(
             auditorGaps.critical_gaps.length === 0
           ? ("done" as const)
           : ("clarifier" as const);
-      const decision = resolveAuditorDecisionForSubstantialDraft(draft, rawDecision);
+      const decision = resolveAuditorDecisionForSubstantialDraft(draft, rawDecision, {
+        hasBrdTraceGaps: hasBrdToMddTraceabilityBlockers(state.brdContent, draft),
+      });
       const currentIteration = state.mddIteration ?? 0;
       const iteration = currentIteration + (decision === "clarifier" ? 1 : 0);
       const finalFeedback =

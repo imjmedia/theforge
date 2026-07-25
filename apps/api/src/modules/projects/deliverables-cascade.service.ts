@@ -41,6 +41,11 @@ import {
   formatPrecisionGapsFeedback,
   precisionGapsForPostPassRetry,
 } from "../engine/sdd-precision-checks.util.js";
+import {
+  CASCADE_W4_PRECISION_MAX_ATTEMPTS,
+  filterSchedulerResearchPrecisionGaps,
+  shouldRunAnotherCascadeW4Pass,
+} from "./cascade-w4-post-pass.util.js";
 import { UiMcpClientService } from "../ui-mcp/ui-mcp-client.service.js";
 import { UiScreensService } from "../ui-mcp/ui-screens.service.js";
 import { ConformanceService } from "../engine/conformance.service.js";
@@ -368,8 +373,47 @@ export class DeliverablesCascadeService {
     });
   }
 
-  /** W4: reintenta artefactos con gaps de precisión SDD o TaskAccuracy < 90. */
+  /** W4: reintenta artefactos con gaps de precisión SDD o TaskAccuracy < 90 (hasta 3 pases). */
   private async runCascadePostPassRetry(projectId: string, signal?: AbortSignal): Promise<void> {
+    for (let attempt = 0; attempt < CASCADE_W4_PRECISION_MAX_ATTEMPTS; attempt++) {
+      if (signal?.aborted) throw new Error("Cancelado por el usuario");
+      const didRetry = await this.executeCascadePostPassRetryRound(projectId, signal);
+      if (!didRetry) return;
+
+      const project = await this.projects.findOne(projectId);
+      const mdd = buildConstitutionMarkdown(project);
+      const stage = pickPrimaryStage(project.stages ?? []);
+      const precisionGaps = collectSddPrecisionGaps({
+        mdd,
+        architecture: project.architectureContent,
+        blueprint: project.blueprintContent,
+        tasks: project.tasksContent,
+        logicFlows: project.logicFlowsContent,
+        userStories: project.userStoriesContent,
+        useCases: project.useCasesContent,
+        apiContracts: project.apiContractsContent,
+        pantallas: project.uiScreensContent,
+        phase0Summary: project.phase0SummaryContent,
+      });
+      const schedulerResearchRemaining = filterSchedulerResearchPrecisionGaps(precisionGaps);
+      if (!shouldRunAnotherCascadeW4Pass(schedulerResearchRemaining, attempt)) {
+        if (schedulerResearchRemaining.length > 0) {
+          this.logger.warn(
+            `[Cascade] W4: ${schedulerResearchRemaining.length} gap(s) scheduler/research persisten tras ${attempt + 1} pase(s)`,
+          );
+        }
+        return;
+      }
+      this.logger.warn(
+        `[Cascade] W4: pase ${attempt + 2}/${CASCADE_W4_PRECISION_MAX_ATTEMPTS} — ${schedulerResearchRemaining.length} gap(s) scheduler/research`,
+      );
+    }
+  }
+
+  private async executeCascadePostPassRetryRound(
+    projectId: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
     if (signal?.aborted) throw new Error("Cancelado por el usuario");
     const project = await this.projects.findOne(projectId);
     const mdd = buildConstitutionMarkdown(project);
@@ -478,7 +522,7 @@ export class DeliverablesCascadeService {
       ...externalGaps,
       ...brdLogGaps,
     ];
-    if (allGaps.length === 0) return;
+    if (allGaps.length === 0) return false;
     if (signal?.aborted) throw new Error("Cancelado por el usuario");
 
     const feedback = formatPrecisionGapsFeedback(allGaps);
@@ -495,18 +539,20 @@ export class DeliverablesCascadeService {
       `[Cascade] Post-pase W4: ${allGaps.length} gap(s) (precision=${precisionGaps.length}, taskAccuracy=${accuracy.tasks.score}) — retry dirigido`,
     );
 
+    if (flags.retryLogicFlows) {
+      await this.projects
+        .generateLogicFlows(projectId, feedback)
+        .catch((e) =>
+          this.logger.warn(`[Cascade] W4 logic-flows retry: ${e instanceof Error ? e.message : e}`),
+        );
+      if (signal?.aborted) throw new Error("Cancelado por el usuario");
+    }
+
     const upstreamRetries: Array<Promise<unknown>> = [];
     if (flags.retryArchitecture) {
       upstreamRetries.push(
         this.projects.generateArchitecture(projectId, feedback).catch((e) =>
           this.logger.warn(`[Cascade] W4 architecture retry: ${e instanceof Error ? e.message : e}`),
-        ),
-      );
-    }
-    if (flags.retryLogicFlows) {
-      upstreamRetries.push(
-        this.projects.generateLogicFlows(projectId, feedback).catch((e) =>
-          this.logger.warn(`[Cascade] W4 logic-flows retry: ${e instanceof Error ? e.message : e}`),
         ),
       );
     }
@@ -524,17 +570,19 @@ export class DeliverablesCascadeService {
     if (signal?.aborted) throw new Error("Cancelado por el usuario");
 
     if (flags.retryTasks) {
+      const refreshed = await this.projects.findOne(projectId);
+      const refreshedStage = pickPrimaryStage(refreshed.stages ?? []);
       const docAcc = computeCascadeAccuracy({
-        brdMarkdown: stage?.brdContent,
-        dbgaMarkdown: project.dbgaContent,
-        mddMarkdown: mdd,
-        tasksMarkdown: project.tasksContent,
-        logicFlowsMarkdown: project.logicFlowsContent,
-        apiContractsMarkdown: project.apiContractsContent,
-        uiScreensMarkdown: project.uiScreensContent,
-        userStoriesMarkdown: project.userStoriesContent,
-        useCasesMarkdown: project.useCasesContent,
-        specMarkdown: project.specContent,
+        brdMarkdown: refreshedStage?.brdContent,
+        dbgaMarkdown: refreshed.dbgaContent,
+        mddMarkdown: buildConstitutionMarkdown(refreshed),
+        tasksMarkdown: refreshed.tasksContent,
+        logicFlowsMarkdown: refreshed.logicFlowsContent,
+        apiContractsMarkdown: refreshed.apiContractsContent,
+        uiScreensMarkdown: refreshed.uiScreensContent,
+        userStoriesMarkdown: refreshed.userStoriesContent,
+        useCasesMarkdown: refreshed.useCasesContent,
+        specMarkdown: refreshed.specContent,
       }).doc;
       const relaxPreflight =
         docAcc.score < TASKS_PREFLIGHT_DOC_ACCURACY_BLOCK_THRESHOLD;
@@ -544,6 +592,8 @@ export class DeliverablesCascadeService {
           this.logger.warn(`[Cascade] W4 tasks retry: ${e instanceof Error ? e.message : e}`),
         );
     }
+
+    return true;
   }
 
   /** Reintenta API e Infra cuando conformance heurístico falla tras la cascada (máx. 2 iteraciones). */
