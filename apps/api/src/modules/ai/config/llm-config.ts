@@ -20,7 +20,7 @@ export const LLM_MAX_TOKENS_DEFAULT = 131_072;
 /** Perfiles de salida por tipo de tarea (siempre acotados por `llmMaxTokens()`). */
 export const LLM_OUTPUT_TOKEN_PROFILES = {
   /** Turnos conversacionales (chat sin regenerar documento). */
-  chat: 8_192,
+  chat: 16_384,
   /** Bienvenida / mensajes cortos. */
   welcome: 2_048,
   /** Design System (DESIGN.md). */
@@ -28,11 +28,11 @@ export const LLM_OUTPUT_TOKEN_PROFILES = {
   /** Documento completo vía Workshop (MDD, DBGA, Blueprint, Spec, BRD…). */
   document: 65_536,
   /** Nodos LangGraph MDD/DBGA (una sección por llamada). */
-  langgraph: 16_384,
+  langgraph: 65_536,
   /** Auditor MDD / cross-consistency. */
-  auditor: 8_192,
+  auditor: 131_072,
   /** Tasks Planner JSON (plan grande en proyectos HIGH). */
-  tasksPlanner: 81_920,
+  tasksPlanner: 131_072,
   /** Tasks documento markdown completo (Workshop tab). */
   tasksDoc: 131_072,
   /** parseChecklist y salidas JSON cortas. */

@@ -54,12 +54,12 @@ test("resolveLlmMaxTokensForPurpose — perfiles por tarea", () => {
   const prev = process.env.LLM_MAX_TOKENS;
   delete process.env.LLM_MAX_TOKENS;
   try {
-    assert.equal(resolveLlmMaxTokensForPurpose("chat"), 8_192);
+    assert.equal(resolveLlmMaxTokensForPurpose("chat"), 16_384);
     assert.equal(resolveLlmMaxTokensForPurpose("document"), 65_536);
     assert.equal(resolveLlmMaxTokensForPurpose("uxGuide"), 16_384);
-    assert.equal(resolveLlmMaxTokensForPurpose("langgraph"), 16_384);
-    assert.equal(resolveLlmMaxTokensForPurpose("auditor"), 8_192);
-    assert.equal(resolveLlmMaxTokensForPurpose("tasksPlanner"), 81_920);
+    assert.equal(resolveLlmMaxTokensForPurpose("langgraph"), 65_536);
+    assert.equal(resolveLlmMaxTokensForPurpose("auditor"), 131_072);
+    assert.equal(resolveLlmMaxTokensForPurpose("tasksPlanner"), 131_072);
     assert.equal(resolveLlmMaxTokensForPurpose("tasksDoc"), 131_072);
   } finally {
     if (prev !== undefined) process.env.LLM_MAX_TOKENS = prev;
@@ -81,7 +81,7 @@ test("resolveLlmMaxTokensForWorkshopTab — pestañas de documento", () => {
   assert.equal(resolveLlmMaxTokensForWorkshopTab("mdd"), 65_536);
   assert.equal(resolveLlmMaxTokensForWorkshopTab("ux-ui-guide"), 16_384);
   assert.equal(resolveLlmMaxTokensForWorkshopTab("tasks"), 131_072);
-  assert.equal(resolveLlmMaxTokensForWorkshopTab(undefined), 8_192);
+  assert.equal(resolveLlmMaxTokensForWorkshopTab(undefined), 16_384);
   assert.equal(resolveLlmMaxTokensForWorkshopTab("mdd", { welcomeBrief: true }), 2_048);
 });
 
