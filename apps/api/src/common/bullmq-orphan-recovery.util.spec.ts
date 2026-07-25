@@ -33,7 +33,7 @@ function mockQueue(jobsByState: Record<string, Job[]>, lockHeld = false): Queue 
         deletedLocks.push(key);
         return 1;
       },
-      exists: async (key: string) => (lockHeld && key.endsWith(":lock") ? 1 : 0),
+      get: async (key: string) => (lockHeld && key.endsWith(":lock") ? "1" : null),
     }),
     toKey: (jobId: string) => `bull:test:${jobId}`,
     getJobs: async (states: string[]) => {

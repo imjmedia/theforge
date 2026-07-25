@@ -95,8 +95,8 @@ export async function recoverBullMqJobsAfterWorkerRestart(
 export async function isBullMqJobLockHeld(queue: Queue, jobId: string): Promise<boolean> {
   const client = await queue.client;
   const lockKey = `${queue.toKey(String(jobId))}:lock`;
-  const held = await client.exists(lockKey);
-  return held === 1;
+  const lockValue = await client.get(lockKey);
+  return lockValue != null;
 }
 
 export type ReconcileOrphanBullMqActiveJobResult = "running" | "reconciled" | "skipped";
