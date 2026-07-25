@@ -11,6 +11,11 @@ import {
   normalizeApiPathForCompare,
 } from "./conformance.service.js";
 import { extractSectionByNumber } from "./mdd-markdown-parser.js";
+import {
+  insertMddSection4Block,
+  reattachMddUiUxDesignIntentSuffix,
+  splitMddUiUxDesignIntentSuffix,
+} from "../ai-analysis/utils/mdd-sanitize/section-merge.js";
 
 export type JourneyEndpointRequirement = {
   id: string;
@@ -188,6 +193,8 @@ export function injectMissingJourneyEndpointsIntoMddSection4(
 ): { markdown: string; injected: string[] } {
   if (missing.length === 0) return { markdown: mddMarkdown, injected: [] };
 
+  const { core, uiUxSuffix } = splitMddUiUxDesignIntentSuffix(mddMarkdown);
+
   const rows = missing.map(
     (m) =>
       `| ${m.method} | \`${m.path.replace(/\*/g, "{id}")}\` | ${m.label} (journey core — auto) | Bearer | DBGA/BRD |`,
@@ -200,29 +207,32 @@ export function injectMissingJourneyEndpointsIntoMddSection4(
     `\n`;
 
   const section4 = extractSection(
-    mddMarkdown,
+    core,
     /^#+\s*(?:4\.\s*)?(?:contratos\s+de\s+api|api\s+contracts|endpoints)/im,
   );
   if (!section4 || section4.length < 40) {
     return {
-      markdown:
-        `${mddMarkdown.trimEnd()}\n\n## 4. Contratos de API\n${block}\n`,
+      markdown: reattachMddUiUxDesignIntentSuffix(insertMddSection4Block(core, block.trim()), uiUxSuffix),
       injected: missing.map((m) => m.id),
     };
   }
 
-  const headingMatch = mddMarkdown.match(/^#+\s*(?:4\.\s*)?(?:contratos\s+de\s+api|api\s+contracts|endpoints)/im);
-  if (!headingMatch?.index && headingMatch?.index !== 0) {
-    return { markdown: mddMarkdown + block, injected: missing.map((m) => m.id) };
+  const headingMatch = core.match(/^#+\s*(?:4\.\s*)?(?:contratos\s+de\s+api|api\s+contracts|endpoints)/im);
+  if (headingMatch?.index == null) {
+    return {
+      markdown: reattachMddUiUxDesignIntentSuffix(insertMddSection4Block(core, block.trim()), uiUxSuffix),
+      injected: missing.map((m) => m.id),
+    };
   }
 
   const start = headingMatch.index;
-  const rest = mddMarkdown.slice(start);
+  const rest = core.slice(start);
   const nextH2 = rest.slice(1).search(/^##\s+\d/m);
-  const end = nextH2 >= 0 ? start + 1 + nextH2 : mddMarkdown.length;
-  const newSection4 = mddMarkdown.slice(start, end).trimEnd() + block;
+  const end = nextH2 >= 0 ? start + 1 + nextH2 : core.length;
+  const newSection4 = core.slice(start, end).trimEnd() + block;
+  const mergedCore = core.slice(0, start) + newSection4 + core.slice(end);
   return {
-    markdown: mddMarkdown.slice(0, start) + newSection4 + mddMarkdown.slice(end),
+    markdown: reattachMddUiUxDesignIntentSuffix(mergedCore, uiUxSuffix),
     injected: missing.map((m) => m.id),
   };
 }

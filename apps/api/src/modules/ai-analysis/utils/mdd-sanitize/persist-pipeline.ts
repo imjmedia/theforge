@@ -24,7 +24,10 @@ import {
   fixGluedSection6Heading,
   mddHasDuplicateSectionHeadings,
   normalizeCanonicalMddSectionHeadings,
+  reattachMddUiUxDesignIntentSuffix,
+  repairMisplacedCanonicalSectionsAfterUiUx,
   replaceContextWhenInstructions,
+  splitMddUiUxDesignIntentSuffix,
   stripTrailingDuplicateMddSections,
 } from "./section-merge.js";
 import {
@@ -151,7 +154,7 @@ function collapseDuplicateManifestHeadings(draft: string): string {
 
 
 export function applyPreDeliveryGateFixes(draft: string): string {
-  let out = normalizeCanonicalMddSectionHeadings(draft ?? "");
+  let out = repairMisplacedCanonicalSectionsAfterUiUx(normalizeCanonicalMddSectionHeadings(draft ?? ""));
   out = alignInfraNodeVersionWithSection2(out);
   out = repairNestedJsonFencesInDraft(out);
   out = repairDisplacedJsonBracesInContratosSection(out);
@@ -486,10 +489,7 @@ export function finalizeMddDeliverable(
 ): string {
   let out = sanitizeMddAtPersist(stripMeshDirectivesFromDraft(draft));
 
-  const uiUxRe = /\n##\s+UI\/UX\s+Design\s+Intent\b[\s\S]*$/i;
-  const uiUxMatch = out.match(uiUxRe);
-  const uiUxSuffix = uiUxMatch?.[0]?.trim() ?? "";
-  const core = uiUxSuffix ? out.slice(0, out.length - uiUxMatch![0].length).trim() : out;
+  const { core, uiUxSuffix } = splitMddUiUxDesignIntentSuffix(out);
 
   let fixedCore = ensureMissingCanonicalSections(
     stripTrailingDuplicateMddSections(core),
@@ -500,6 +500,6 @@ export function finalizeMddDeliverable(
     fixedCore = deduplicateAndReorderMddSections(stripTrailingDuplicateMddSections(fixedCore));
   }
 
-  out = uiUxSuffix ? `${fixedCore}\n\n${uiUxSuffix}` : fixedCore;
+  out = reattachMddUiUxDesignIntentSuffix(fixedCore, uiUxSuffix);
   return stripMeshDirectivesFromDraft(out);
 }

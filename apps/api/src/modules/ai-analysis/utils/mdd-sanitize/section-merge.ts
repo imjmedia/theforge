@@ -13,6 +13,55 @@ import {
 
 const RE_SECTION6_H2_LINE = /^##\s+(?:6\.\s+)?Seguridad/i;
 
+/** Bloque anexo § UI/UX (después de §1–§7). */
+export const MDD_UI_UX_DESIGN_INTENT_RE = /\n##\s+UI\/UX\s+Design\s+Intent\b[\s\S]*$/i;
+
+/** Separa núcleo canónico (§1–§7) del bloque UI/UX al final. */
+export function splitMddUiUxDesignIntentSuffix(markdown: string): {
+  core: string;
+  uiUxSuffix: string;
+} {
+  const trimmed = (markdown ?? "").trim();
+  const match = trimmed.match(MDD_UI_UX_DESIGN_INTENT_RE);
+  if (!match?.index && match?.index !== 0) {
+    return { core: trimmed, uiUxSuffix: "" };
+  }
+  return {
+    core: trimmed.slice(0, match.index).trim(),
+    uiUxSuffix: match[0].trim(),
+  };
+}
+
+/** Vuelve a anexar UI/UX tras el núcleo §1–§7. */
+export function reattachMddUiUxDesignIntentSuffix(core: string, uiUxSuffix: string): string {
+  const body = (core ?? "").trim();
+  const suffix = (uiUxSuffix ?? "").trim();
+  if (!suffix) return body ? `${body}\n` : "";
+  return `${body}\n\n${suffix}\n`;
+}
+
+/**
+ * Reubica §1–§7 que quedaron después de UI/UX (p. ej. SSOT inyectó §4 al final del doc).
+ */
+export function repairMisplacedCanonicalSectionsAfterUiUx(draft: string): string {
+  const trimmed = (draft ?? "").trim();
+  const uiStart = trimmed.search(/\n##\s+UI\/UX\s+Design\s+Intent\b/i);
+  if (uiStart < 0) return draft;
+
+  const core = trimmed.slice(0, uiStart).trim();
+  const tail = trimmed.slice(uiStart);
+  const misplacedMatch = tail.slice(1).match(/\n##\s+[1-7]\.\s+[^\n]+/);
+  if (!misplacedMatch?.index && misplacedMatch?.index !== 0) return draft;
+
+  const misplacedStart = misplacedMatch.index + 1;
+  const uiUxBlock = tail.slice(0, misplacedStart).trim();
+  const misplaced = tail.slice(misplacedStart).trim();
+  if (!misplaced) return draft;
+
+  const mergedCore = deduplicateAndReorderMddSections(`${core}\n\n${misplaced}`);
+  return reattachMddUiUxDesignIntentSuffix(mergedCore, uiUxBlock);
+}
+
 /** Despega subtítulo del H2 (ej. `## 6. SeguridadGestión…:` o `## 6. Seguridad. Autenticación:` → H2 + ###). */
 export function fixGluedSection6Heading(draft: string): string {
   let out = repairGluedMarkdownHeadings(draft);
@@ -580,6 +629,38 @@ function insertMddSection5Block(draft: string, newBody: string): string {
     const rest = trimmed.slice(after4Start);
     const nextH2 = rest.search(/\n##\s+/);
     const insertAt = nextH2 >= 0 ? after4Start + nextH2 : trimmed.length;
+    return `${trimmed.slice(0, insertAt).trimEnd()}\n\n${sectionMd}\n\n${trimmed.slice(insertAt).trimStart()}`.trim();
+  }
+  return `${trimmed}\n\n${sectionMd}`.trim();
+}
+
+/** Inserta §4 tras §3 (o antes de §5/§6/§7) si el heading canónico no existía. */
+export function insertMddSection4Block(draft: string, newBody: string): string {
+  const body = (newBody ?? "").trim();
+  if (!body) return draft;
+  const sectionMd = body.startsWith("## 4.") ? body : `## 4. Contratos de API\n\n${body}`;
+  const trimmed = (draft ?? "").trim();
+  if (/##\s*4\.\s*Contratos\s+de\s+API/i.test(trimmed)) {
+    return replaceSection4Body(trimmed, body.replace(/^##\s*4\.[^\n]*\n?/i, "").trim() || body);
+  }
+  const s5Range = trimmed.match(/\n##\s*5\.\s*Lógica\s+y\s*Edge\s+Cases\b/i);
+  if (s5Range?.index != null) {
+    return `${trimmed.slice(0, s5Range.index).trimEnd()}\n\n${sectionMd}\n\n${trimmed.slice(s5Range.index).trimStart()}`.trim();
+  }
+  const range6 = getSection6Or7Range(trimmed, 6);
+  if (range6) {
+    return `${trimmed.slice(0, range6.start).trimEnd()}\n\n${sectionMd}\n\n${trimmed.slice(range6.start).trimStart()}`.trim();
+  }
+  const range7 = getSection6Or7Range(trimmed, 7);
+  if (range7) {
+    return `${trimmed.slice(0, range7.start).trimEnd()}\n\n${sectionMd}\n\n${trimmed.slice(range7.start).trimStart()}`.trim();
+  }
+  const s3Match = trimmed.match(/##\s*3\.\s*Modelo\s+(?:de\s+)?datos/i);
+  if (s3Match?.index != null) {
+    const after3 = s3Match.index + s3Match[0].length;
+    const rest = trimmed.slice(after3);
+    const nextH2 = rest.search(/\n##\s+/);
+    const insertAt = nextH2 >= 0 ? after3 + nextH2 : trimmed.length;
     return `${trimmed.slice(0, insertAt).trimEnd()}\n\n${sectionMd}\n\n${trimmed.slice(insertAt).trimStart()}`.trim();
   }
   return `${trimmed}\n\n${sectionMd}`.trim();

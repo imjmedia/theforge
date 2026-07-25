@@ -194,4 +194,45 @@ Docker.
     assert.match(r.content, /POST \/api\/v1\/auth\/login/);
     assert.doesNotMatch(r.content, /Falta: definir endpoints/i);
   });
+
+  it("preserva UI/UX al final y ordena §4 antes de §5 cuando incoming solo trae §4", () => {
+    const existing = `# MDD
+## 1. Contexto
+Ctx.
+
+## 2. Arquitectura y Stack
+Stack.
+
+## 3. Modelo de Datos
+SQL.
+
+## 5. Lógica y Edge Cases
+Logic.
+
+## 6. Seguridad
+Sec.
+
+## 7. Infraestructura
+Infra.
+
+## UI/UX Design Intent
+### Personas y journeys
+UI block.
+`;
+    const incoming = `# MDD
+## 4. Contratos de API
+GET /api/v1/health
+\`\`\`json
+{"ok":true}
+\`\`\`
+`;
+    const r = mergeMddBySection(existing, incoming);
+    const uiIdx = r.content.search(/##\s+UI\/UX\s+Design\s+Intent/i);
+    const s4Idx = r.content.search(/##\s+4\.\s*Contratos/i);
+    const s5Idx = r.content.search(/##\s+5\.\s*Lógica/i);
+    assert.ok(s4Idx >= 0 && s5Idx >= 0 && uiIdx >= 0);
+    assert.ok(s4Idx < s5Idx, "§4 antes de §5");
+    assert.ok(s5Idx < uiIdx, "UI/UX al final");
+    assert.match(r.content, /Personas y journeys/);
+  });
 });

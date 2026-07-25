@@ -36,6 +36,20 @@ import {
   isContratosPlaceholder,
   isContratosSubstantial,
 } from "../ai-analysis/utils/mdd-sanitize/contratos-format.js";
+import {
+  reattachMddUiUxDesignIntentSuffix,
+  splitMddUiUxDesignIntentSuffix,
+} from "../ai-analysis/utils/mdd-sanitize/section-merge.js";
+
+/** Orden canónico §1–§7 para serializar merge (evita §4 al final tras §7). */
+function canonicalSectionSortKey(heading: string): number {
+  const m = heading.match(/^##\s+(\d+)\./);
+  if (m) {
+    const n = parseInt(m[1]!, 10);
+    return n >= 1 && n <= 7 ? n : 999;
+  }
+  return 999;
+}
 
 export type MddSection = {
   /** Texto literal del heading, ej. "## 4. Contratos de API". */
@@ -168,8 +182,11 @@ export function mergeMddBySection(
   existing: string | null | undefined,
   incoming: string | null | undefined,
 ): MddMergeResult {
-  const existingParsed = parseMddBySection(existing);
-  const incomingParsed = parseMddBySection(incoming);
+  const existingSplit = splitMddUiUxDesignIntentSuffix(existing ?? "");
+  const incomingSplit = splitMddUiUxDesignIntentSuffix(incoming ?? "");
+  const existingParsed = parseMddBySection(existingSplit.core);
+  const incomingParsed = parseMddBySection(incomingSplit.core);
+  const preservedUiUx = incomingSplit.uiUxSuffix || existingSplit.uiUxSuffix;
 
   // Caso 1: incoming vacío / sin secciones → mantener existing.
   if (incomingParsed.sections.length === 0) {
@@ -188,8 +205,14 @@ export function mergeMddBySection(
 
   // Caso 2: existing vacío → incoming es el primer write (acepta tal cual).
   if (existingParsed.sections.length === 0) {
+    const sorted = [...incomingParsed.sections].sort(
+      (a, b) => canonicalSectionSortKey(a.heading) - canonicalSectionSortKey(b.heading),
+    );
     return {
-      content: (incoming ?? "").trim() + "\n",
+      content: reattachMddUiUxDesignIntentSuffix(
+        serializeMerged(incomingParsed.frontMatter, sorted),
+        preservedUiUx,
+      ),
       stats: {
         sectionsReplaced: [],
         sectionsAdded: incomingParsed.sections.map((s) => s.heading),
@@ -234,9 +257,12 @@ export function mergeMddBySection(
     // contra placeholders vacíos del incoming.
   } else {
     // Existing vacío (primer write) → incoming es el primer write.
-    const content = serializeMerged(
-      incomingParsed.frontMatter,
-      incomingParsed.sections,
+    const sorted = [...incomingParsed.sections].sort(
+      (a, b) => canonicalSectionSortKey(a.heading) - canonicalSectionSortKey(b.heading),
+    );
+    const content = reattachMddUiUxDesignIntentSuffix(
+      serializeMerged(incomingParsed.frontMatter, sorted),
+      preservedUiUx,
     );
     return {
       content,
@@ -307,9 +333,14 @@ export function mergeMddBySection(
     }
   }
 
-  const content = serializeMerged(
-    incomingParsed.frontMatter || existingParsed.frontMatter,
-    mergedSections,
+  const content = reattachMddUiUxDesignIntentSuffix(
+    serializeMerged(
+      incomingParsed.frontMatter || existingParsed.frontMatter,
+      [...mergedSections].sort(
+        (a, b) => canonicalSectionSortKey(a.heading) - canonicalSectionSortKey(b.heading),
+      ),
+    ),
+    preservedUiUx,
   );
 
   return {

@@ -74,4 +74,30 @@ CREATE TABLE keys (id UUID PRIMARY KEY);
     assert.deepEqual(injected, ["dashboard-me"]);
     assert.match(markdown, /dashboards\/me/);
   });
+
+  it("inserta §4 antes de UI/UX cuando falta la sección canónica", () => {
+    const mdd = `
+## 3. Modelo de Datos
+\`\`\`sql
+CREATE TABLE watchlists (id UUID PRIMARY KEY);
+CREATE TABLE strategies (id UUID PRIMARY KEY);
+CREATE TABLE credentials (id UUID PRIMARY KEY);
+CREATE TABLE dashboard_configs (id UUID PRIMARY KEY);
+\`\`\`
+
+## 5. Lógica y Edge Cases
+Reglas.
+
+## UI/UX Design Intent
+### Personas y journeys
+Journey UI.
+`;
+    const report = checkMddJourneySection4Gaps({ mddMarkdown: mdd });
+    const { markdown } = injectMissingJourneyEndpointsIntoMddSection4(mdd, report.missing.slice(0, 2));
+    const uiIdx = markdown.search(/##\s+UI\/UX\s+Design\s+Intent/i);
+    const s4Idx = markdown.search(/##\s+4\.\s*Contratos\s+de\s+API/i);
+    assert.ok(s4Idx >= 0, "debe crear §4");
+    assert.ok(uiIdx >= 0, "debe conservar UI/UX");
+    assert.ok(s4Idx < uiIdx, "§4 debe ir antes de UI/UX");
+  });
 });
