@@ -5,7 +5,11 @@ import {
   buildProjectClearMddDependentDeliverablesUpdate,
   buildStageClearMddDependentDeliverablesUpdate,
 } from "./clear-mdd-dependent-deliverables.util.js";
-import { MDD_DEPENDENT_DELIVERABLE_KEYS } from "@theforge/shared-types";
+import {
+  MDD_DEPENDENT_DELIVERABLE_KEYS,
+  MDD_DEPENDENT_PROJECT_ONLY_KEYS,
+  MDD_DEPENDENT_STAGE_DELIVERABLE_KEYS,
+} from "@theforge/shared-types";
 
 describe("clear-mdd-dependent-deliverables.util", () => {
   it("buildProjectClearMddDependentDeliverablesUpdate nulls all MDD-dependent fields and tasksJson", () => {
@@ -30,5 +34,11 @@ describe("clear-mdd-dependent-deliverables.util", () => {
     });
     assert.equal(payload.specContent, null);
     assert.equal(payload.tasksJson, Prisma.JsonNull);
+    for (const key of MDD_DEPENDENT_STAGE_DELIVERABLE_KEYS) {
+      assert.equal(payload[key], null);
+    }
+    for (const key of MDD_DEPENDENT_PROJECT_ONLY_KEYS) {
+      assert.equal(payload[key as keyof typeof payload], undefined);
+    }
   });
 });

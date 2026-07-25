@@ -1,6 +1,7 @@
 import { Prisma } from "@theforge/database";
 import {
   buildClearMddDependentDeliverablesPayload,
+  buildClearStageMddDependentDeliverablesPayload,
 } from "@theforge/shared-types";
 
 export function buildProjectClearMddDependentDeliverablesUpdate(): Prisma.ProjectUpdateInput {
@@ -21,7 +22,7 @@ export function buildStageClearMddDependentDeliverablesUpdate(
       : {};
 
   return {
-    ...buildClearMddDependentDeliverablesPayload(),
+    ...buildClearStageMddDependentDeliverablesPayload(),
     tasksJson: Prisma.JsonNull,
     changeSpecContent: null,
     deliverableSnapshot: Prisma.JsonNull,
