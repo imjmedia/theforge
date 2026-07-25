@@ -971,12 +971,17 @@ export class EstimationService {
         blueprint: { ok: bp.ok },
         logicFlows: { ok: lf.ok },
       };
-      if (!conformanceSummary.ok && status === "green") {
+      const hasSignificantConformanceGaps =
+        (!conformanceSummary.api.ok && conformanceSummary.api.missingCount > 5) ||
+        (!conformanceSummary.infra.ok && conformanceSummary.infra.gapCount > 3) ||
+        !conformanceSummary.blueprint.ok ||
+        !conformanceSummary.logicFlows.ok;
+      if (hasSignificantConformanceGaps && status === "green") {
         status = "yellow";
       }
       if (
         !conformanceSummary.api.ok &&
-        conformanceSummary.api.missingCount > 3 &&
+        conformanceSummary.api.missingCount > 8 &&
         status !== "red"
       ) {
         status = "red";
