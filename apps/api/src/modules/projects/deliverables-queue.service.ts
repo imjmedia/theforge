@@ -201,7 +201,7 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
         },
         {
           connection: { url },
-          ...longRunningBullmqWorkerOptions({ concurrency }),
+          ...longRunningBullmqWorkerOptions({ concurrency, maxStalledCount: 0 }),
         },
       );
       this.worker.on("failed", (job, err) => {
@@ -362,11 +362,20 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
     const abortController = new AbortController();
     this.jobAbortControllers.set(jobId, abortController);
     const stopCancelPoll = this.startCancelPoll(jobId, abortController);
+    const JOB_TIMEOUT_MS = 45 * 60 * 1000;
     try {
       if (await this.isCancelRequested(jobId)) {
         abortController.abort();
       }
-      return await this.runJob(data, onProgress, abortController.signal);
+      return await Promise.race([
+        this.runJob(data, onProgress, abortController.signal),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => {
+            abortController.abort();
+            reject(new Error(`Job ${jobId} excedió timeout de ${JOB_TIMEOUT_MS / 60_000}min`));
+          }, JOB_TIMEOUT_MS),
+        ),
+      ]);
     } catch (err) {
       throw toDeliverablesJobError(err);
     } finally {
