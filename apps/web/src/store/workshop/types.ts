@@ -1,3 +1,6 @@
+/**
+ * @fileoverview Tipos compartidos del store Workshop: {@link Status} (semáforo), {@link ChatMessage}, tipos de agentes, etc.
+ */
 import type { ChatImagePart, MddDeliveryGateResult } from "@theforge/shared-types";
 
 export type Status = "ROJO" | "AMARILLO" | "VERDE";

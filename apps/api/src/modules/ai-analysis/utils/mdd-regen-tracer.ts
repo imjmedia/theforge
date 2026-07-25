@@ -1,4 +1,8 @@
 /**
+ * @fileoverview Trazador estructurado del pipeline de regeneración MDD.
+ */
+
+/**
  * Tracer estructurado para la pipeline de regeneración MDD (section / upstream-sync / pipeline / manager).
  *
  * Log por línea (greppable con `docker logs | grep "[MDD:Regen]"`):

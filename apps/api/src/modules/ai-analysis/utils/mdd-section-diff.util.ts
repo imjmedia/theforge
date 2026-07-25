@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Diff entre versiones de secciones MDD.
+ */
+
 import { extractMddSection } from "@theforge/shared-types";
 
 export type MddCanonicalSectionId = "1" | "2" | "3" | "4" | "5" | "6" | "7";

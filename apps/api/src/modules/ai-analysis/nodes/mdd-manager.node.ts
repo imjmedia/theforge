@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo manager — orquesta el pipeline completo de generación MDD.
+ */
+
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { Command } from "@langchain/langgraph";
 import type { LivePrecisionCalculator } from "../estimation/estimation.types.js";

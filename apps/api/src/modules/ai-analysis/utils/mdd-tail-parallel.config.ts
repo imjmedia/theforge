@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo tail-parallel — ejecuta procesamiento paralelo final.
+ */
+
 /** Activa §5 ∥ §6 ∥ §7 tras Software Architect (§2–§4). Desactivar: `MDD_TAIL_PARALLEL=0`. */
 export function isMddTailParallelEnabled(): boolean {
   const raw = process.env.MDD_TAIL_PARALLEL;

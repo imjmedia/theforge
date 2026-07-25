@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo formateador — aplica reglas de formato y normalización al MDD.
+ */
+
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage } from "@langchain/core/messages";
 import { MDD_LLM_FORMATTER_PROMPT } from "../prompts/load-prompts.js";

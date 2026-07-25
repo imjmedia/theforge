@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Ciclo de reintento/corrección para delivery gates MDD.
+ */
+
 import type { MddDeliveryGateResult } from "@theforge/shared-types";
 import { isAutoRepairableDeliveryGateWarning } from "../../engine/mdd-quality-audit.util.js";
 import type { AuditorGapsState } from "../state/mdd-state.schema.js";

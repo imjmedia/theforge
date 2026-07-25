@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo auditor — evalúa calidad de documentación y gaps en el pipeline.
+ */
+
 import type { AuditorGapsState } from "../state/mdd-state.schema.js";
 import {
   detectSection2Section7NodeVersionMismatchIssue,

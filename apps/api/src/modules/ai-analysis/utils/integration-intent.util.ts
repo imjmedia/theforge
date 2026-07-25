@@ -1,4 +1,8 @@
 /**
+ * @fileoverview Integración de handoff-spec con IntegrationAgent.
+ */
+
+/**
  * Manager hook for IntegrationAgent (handoff-spec) delegation.
  *
  * The handoff-spec.md is produced by `IntegrationAgentService` (projects module), invoked via

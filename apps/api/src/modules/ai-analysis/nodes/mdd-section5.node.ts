@@ -1,4 +1,8 @@
 /**
+ * @fileoverview Nodo sección 5 — genera la quinta sección del MDD.
+ */
+
+/**
  * Nodo "section5" — regenera SOLO `## 5. Lógica y Edge Cases` del MDD.
  *
  * Por qué existe: el delivery gate (validateMddForDelivery) tiene un

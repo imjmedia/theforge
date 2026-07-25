@@ -1,4 +1,8 @@
 /**
+ * @fileoverview Nodo populador de grafo — carga estado persistido en el grafo LangGraph.
+ */
+
+/**
  * Nodo GraphPopulator: hidrata `mddStructured` y extrae ADRs.
  * La sync a FalkorDB ocurre en `MddUpdatePipelineService` / `SddGraphSyncService`
  * al persistir el MDD (jobs background finalize, PATCH), antes del semáforo.

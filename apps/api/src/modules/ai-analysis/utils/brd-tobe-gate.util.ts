@@ -1,4 +1,8 @@
 /**
+ * @fileoverview Composición de preámbulo BRD To-Be para MDD.
+ */
+
+/**
  * Composición de preámbulo BRD para anteponer al MDD (solo BRD; To-Be y As-Is eliminados).
  */
 

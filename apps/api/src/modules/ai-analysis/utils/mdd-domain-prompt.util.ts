@@ -1,4 +1,8 @@
 /**
+ * @fileoverview Builder de prompts con contexto de dominio.
+ */
+
+/**
  * Domain inventory injection for MDD LangGraph nodes (PLAN-CASCADE-90-ACCURACY).
  */
 

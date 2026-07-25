@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Definición de fases del pipeline MDD de alta complejidad.
+ */
+
 /** Fases del pipeline MDD HIGH mostradas en UI (evita acumular decenas de micro-pasos). */
 export type MddHighPipelinePhase = {
   index: number;

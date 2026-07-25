@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Preservación de secciones aprobadas durante regeneración MDD.
+ */
+
 import { extractContratosSectionBody } from "./mdd-sanitize/contratos-format.js";
 import {
   extractArquitecturaSectionBody,

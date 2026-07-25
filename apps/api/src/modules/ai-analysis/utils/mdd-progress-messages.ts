@@ -1,4 +1,8 @@
 /**
+ * @fileoverview Mensajes de progreso humano-legibles por nodo MDD.
+ */
+
+/**
  * Mensajes de progreso MDD en tiempo pasado: se emiten cuando el nodo LangGraph ya terminó.
  */
 export const MDD_NODE_PROGRESS_MESSAGE: Record<string, string> = {

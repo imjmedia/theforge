@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo arquitecto de seguridad — genera especificaciones de seguridad.
+ */
+
 import { z } from "zod";
 import type { MddSeguridadItem } from "../state/mdd-structured.schema.js";
 import { mddSeguridadItemSchema } from "../state/mdd-structured.schema.js";

@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Invocación de herramientas estructuradas para agentes MDD.
+ */
+
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 // bindTools existe en ChatOpenAI / ChatGoogle; el tipo base no siempre lo declara.
 import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";

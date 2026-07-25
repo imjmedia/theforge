@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo merger §1 — fusiona contenido de sección 1 en el documento principal.
+ */
+
 import type { MDDStateType } from "../state/index.js";
 import { logMddNodeOutput, mergeSection1IntoDraft } from "../utils/mdd-sanitize.js";
 

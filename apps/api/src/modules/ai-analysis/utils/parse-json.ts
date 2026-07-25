@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Parser JSON — extrae JSON de bloques markdown o texto plano.
+ */
+
 import type { z } from "zod";
 
 /**

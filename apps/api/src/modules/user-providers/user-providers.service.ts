@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Servicio central de proveedores LLM del usuario: resolución de runtime BYOK/tenant,
+ * gestión de settings ({@link UserAISettings}), CRUD de configuraciones personales, y catálogo de proveedores.
+ * Orden de resolución: instancia activa → tenant default → primera disponible → BYOK personal.
+ */
 import {
   BadRequestException,
   ForbiddenException,

@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo formateador de seguridad/integración — formatea secciones §6/§7.
+ */
+
 import type { MDDStateType } from "../state/index.js";
 import {
   fixJwtAlgorithmCoherence,

@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Validación de ideas de proyecto antes de generación DBGA.
+ */
+
 /** Mensaje NDJSON cuando la idea no alcanza para ejecutar el grafo DBGA. */
 export const INSUFFICIENT_DBGA_IDEA_MESSAGE =
   "Escribe tu dominio o idea de producto con más detalle (problema, usuarios o referencia de mercado). Un saludo no basta para generar el Benchmark.";

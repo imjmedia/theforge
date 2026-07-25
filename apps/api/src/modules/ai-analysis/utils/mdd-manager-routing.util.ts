@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo manager — orquesta el pipeline completo de generación MDD.
+ */
+
 import type { AuditorGapsState } from "../state/mdd-state.schema.js";
 
 const SECTION_AGENT_MAP: Array<{ pattern: RegExp; agent: string }> = [

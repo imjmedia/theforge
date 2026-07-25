@@ -1,4 +1,8 @@
 /**
+ * @fileoverview Integración de handoff-spec con IntegrationAgent.
+ */
+
+/**
  * IntegrationAgent — redactor node (Plan-then-Execute).
  *
  * NOTE: this is NOT a LangGraph StateGraph node. The handoff-spec.md is a *separate*

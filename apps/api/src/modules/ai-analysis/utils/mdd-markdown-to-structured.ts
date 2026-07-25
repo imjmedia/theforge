@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Conversión de MDD markdown a schema estructurado.
+ */
+
 import type { MddStructured } from "../state/mdd-structured.schema.js";
 import {
   mddIntegracionSubsectionSchema,

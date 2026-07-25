@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Pre-guardia del delivery gate MDD.
+ */
+
 import type { MddDeliveryGateResult } from "@theforge/shared-types";
 import { prepareMddForOutput } from "./mdd-prepare-output.js";
 import { validateMddForDelivery } from "./mdd-delivery-gate.util.js";

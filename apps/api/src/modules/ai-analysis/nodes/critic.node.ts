@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Utilidad del pipeline MDD/DBGA.
+ */
+
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage } from "@langchain/core/messages";
 import { CRITIC_PROMPT } from "../prompts/load-prompts.js";

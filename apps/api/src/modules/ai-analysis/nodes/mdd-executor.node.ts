@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo ejecutor — despacha y coordina generación de secciones MDD.
+ */
+
 import { Command } from "@langchain/langgraph";
 import type { MDDStateType } from "../state/index.js";
 

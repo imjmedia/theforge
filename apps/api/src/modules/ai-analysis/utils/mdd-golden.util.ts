@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Golden files de referencia para salidas MDD.
+ */
+
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 

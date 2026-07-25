@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo de consulta inicial — pregunta al usuario el tema/propósito del proyecto.
+ */
+
 import { Command, interrupt } from "@langchain/langgraph";
 import type { MDDStateType } from "../state/index.js";
 

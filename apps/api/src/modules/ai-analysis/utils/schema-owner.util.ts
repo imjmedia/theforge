@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Resolución de propiedad de campos de schema por agente.
+ */
+
 import type { MddStructured } from "../state/mdd-structured.schema.js";
 import { regenerateErDiagramFromSql } from "./mdd-diagram-suggestions.js";
 import {

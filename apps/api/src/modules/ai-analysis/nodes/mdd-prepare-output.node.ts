@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo preparador de salida — ensamblaje final del MDD completo.
+ */
+
 import type { MDDStateType } from "../state/index.js";
 import { prepareMddForOutput } from "../utils/mdd-prepare-output.js";
 import { validateMddForDelivery } from "../utils/mdd-delivery-gate.util.js";

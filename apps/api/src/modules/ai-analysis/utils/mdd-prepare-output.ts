@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo preparador de salida — ensamblaje final del MDD completo.
+ */
+
 import type { MddStructured } from "../state/mdd-structured.schema.js";
 import { repairInlineHorizontalRuleSectionBreaks } from "@theforge/shared-types";
 import { mddStructuredToMarkdown } from "../render/mdd-structured-to-markdown.js";

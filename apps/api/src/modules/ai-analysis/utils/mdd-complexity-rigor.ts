@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Mapeo complejidad→rigor: determina nivel de procesamiento MDD.
+ */
+
 import type { MddComplexityLevel } from "../state/mdd-state.schema.js";
 
 function level(cx: MddComplexityLevel | undefined): MddComplexityLevel {

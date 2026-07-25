@@ -1,3 +1,6 @@
+/**
+ * @fileoverview Selectores memoizados del store Workshop: detección de agentes ocupados, comparación de documentos.
+ */
 import { isWorkshopAgentsBusy } from "../../utils/workshopAgentsBusy";
 import { workshopDocumentBodiesEqual } from "../../utils/workshop-document-content.util";
 import type { WorkshopState } from "./workshop-state.types";

@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Controller REST de instancias de proveedor (tenant): CRUD para admin+.
+ * Endpoints: GET/POST/PUT/DELETE /provider-instances, GET /provider-instances/enabled.
+ */
 import {
   Body,
   Controller,

@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo de aprobación de plan — presenta el plan para aprobación del usuario.
+ */
+
 import { Command, interrupt } from "@langchain/langgraph";
 import type { MDDStateType } from "../state/index.js";
 

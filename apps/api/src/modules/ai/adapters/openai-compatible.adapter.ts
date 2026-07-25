@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Adapter OpenAI-compatible: traduce la interfaz {@link LLMProvider} a la API REST de OpenAI.
+ * Soporta OpenAI, OpenRouter, Groq y Cloudflare Workers AI mediante el SDK `openai`.
+ */
 import OpenAI from "openai";
 import type {
   LLMProvider,

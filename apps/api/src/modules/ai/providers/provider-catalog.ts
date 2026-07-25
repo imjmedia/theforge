@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Catálogo central de proveedores LLM: IDs, defaults, modelos por capacidad y metadata.
+ * Define {@link PROVIDER_IDS} (6 proveedores) y {@link PROVIDER_CATALOG_MAP} con entry completa por proveedor.
+ */
 export const PROVIDER_IDS = [
   "openrouter",
   "openai",

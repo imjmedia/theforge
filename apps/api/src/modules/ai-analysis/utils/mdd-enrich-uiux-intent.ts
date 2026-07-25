@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Enriquecimiento UI/UX del MDD con intents de diseño.
+ */
+
 import { extractSection3Body } from "./mdd-sanitize.js";
 import { mddExcludesWebUiSurface } from "./mdd-sanitize/internal.js";
 import {

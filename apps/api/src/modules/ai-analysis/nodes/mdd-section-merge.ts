@@ -1,4 +1,8 @@
 /**
+ * @fileoverview Utilidad de merge de secciones MDD — reemplaza o añade secciones.
+ */
+
+/**
  * Reemplaza una sección del MDD por título (ej. Seguridad, Integración) o la añade al final si no existe.
  * Evita duplicar secciones cuando Security/Integration se ejecutan en iteraciones o sobre un borrador ya completo.
  */

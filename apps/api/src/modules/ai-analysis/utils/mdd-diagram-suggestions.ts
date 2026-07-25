@@ -1,4 +1,8 @@
 /**
+ * @fileoverview Motor de sugerencias de diagramas según contenido MDD.
+ */
+
+/**
  * Detecta en qué secciones del MDD conviene añadir diagramas Mermaid (ER, estados, jerárquicos)
  * y genera bloques Mermaid basados en el contenido del documento.
  */

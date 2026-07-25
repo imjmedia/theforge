@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Linter SQL — valida snippets SQL en documentación.
+ */
+
 import { Parser } from "node-sql-parser";
 
 export interface SqlLintResult {

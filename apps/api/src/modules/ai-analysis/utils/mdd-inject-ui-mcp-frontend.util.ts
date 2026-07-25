@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Inyección de specs frontend desde MCP en el MDD.
+ */
+
 /** Etiqueta legible de la librería del MCP gráfico compatible activo. */
 export function formatUiMcpLibraryLabel(meta: {
   libraryName: string | null;

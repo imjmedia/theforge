@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo tail-parallel — ejecuta procesamiento paralelo final.
+ */
+
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { MDDStateType } from "../state/index.js";
 import { getMddDraftSummary } from "../utils/mdd-sanitize.js";

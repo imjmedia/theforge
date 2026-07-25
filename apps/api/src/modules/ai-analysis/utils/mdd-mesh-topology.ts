@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Formateo de directivas internas para comunicación entre agentes.
+ */
+
 import type { MDDStateType } from "../state/index.js";
 
 /**
