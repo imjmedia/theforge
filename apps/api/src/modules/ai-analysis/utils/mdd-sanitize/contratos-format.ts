@@ -176,6 +176,23 @@ export const CONTRATOS_HAS_ENDPOINTS =
 export const CONTRATOS_IS_PLACEHOLDER =
   /^\s*\(?\s*(Pendiente|Falta):\s*definir\s+endpoints/i;
 
+/** Párrafo completo del placeholder de §4 (Auditor / ensureContratosSection). */
+const CONTRATOS_LEADING_PLACEHOLDER_PARAGRAPH =
+  /^\s*\(?\s*(?:Pendiente|Falta):\s*definir\s+endpoints[\s\S]*?\)?\s*(?:\n|$)/i;
+
+/**
+ * Quita el párrafo "(Falta|Pendiente): definir endpoints…" del inicio de §4 cuando
+ * hay contenido real debajo (tabla, rutas, ```json). Evita que el placeholder bloquee
+ * validación y merge cuando el Arquitecto ya generó contratos parciales.
+ */
+export function stripLeadingContratosPlaceholder(body: string): string {
+  const trimmed = (body ?? "").trim();
+  if (!trimmed || !CONTRATOS_IS_PLACEHOLDER.test(trimmed)) return trimmed;
+  const rest = trimmed.replace(CONTRATOS_LEADING_PLACEHOLDER_PARAGRAPH, "").trim();
+  if (!rest || rest.length < 40) return trimmed;
+  return rest;
+}
+
 const SECTION4_CONTRATOS_HEADING_REGEX =
   /##\s*4\.\s*Contratos\s+de\s+API|##\s*3\.\s*Contratos\s+de\s+API|##\s*Contratos\s+de\s+API/i;
 
@@ -192,9 +209,15 @@ export function extractContratosSectionBody(draft: string): string | null {
 
 /** True si el cuerpo es placeholder o carece de endpoints/JSON reales. */
 export function isContratosPlaceholder(body: string | null | undefined): boolean {
-  if (!body || body.trim().length < MIN_CONTRATOS_LENGTH) return true;
-  if (CONTRATOS_IS_PLACEHOLDER.test(body)) return true;
-  return !CONTRATOS_HAS_ENDPOINTS.test(body);
+  const trimmed = (body ?? "").trim();
+  if (!trimmed || trimmed.length < MIN_CONTRATOS_LENGTH) return true;
+  const hasJsonContracts = /```json/i.test(trimmed);
+  // Stub del Auditor al inicio: sigue siendo placeholder aunque haya tabla journey debajo.
+  if (CONTRATOS_IS_PLACEHOLDER.test(trimmed) && !hasJsonContracts) return true;
+  const normalized = stripLeadingContratosPlaceholder(trimmed);
+  if (!normalized || normalized.length < MIN_CONTRATOS_LENGTH) return true;
+  if (CONTRATOS_IS_PLACEHOLDER.test(normalized)) return true;
+  return !CONTRATOS_HAS_ENDPOINTS.test(normalized);
 }
 
 /** True si §4 tiene contratos usables (endpoints o JSON y no es placeholder). */
@@ -637,7 +660,8 @@ export function repairStrayFencesInContratosTable(body: string): string {
  * Envuelve JSON minificado (líneas largas sin saltos) en bloques ```json con pretty-print.
  */
 export function formatContratosBody(body: string): string {
-  let normalized = repairStrayFencesInContratosTable(body);
+  let normalized = stripLeadingContratosPlaceholder(body);
+  normalized = repairStrayFencesInContratosTable(normalized);
   normalized = splitHeaderAndSeparatorOnSameLine(normalized);
   normalized = deduplicateTableSeparators(normalized);
   normalized = convertListWithPipesToMarkdownTable(normalized);

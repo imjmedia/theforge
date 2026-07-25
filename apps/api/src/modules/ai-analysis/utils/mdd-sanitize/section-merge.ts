@@ -8,6 +8,7 @@ import { isMddTailParallelEnabled } from "../mdd-tail-parallel.config.js";
 import { stripBrdPasteNoiseFromSection1 } from "../mdd-section1-cleanup.util.js";
 import {
   isContratosSectionRegression,
+  stripLeadingContratosPlaceholder,
 } from "./contratos-format.js";
 
 const RE_SECTION6_H2_LINE = /^##\s+(?:6\.\s+)?Seguridad/i;
@@ -850,7 +851,8 @@ export function validateMddStructure(draft: string): ValidateMddStructureResult 
     if (!sectionFound) missingSections.push(SECTION_HEADINGS_CANONICAL[i]);
   }
 
-  const section4Body = getSectionBody(trimmed, /##\s*4\.\s*Contratos\s+de\s+API|##\s*3\.\s*Contratos\s+de\s+API|##\s*Contratos\s+de\s+API/i);
+  const section4BodyRaw = getSectionBody(trimmed, /##\s*4\.\s*Contratos\s+de\s+API|##\s*3\.\s*Contratos\s+de\s+API|##\s*Contratos\s+de\s+API/i);
+  const section4Body = section4BodyRaw ? stripLeadingContratosPlaceholder(section4BodyRaw) : null;
   const section3HasPayloads =
     !!section4Body &&
     section4Body.length >= 100 &&

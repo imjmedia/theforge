@@ -31,6 +31,12 @@
  * produce el mismo output siempre.
  */
 
+import {
+  CONTRATOS_HAS_ENDPOINTS,
+  isContratosPlaceholder,
+  isContratosSubstantial,
+} from "../ai-analysis/utils/mdd-sanitize/contratos-format.js";
+
 export type MddSection = {
   /** Texto literal del heading, ej. "## 4. Contratos de API". */
   heading: string;
@@ -264,15 +270,25 @@ export function mergeMddBySection(
       // sin protección secciones como §4 "Contratos de API" con 30 chars).
       const existingBodyLen = existingSec.body.trim().length;
       const incomingBodyLen = incomingSec.body.trim().length;
+      const existingBody = existingSec.body.trim();
+      const incomingBody = incomingSec.body.trim();
+      const preferIncomingOverContratosStub =
+        key === "§4" &&
+        isContratosPlaceholder(existingBody) &&
+        (/```json/i.test(incomingBody) ||
+          (isContratosSubstantial(incomingBody) && CONTRATOS_HAS_ENDPOINTS.test(incomingBody)));
       if (
-        incomingBodyLen === 0 ||
-        (existingBodyLen > 0 && incomingBodyLen * 100 < existingBodyLen * 20)
+        preferIncomingOverContratosStub ||
+        !(
+          incomingBodyLen === 0 ||
+          (existingBodyLen > 0 && incomingBodyLen * 100 < existingBodyLen * 20)
+        )
       ) {
-        kept.push(existingSec.heading);
-        mergedSections.push(existingSec);
-      } else {
         replaced.push(incomingSec.heading);
         mergedSections.push(incomingSec);
+      } else {
+        kept.push(existingSec.heading);
+        mergedSections.push(existingSec);
       }
       seenKeys.add(key);
     } else {

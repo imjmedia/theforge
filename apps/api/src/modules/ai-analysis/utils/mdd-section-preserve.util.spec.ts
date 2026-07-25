@@ -75,6 +75,45 @@ describe("draftHasSubstantialSection2/3/4", () => {
     const placeholder = BASE.replace(S3_BODY, "(Pendiente: Arquitecto)");
     assert.equal(draftHasSubstantialSection3(placeholder), false);
   });
+
+  it("false con stub Falta en §4 aunque tenga tabla journey", () => {
+    const faltaStub = BASE.replace(
+      S4_BODY,
+      `(Falta: definir endpoints con request/response en JSON. El Auditor ha detectado este hueco.)
+
+| Método | Ruta |
+| GET | /api/v1/health | health |`,
+    );
+    assert.equal(draftHasSubstantialSection4(faltaStub), false);
+  });
+
+  it("preserve §4: acepta contratos nuevos del Arquitecto sobre stub Falta+tabla", () => {
+    const baseline = BASE.replace(
+      S4_BODY,
+      `(Falta: definir endpoints con request/response en JSON. El Auditor ha detectado este hueco.)
+
+| Método | Ruta |
+| GET | /api/v1/old | legacy |`,
+    );
+    const architectS4 = `### POST /api/v1/auth/login
+
+\`\`\`json
+{"email":"string","password":"string"}
+\`\`\`
+
+### GET /api/v1/portfolios
+
+\`\`\`json
+{"items":[]}
+\`\`\`
+
+${"| GET | /api/v1/extra | extra |\n".repeat(20)}`;
+    const merged = BASE.replace(S4_BODY, architectS4);
+    const out = preserveSection4IfSubstantial(baseline, merged);
+    assert.match(out, /POST \/api\/v1\/auth\/login/);
+    assert.doesNotMatch(out, /Falta: definir endpoints/i);
+    assert.doesNotMatch(out, /\/api\/v1\/old/);
+  });
 });
 
 describe("preserveSection2/3/4IfSubstantial", () => {

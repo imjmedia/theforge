@@ -5,6 +5,7 @@ import {
   isContratosSectionRegression,
   isContratosSubstantial,
   repairStrayFencesInContratosTable,
+  stripLeadingContratosPlaceholder,
 } from "./contratos-format.js";
 
 describe("isContratosSectionRegression", () => {
@@ -27,6 +28,27 @@ describe("isContratosSectionRegression", () => {
   it("countContratosEndpointRows cuenta métodos HTTP", () => {
     assert.equal(countContratosEndpointRows("GET /a\nPOST /b\n"), 2);
     assert.equal(countContratosEndpointRows("| GET | /a |\n| POST | /b |\n"), 2);
+  });
+
+  it("stripLeadingContratosPlaceholder quita stub cuando hay tabla debajo", () => {
+    const raw = `(Falta: definir endpoints con request/response en JSON. El Auditor ha detectado este hueco.)
+
+| Método | Ruta |
+| GET | /api/v1/health |`;
+    const stripped = stripLeadingContratosPlaceholder(raw);
+    assert.doesNotMatch(stripped, /Falta: definir endpoints/i);
+    assert.match(stripped, /GET \| \/api\/v1\/health/);
+  });
+
+  it("Falta + tabla journey sin json no es sustancial (evita bucle preserve)", () => {
+    const stub =
+      `(Falta: definir endpoints con request/response en JSON. El Auditor ha detectado este hueco; en la siguiente iteración se deben completar los contratos.)
+
+### Endpoints journey core
+
+| Método | Ruta | Descripción |
+| GET | /api/v1/strategies | list |`;
+    assert.equal(isContratosSubstantial(stub), false);
   });
 });
 

@@ -2,7 +2,10 @@
  * @fileoverview Preservación de secciones aprobadas durante regeneración MDD.
  */
 
-import { extractContratosSectionBody } from "./mdd-sanitize/contratos-format.js";
+import {
+  extractContratosSectionBody,
+  isContratosSubstantial,
+} from "./mdd-sanitize/contratos-format.js";
 import {
   extractArquitecturaSectionBody,
   extractSection3Body,
@@ -53,12 +56,9 @@ export function draftHasSubstantialSection3(draft: string): boolean {
   return sectionBodyIsSubstantial(body, MIN_SUBSTANTIAL_SECTION3_BODY_LEN);
 }
 
-/** True si §4 tiene cuerpo real (no placeholder del pipeline). */
+/** True si §4 tiene contratos reales (endpoints/JSON; no stub «Falta: definir endpoints…»). */
 export function draftHasSubstantialSection4(draft: string): boolean {
-  return sectionBodyIsSubstantial(
-    extractContratosSectionBody((draft ?? "").trim()),
-    MIN_SUBSTANTIAL_SECTION4_BODY_LEN,
-  );
+  return isContratosSubstantial(extractContratosSectionBody((draft ?? "").trim()));
 }
 
 /** True si §5 tiene cuerpo real (no placeholder del pipeline). */
@@ -149,14 +149,25 @@ export function preserveSection3IfSubstantial(baselineDraft: string, currentDraf
 }
 
 export function preserveSection4IfSubstantial(baselineDraft: string, currentDraft: string): string {
-  return preserveSectionBodyIfSubstantial(
-    baselineDraft,
-    currentDraft,
-    extractContratosSectionBody,
-    replaceMddSection4Body,
-    MIN_SUBSTANTIAL_SECTION4_BODY_LEN,
-    "§4",
-  );
+  const baseline = (baselineDraft ?? "").trim();
+  const current = (currentDraft ?? "").trim();
+  if (!baseline || !current) return current || baseline;
+
+  const prevBody = extractContratosSectionBody(baseline);
+  if (!isContratosSubstantial(prevBody)) return current;
+
+  const curBody = extractContratosSectionBody(current);
+  const curSubstantial = isContratosSubstantial(curBody);
+  const curShorter = (curBody?.length ?? 0) < (prevBody?.length ?? 0) * 0.5;
+  if (curSubstantial && !curShorter) return current;
+
+  const restored = replaceMddSection4Body(current, prevBody!);
+  if (restored !== current) {
+    console.warn(
+      `[MDD:SectionPreserve] §4 restaurada (${curBody?.length ?? 0}→${prevBody!.length} chars)`,
+    );
+  }
+  return restored;
 }
 
 /**

@@ -34,6 +34,7 @@ export {
   normalizeContratosTableSummary,
   repairDisplacedJsonBracesInContratos,
   repairNestedJsonFencesInDraft,
+  stripLeadingContratosPlaceholder,
 } from "./mdd-sanitize/contratos-format.js";
 export {
   buildManifestFromIdentifiedInfra,

@@ -140,4 +140,58 @@ Argon2id. JWT RS256.
     // incoming shrunk (~40% de existing) → section-merge, no full-replace
     assert.equal(r.stats.mode, "section-merge");
   });
+
+  it("§4: incoming sustancial reemplaza existing con stub Falta+tabla (ratio <20%)", () => {
+    const existing = `# MDD
+## 1. Contexto
+Contexto del proyecto con suficiente detalle para pruebas de merge.
+
+## 2. Arquitectura y Stack
+NestJS y PostgreSQL.
+
+## 3. Modelo de Datos
+\`\`\`sql
+CREATE TABLE tenants (id UUID PRIMARY KEY);
+\`\`\`
+
+## 4. Contratos de API
+(Falta: definir endpoints con request/response en JSON. El Auditor ha detectado este hueco; en la siguiente iteración se deben completar los contratos.)
+
+| Método | Ruta | Descripción |
+| GET | /api/v1/strategies | list |
+| POST | /api/v1/strategies | create |
+${"| GET | /api/v1/extra | filler |\n".repeat(30)}
+
+## 5. Lógica y Edge Cases
+Reglas BDD.
+
+## 6. Seguridad
+JWT.
+
+## 7. Infraestructura
+Docker.
+`;
+    const incoming = existing.replace(
+      /## 4\. Contratos de API[\s\S]*?(?=## 5\.)/,
+      `## 4. Contratos de API
+
+### POST /api/v1/auth/login
+
+\`\`\`json
+{"email":"a@b.c","password":"secret"}
+\`\`\`
+
+### GET /api/v1/portfolios
+
+\`\`\`json
+{"items":[]}
+\`\`\`
+
+`,
+    );
+    const r = mergeMddBySection(existing, incoming);
+    assert.ok(r.stats.sectionsReplaced.some((h) => h.includes("4. Contratos")));
+    assert.match(r.content, /POST \/api\/v1\/auth\/login/);
+    assert.doesNotMatch(r.content, /Falta: definir endpoints/i);
+  });
 });
