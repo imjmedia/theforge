@@ -1,3 +1,4 @@
+import { corpusExcludesDashboardWeb, corpusExcludesMultiTenantSaaS } from "../../../engine/mdd-brd-scope.util.js";
 import { extractMddSectionBody } from "./section-body.util.js";
 import {
   formatSqlBlockWithNewlines,
@@ -98,7 +99,9 @@ export function ensureTechnicalMetadataBlockInDraft(draft: string): string {
   const tags: string[] = [];
   if (/Argon2|JWT|MFA|TOTP|RS256|oauth|seguridad/i.test(draft)) tags.push("[high_security]");
   if (/webhook|api externa|terceros|integraci[oó]n externa/i.test(draft)) tags.push("[external_api]");
-  if (/tenant|multi.?tenant/i.test(draft)) tags.push("[multi_tenant]");
+  if (/tenant|multi.?tenant/i.test(draft) && !corpusExcludesMultiTenantSaaS(draft)) {
+    tags.push("[multi_tenant]");
+  }
   if (/docker|ci\/cd|pipeline|deploy|github actions/i.test(draft)) tags.push("[cicd_pipeline]");
   if (/websocket|real.?time|streaming/i.test(draft)) tags.push("[real_time]");
   if (tags.length === 0) tags.push("[high_security]");
@@ -121,6 +124,7 @@ export function mddExcludesWebUiSurface(mddMarkdown: string): boolean {
   const sec1Body = extractContextSectionBody(mddMarkdown);
   const sec2 = extractMddSectionBody(mddMarkdown, "## 2. Arquitectura y Stack");
   const authority = [sec1Body, sec2?.body].filter(Boolean).join("\n");
+  if (corpusExcludesDashboardWeb(authority)) return true;
   return NO_UI_SURFACE_FOR_BANNER.test(authority);
 }
 
@@ -609,13 +613,13 @@ export function replaceSections2To5InDraft(
 
 const OUTPUT_PREFIX_LEN = 200;
 
-/** Log resumido de la salida de un nodo (len, section2, prefijo) para depurar pipeline MDD. */
+/** Log resumido de la salida de un nodo (len, §3 status, prefijo) para depurar pipeline MDD. */
 export function logMddNodeOutput(nodeName: string, draft: string): void {
   const trimmed = (draft ?? "").trim();
   const sum = getMddDraftSummary(trimmed);
   const prefix = trimmed.slice(0, OUTPUT_PREFIX_LEN).replace(/\s+/g, " ").trim();
   const suffix = trimmed.length > OUTPUT_PREFIX_LEN ? "…" : "";
   console.log(
-    `[MDD:${nodeName}] output len=${sum.length} section2=${sum.section2} prefix=${JSON.stringify(prefix + suffix)}`
+    `[MDD:${nodeName}] output len=${sum.length} section3=${sum.section3} prefix=${JSON.stringify(prefix + suffix)}`
   );
 }

@@ -107,8 +107,8 @@ export function workshopFrozenTabChatSystemNote(tab: string): string {
   return (
     `[Política SSOT — documento congelado]\n` +
     `El panel activo (${tab}) es entregable derivado del MDD. ` +
-    `Responde en chat (exploración, preguntas, sugerencias) pero **NO** devuelvas ` +
-    `markdown con delimitador ---FIN_*--- ni afirmes que persististe cambios en el panel. ` +
+    `El chat de edición está deshabilitado en esta pestaña. ` +
+    `NO devuelvas markdown con delimitador ---FIN_*--- ni afirmes que persististe cambios en el panel. ` +
     `Indica que debe editarse el MDD o documentos upstream, o regenerar vía cascada.`
   );
 }

@@ -1,5 +1,6 @@
 import type { MddDeliveryGateResult } from "@theforge/shared-types";
 import { isAutoRepairableDeliveryGateWarning } from "../../engine/mdd-quality-audit.util.js";
+import type { AuditorGapsState } from "../state/mdd-state.schema.js";
 import { getSection6Or7Range } from "./mdd-sanitize.js";
 
 /** Máximo de reintentos automáticos del gate de entrega (Fase 4). */
@@ -25,7 +26,32 @@ export type DeliveryGateFixTarget =
 export type ResolveDeliveryGateFixTargetOptions = {
   /** Pipeline HIGH §2→§3→§4: enruta al nodo acotado según blockers. */
   splitArchitectPipeline?: boolean;
+  /** Fingerprint de blockers placeholder del intento anterior (circuit breaker). */
+  previousPlaceholderFingerprint?: string;
+  /** Intento actual del auto-loop (1-based tras incremento en prepare_output). */
+  deliveryGateAttempt?: number;
 };
+
+const PLACEHOLDER_BLOCKER_RE =
+  /placeholder del pipeline|Pendiente:\s*Arquitecto|está en \(Pendiente\)/i;
+
+/** Fingerprint estable de blockers placeholder (misma sección/defecto repetido). */
+export function fingerprintPlaceholderBlockers(blockers: string[]): string {
+  return blockers
+    .filter((b) => PLACEHOLDER_BLOCKER_RE.test(b))
+    .map((b) => b.replace(/\s+/g, " ").trim().toLowerCase())
+    .sort()
+    .join("||");
+}
+
+/** True si los blockers placeholder son idénticos al intento anterior. */
+export function hasRepeatedPlaceholderBlockers(
+  previousFingerprint: string | undefined,
+  blockers: string[],
+): boolean {
+  const fp = fingerprintPlaceholderBlockers(blockers);
+  return fp.length > 0 && fp === (previousFingerprint ?? "");
+}
 
 const SECTION5_BLOCKER_RE = /5\.\s*Lógica\s+y\s*Edge\s+Cases/i;
 const INTEGRATION_BLOCKER_RE =
@@ -69,12 +95,96 @@ function resolveSplitArchitectFixTarget(items: string[]): DeliveryGateFixTarget 
   return "data_model";
 }
 
+function gapTextTargetsSection5(text: string): boolean {
+  return /§?\s*5\b|secci[oó]n\s*5|5\.\s*l[oó]gica\s+y\s+edge/i.test(text);
+}
+
+/** True si algún blocker de sustancia apunta a §5 (insuficiente, placeholder, pendiente). */
+export function gateHasSection5SubstanceBlocker(blockers: string[]): boolean {
+  return blockers.some((b) => SECTION5_BLOCKER_RE.test(b));
+}
+
+/**
+ * Evita enrutar a scoped §2–§4 mientras §5 sigue bloqueado por sustancia.
+ * Gate blockers > texto de gaps del Auditor (p. ej. contratos en warnings).
+ */
+export function guardFixTargetAgainstSection5Blockers(
+  blockers: string[],
+  target: DeliveryGateFixTarget,
+): DeliveryGateFixTarget {
+  if (!gateHasSection5SubstanceBlocker(blockers)) return target;
+  if (
+    target === "api_contracts" ||
+    target === "data_model" ||
+    target === "stack_architect" ||
+    target === "software_architect"
+  ) {
+    return "section5";
+  }
+  return target;
+}
+
+/** Resuelve fixTarget: blockers de sustancia primero; warnings solo si no hay blockers. */
+export function resolveDeliveryGateFixTargetFromGate(
+  blockers: string[],
+  warnings: string[],
+  options?: ResolveDeliveryGateFixTargetOptions,
+): DeliveryGateFixTarget {
+  if (blockers.length > 0) {
+    return guardFixTargetAgainstSection5Blockers(
+      blockers,
+      resolveDeliveryGateFixTarget(blockers, options),
+    );
+  }
+  const autoWarnings = warnings.filter((w) => isAutoRepairableDeliveryGateWarning(w));
+  if (autoWarnings.length > 0) {
+    return resolveDeliveryGateFixTarget(autoWarnings, options);
+  }
+  return "software_architect";
+}
+
+/** Convierte gaps del Auditor en fixTarget acotado (§5, data_model, integration, …). */
+export function mapAuditorGapsToFixTarget(
+  gaps: AuditorGapsState,
+  options?: ResolveDeliveryGateFixTargetOptions,
+): DeliveryGateFixTarget {
+  const items: string[] = [];
+  for (const g of gaps.critical_gaps) {
+    const sections = (g.sections ?? []).join(" ");
+    items.push(`${sections} ${g.issue} ${g.fix}`.trim());
+  }
+  for (const e of gaps.syntax_errors) {
+    items.push(e);
+  }
+  if (items.length === 0) return "software_architect";
+  if (
+    gaps.syntax_errors.length === 0 &&
+    gaps.critical_gaps.length > 0 &&
+    gaps.critical_gaps.every((g) =>
+      gapTextTargetsSection5(`${(g.sections ?? []).join(" ")} ${g.issue} ${g.fix}`),
+    )
+  ) {
+    return "section5";
+  }
+  return resolveDeliveryGateFixTarget(items, options);
+}
+
 export function resolveDeliveryGateFixTarget(
   blockers: string[],
   options?: ResolveDeliveryGateFixTargetOptions,
 ): DeliveryGateFixTarget {
   const items = blockers.length > 0 ? blockers : [];
   const text = items.join(" ");
+
+  // Circuit breaker: mismos placeholders §2–§4 dos veces → pasada scoped barata (no clarifier/stack completo).
+  if (
+    options?.splitArchitectPipeline &&
+    (options.deliveryGateAttempt ?? 0) >= 2 &&
+    hasRepeatedPlaceholderBlockers(options.previousPlaceholderFingerprint, items) &&
+    items.some((b) => SECTION2_BLOCKER_RE.test(b) || SECTION3_BLOCKER_RE.test(b) || SECTION4_BLOCKER_RE.test(b))
+  ) {
+    return resolveSplitArchitectFixTarget(items);
+  }
 
   // Prioridad alta: si TODOS los blockers son sólo sobre §5 → section5
   // (más eficiente que regenerar §2-§5 vía software_architect).
@@ -113,6 +223,9 @@ export function resolveDeliveryGateFixTarget(
       : "software_architect";
   }
   if (options?.splitArchitectPipeline && architectScore > 0) {
+    return resolveSplitArchitectFixTarget(items);
+  }
+  if (options?.splitArchitectPipeline && items.some((b) => PLACEHOLDER_BLOCKER_RE.test(b))) {
     return resolveSplitArchitectFixTarget(items);
   }
   return INTEGRATION_BLOCKER_RE.test(text) ? "integration" : "software_architect";

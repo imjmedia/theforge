@@ -64,6 +64,7 @@ export class AiAnalysisController {
       ...metrics,
       precisionBreakdown,
       auditTrail: snapshot?.auditTrail,
+      mddAgentEditLog: snapshot?.mddAgentEditLog,
       lastAuditAt: snapshot?.updatedAt,
     };
   }
@@ -89,6 +90,7 @@ export class AiAnalysisController {
       ...metrics,
       precisionBreakdown,
       auditTrail: snapshot?.auditTrail,
+      mddAgentEditLog: snapshot?.mddAgentEditLog,
       lastAuditAt: snapshot?.updatedAt,
     };
   }

@@ -1170,8 +1170,14 @@ export function deduplicateUatSections(draft: string): string {
   const match = sec5.body.match(uatHeadingRe);
   if (!match || /Ver\s+§1/i.test(match[2] ?? "")) return draft;
 
+  const bodyWithoutUat = sec5.body.replace(uatHeadingRe, "").trim();
+  if (bodyWithoutUat.length < 100 && sec5.body.length >= 200) {
+    return draft;
+  }
+
   const replacement = `${match[1]}\n- Ver §1 (Criterios UAT / aceptación).\n`;
   const newBody = sec5.body.replace(uatHeadingRe, replacement);
+  if (newBody.length < 100 && sec5.body.length >= 200) return draft;
   if (newBody === sec5.body) return draft;
   return draft.slice(0, sec5.start) + newBody + draft.slice(sec5.end);
 }

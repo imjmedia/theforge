@@ -9,7 +9,7 @@ import { applyPreDeliveryGateFixes, validateMddStructure } from "../utils/mdd-sa
 import { getInternalDirectivesContext } from "../utils/mdd-mesh-topology.js";
 import { auditorConstitutionRigorAppendix } from "../utils/mdd-complexity-rigor.js";
 import { domainInventoryPromptBlock } from "../utils/mdd-domain-prompt.util.js";
-import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
+import { extractLlmText, extractLlmToolCalls, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
 import {
   buildAuditorFeedbackFromGaps,
   MDD_AUDIT_PASS_THRESHOLD,
@@ -19,6 +19,7 @@ import {
 import { buildMddAuditorDeepContext } from "../utils/mdd-auditor-context.util.js";
 import type { AuditorGapsState } from "../state/mdd-state.schema.js";
 import { z } from "zod";
+import { draftIsSubstantialForScopedRepair } from "../utils/mdd-section-preserve.util.js";
 
 const AUDIT_PASS_THRESHOLD = MDD_AUDIT_PASS_THRESHOLD;
 
@@ -59,6 +60,22 @@ const auditorOutputSchema = z.object({
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Auditor] ${msg}`, ...args);
 const MAX_TOOL_LOOPS = 3;
+
+/** Auditor califica (score/gaps); el auto-loop lo decide prepare_output vía gate blockers. */
+function resolveAuditorDecisionForSubstantialDraft(
+  draft: string,
+  baseDecision: "done" | "clarifier" | "blackboard",
+): "done" | "clarifier" | "blackboard" {
+  if (baseDecision === "blackboard") return "blackboard";
+  if (draftIsSubstantialForScopedRepair(draft)) {
+    LOG(
+      "draft sustancial (%s chars) → score-only (gaps informativos; gate en prepare_output)",
+      draft.length,
+    );
+    return "done";
+  }
+  return baseDecision;
+}
 
 function buildToolsByName(tools: StructuredToolInterface[]): Record<string, StructuredToolInterface> {
   const byName: Record<string, StructuredToolInterface> = {};
@@ -118,7 +135,7 @@ function buildStructuralAuditorResult(
     auditorFeedback: feedback,
     auditorGaps,
     auditorDecision: decision,
-    mddIteration: iteration,
+    mddIteration: decision === "clarifier" ? iteration : (state.mddIteration ?? 0),
     delegateTarget: undefined,
     sectionsToRun: undefined,
     acceptedProposalDirective: undefined,
@@ -164,16 +181,21 @@ export function createMddAuditorNode(
 
       let lastContent = "";
       let loopCount = 0;
+      let emptyFinalAttempts = 0;
+      const MAX_EMPTY_FINAL_ATTEMPTS = 2;
 
       while (loopCount < MAX_TOOL_LOOPS) {
-        // Retry sólo en la última iteración del tool-loop (cuando ya no hay
-        // tool_calls y se genera la respuesta JSON final). Iteraciones
-        // intermedias con contenido vacío son OK — el LLM sigue invocando
-        // tools hasta agotar el loop. Ver CHANGELOG [Unreleased] → Fixed →
-        // "Auditor devuelve LLM vacío".
         const isFinalIteration = loopCount === MAX_TOOL_LOOPS - 1;
-        const response = isFinalIteration
-          ? await invokeLlmWithRetry(llmWithTools, messages, { tag: "Auditor:tools" })
+        const useRetry =
+          isFinalIteration ||
+          (loopCount > 0 && emptyFinalAttempts > 0 && loopCount < MAX_TOOL_LOOPS - 1);
+        const response = useRetry
+          ? await invokeLlmWithRetry(llmWithTools, messages, {
+              tag: "Auditor:tools",
+              maxAttempts: isFinalIteration ? 3 : 2,
+              acceptToolCallsWithoutContent: true,
+              isResponseValid: (text) => text.trim().length > 0,
+            })
           : await llmWithTools.invoke(messages);
         if (!response) {
           LOG("tool-loop LLM sin respuesta tras reintentos (iter=%s); saliendo del loop", loopCount);
@@ -182,9 +204,26 @@ export function createMddAuditorNode(
         }
         const aiMsg = response as AIMessage;
         lastContent = extractLlmText(aiMsg);
-
-        const toolCalls = aiMsg.tool_calls ?? [];
-        if (toolCalls.length === 0) break;
+        const toolCalls = extractLlmToolCalls(aiMsg);
+        if (toolCalls.length === 0) {
+          if (!lastContent.trim()) {
+            emptyFinalAttempts += 1;
+            if (emptyFinalAttempts >= MAX_EMPTY_FINAL_ATTEMPTS) {
+              LOG(
+                "tool-loop: contenido vacío sin tool_calls tras %s intentos (iter=%s); abortando loop",
+                emptyFinalAttempts,
+                loopCount,
+              );
+              break;
+            }
+            LOG(
+              "tool-loop: contenido vacío sin tool_calls (iter=%s); reintentando iteración",
+              loopCount,
+            );
+            continue;
+          }
+          break;
+        }
 
         const toolMessages: ToolMessage[] = [];
         for (const tc of toolCalls) {
@@ -274,27 +313,36 @@ export function createMddAuditorNode(
 
       const hasConflict = auditorGaps.critical_gaps.some((g) => g.issue.includes("[CONFLICTO]"));
 
-      const decision = hasConflict
+      const rawDecision = hasConflict
         ? ("blackboard" as const)
         : score >= AUDIT_PASS_THRESHOLD &&
             validation.missingSections.length === 0 &&
             auditorGaps.critical_gaps.length === 0
           ? ("done" as const)
           : ("clarifier" as const);
-      const iteration = (state.mddIteration ?? 0) + (decision === "clarifier" ? 1 : 0);
+      const decision = resolveAuditorDecisionForSubstantialDraft(draft, rawDecision);
+      const currentIteration = state.mddIteration ?? 0;
+      const iteration = currentIteration + (decision === "clarifier" ? 1 : 0);
       const finalFeedback =
         feedback ||
         (score < AUDIT_PASS_THRESHOLD
           ? "Faltan: modelo de datos/entidades con tipos y relaciones, contratos u operaciones con entrada/salida, decisiones de seguridad, estrategia de infraestructura/despliegue. Genera preguntas para cubrir estos huecos."
           : undefined);
 
-      LOG("ok score=%s decision=%s iteration=%s gaps=%s", score, decision, iteration, auditorGaps.critical_gaps.length);
+      LOG(
+        "ok score=%s decision=%s iteration=%s gaps=%s scoreOnly=%s",
+        score,
+        decision,
+        decision === "clarifier" ? iteration : currentIteration,
+        auditorGaps.critical_gaps.length,
+        draftIsSubstantialForScopedRepair(draft),
+      );
       return {
         auditorScore: score,
         auditorFeedback: finalFeedback,
         auditorGaps,
         auditorDecision: decision,
-        mddIteration: iteration,
+mddIteration: decision === "clarifier" ? iteration : (state.mddIteration ?? 0),
         delegateTarget: undefined,
         sectionsToRun: undefined,
         acceptedProposalDirective: undefined,

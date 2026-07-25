@@ -16,7 +16,7 @@ export type LongRunningBullmqWorkerOptions = Pick<
 >;
 
 export function longRunningBullmqWorkerOptions(
-  overrides?: Pick<WorkerOptions, "concurrency">,
+  overrides?: Pick<WorkerOptions, "concurrency" | "maxStalledCount">,
 ): LongRunningBullmqWorkerOptions {
   return {
     lockDuration: LONG_JOB_LOCK_DURATION_MS,

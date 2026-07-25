@@ -12,6 +12,7 @@ import {
   injectMissingJourneyEndpointsIntoMddSection4,
 } from "./mdd-journey-section4.util.js";
 import { annotateJustifiedPlatformTablesInMdd } from "./platform-table-justify.util.js";
+import { stripUnjustifiedPlatformTablesFromMdd } from "./mdd-platform-table-strip.util.js";
 import { rebuildDomainInventoryPreferringBrd } from "./domain-inventory-persist.util.js";
 import {
   mergeDbgaCoreGapsIntoMdd,
@@ -25,6 +26,7 @@ export type MddSsotRepairResult = {
   uatInjected: string[];
   section4Injected: string[];
   platformAnnotated: string[];
+  platformStripped: string[];
   remainingGaps: string[];
 };
 
@@ -63,6 +65,14 @@ export function reconcileMddSsotBeforeDeliveryGate(
     section3Injected.push(...domain.injected);
   }
 
+  const stripped = stripUnjustifiedPlatformTablesFromMdd(markdown, {
+    brdMarkdown: params.brdMarkdown,
+    dbgaMarkdown: params.dbgaMarkdown,
+    specMarkdown: params.specMarkdown,
+    inventory: inventory ?? undefined,
+  });
+  markdown = stripped.markdown;
+
   const platform = annotateJustifiedPlatformTablesInMdd(markdown, {
     brdMarkdown: params.brdMarkdown,
     dbgaMarkdown: params.dbgaMarkdown,
@@ -81,6 +91,8 @@ export function reconcileMddSsotBeforeDeliveryGate(
   const section4Report = checkMddJourneySection4Gaps({
     mddMarkdown: markdown,
     inventory: inventory ?? undefined,
+    brdMarkdown: params.brdMarkdown,
+    dbgaMarkdown: params.dbgaMarkdown,
   });
   const section4Repair = injectMissingJourneyEndpointsIntoMddSection4(
     markdown,
@@ -102,6 +114,8 @@ export function reconcileMddSsotBeforeDeliveryGate(
   const section4After = checkMddJourneySection4Gaps({
     mddMarkdown: markdown,
     inventory: inventory ?? undefined,
+    brdMarkdown: params.brdMarkdown,
+    dbgaMarkdown: params.dbgaMarkdown,
   });
 
   return {
@@ -110,6 +124,7 @@ export function reconcileMddSsotBeforeDeliveryGate(
     uatInjected: uatRepair.injected,
     section4Injected: section4Repair.injected,
     platformAnnotated: platform.annotated,
+    platformStripped: stripped.stripped,
     remainingGaps: [...invAfter.gaps, ...uatAfter.gaps, ...section4After.gaps],
   };
 }
@@ -121,6 +136,11 @@ export function collectMddSsotGateGaps(params: {
   inventory?: DomainInventory | null;
 }): string[] {
   const uat = checkBrdMddUatConformance(params);
-  const section4 = checkMddJourneySection4Gaps(params);
+  const section4 = checkMddJourneySection4Gaps({
+    mddMarkdown: params.mddMarkdown,
+    inventory: params.inventory,
+    brdMarkdown: params.brdMarkdown,
+    dbgaMarkdown: params.dbgaMarkdown,
+  });
   return [...uat.gaps, ...section4.gaps];
 }

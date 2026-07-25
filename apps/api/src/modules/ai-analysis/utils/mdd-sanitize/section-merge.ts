@@ -5,6 +5,7 @@ import {
 } from "@theforge/shared-types";
 import { collectMddQualityIssues } from "../../../engine/mdd-quality-audit.util.js";
 import { isMddTailParallelEnabled } from "../mdd-tail-parallel.config.js";
+import { stripBrdPasteNoiseFromSection1 } from "../mdd-section1-cleanup.util.js";
 import {
   isContratosSectionRegression,
 } from "./contratos-format.js";
@@ -88,25 +89,40 @@ export function deduplicateMddDraftSections(draft: string): string {
 }
 
 const CONTEXTO_HEADING = "## 1. Contexto y alcance";
-const CONTEXTO_HEADINGS_EXTRACT = ["## 1. Contexto y alcance", "## 1. Contexto", "## Contexto y alcance"];
+
+/**
+ * Localiza el H2 de §1 sin tratar `## 1. Contexto` como prefijo de
+ * `## 1. Contexto y Alcance` (indexOf corto rompía el título y vaciaba el cuerpo).
+ * Case-insensitive; acepta "alcance" / "Alcance".
+ */
+export function findSection1HeadingSpan(
+  draft: string,
+): { headingStart: number; bodyStart: number } | null {
+  const re =
+    /(^|\n)(##\s*1\.\s*Contexto(?:\s+y\s+alcance)?|##\s*Contexto\s+y\s+alcance)[ \t]*(?=\n|$)/gi;
+  const m = re.exec(draft);
+  if (!m || m.index == null) return null;
+  const prefixLen = m[1]?.length ?? 0;
+  const headingStart = m.index + prefixLen;
+  const full = m[0];
+  const bodyStart = m.index + full.length;
+  return { headingStart, bodyStart };
+}
 
 /** Extrae el cuerpo de la sección "## 1. Contexto" (hasta el siguiente ## o fin). */
 export function extractContextSectionBody(draft: string): string | null {
-  for (const heading of CONTEXTO_HEADINGS_EXTRACT) {
-    const idx = draft.indexOf(heading);
-    if (idx === -1) continue;
-    const start = idx + heading.length;
-    const after = draft.slice(start).replace(/^\s*\n+/, "");
-    const nextHeading = after.search(/\n##\s+/);
-    const body = nextHeading !== -1 ? after.slice(0, nextHeading).trim() : after.trim();
-    return body || null;
-  }
-  return null;
+  const span = findSection1HeadingSpan(draft);
+  if (!span) return null;
+  const after = draft.slice(span.bodyStart).replace(/^\s*\n+/, "");
+  const nextHeading = after.search(/\n##\s+/);
+  const body = nextHeading !== -1 ? after.slice(0, nextHeading).trim() : after.trim();
+  return body || null;
 }
 
 /** Fusiona solo la sección 1 (Contexto y alcance) de newDraft en previousDraft; el resto del documento se mantiene de previousDraft. */
 export function mergeSection1IntoDraft(previousDraft: string, newDraft: string): string {
-  const section1Body = extractContextSectionBody(newDraft);
+  const rawBody = extractContextSectionBody(newDraft);
+  const section1Body = rawBody ? stripBrdPasteNoiseFromSection1(rawBody) : null;
   if (!section1Body?.trim()) return previousDraft;
   return replaceContextSectionBody(previousDraft, section1Body);
 }
@@ -125,17 +141,19 @@ export function replaceContextSectionBody(draft: string, newBody: string): strin
 
 /** Reemplaza el cuerpo de la sección 1 (cualquier variante de título) por newBody. Para regenerar §1 sin depender del título exacto. */
 export function replaceSection1BodyFromAnyHeading(draft: string, newBody: string): string {
-  for (const heading of CONTEXTO_HEADINGS_EXTRACT) {
-    const idx = draft.indexOf(heading);
-    if (idx === -1) continue;
-    const sectionStart = idx + heading.length;
-    const rest = draft.slice(sectionStart);
-    const nextHeadingInRest = rest.search(/\n##\s+/);
-    const endOfSection = nextHeadingInRest !== -1 ? sectionStart + nextHeadingInRest : draft.length;
-    const afterSection = endOfSection < draft.length ? draft.slice(endOfSection).trimStart() : "";
-    return draft.slice(0, sectionStart) + "\n\n" + newBody.trim() + (afterSection ? "\n\n" + afterSection : "");
-  }
-  return draft;
+  const span = findSection1HeadingSpan(draft);
+  if (!span) return draft;
+  const rest = draft.slice(span.bodyStart);
+  const nextHeadingInRest = rest.search(/\n##\s+/);
+  const endOfSection =
+    nextHeadingInRest !== -1 ? span.bodyStart + nextHeadingInRest : draft.length;
+  const afterSection = endOfSection < draft.length ? draft.slice(endOfSection).trimStart() : "";
+  return (
+    draft.slice(0, span.bodyStart) +
+    "\n\n" +
+    newBody.trim() +
+    (afterSection ? "\n\n" + afterSection : "")
+  );
 }
 
 const METADATA_KEYS = /^(section\d|toolPreference|diagramFormat|apiFormat|tool\s*:)$/i;
@@ -201,7 +219,7 @@ function insertSectionBlockBeforeFirstCoreHeading(
 }
 
 function hasContextSectionHeading(draft: string): boolean {
-  return CONTEXTO_HEADINGS_EXTRACT.some((h) => draft.includes(h));
+  return findSection1HeadingSpan(draft) != null;
 }
 
 function hasArquitecturaSectionHeading(draft: string): boolean {
@@ -346,9 +364,18 @@ export function hydrateStructuredFromDraft(
   if (!trimmed) return base;
   const ctx = extractContextSectionBody(draft);
   const arch = extractArquitecturaSectionBody(draft);
+  const logic = extractSection5Body(draft);
   const out = { ...base };
   if (ctx && ctx.length >= 80 && !(base.contextoAlcance?.trim())) out.contextoAlcance = ctx;
   if (arch && arch.length >= 80 && !(base.arquitecturaStack?.trim())) out.arquitecturaStack = arch;
+  if (
+    logic &&
+    logic.length >= 100 &&
+    !isMddSectionPipelinePlaceholderBody(logic) &&
+    !(base.logicaEdgeCases?.trim())
+  ) {
+    out.logicaEdgeCases = logic;
+  }
   return out as MddStructured;
 }
 
@@ -385,24 +412,33 @@ const SECTION_HEADINGS_CANONICAL = [
 ];
 
 function getSectionBody(draft: string, pattern: RegExp): string | null {
-  const match = draft.match(pattern);
-  if (!match) return null;
-  const idx = draft.indexOf(match[0]);
-  const start = idx + match[0].length;
-  const rest = draft.slice(start).replace(/^\s*\n+/, "");
-  const nextH2 = rest.search(/\n##\s+/);
-  return (nextH2 !== -1 ? rest.slice(0, nextH2) : rest).trim();
+  const trimmed = (draft ?? "").trim();
+  pattern.lastIndex = 0;
+  const match = pattern.exec(trimmed);
+  if (!match || match.index == null) return null;
+  const headingEnd = match.index + match[0].length;
+  const nextH2 = indexOfNextH2OutsideFenced(trimmed, headingEnd);
+  const bodyEnd = nextH2 !== -1 ? nextH2 : trimmed.length;
+  const body = trimmed.slice(headingEnd, bodyEnd).replace(/^\s*\n+/, "").trim();
+  return body.length > 0 ? body : null;
 }
 
-/** Resumen del draft para logs: longitud y estado de la sección 3 (modelo de datos). */
-export function getMddDraftSummary(draft: string): { length: number; section2: "sql" | "placeholder" | "empty" } {
+export type MddSection3Status = "sql" | "placeholder" | "empty";
+
+/** Resumen del draft para logs: longitud y estado de §3 (modelo de datos). */
+export function getMddDraftSummary(draft: string): {
+  length: number;
+  section3: MddSection3Status;
+  /** @deprecated Usar `section3` — nombre histórico incorrecto (era §3, no §2). */
+  section2: MddSection3Status;
+} {
   const trimmed = (draft ?? "").trim();
   const body = getSectionBody(trimmed, /##\s*3\.\s*Modelo\s+(?:de\s+)?datos|##\s*2\.\s*Modelo\s+(?:de\s+)?datos/i);
-  let section2: "sql" | "placeholder" | "empty" = "empty";
+  let section3: MddSection3Status = "empty";
   if (body && body.length > 10) {
-    section2 = /CREATE\s+TABLE/i.test(body) ? "sql" : /pendiente|placeholder/i.test(body) ? "placeholder" : "empty";
+    section3 = /CREATE\s+TABLE/i.test(body) ? "sql" : /pendiente|placeholder/i.test(body) ? "placeholder" : "empty";
   }
-  return { length: trimmed.length, section2 };
+  return { length: trimmed.length, section3, section2: section3 };
 }
 
 export function getSection6Or7Range(
@@ -493,9 +529,8 @@ function replaceH2SectionBody(draft: string, headingPattern: RegExp, newBody: st
   const match = headingPattern.exec(draft);
   if (!match || match.index == null) return draft;
   const sectionStart = match.index + match[0].length;
-  const rest = draft.slice(sectionStart);
-  const nextH2 = rest.search(/\n##\s+/);
-  const endOfSection = nextH2 !== -1 ? sectionStart + nextH2 : draft.length;
+  const nextH2 = indexOfNextH2OutsideFenced(draft, sectionStart);
+  const endOfSection = nextH2 !== -1 ? nextH2 : draft.length;
   const afterSection = endOfSection < draft.length ? draft.slice(endOfSection).trimStart() : "";
   return draft.slice(0, sectionStart) + "\n\n" + newBody.trim() + (afterSection ? "\n\n" + afterSection : "");
 }
@@ -561,21 +596,33 @@ export function replaceMddSection5Body(draft: string, newBody: string): string {
 
 const MIN_SURGICAL_SECTION_BODY_LEN = 80;
 
+export type MergeArchitectSectionRejectReason = "empty" | "placeholder" | "short" | "regression";
+
+export interface MergeSingleArchitectSectionResult {
+  draft: string;
+  merged: boolean;
+  rejectReason?: MergeArchitectSectionRejectReason;
+}
+
 /**
  * Tras Software Architect (que produce §2–§5), aplica SOLO la sección pedida (2|3|4)
  * sobre el draft baseline. Evita que `/arquitectura` / `/modelo-datos` / `/contratos-api`
  * reescriban el bloque §2–§5 entero y borren contenido bueno en las otras.
- * Si el cuerpo extraído es vacío, placeholder o demasiado corto, conserva el baseline.
+ * Si el cuerpo extraído es vacío, placeholder o demasiado corto, `merged=false` (no finge éxito).
  */
-export function mergeSingleArchitectSectionIntoDraft(
+export function tryMergeSingleArchitectSectionIntoDraft(
   baselineDraft: string,
   architectDraft: string,
   section: 2 | 3 | 4,
-): string {
+): MergeSingleArchitectSectionResult {
   const baseline = (baselineDraft ?? "").trim();
   const fromArchitect = (architectDraft ?? "").trim();
-  if (!baseline) return fromArchitect;
-  if (!fromArchitect) return baseline;
+  if (!baseline) {
+    return { draft: fromArchitect, merged: !!fromArchitect, rejectReason: fromArchitect ? undefined : "empty" };
+  }
+  if (!fromArchitect) {
+    return { draft: baseline, merged: false, rejectReason: "empty" };
+  }
 
   const body =
     section === 2
@@ -584,20 +631,35 @@ export function mergeSingleArchitectSectionIntoDraft(
         ? extractSection3Body(fromArchitect)
         : extractSection4Body(fromArchitect);
 
-  if (!body || isMddSectionPipelinePlaceholderBody(body) || body.trim().length < MIN_SURGICAL_SECTION_BODY_LEN) {
-    return baseline;
+  if (!body) {
+    return { draft: baseline, merged: false, rejectReason: "empty" };
+  }
+  if (isMddSectionPipelinePlaceholderBody(body)) {
+    return { draft: baseline, merged: false, rejectReason: "placeholder" };
+  }
+  if (body.trim().length < MIN_SURGICAL_SECTION_BODY_LEN) {
+    return { draft: baseline, merged: false, rejectReason: "short" };
   }
 
   if (section === 4) {
     const baselineBody = extractSection4Body(baseline);
     if (isContratosSectionRegression(baselineBody, body)) {
-      return baseline;
+      return { draft: baseline, merged: false, rejectReason: "regression" };
     }
   }
 
-  if (section === 2) return replaceArquitecturaSectionBody(baseline, body);
-  if (section === 3) return replaceMddSection3Body(baseline, body);
-  return replaceMddSection4Body(baseline, body);
+  if (section === 2) return { draft: replaceArquitecturaSectionBody(baseline, body), merged: true };
+  if (section === 3) return { draft: replaceMddSection3Body(baseline, body), merged: true };
+  return { draft: replaceMddSection4Body(baseline, body), merged: true };
+}
+
+/** Wrapper legacy: devuelve solo el draft (baseline si merge rechazado). */
+export function mergeSingleArchitectSectionIntoDraft(
+  baselineDraft: string,
+  architectDraft: string,
+  section: 2 | 3 | 4,
+): string {
+  return tryMergeSingleArchitectSectionIntoDraft(baselineDraft, architectDraft, section).draft;
 }
 
 /** Secciones 1–7 que no serán reescritas por los nodos del plan sections (sin format/diagram/auditor). */

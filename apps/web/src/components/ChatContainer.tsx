@@ -885,6 +885,7 @@ export default function ChatContainer({
   }, []);
 
   const handleSend = async () => {
+    if (frozenDeliverableChat) return;
     if ((!inputValue.trim() && !pendingFiles.length) || loading) return;
     const msg = inputValue.trim();
     if (activeTab === "mdd" && msg === "/") {
@@ -910,6 +911,7 @@ export default function ChatContainer({
 
   const slashFilter = inputValue.startsWith("/") ? inputValue.slice(1).toLowerCase() : "";
   const showFormatSlash =
+    !frozenDeliverableChat &&
     TABS_WITH_FORMAT_COMMAND.has(activeTab) &&
     !isBenchmarkFirstAction &&
     inputValue.startsWith("/") &&
@@ -919,6 +921,7 @@ export default function ChatContainer({
     ? MDD_SECTION_COMMANDS.filter((c) => c.slug.startsWith(slashFilter) || String(c.section).startsWith(slashFilter))
     : MDD_SECTION_COMMANDS;
   const showMddSectionSlash =
+    !frozenDeliverableChat &&
     activeTab === "mdd" &&
     (inputValue === "/" ||
       (inputValue.startsWith("/") && !inputValue.includes(" ") && filteredSlashCommands.length > 0));
@@ -1160,10 +1163,12 @@ export default function ChatContainer({
           )}
           {frozenDeliverableChat && (
             <div
-              className="shrink-0 mx-3 mt-2 mb-1 px-3 py-2 rounded-lg border border-[color-mix(in_oklch,var(--warning)_35%,var(--border))] bg-[color-mix(in_oklch,var(--warning)_8%,var(--card))] text-[color-mix(in_oklch,var(--warning)_70%,var(--foreground))] text-xs leading-snug"
+              className="shrink-0 mx-3 mt-2 mb-1 px-3 py-2 rounded-lg border border-[color-mix(in_oklch,var(--warning)_35%,var(--border))] bg-[color-mix(in_oklch,var(--warning)_8%,var(--card))] text-[color-mix(in_oklch,var(--warning)_70%,var(--foreground))] text-xs leading-snug prose prose-invert prose-sm max-w-none prose-p:my-0"
               role="status"
             >
-              {workshopFrozenTabUserMessage(activeTab)}
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {workshopFrozenTabUserMessage(activeTab)}
+              </ReactMarkdown>
             </div>
           )}
           <AlertDialog open={showClearConfirm} onOpenChange={setShowClearConfirm}>
@@ -1349,7 +1354,7 @@ export default function ChatContainer({
           {error && (
             <p className={cn("pb-2 text-sm text-[color-mix(in_oklch,var(--destructive)_88%,var(--foreground))]", WORKSHOP_CHAT_INSET_X)}>{error}</p>
           )}
-          {showSlashCommands && (
+          {!frozenDeliverableChat && showSlashCommands && (
             <div className={cn("pt-2 border-t border-[var(--border)]/50 bg-[var(--card)]/30 space-y-2", WORKSHOP_CHAT_INSET_X)}>
               {showFormatSlash && (
                 <div>
@@ -1392,6 +1397,7 @@ export default function ChatContainer({
               )}
             </div>
           )}
+          {!frozenDeliverableChat ? (
           <div
             className={cn(
               APP_PANEL_FOOTER_CHROME,
@@ -1472,6 +1478,7 @@ export default function ChatContainer({
               onGenerateBenchmark={() => void handleGenerateBenchmark()}
             />
           </div>
+          ) : null}
         </>
       )}
     </div>

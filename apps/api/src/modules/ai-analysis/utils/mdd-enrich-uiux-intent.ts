@@ -1,9 +1,11 @@
 import { extractSection3Body } from "./mdd-sanitize.js";
+import { mddExcludesWebUiSurface } from "./mdd-sanitize/internal.js";
 import {
   heuristicUiComponentResolver,
   type UiComponentResolver,
 } from "../../ui-mcp/ui-component-resolver.js";
 import { extractRolesFromMdd, shouldAvoidKanban } from "../../ui-mcp/ui-screen-routes.util.js";
+import { THEFORGE_PLATFORM_NOISE_TABLES } from "../../engine/mdd-platform-table-strip.util.js";
 
 // ---------------------------------------------------------------------------
 // UI/UX Design Intent Enrichment
@@ -79,20 +81,50 @@ function parseEntitiesFromSection3(section3: string): string[] {
   return entities;
 }
 
-function buildPersonaJourneyParagraphs(roles: string[], entityCount: number): string[] {
+/** Parsea entidades de dominio §3 excluyendo tablas ruido plataforma no mencionadas en §1. */
+function parseDomainEntitiesFromSection3(section3: string, mddMarkdown: string): string[] {
+  const all = parseEntitiesFromSection3(section3);
+  const sec1 = (mddMarkdown.match(/(?:^|\n)##\s*1\.[\s\S]*?(?=\n##\s|\n#\s|$)/i)?.[0] ?? "").toLowerCase();
+  return all.filter((name) => {
+    if (!THEFORGE_PLATFORM_NOISE_TABLES.has(name)) return true;
+    const needle = name.replace(/_/g, "[\\s_-]*");
+    return new RegExp(needle, "i").test(sec1);
+  });
+}
+
+function corpusMentionsTenantQuotaLlm(mddMarkdown: string): boolean {
+  return /\b(tenant[s]?\s+quota|quota\s+(?:llm|ia|tokens?)|l[ií]mite\s+(?:de\s+)?(?:tokens?|ia|llm)|token\s+limit)\b/i.test(
+    mddMarkdown,
+  );
+}
+
+function buildPersonaJourneyParagraphs(
+  roles: string[],
+  entityCount: number,
+  options: { cliOnly: boolean },
+): string[] {
   const paragraphs: string[] = [];
   for (const role of roles.slice(0, 4)) {
+    if (options.cliOnly) {
+      paragraphs.push(
+        `**${role}** opera vía API REST y CLI según §1; sin panel web en MVP. ` +
+          `Flujos documentados en historias de usuario y \`api-contracts.md\` (${entityCount} entidades de dominio en §3).`,
+      );
+      continue;
+    }
     paragraphs.push(
       `**${role}** accede al producto con objetivos concretos del dominio descrito en §1. ` +
-        `Su journey principal combina autenticación, navegación en \`AppLayout\` y tareas sobre datos ` +
-        `del modelo §3 (${entityCount} entidades) sin asumir un CRUD por tabla. ` +
+        `Su journey principal combina autenticación y tareas sobre datos del modelo §3 ` +
+        `(${entityCount} entidades de dominio) sin asumir un CRUD por tabla. ` +
         `Las pantallas, rutas y APIs ejecutables se documentan en \`pantallas.md\` y deben trazarse a historias de usuario.`,
     );
   }
   if (paragraphs.length < 2 && roles.length === 1) {
     paragraphs.push(
-      `El flujo transversal conecta onboarding, operación diaria y tareas puntuales (formularios, listados, feedback). ` +
-        `Prioriza journeys completos sobre pantallas aisladas por entidad; estados \`loading\`, \`empty\` y \`error\` son obligatorios en login, dashboard y listados principales.`,
+      options.cliOnly
+        ? `Los flujos CLI/API conectan onboarding, operación diaria y tareas puntuales; estados de error y vacío deben documentarse en contratos y US.`
+        : `El flujo transversal conecta onboarding, operación diaria y tareas puntuales (formularios, listados, feedback). ` +
+            `Prioriza journeys completos sobre pantallas aisladas por entidad; estados \`loading\`, \`empty\` y \`error\` son obligatorios en login, dashboard y listados principales.`,
     );
   }
   return paragraphs.slice(0, 4);
@@ -105,9 +137,10 @@ async function buildUiUxDesignIntentSection(
   mddMarkdown: string,
   section3: string,
 ): Promise<string | null> {
-  const entityNames = parseEntitiesFromSection3(section3);
+  const entityNames = parseDomainEntitiesFromSection3(section3, mddMarkdown);
   if (entityNames.length === 0) return null;
 
+  const cliOnly = mddExcludesWebUiSurface(mddMarkdown);
   const roles = extractRolesFromMdd(mddMarkdown);
   const kanbanCandidates = entityNames.filter(
     (n) => classifyEntity(n) === "WorkflowProcess" && !shouldAvoidKanban(n),
@@ -127,7 +160,7 @@ async function buildUiUxDesignIntentSection(
 
   lines.push("### Personas y journeys");
   lines.push("");
-  for (const p of buildPersonaJourneyParagraphs(roles, entityNames.length)) {
+  for (const p of buildPersonaJourneyParagraphs(roles, entityNames.length, { cliOnly })) {
     lines.push(p);
     lines.push("");
   }
@@ -160,10 +193,14 @@ async function buildUiUxDesignIntentSection(
 
   lines.push("### Componentes transversales");
   lines.push("");
-  lines.push("- **Layout shell** (`AppLayout` o equivalente): nav por rol (ítems, iconos, orden); rutas protegidas JWT (`role`, `tenant_id`).");
+  if (!cliOnly) {
+    lines.push("- **Layout shell** (`AppLayout` o equivalente): nav por rol (ítems, iconos, orden); rutas protegidas JWT (`role`, `tenant_id`).");
+  }
   lines.push("- **Estado vacío:** CTA contextual en listados sin datos.");
   lines.push("- **Toast / feedback:** éxito tras POST/PUT; errores API cerca del formulario o banner.");
-  lines.push("- **Modales globales:** impersonación, quota LLM 80%/100% (documentar trigger en Tasks).");
+  if (corpusMentionsTenantQuotaLlm(mddMarkdown)) {
+    lines.push("- **Modales globales:** quota LLM 80%/100% (documentar trigger en Tasks).");
+  }
   lines.push("- **Responsive:** sm 640 / md 768 / lg 1024 / xl 1280; touch ≥ 44×44px; WCAG AA.");
   lines.push("");
 
@@ -206,6 +243,7 @@ export async function enrichMddWithUiUxDesignIntent(
 ): Promise<string> {
   const trimmed = (markdown ?? "").trim();
   if (!trimmed) return markdown;
+  if (mddExcludesWebUiSurface(trimmed)) return markdown;
   if (/^##\s*UI\/UX\s+Design\s+Intent/im.test(trimmed) && isCompleteUiUxIntent(trimmed) && !isLegacyEntityUiIntent(trimmed)) {
     return markdown;
   }
@@ -263,6 +301,7 @@ export async function reconcileUiUxDesignIntent(
 ): Promise<string> {
   const trimmed = (markdown ?? "").trim();
   if (!trimmed) return markdown;
+  if (mddExcludesWebUiSurface(trimmed)) return markdown;
 
   const section3 = extractSection3Body(trimmed);
   if (!section3) return markdown;

@@ -25,7 +25,7 @@ Revisa los **MENSAJES INTERNOS** enviados entre agentes (vía Directives).
 3.  **Consistencia Estructural:**
     - ¿Todas las entidades de §1 tienen tabla en §3?
     - ¿Todas las capacidades de §1 tienen endpoint en §4?
-4.  **Fidelidad de dominio (BRD / inventario):** Si el mensaje incluye inventario de dominio o BRD con ≥3 capacidades no-auth, §3 **no** puede ser solo familia auth (`users`, `roles`, `sessions`, …). Eso es **critical_gap** `domain-auth-only-skew` y baja el score bajo 85.
+4.  **Fidelidad de dominio (BRD / inventario):** Si el mensaje incluye inventario de dominio o BRD con ≥3 capacidades no-auth **de este proyecto**, §3 **no** puede ser solo familia auth (`users`, `roles`, `sessions`, …). Eso es **critical_gap** `domain-auth-only-skew` y baja el score bajo 85. Evalúa contra las entidades/capacidades **reales** del BRD — no impongas checklist fijo chat/MCP/WhatsApp si el dominio es otro (KMS, catálogo, finanzas, etc.).
 
 Registra en `critical_gaps` cualquier violación directa de la Constitución.
 

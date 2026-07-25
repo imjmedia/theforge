@@ -87,6 +87,7 @@ export function WorkshopDocToolbar(props: WorkshopDocToolbarProps) {
     phase0EntryModeToolbarToggle,
     isLgLayout,
     lgWorkshopChatCollapsed,
+    deliverablesReadOnly,
   } = ui;
 
   const {
@@ -137,7 +138,7 @@ export function WorkshopDocToolbar(props: WorkshopDocToolbarProps) {
     />
     {docEditToolbarToggle ? (
       <div className="hidden shrink-0 items-center gap-1.5 lg:flex">
-        {centralPanel === "spec" ? (
+        {centralPanel === "spec" && !deliverablesReadOnly ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <WorkshopDocToolbarIconButton
@@ -177,7 +178,7 @@ export function WorkshopDocToolbar(props: WorkshopDocToolbarProps) {
       </div>
     ) : null}
     <div className="flex flex-wrap items-center gap-1.5 shrink-0 sm:justify-end sm:gap-2 sm:pt-0.5 lg:hidden">
-      {canShowWorkshopDocViewToggle(centralPanel, content) && (() => {
+      {!deliverablesReadOnly && canShowWorkshopDocViewToggle(centralPanel, content) && (() => {
                       const activeDocViewMode = getWorkshopDocToolbarActiveViewMode(centralPanel, viewModes);
                       const { Icon: DocToggleIcon, tooltip: docToggleTooltip } = workshopDocSourceTogglePresentation(
                         centralPanel,
@@ -440,7 +441,7 @@ export function WorkshopDocToolbar(props: WorkshopDocToolbarProps) {
         </Tooltip>
       )}
       {/* to-be save button removed */}
-      {centralPanel === "spec" ? (
+      {centralPanel === "spec" && !deliverablesReadOnly ? (
         <Tooltip>
           <TooltipTrigger asChild>
             <WorkshopDocToolbarIconButton
@@ -597,7 +598,7 @@ export function WorkshopDocToolbar(props: WorkshopDocToolbarProps) {
         </Tooltip>
       )}
     </div>
-    {isLgLayout && lgWorkshopChatCollapsed ? (
+    {isLgLayout && lgWorkshopChatCollapsed && !deliverablesReadOnly ? (
       <div className="hidden shrink-0 lg:flex">
         <Tooltip>
           <TooltipTrigger asChild>

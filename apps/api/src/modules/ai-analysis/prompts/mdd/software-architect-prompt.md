@@ -25,7 +25,9 @@ Si detectas un problema que otro agente deba resolver (ej: necesitas que Segurid
 Targets válidos: `security`, `integration_engineer`, `all`.
 Ejemplo: `[DIRECTIVE: security] El modelo incluye pagos sensibles; por favor define rotación de tokens en §6.`
 
-**Salida:** Responde **únicamente** con el documento MDD completo en Markdown (desde # Master Design Document), **con las modificaciones ya aplicadas** en §2–§4 (y §5 solo como placeholder en pasada paralela). No devuelvas el borrador anterior sin cambiar: si hay ACCIÓN REQUERIDA o requisitos del usuario, el documento que devuelvas debe **reflejar esos cambios** (nuevas tablas, endpoints, frontend, roles por aplicación, etc.). **PROHIBIDO** incluir en la respuesta los bloques "ACCIÓN REQUERIDA", "Prioridad (léelo primero)" o "Requisitos del usuario (conversación reciente)"; son solo instrucciones para aplicar, no contenido del MDD.
+**Salida (pasada completa `full`):** Responde **únicamente** con el documento MDD completo en Markdown (desde # Master Design Document), **con las modificaciones ya aplicadas** en §2–§4 (y §5 solo como placeholder en pasada paralela). No devuelvas el borrador anterior sin cambiar: si hay ACCIÓN REQUERIDA o requisitos del usuario, el documento que devuelvas debe **reflejar esos cambios** (nuevas tablas, endpoints, frontend, roles por aplicación, etc.). **PROHIBIDO** incluir en la respuesta los bloques "ACCIÓN REQUERIDA", "Prioridad (léelo primero)" o "Requisitos del usuario (conversación reciente)"; son solo instrucciones para aplicar, no contenido del MDD.
+
+**Salida (pasadas acotadas `stack` / `data_model` / `api_contracts`):** Si el mensaje incluye un bloque de alcance exclusivo (§2, §3 o §4), responde **solo esa sección** — cuerpo técnico + heading `## N. …` opcional. **PROHIBIDO** devolver el MDD completo ni copiar §1–§7 enteras; el pipeline hace merge quirúrgico. Alternativa aceptable: JSON con una sola clave (`stack`, `data_model` o `api_contracts`) cuyo valor es el markdown de esa sección.
 
 **IDIOMA OBLIGATORIO: ESPAÑOL.**
 - **Narrativa (Prosa):** Todo el texto explicativo (introducción, justificaciones, descripciones de endpoints, lógica de negocio) debe estar en **ESPAÑOL**. Si el borrador que recibes tiene secciones en inglés (ej. "The Oracle MCP server will implement..."), **TRADÚCELAS** al español al generar tu respuesta. NO conserves bloques de texto en inglés. reescríbelos.
@@ -79,6 +81,7 @@ Antes de generar el SQL, realiza este paso intermedio (pensamiento):
         *   **Relacional:** Bloque `mermaid` tipo `erDiagram` para las tablas.
         *   **NoSQL/Graph:** Bloque `mermaid` tipo `graph TD` visualizando la ontología o relaciones.
     *   **SQL válido:** Cada línea dentro del bloque `sql` debe ser DDL ejecutable o comentario `--`. **PROHIBIDO** prosa en español suelta entre columnas (ej. `application_id o NULL para system`). Usa columnas tipadas (`application_id UUID`) y comentarios `--` si hace falta aclarar.
+    *   **CONSTRAINT PostgreSQL:** Los nombres de `CONSTRAINT` deben ser **ASCII** (`chk_`, `fk_`, `uq_` + identificador en inglés). **PROHIBIDO** español en el identificador (ej. `CONSTRAINT diferentes` ❌ → `CONSTRAINT chk_keys_status_valid` ✓).
 
 5. **Redactar ## 2. Arquitectura y Stack**:
     *   **Definición de Stack:** Backend, Frontend, Base de Datos, Colas, Infra según lo requiera el contexto.

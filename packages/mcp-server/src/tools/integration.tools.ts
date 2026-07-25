@@ -200,7 +200,8 @@ export const INTEGRATION_TOOLS: McpTool[] = [
         tableNames: {
           type: "array",
           items: { type: "string" },
-          description: "Lista opcional de nombres de tablas a filtrar (ej. ['usuarios', 'pagos']). Si se omite, devuelve todas.",
+          nullable: true,
+          description: "Lista opcional de nombres de tablas (ej. ['usuarios', 'pagos']). Si se omite, devuelve todas salvo tablas ruido plataforma chat/MCP.",
         },
       },
       required: ["projectId"],
@@ -349,6 +350,16 @@ export function createIntegrationHandlers(api: McpApiClient): Record<string, Mcp
     if (Array.isArray(tableNames) && tableNames.length > 0) {
       const filterSet = new Set(tableNames.map(n => n.toLowerCase()));
       tables = allTables.filter(t => filterSet.has(t.name.toLowerCase()));
+    } else {
+      const section1 = mddContent.match(/(?:^|\n)##\s*1\.[\s\S]*?(?=\n##\s|\n#\s|$)/i)?.[0] ?? "";
+      const scopeCorpus = `${section1}\n${mddContent.slice(0, 2500)}`;
+      const platformNoise = new Set([
+        "conversations", "messages", "mcp_plugins", "conversation_memory",
+        "llm_configs", "agent_runs", "channels",
+      ]);
+      if (!/\b(integraci[oó]n\s+mcp|plataforma\s+mcp|chat\s+operacional|mensajer[ií]a)\b/i.test(scopeCorpus)) {
+        tables = allTables.filter(t => !platformNoise.has(t.name));
+      }
     }
     return JSON.stringify({
       projectId,

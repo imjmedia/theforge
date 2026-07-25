@@ -71,6 +71,7 @@ export function useWorkshopDocToolbarProps(
     phase0SummaryViewMode,
     isLgLayout,
     lgWorkshopChatCollapsed,
+    deliverablesReadOnly,
     toggleDocViewMode,
     setFlowOrderModalOpen,
     setClarifySpecDialogOpen,
@@ -112,8 +113,9 @@ export function useWorkshopDocToolbarProps(
 
   /** Preview/source (or design) toggle — header toolbar on desktop; not in the bubble menu. */
   const docEditToolbarToggle = useMemo(
-    () =>
-      resolveWorkshopDocEditToolbarToggle({
+    () => {
+      if (deliverablesReadOnly) return null;
+      return resolveWorkshopDocEditToolbarToggle({
         centralPanel,
         viewModes: {
           mddViewMode,
@@ -154,8 +156,10 @@ export function useWorkshopDocToolbarProps(
         toggleDocViewMode,
         setBenchmarkViewMode,
         setPhase0SummaryViewMode,
-      }),
+      });
+    },
     [
+      deliverablesReadOnly,
       centralPanel,
       mddViewMode,
       mddInicialViewMode,
@@ -256,6 +260,7 @@ export function useWorkshopDocToolbarProps(
       phase0EntryModeToolbarToggle,
       isLgLayout,
       lgWorkshopChatCollapsed,
+      deliverablesReadOnly,
     },
     actions: {
       toggleDocViewMode,
@@ -346,6 +351,7 @@ export function useWorkshopDocToolbarProps(
     phase0EntryModeToolbarToggle,
     isLgLayout,
     lgWorkshopChatCollapsed,
+    deliverablesReadOnly,
     toggleDocViewMode,
     handlePrintDocument,
     handleRegenerateLegacyCodebaseDoc,

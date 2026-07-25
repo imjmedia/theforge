@@ -22,6 +22,92 @@ import type { Runnable } from "@langchain/core/runnables";
 import type { BaseMessage } from "@langchain/core/messages";
 import { recordTokenUsageFromContext } from "../../ai/utils/token-usage-recorder.js";
 
+const DEFAULT_BACKOFF_MS = [0, 1500, 4000];
+
+export type LlmToolCallLike = {
+  id?: string;
+  name: string;
+  args: Record<string, unknown>;
+};
+
+function blockToText(block: unknown): string {
+  if (typeof block === "string") return block;
+  if (!block || typeof block !== "object") return "";
+  const o = block as Record<string, unknown>;
+  if (typeof o.text === "string") return o.text;
+  if (typeof o.content === "string") return o.content;
+  if (o.type === "text" && typeof o.text === "string") return o.text;
+  return "";
+}
+
+function normalizeToolCallArgs(raw: unknown): Record<string, unknown> {
+  if (raw == null) return {};
+  if (typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function normalizeToolCallEntry(entry: unknown): LlmToolCallLike | null {
+  if (!entry || typeof entry !== "object") return null;
+  const o = entry as Record<string, unknown>;
+  const fn = o.function as { name?: string; arguments?: unknown } | undefined;
+  const name =
+    (typeof o.name === "string" && o.name) ||
+    (typeof fn?.name === "string" && fn.name) ||
+    "";
+  if (!name) return null;
+  const args = normalizeToolCallArgs(o.args ?? fn?.arguments ?? o.arguments);
+  const id = typeof o.id === "string" ? o.id : undefined;
+  return { id, name, args };
+}
+
+/** Extrae tool_calls de AIMessage en formas LangChain / OpenAI-compat / nested. */
+export function extractLlmToolCalls(response: unknown): LlmToolCallLike[] {
+  if (response == null || typeof response !== "object") return [];
+  const root = response as Record<string, unknown>;
+  const candidates: unknown[] = [
+    root.tool_calls,
+    (root.additional_kwargs as { tool_calls?: unknown } | undefined)?.tool_calls,
+    (root.kwargs as { tool_calls?: unknown } | undefined)?.tool_calls,
+    (root.response_metadata as { tool_calls?: unknown } | undefined)?.tool_calls,
+  ];
+  for (const raw of candidates) {
+    if (!Array.isArray(raw) || raw.length === 0) continue;
+    const parsed = raw
+      .map((entry) => normalizeToolCallEntry(entry))
+      .filter((tc): tc is LlmToolCallLike => tc != null);
+    if (parsed.length > 0) return parsed;
+  }
+  return [];
+}
+
+/** True si la respuesta tiene tool_calls parseables aunque content esté vacío. */
+export function llmResponseHasUsableToolCalls(response: unknown): boolean {
+  return extractLlmToolCalls(response).length > 0;
+}
+
+/** Extrae texto plano de un AIMessage de LangChain (string content o array de bloques). */
+export function extractLlmText(response: unknown): string {
+  if (response == null) return "";
+  if (typeof response === "string") return response;
+  if (typeof response !== "object") return "";
+  const content = (response as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map((block) => blockToText(block)).join("");
+  }
+  return "";
+}
+
 export type InvokeWithRetryOptions = {
   /** Etiqueta corta para logs: "SoftwareArchitect", "Clarifier", etc. */
   tag: string;
@@ -34,30 +120,9 @@ export type InvokeWithRetryOptions = {
    * vacía/inválida y se reintenta. Default: texto no-vacío tras trim.
    */
   isResponseValid?: (text: string) => boolean;
+  /** Si true, tool_calls sin texto cuentan como respuesta válida (loops de herramientas). */
+  acceptToolCallsWithoutContent?: boolean;
 };
-
-const DEFAULT_BACKOFF_MS = [0, 1500, 4000];
-
-/** Extrae texto plano de un AIMessage de LangChain (string content o array de bloques). */
-export function extractLlmText(response: unknown): string {
-  if (response == null) return "";
-  if (typeof response === "string") return response;
-  if (typeof response !== "object") return "";
-  const content = (response as { content?: unknown }).content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((block) => {
-        if (typeof block === "string") return block;
-        if (block && typeof block === "object" && "text" in block && typeof (block as { text?: unknown }).text === "string") {
-          return (block as { text: string }).text;
-        }
-        return "";
-      })
-      .join("");
-  }
-  return "";
-}
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -81,6 +146,7 @@ export async function invokeLlmWithRetry(
   const max = Math.max(1, options.maxAttempts ?? 3);
   const backoff = options.backoffMs ?? DEFAULT_BACKOFF_MS;
   const isValid = options.isResponseValid ?? ((t) => t.trim().length > 0);
+  const acceptTools = options.acceptToolCallsWithoutContent === true;
   const tag = options.tag || "LLM";
 
   for (let attempt = 1; attempt <= max; attempt += 1) {
@@ -90,16 +156,18 @@ export async function invokeLlmWithRetry(
       const response = await (llm as { invoke: (m: BaseMessage[]) => Promise<unknown> }).invoke(messages);
       recordLlmUsageFromMessage(llm, response, tag);
       const text = extractLlmText(response);
-      if (isValid(text)) {
+      const toolCalls = extractLlmToolCalls(response);
+      const toolsOk = acceptTools && toolCalls.length > 0;
+      if (toolsOk || isValid(text)) {
         if (attempt > 1) {
           console.log(
-            `[${tag}] retry recuperó respuesta válida (attempt ${attempt}/${max}, len=${text.length})`,
+            `[${tag}] retry recuperó respuesta válida (attempt ${attempt}/${max}, len=${text.length}, tools=${toolCalls.length})`,
           );
         }
         return response;
       }
       console.warn(
-        `[${tag}] respuesta vacía/inválida del LLM (attempt ${attempt}/${max}, len=${text.length}), reintentando...`,
+        `[${tag}] respuesta vacía/inválida del LLM (attempt ${attempt}/${max}, len=${text.length}, tools=${toolCalls.length}), reintentando...`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

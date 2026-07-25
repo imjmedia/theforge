@@ -589,11 +589,56 @@ function ensureTableSeparatorAfterHeader(body: string): string {
   return out.join("\n");
 }
 
+/** Repara fences ``` huérfanos entre filas de tabla §4 y ``` pegados al final de una fila. */
+export function repairStrayFencesInContratosTable(body: string): string {
+  if (!body?.trim()) return body;
+  const lines = body.split("\n");
+  const out: string[] = [];
+  let inTable = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const trimmed = line.trim();
+    const isSeparator = isTableSeparatorLine(trimmed);
+    const isTableRow = trimmed.startsWith("|") && trimmed.includes("|") && !isSeparator;
+    const isFenceOnly = /^```\s*$/.test(trimmed);
+
+    if (isTableRow) {
+      inTable = true;
+      const fenceInRow = trimmed.match(/^(\|.+)\s+```(?:json)?\s*$/);
+      if (fenceInRow) {
+        out.push(fenceInRow[1]!.trimEnd());
+        out.push("```json");
+        continue;
+      }
+      out.push(line);
+      continue;
+    }
+
+    if (inTable && isFenceOnly) {
+      let j = i + 1;
+      while (j < lines.length && lines[j]!.trim() === "") j++;
+      const next = (lines[j] ?? "").trim();
+      if (next.startsWith("|") || /^```json/i.test(next)) {
+        continue;
+      }
+      inTable = false;
+    }
+
+    if (trimmed && !isTableRow && !isSeparator) {
+      inTable = false;
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
 /**
  * Envuelve JSON minificado (líneas largas sin saltos) en bloques ```json con pretty-print.
  */
 export function formatContratosBody(body: string): string {
-  let normalized = splitHeaderAndSeparatorOnSameLine(body);
+  let normalized = repairStrayFencesInContratosTable(body);
+  normalized = splitHeaderAndSeparatorOnSameLine(normalized);
   normalized = deduplicateTableSeparators(normalized);
   normalized = convertListWithPipesToMarkdownTable(normalized);
   normalized = ensureTableSeparatorAfterHeader(normalized);

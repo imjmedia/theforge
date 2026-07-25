@@ -10,6 +10,7 @@ import {
   injectErDiagramBlockIntoDraft,
 } from "../utils/mdd-diagram-suggestions.js";
 import { getMddDraftSummary, logMddNodeOutput } from "../utils/mdd-sanitize.js";
+import { guardTailSectionsForPersist } from "../utils/mdd-section-preserve.util.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:DiagramInjector] ${msg}`, ...args);
 
@@ -19,7 +20,7 @@ function finalizeDiagramInjection(
   logLabel: string,
 ): Partial<MDDStateType> | null {
   const withComponentDiagram = injectProposedComponentDiagramIntoSection2(workingDraft);
-  const finalDraft = withComponentDiagram;
+  const finalDraft = guardTailSectionsForPersist(originalDraft, withComponentDiagram, "DiagramInjector").markdown;
   if (finalDraft === originalDraft) return null;
   const sum = getMddDraftSummary(finalDraft);
   LOG("%s draftLen=%s section2=%s", logLabel, sum.length, sum.section2);

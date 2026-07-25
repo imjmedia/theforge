@@ -168,6 +168,8 @@ export const mddStateSchema = z.object({
       "section5",
     ])
     .optional(),
+  /** Fingerprint de blockers placeholder del intento anterior (circuit breaker gate). */
+  deliveryGatePlaceholderFingerprint: z.string().optional(),
 });
 
 export type MDDState = z.infer<typeof mddStateSchema>;
@@ -217,4 +219,5 @@ export const defaultMDDState: MDDState = {
   deliveryGate: undefined,
   deliveryGateLoopActive: undefined,
   deliveryGateFixTarget: undefined,
+  deliveryGatePlaceholderFingerprint: undefined,
 };

@@ -60,6 +60,17 @@ const ENTITY_JOURNEY_MAP: Record<string, string> = {
   dashboard_configs: "dashboard_configs",
 };
 
+function corpusMentionsTenantQuotaLlm(
+  mddMarkdown: string,
+  brdMarkdown?: string | null,
+  dbgaMarkdown?: string | null,
+): boolean {
+  const corpus = [brdMarkdown, dbgaMarkdown, mddMarkdown].filter(Boolean).join("\n");
+  return /\b(tenant[s]?\s+quota|quota\s+(?:llm|ia|tokens?)|\/tenants\/[^/\s]+\/quota|l[ií]mite\s+(?:de\s+)?(?:tokens?|ia|llm)|token\s+limit|consumo\s+de\s+tokens?)\b/i.test(
+    corpus,
+  );
+}
+
 function section2MentionsWebSocket(mddMarkdown: string): boolean {
   const section2 = extractSection(
     mddMarkdown,
@@ -90,6 +101,8 @@ function wsPresent(section4: string): boolean {
 export function buildJourneyEndpointRequirements(params: {
   mddMarkdown: string;
   inventory?: DomainInventory | null;
+  brdMarkdown?: string | null;
+  dbgaMarkdown?: string | null;
 }): JourneyEndpointRequirement[] {
   const section3 = extractSectionByNumber(params.mddMarkdown ?? "", 3) || params.mddMarkdown || "";
   const entities = extractEntities(section3);
@@ -106,11 +119,7 @@ export function buildJourneyEndpointRequirements(params: {
   if (entities.has("dashboard_configs")) {
     required.push(...SPECIAL_JOURNEY_ENDPOINTS.filter((e) => e.id.startsWith("dashboard")));
   }
-  if (
-    entities.has("users") ||
-    entities.has("credentials") ||
-    /\b(quota|token\s*limit|l[ií]mite\s+ia)\b/i.test(params.mddMarkdown ?? "")
-  ) {
+  if (corpusMentionsTenantQuotaLlm(params.mddMarkdown ?? "", params.brdMarkdown, params.dbgaMarkdown)) {
     required.push(...SPECIAL_JOURNEY_ENDPOINTS.filter((e) => e.id.startsWith("tenant-quota")));
   }
 
@@ -140,6 +149,8 @@ export type MddJourneySection4Report = {
 export function checkMddJourneySection4Gaps(params: {
   mddMarkdown: string;
   inventory?: DomainInventory | null;
+  brdMarkdown?: string | null;
+  dbgaMarkdown?: string | null;
 }): MddJourneySection4Report {
   const section4 = extractSection(
     params.mddMarkdown,

@@ -2,6 +2,20 @@
 import { findBalancedBrace, findBalancedBraceRespectingStrings } from "./brace.util.js";
 import { subsectionsToMarkdown } from "./json-section-to-markdown.js";
 
+/** Misma lógica que `findSection1HeadingSpan` (evitar import circular con section-merge). */
+function findSection1HeadingSpanLocal(
+  draft: string,
+): { headingStart: number; bodyStart: number } | null {
+  const re =
+    /(^|\n)(##\s*1\.\s*Contexto(?:\s+y\s+alcance)?|##\s*Contexto\s+y\s+alcance)[ \t]*(?=\n|$)/gi;
+  const m = re.exec(draft);
+  if (!m || m.index == null) return null;
+  const prefixLen = m[1]?.length ?? 0;
+  const headingStart = m.index + prefixLen;
+  const bodyStart = m.index + m[0].length;
+  return { headingStart, bodyStart };
+}
+
 /** Busca una clave en obj de forma case-insensitive. */
 function getKeyIgnoreCase(obj: Record<string, unknown>, key: string): string | undefined {
   const lower = key.toLowerCase();
@@ -410,8 +424,6 @@ const CONTEXTO_JSON_KEY_LABELS: Record<string, string> = {
  * Si la sección "## 1. Contexto" (o "## 1. Contexto y alcance") contiene un bloque JSON,
  * lo reemplaza por viñetas en markdown. Arrays → sublista con guiones. Evita JSON crudo en §1.
  */
-const CONTEXTO_HEADINGS = ["## 1. Contexto y alcance", "## 1. Contexto", "## Contexto y alcance"];
-
 function contextJsonValueToMarkdown(v: unknown): string {
   if (v === undefined || v === null) return "";
   if (typeof v === "boolean") return v ? "Sí" : "No";
@@ -427,18 +439,9 @@ function contextJsonValueToMarkdown(v: unknown): string {
 }
 
 export function sanitizeContextSection(draft: string): string {
-  let idx = -1;
-  let heading = "";
-  for (const h of CONTEXTO_HEADINGS) {
-    const i = draft.indexOf(h);
-    if (i !== -1) {
-      idx = i;
-      heading = h;
-      break;
-    }
-  }
-  if (idx === -1) return draft;
-  const sectionStart = idx + heading.length;
+  const span = findSection1HeadingSpanLocal(draft);
+  if (!span) return draft;
+  const sectionStart = span.bodyStart;
   const rest = draft.slice(sectionStart);
   const nextH2 = rest.search(/\n##\s+/);
   const body = (nextH2 !== -1 ? rest.slice(0, nextH2) : rest).replace(/^\s*\n+/, "").trim();
@@ -484,10 +487,9 @@ export function sanitizeContextSection(draft: string): string {
  * viñetas key: value (objective, technologies, focus, requirements) en prosa breve cuando sea solo metadatos.
  */
 export function sanitizeContextKeyValueAndObject(draft: string): string {
-  const heading = "## 1. Contexto y alcance";
-  const idx = draft.indexOf(heading);
-  if (idx === -1) return draft;
-  const sectionStart = idx + heading.length;
+  const span = findSection1HeadingSpanLocal(draft);
+  if (!span) return draft;
+  const sectionStart = span.bodyStart;
   const rest = draft.slice(sectionStart);
   const nextH2 = rest.search(/\n##\s+/);
   const body = (nextH2 !== -1 ? rest.slice(0, nextH2) : rest).replace(/^\s*\n+/, "").trim();

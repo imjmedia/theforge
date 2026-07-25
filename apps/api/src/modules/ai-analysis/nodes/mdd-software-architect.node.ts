@@ -29,18 +29,26 @@ import {
   preserveUntouchedMddSectionsFromBaseline,
   replaceContextWhenOnlyMetadata,
   sanitizeContextSection,
-  mergeSingleArchitectSectionIntoDraft,
+  tryMergeSingleArchitectSectionIntoDraft,
   deduplicateMddDraftSections,
 } from "../utils/mdd-sanitize.js";
 import {
   architectScopePromptPrefix,
   architectScopeSectionNumber,
+  formatScopedArchitectFullMddRejectFeedback,
+  formatScopedArchitectMergeRejectFeedback,
   isHighSplitArchitectPipeline,
+  processScopedArchitectResponse,
+  resolveArchitectMergeBaseline,
   shouldDecoupleSection5FromArchitect,
   type MddSoftwareArchitectScope,
 } from "../utils/mdd-architect-pipeline.util.js";
 import { getUserBrief, getUserExplicitRequirements } from "../utils/mdd-user-brief.js";
 import { ensureSection5TailParallelPlaceholder } from "../utils/mdd-tail-parallel.util.js";
+import {
+  preserveNonTargetValidatedSectionsAfterArchitectMerge,
+  preserveValidatedSectionsIfSubstantial,
+} from "../utils/mdd-section-preserve.util.js";
 import {
   buildUserDeclaredStackPromptBlock,
   STACK_TECHNOLOGY_REGEX,
@@ -510,7 +518,18 @@ export function createMddSoftwareArchitectNode(
     LOG("Draft Preview (Section 2 search): %s", (state.mddDraft ?? "").match(/##\s*2\.[^#]*/)?.[0]?.slice(0, 100) ?? "Not found");
     try {
       const draftTrimmed = (state.mddDraft ?? "").trim();
-      const mergeBaseline = (state.previousMddDraftForMerge ?? "").trim() || draftTrimmed;
+      const { baseline: mergeBaseline, source: mergeBaselineSource } = resolveArchitectMergeBaseline(
+        state,
+        scope,
+        draftTrimmed,
+      );
+      LOG(
+        "mergeBaseline source=%s len=%s draftTrimmedLen=%s previousLen=%s",
+        mergeBaselineSource,
+        mergeBaseline.length,
+        draftTrimmed.length,
+        (state.previousMddDraftForMerge ?? "").trim().length,
+      );
       const sectionsToPreserve =
         state.executorControlled === true
           ? getSectionsToPreserveFromExecutorPlan(state.sectionsToRun)
@@ -907,79 +926,185 @@ export function createMddSoftwareArchitectNode(
         }
       }
       if (!mddDraft) return {};
-      // §3 la genera el SA; no hay Experto en Modelo de Datos en el flujo.
-      // No pisar sección 4 (Contratos) si el borrador entrante ya tenía contratos y el Arquitecto devolvió placeholder.
-      const incomingContratos = extractContratosBody(draftTrimmed);
-      const currentContratos = extractContratosBody(mddDraft);
-      if (isContratosSubstantial(incomingContratos) && isContratosPlaceholder(currentContratos)) {
-        mddDraft = replaceContratosInDraft(mddDraft, incomingContratos!);
-        LOG("preservada sección 4 entrante (contratos reales); el Arquitecto había devuelto placeholder");
-      }
-      // Si la conversión del LLM dejó un draft muy corto pero teníamos uno sustancial del Clarificador, conservarlo.
       const minLength = 600;
-      if (mddDraft.length < minLength && draftTrimmed.length >= minLength) {
-        if (contractsRequired(state)) {
+      let extractedFromFullMdd = false;
+
+      const applyPostMergeNormalization = (draft: string): string => {
+        let out = draft;
+        out = sanitizeContextSection(out);
+        out = replaceContextWhenOnlyMetadata(out);
+        out = ensureContratosSection(out);
+        out = normalizeMddFormat(out);
+        if (decoupleSection5) {
+          out = ensureSection5TailParallelPlaceholder(out);
+        }
+        const incomingSection6 = extractSection6SeguridadBody(mergeBaseline);
+        const currentSection6 = extractSection6SeguridadBody(out);
+        if (incomingSection6 && isPlaceholderSection(currentSection6)) {
+          out = replaceSectionBody(out, /##\s+(?:6\.\s+)?Seguridad\b[^\n]*/i, `## 6. Seguridad\n\n${incomingSection6}`);
+          LOG("preservada sección 6 desde baseline (el Arquitecto puso placeholder)");
+        }
+        const incomingSection7 = extractSection7InfraestructuraBody(mergeBaseline);
+        const currentSection7 = extractSection7InfraestructuraBody(out);
+        if (incomingSection7 && isPlaceholderSection(currentSection7)) {
+          out = replaceSectionBody(out, /##\s+(?:7\.\s+)?Infraestructura\b[^\n]*/i, `## 7. Infraestructura\n\n${incomingSection7}`);
+          LOG("preservada sección 7 desde baseline (el Arquitecto puso placeholder)");
+        }
+        if (sectionsToPreserve.length > 0 && mergeBaseline.length >= minLength) {
+          out = preserveUntouchedMddSectionsFromBaseline(out, mergeBaseline, sectionsToPreserve);
+          LOG("preservadas secciones fuera de plan desde baseline: %s", sectionsToPreserve.join(","));
+        }
+        if (scopeSection === 4) {
+          const baselineContratos = extractContratosBody(mergeBaseline);
+          const mergedContratos = extractContratosBody(out);
+          if (baselineContratos && isContratosSectionRegression(baselineContratos, mergedContratos)) {
+            out = replaceContratosInDraft(out, baselineContratos);
+            LOG(
+              "preservada sección 4 desde baseline (merge quirúrgico regresión len=%s→%s)",
+              baselineContratos.length,
+              mergedContratos?.length ?? 0,
+            );
+          }
+        }
+        if (mergeBaseline.length >= minLength) {
+          out =
+            scopeSection !== null
+              ? preserveNonTargetValidatedSectionsAfterArchitectMerge(mergeBaseline, out, scopeSection)
+              : preserveValidatedSectionsIfSubstantial(mergeBaseline, out);
+        }
+        return out;
+      };
+
+      if (scope !== "full") {
+        const processed = processScopedArchitectResponse(mddDraft, scope);
+        extractedFromFullMdd = processed.extractedFromFullMdd;
+        let architectFragment = processed.fragment;
+        if (extractedFromFullMdd) {
+          LOG("WARN scoped full-MDD detectado scope=%s; extracción §%s antes de merge", scope, scopeSection);
+        }
+
+        const fragmentContratos = extractContratosBody(architectFragment);
+        const incomingContratosScoped = extractContratosBody(draftTrimmed);
+        if (
+          scope === "api_contracts" &&
+          isContratosSubstantial(incomingContratosScoped) &&
+          isContratosPlaceholder(fragmentContratos)
+        ) {
+          architectFragment = replaceContratosInDraft(architectFragment, incomingContratosScoped!);
+          LOG("preservada sección 4 entrante en fragment scoped");
+        }
+
+        if (
+          architectFragment.length < minLength &&
+          draftTrimmed.length >= minLength &&
+          scope === "api_contracts" &&
+          contractsRequired(state)
+        ) {
           const contratosFromText = extractContratosFromArchitectResponse(text);
           if (contratosFromText) {
-            mddDraft = replaceContratosInDraft(draftTrimmed, contratosFromText);
-            LOG("draft corto pero sección 4 extraída del texto (len=%s), inyectada en borrador Clarificador", contratosFromText.length);
+            architectFragment = `## 4. Contratos de API\n\n${contratosFromText}`;
+          }
+        }
+
+        let mergeResult =
+          scopeSection !== null && mergeBaseline.length >= minLength
+            ? tryMergeSingleArchitectSectionIntoDraft(mergeBaseline, architectFragment, scopeSection)
+            : { draft: mergeBaseline, merged: false as const, rejectReason: "empty" as const };
+
+        if (mergeResult.merged) {
+          mddDraft = mergeResult.draft;
+        } else if (scopeSection !== null && mergeBaseline.length >= minLength) {
+          LOG(
+            "merge rechazado scope=%s section=%s reason=%s extractedFromFullMdd=%s; reintento scoped (máx 1)",
+            scope,
+            scopeSection,
+            mergeResult.rejectReason ?? "unknown",
+            extractedFromFullMdd,
+          );
+          const rejectParts = [
+            formatScopedArchitectMergeRejectFeedback(scopeSection, mergeResult.rejectReason ?? "empty"),
+            extractedFromFullMdd ? formatScopedArchitectFullMddRejectFeedback(scope) : "",
+          ].filter(Boolean);
+          const retryMessages = [
+            ...messages,
+            new HumanMessage(
+              `${rejectParts.join("\n")}\n\nResponde **solo** con el cuerpo de tu sección asignada (sin MDD completo).`,
+            ),
+          ];
+          const retryResponse = await invokeLlmWithRetry(llm, retryMessages, {
+            tag: `SoftwareArchitect:scoped-retry-${scopeSection}`,
+          });
+          const retryText = stripThinkingTags(retryResponse ? extractLlmText(retryResponse) : "");
+          if (retryText.trim()) {
+            const retryProcessed = processScopedArchitectResponse(retryText.trim(), scope);
+            mergeResult = tryMergeSingleArchitectSectionIntoDraft(
+              mergeBaseline,
+              retryProcessed.fragment,
+              scopeSection,
+            );
+            if (mergeResult.merged) {
+              mddDraft = mergeResult.draft;
+              LOG("merge scoped ok tras reintento scope=%s section=%s", scope, scopeSection);
+            } else {
+              LOG(
+                "merge rechazado tras reintento scope=%s section=%s reason=%s",
+                scope,
+                scopeSection,
+                mergeResult.rejectReason ?? "unknown",
+              );
+              mddDraft = mergeBaseline;
+            }
+          } else {
+            LOG("reintento scoped sin respuesta LLM scope=%s", scope);
+            mddDraft = mergeBaseline;
+          }
+        } else {
+          mddDraft = mergeBaseline;
+        }
+
+        LOG(
+          "merge quirúrgico scope=%s section=%s merged=%s baseline=%s",
+          scope,
+          scopeSection,
+          mergeResult.merged,
+          mergeBaselineSource,
+        );
+        mddDraft = applyPostMergeNormalization(mddDraft);
+      } else {
+        // Pasada full: helpers de documento completo antes de normalizar.
+        const incomingContratos = extractContratosBody(draftTrimmed);
+        const currentContratos = extractContratosBody(mddDraft);
+        if (isContratosSubstantial(incomingContratos) && isContratosPlaceholder(currentContratos)) {
+          mddDraft = replaceContratosInDraft(mddDraft, incomingContratos!);
+          LOG("preservada sección 4 entrante (contratos reales); el Arquitecto había devuelto placeholder");
+        }
+        if (mddDraft.length < minLength && draftTrimmed.length >= minLength) {
+          if (contractsRequired(state)) {
+            const contratosFromText = extractContratosFromArchitectResponse(text);
+            if (contratosFromText) {
+              mddDraft = replaceContratosInDraft(draftTrimmed, contratosFromText);
+              LOG("draft corto pero sección 4 extraída del texto (len=%s), inyectada en borrador Clarificador", contratosFromText.length);
+            } else {
+              LOG("draft convertido muy corto (len=%s), conservando borrador del Clarificador (len=%s)", mddDraft.length, draftTrimmed.length);
+              mddDraft = draftTrimmed;
+            }
           } else {
             LOG("draft convertido muy corto (len=%s), conservando borrador del Clarificador (len=%s)", mddDraft.length, draftTrimmed.length);
             mddDraft = draftTrimmed;
           }
-        } else {
-          LOG("draft convertido muy corto (len=%s), conservando borrador del Clarificador (len=%s)", mddDraft.length, draftTrimmed.length);
-          mddDraft = draftTrimmed;
         }
-      }
-      if (draftTrimmed.length >= minLength) {
-        mddDraft = preserveContextSectionIfSubstantial(draftTrimmed, mddDraft);
-        mddDraft = restoreArquitecturaSectionFromBaselineIfMissing(draftTrimmed, mddDraft);
-      }
-      mddDraft = sanitizeContextSection(mddDraft);
-      mddDraft = replaceContextWhenOnlyMetadata(mddDraft);
-      mddDraft = ensureContratosSection(mddDraft);
-      mddDraft = normalizeMddFormat(mddDraft);
-      if (decoupleSection5) {
-        mddDraft = ensureSection5TailParallelPlaceholder(mddDraft);
-      }
-      // Preservar §6 y §7 del borrador de merge si el LLM los reemplazó con placeholders
-      const incomingSection6 = extractSection6SeguridadBody(mergeBaseline);
-      const currentSection6 = extractSection6SeguridadBody(mddDraft);
-      if (incomingSection6 && isPlaceholderSection(currentSection6)) {
-        mddDraft = replaceSectionBody(mddDraft, /##\s+(?:6\.\s+)?Seguridad\b[^\n]*/i, `## 6. Seguridad\n\n${incomingSection6}`);
-        LOG("preservada sección 6 desde baseline (el Arquitecto puso placeholder)");
-      }
-      const incomingSection7 = extractSection7InfraestructuraBody(mergeBaseline);
-      const currentSection7 = extractSection7InfraestructuraBody(mddDraft);
-      if (incomingSection7 && isPlaceholderSection(currentSection7)) {
-        mddDraft = replaceSectionBody(mddDraft, /##\s+(?:7\.\s+)?Infraestructura\b[^\n]*/i, `## 7. Infraestructura\n\n${incomingSection7}`);
-        LOG("preservada sección 7 desde baseline (el Arquitecto puso placeholder)");
-      }
-      if (sectionsToPreserve.length > 0 && mergeBaseline.length >= minLength) {
-        mddDraft = preserveUntouchedMddSectionsFromBaseline(mddDraft, mergeBaseline, sectionsToPreserve);
-        LOG("preservadas secciones fuera de plan desde baseline: %s", sectionsToPreserve.join(","));
-      }
-      if (scopeSection !== null && mergeBaseline.length >= minLength) {
-        mddDraft = mergeSingleArchitectSectionIntoDraft(mergeBaseline, mddDraft, scopeSection);
-        LOG("merge quirúrgico scope=%s section=%s", scope, scopeSection);
-        if (scopeSection === 4) {
-          const incomingContratos = extractContratosBody(mergeBaseline);
-          const currentContratos = extractContratosBody(mddDraft);
-          if (incomingContratos && isContratosSectionRegression(incomingContratos, currentContratos)) {
-            mddDraft = replaceContratosInDraft(mddDraft, incomingContratos);
-            LOG("preservada sección 4 desde baseline (merge quirúrgico regresión len=%s→%s)",
-              incomingContratos.length,
-              currentContratos?.length ?? 0);
-          }
+        if (draftTrimmed.length >= minLength) {
+          mddDraft = preserveContextSectionIfSubstantial(draftTrimmed, mddDraft);
+          mddDraft = restoreArquitecturaSectionFromBaselineIfMissing(draftTrimmed, mddDraft);
         }
+        mddDraft = applyPostMergeNormalization(mddDraft);
       }
       if (directive && affectsSection2) {
         mddDraft = applyDeploymentStackDirectiveToDraft(mddDraft, directive);
       }
       mddDraft = deduplicateMddDraftSections(mddDraft);
       const sum = getMddDraftSummary(mddDraft);
-      LOG("ok mddDraftLen=%s section2=%s", sum.length, sum.section2);
+      LOG("ok mddDraftLen=%s section3=%s", sum.length, sum.section3);
       logMddNodeOutput("SoftwareArchitect", mddDraft);
       logSection3Debug("post-SoftwareArchitect", mddDraft);
       // Cuando el SA devolvió markdown (no JSON estructurado), §3, §4 y §5 están en mddDraft.

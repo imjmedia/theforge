@@ -4,9 +4,10 @@ import { validateMddForDelivery } from "../utils/mdd-delivery-gate.util.js";
 import {
   formatDeliveryGateBlockersFeedback,
   formatDeliveryGateQualityWarningsFeedback,
+  fingerprintPlaceholderBlockers,
   hasUnresolvedAutoRepairableGateWarnings,
   MAX_MDD_DELIVERY_GATE_ATTEMPTS,
-  resolveDeliveryGateFixTarget,
+  resolveDeliveryGateFixTargetFromGate,
   shouldContinueDeliveryGateLoop,
 } from "../utils/mdd-delivery-gate-loop.util.js";
 import { isHighSplitArchitectPipeline } from "../utils/mdd-architect-pipeline.util.js";
@@ -61,13 +62,11 @@ export function createMddPrepareOutputNode(options?: { uiMcpLibraryLabel?: strin
     );
 
     if (loop) {
-      const fixTarget = resolveDeliveryGateFixTarget(
-        [
-          ...gate.blockers,
-          ...gate.warnings.filter((w) => hasUnresolvedAutoRepairableGateWarnings([w])),
-        ],
-        { splitArchitectPipeline: isHighSplitArchitectPipeline(state) },
-      );
+      const fixTarget = resolveDeliveryGateFixTargetFromGate(gate.blockers, gate.warnings, {
+        splitArchitectPipeline: isHighSplitArchitectPipeline(state),
+        previousPlaceholderFingerprint: state.deliveryGatePlaceholderFingerprint,
+        deliveryGateAttempt: attempt + 1,
+      });
       const agentFeedback = [
         formatDeliveryGateBlockersFeedback(gate.blockers),
         formatDeliveryGateQualityWarningsFeedback(gate.warnings),
@@ -80,6 +79,7 @@ export function createMddPrepareOutputNode(options?: { uiMcpLibraryLabel?: strin
         deliveryGateAttempt: attempt + 1,
         deliveryGateLoopActive: true,
         deliveryGateFixTarget: fixTarget,
+        deliveryGatePlaceholderFingerprint: fingerprintPlaceholderBlockers(gate.blockers),
         auditorFeedback: agentFeedback || state.auditorFeedback,
       };
     }
@@ -89,6 +89,7 @@ export function createMddPrepareOutputNode(options?: { uiMcpLibraryLabel?: strin
       deliveryGate: gate,
       deliveryGateLoopActive: false,
       deliveryGateFixTarget: undefined,
+      deliveryGatePlaceholderFingerprint: undefined,
       auditorFeedback:
         gate.ok
           ? state.auditorFeedback

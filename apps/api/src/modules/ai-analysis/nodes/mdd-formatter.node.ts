@@ -15,6 +15,8 @@ import {
   sanitizeContextSection,
 } from "../utils/mdd-sanitize.js";
 import { reconcileUiUxDesignIntent } from "../utils/mdd-enrich-uiux-intent.js";
+import { preserveTailSectionsIfSubstantial } from "../utils/mdd-section-preserve.util.js";
+import { shouldPreferDraftOverStructured } from "../utils/mdd-prepare-output.js";
 import { mddStructuredToMarkdown } from "../render/mdd-structured-to-markdown.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Formatter] ${msg}`, ...args);
@@ -61,7 +63,8 @@ export function createMddFormatterNode(): (state: MDDStateType) => Promise<Parti
       preserveDraftFromArchitect ||
       draftHasSubstantialSection3 ||
       draftHasSubstantialSection6 ||
-      executorSectionPreserve;
+      executorSectionPreserve ||
+      shouldPreferDraftOverStructured(currentDraft, state.mddStructured);
 
     if (hasStructuredContent(state.mddStructured) && !preserveDraft) {
       try {
@@ -119,6 +122,7 @@ export function createMddFormatterNode(): (state: MDDStateType) => Promise<Parti
         LOG("sin cambios len=%s section2=%s", sum.length, sum.section2);
         return {};
       }
+      formatted = preserveTailSectionsIfSubstantial(draft, formatted);
       const sum = getMddDraftSummary(formatted);
       LOG("formateado len=%s -> %s section2=%s", draft.length, sum.length, sum.section2);
       logMddNodeOutput("Formatter", formatted);
