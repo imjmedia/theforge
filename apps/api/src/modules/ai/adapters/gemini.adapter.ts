@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Adapter Google Gemini: implementa {@link LLMProvider} contra la API generateContent de Gemini.
+ * Usa el SDK `@google/generative-ai` con streaming nativo.
+ */
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import type {
   LLMProvider,

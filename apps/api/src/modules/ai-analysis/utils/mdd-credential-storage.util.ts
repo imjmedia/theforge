@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Almacenamiento de credenciales referenciadas en documentación.
+ */
+
 import { getSection6Or7Range, replaceSection6Or7InDraft } from "./mdd-sanitize.js";
 
 const GESTION_SECRETOS_RE = /\bgesti[oó]n\s+de\s+secretos\b/i;

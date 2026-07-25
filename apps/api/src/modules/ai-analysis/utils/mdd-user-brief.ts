@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Extracción de resumen de usuario desde estado MDD.
+ */
+
 import type { MDDStateType } from "../state/index.js";
 import {
   MDD_MAX_EXPLICIT_REQUIREMENTS_CHARS,

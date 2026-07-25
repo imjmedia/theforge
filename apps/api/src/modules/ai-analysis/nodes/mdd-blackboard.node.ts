@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo blackboard — espacio compartido de coordinación entre agentes.
+ */
+
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage } from "@langchain/core/messages";
 import type { MDDStateType } from "../state/index.js";

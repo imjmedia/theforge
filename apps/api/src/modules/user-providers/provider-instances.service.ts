@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Servicio CRUD de instancias de proveedor (tenant): crear, listar, actualizar y eliminar
+ * instancias compartidas de proveedores LLM para el equipo. Solo admin+.
+ */
 import {
   BadRequestException,
   ForbiddenException,

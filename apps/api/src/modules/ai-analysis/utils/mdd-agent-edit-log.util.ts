@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Log de ediciones de agentes MDD — tracking y diffs.
+ */
+
 import type { MDDState } from "../state/index.js";
 import type { MddAgentEditKind, MddAgentEditLogEntry } from "../estimation/estimation.types.js";
 import { diffMddSectionTouches } from "./mdd-section-diff.util.js";

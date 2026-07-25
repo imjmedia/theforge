@@ -1,3 +1,6 @@
+/**
+ * @fileoverview Módulo NestJS de proveedores de usuario: registra servicios, controllers y dependencias (Prisma, Crypto).
+ */
 import { Module } from "@nestjs/common";
 import { PrismaModule } from "../../prisma/prisma.module.js";
 import { CryptoModule } from "../crypto/crypto.module.js";

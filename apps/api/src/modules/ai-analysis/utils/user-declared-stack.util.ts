@@ -1,4 +1,8 @@
 /**
+ * @fileoverview Extracción de stack tecnológico declarado por el usuario.
+ */
+
+/**
  * Detects and surfaces stack technologies the user explicitly named in idea/chat/MDD.
  * Used to prevent DBGA/Clarifier/Architect from substituting market defaults (e.g. Next.js).
  */

@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo formateador — aplica reglas de formato y normalización al MDD.
+ */
+
 import type { MDDStateType } from "../state/index.js";
 import {
   ensureContratosSection,

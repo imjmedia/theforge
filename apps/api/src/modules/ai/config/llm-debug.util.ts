@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Utilidades de debug/tracing para llamadas LLM.
+ * Activar con `LLM_DEBUG=1` — imprime modelo, tokens y latencia en consola.
+ */
+
 /** Activa trazas detalladas LLM: `LLM_DEBUG=1` o `LLM_DEBUG=true`. */
 export function isLlmDebugEnabled(): boolean {
   const v = process.env.LLM_DEBUG?.trim().toLowerCase();

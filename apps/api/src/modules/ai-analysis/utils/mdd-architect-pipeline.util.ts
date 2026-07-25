@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Utilidades del pipeline de arquitecto MDD.
+ */
+
 import type { MddComplexityLevel } from "../state/mdd-state.schema.js";
 import type { MDDStateType } from "../state/index.js";
 import { isMddTailParallelEnabled } from "./mdd-tail-parallel.config.js";

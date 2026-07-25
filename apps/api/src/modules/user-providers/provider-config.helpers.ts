@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Helpers de configuración de proveedores: builders de base URL, resolución de account IDs,
+ * validación de dimensiones de embeddings y whitelist de modelos.
+ */
 import { BadRequestException } from "@nestjs/common";
 import {
   buildCloudflareBaseUrl,

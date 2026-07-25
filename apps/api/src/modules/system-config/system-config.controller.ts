@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Controller REST de configuración del sistema. Solo super_admin.
+ * Endpoints: {@link GET /admin/system-config} (snapshot) y {@link PATCH /admin/system-config} (actualizar llaves).
+ */
 import { Body, Controller, Get, Patch } from "@nestjs/common";
 import { requireSuperAdmin } from "../../common/guards/role.helpers.js";
 import {

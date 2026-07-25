@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Regeneración de contenido de sección 1 del MDD.
+ */
+
 import { peelDocumentBodyForPersist, peelTheforgeDocStamp } from "@theforge/shared-types";
 import { extractContextSectionBody, isMddSectionPipelinePlaceholderBody } from "./mdd-sanitize/section-merge.js";
 import { stripBrdPasteNoiseFromSection1 } from "./mdd-section1-cleanup.util.js";

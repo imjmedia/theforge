@@ -1,4 +1,8 @@
 /**
+ * @fileoverview Estrategia de reintento para llamadas LLM en el pipeline MDD.
+ */
+
+/**
  * Retry helper para invocaciones LLM en el pipeline MDD.
  *
  * Por qué existe: los nodos LLM (SoftwareArchitect, Clarifier, LLMFormatter,

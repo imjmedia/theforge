@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Adapter Anthropic Claude: implementa {@link LLMProvider} contra la API Messages de Anthropic.
+ * Usa el SDK `@anthropic-ai/sdk` con streaming nativo.
+ */
 import Anthropic from "@anthropic-ai/sdk";
 import type {
   LLMProvider,

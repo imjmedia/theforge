@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Merge de objetos MDD estructurados con deduplicación.
+ */
+
 import type { MddStructured } from "../state/mdd-structured.schema.js";
 import {
   mddContratosApiSchema,

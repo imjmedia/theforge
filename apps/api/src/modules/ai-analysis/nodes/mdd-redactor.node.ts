@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo redactor — reescribe y pule contenido del MDD.
+ */
+
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage, AIMessage, ToolMessage } from "@langchain/core/messages";
 import type { StructuredToolInterface } from "@langchain/core/tools";

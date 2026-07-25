@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Emisión de eventos de progreso durante streaming MDD.
+ */
+
 import { getAgentLabel } from "../state/state-to-markdown.js";
 import {
   getMddNodeActiveProgressMessage,

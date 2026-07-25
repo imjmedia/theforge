@@ -1,3 +1,6 @@
+/**
+ * @fileoverview Controller REST de configuración BYOK del usuario: settings, catálogo y CRUD de configs personales.
+ */
 import { Body, Controller, Delete, Get, Param, Put } from "@nestjs/common";
 import { getRequestUserId } from "../../common/request-user.store.js";
 import {

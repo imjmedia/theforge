@@ -1,4 +1,8 @@
 /**
+ * @fileoverview Nodo auditor — evalúa calidad de documentación y gaps en el pipeline.
+ */
+
+/**
  * Contexto enriquecido para el Auditor MDD (LLM): BRD, tablas plataforma, pistas de alucinación.
  * Las pistas orientan al agente; el veredicto final es del LLM, no de reglas heurísticas de score.
  */

@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Store Zustand principal del Workshop. Compone slices: UI, project, MDD, deliverables, chat, clarify, legacy-debug.
+ * Cada slice gestiona su propio estado y acciones; el store combina todos en {@link WorkshopState}.
+ */
 import { create } from "zustand";
 
 import { workshopInitialState } from "./workshop/initial-state";

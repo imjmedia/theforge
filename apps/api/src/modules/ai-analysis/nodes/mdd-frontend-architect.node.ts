@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo arquitecto frontend — genera especificaciones de frontend.
+ */
+
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage } from "@langchain/core/messages";
 import { FRONTEND_ARCHITECT_MDD_PROMPT } from "../prompts/load-prompts.js";

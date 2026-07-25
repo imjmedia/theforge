@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo inyector de diagramas — inserta diagramas generados en el MDD.
+ */
+
 import type { MDDStateType } from "../state/index.js";
 import { mergeMddStructured } from "../utils/mdd-merge-structured.js";
 import { injectProposedComponentDiagramIntoSection2 } from "../utils/mdd-component-diagram.util.js";

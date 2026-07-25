@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Tipo completo {@link WorkshopState}: compone todos los slices del store Workshop.
+ * Cada slice define su propia interfaz; este archivo las unifica en un solo tipo raíz.
+ */
 import type {
   ChatImagePart,
   CodebaseDocResponseMode,

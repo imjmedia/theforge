@@ -1,4 +1,8 @@
 /**
+ * @fileoverview Limpieza de artefactos en sección 1 del MDD.
+ */
+
+/**
  * Limpieza post-Clarifier/§1: ruido de pegado BRD (Auto-trazabilidad, stubs truncados).
  */
 

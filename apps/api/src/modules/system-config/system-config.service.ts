@@ -1,3 +1,8 @@
+/**
+ * @fileoverview Servicio de configuración del sistema: gestión de llaves de plataforma con defaults del catálogo.
+ * Resuelve valores en orden: BD (AppConfig) → variable de entorno → default del catálogo ({@link SYSTEM_CONFIG_CATEGORIES}).
+ * Expone {@link getConfigSnapshot} para lectura y {@link patchConfig} para escritura (solo super_admin).
+ */
 import { BadRequestException, Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import {
   SYSTEM_CONFIG_CATEGORIES,

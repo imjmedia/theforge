@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo arquitecto de seguridad — genera especificaciones de seguridad.
+ */
+
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage } from "@langchain/core/messages";
 import { SECURITY_ARCHITECT_MDD_PROMPT } from "../prompts/load-prompts.js";

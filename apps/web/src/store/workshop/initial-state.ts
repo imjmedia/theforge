@@ -1,3 +1,6 @@
+/**
+ * @fileoverview Estado inicial del store Workshop: defaults para todos los slices (UI, project, MDD, deliverables, chat, clarify, legacy).
+ */
 import type { ChatImagePart, MddDeliveryGateResult, PlanValidationPersisted, ProjectGenerationStatus } from "@theforge/shared-types";
 import type { AgentProgressItem } from "../../utils/agentProgress";
 import type { WorkshopDocumentTimestamps } from "../../utils/workshop-document-content.util";

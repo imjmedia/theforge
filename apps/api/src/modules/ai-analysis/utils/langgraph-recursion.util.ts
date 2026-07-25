@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Gestión de límite de recursión en grafos LangGraph.
+ */
+
 import { resolvePlatformConfigNumber } from "../../system-config/platform-config.runtime.js";
 
 /** LangGraph default recursion limit is 25; MDD con Manager puede superarlo. Override: catálogo `langgraph_recursion_limit`. */

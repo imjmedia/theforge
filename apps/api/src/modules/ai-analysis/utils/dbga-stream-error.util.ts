@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Manejo de errores durante streaming DBGA.
+ */
+
 import { ModelsUnavailableError } from "../../ai/config/llm-model-fallback.js";
 
 const RECURSION_LIMIT_USER_MESSAGE =

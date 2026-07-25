@@ -1,4 +1,8 @@
 /**
+ * @fileoverview Generación de diagramas de componentes Mermaid.
+ */
+
+/**
  * Diagrama de componentes propuesto (greenfield): Mermaid determinista desde §2–§4 del MDD canónico.
  */
 

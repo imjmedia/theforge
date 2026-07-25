@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Heartbeat NDJSON para streams de larga duración.
+ */
+
 const DEFAULT_HEARTBEAT_MS = 15_000;
 
 function sleep(ms: number): Promise<void> {

@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Evaluación de delivery gate — umbrales de calidad MDD.
+ */
+
 import type { MddDeliveryGateResult } from "@theforge/shared-types";
 import { preRenderMddSanity } from "./mdd-pre-render.js";
 import {

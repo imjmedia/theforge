@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Nodo tail-parallel — ejecuta procesamiento paralelo final.
+ */
+
 import type { MddStructured } from "../state/mdd-structured.schema.js";
 import type { MDDStateType } from "../state/index.js";
 import {
