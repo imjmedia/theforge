@@ -61,6 +61,7 @@ test("resolveLlmMaxTokensForPurpose — perfiles por tarea", () => {
     assert.equal(resolveLlmMaxTokensForPurpose("auditor"), 131_072);
     assert.equal(resolveLlmMaxTokensForPurpose("tasksPlanner"), 131_072);
     assert.equal(resolveLlmMaxTokensForPurpose("tasksDoc"), 131_072);
+    assert.equal(resolveLlmMaxTokensForPurpose("governancePatterns"), 2_048);
   } finally {
     if (prev !== undefined) process.env.LLM_MAX_TOKENS = prev;
   }

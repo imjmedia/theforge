@@ -2210,7 +2210,7 @@ export class AiAnalysisService {
     const stage =
       (stageId?.trim() && stages.find((s) => s.id === stageId.trim())) ||
       pickPrimaryStage(stages);
-    const { suggestGovernancePatternIds, suggestGovernancePatternIdsFast } = await import(
+    const { suggestGovernancePatternIds, suggestGovernancePatternIdsWithoutDocs } = await import(
       "./utils/suggest-mdd-governance-patterns.util.js"
     );
     const input = {
@@ -2218,11 +2218,14 @@ export class AiAnalysisService {
       phase0SummaryContent: (project.phase0SummaryContent ?? "").trim(),
       brdContent: (stage?.brdContent ?? "").trim(),
     };
-    const fast = suggestGovernancePatternIdsFast(input);
-    if (fast) return fast;
+    const empty = suggestGovernancePatternIdsWithoutDocs(input);
+    if (empty) return empty;
 
     const userId = await this.resolveUserId(projectId);
-    const llm = await createDbgaLLM(this.aiFactory, userId);
+    const llm = await createDbgaLLM(this.aiFactory, userId, {
+      temperature: 0,
+      outputTokenPurpose: "governancePatterns",
+    });
     return suggestGovernancePatternIds(llm, input);
   }
 

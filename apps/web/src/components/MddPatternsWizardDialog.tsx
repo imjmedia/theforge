@@ -228,7 +228,7 @@ export function MddPatternsWizardDialog({
             aria-live="polite"
           >
             <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" aria-hidden />
-            <span>Refinando preselección con el servidor…</span>
+            <span>Refinando preselección con IA…</span>
           </div>
         ) : null}
         <div className="flex flex-1 min-h-0 border-t border-border/60">

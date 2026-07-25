@@ -572,8 +572,8 @@ export default function WorkshopView({
         setPatternsWizardPreselected(new Set(instantIds));
         setPatternsAnalyzeRationale(
           instantIds.length >= 2
-            ? "Preselección rápida desde tus documentos. Puedes ajustar antes de continuar."
-            : "Preselección inicial; revisa y marca los patrones que apliquen.",
+            ? "Borrador inicial desde tus documentos; refinando con IA…"
+            : "Borrador inicial; la IA analizará Fase 0, Benchmark y BRD…",
         );
       } else {
         setPatternsWizardPreselected(null);

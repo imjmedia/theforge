@@ -8,9 +8,11 @@ import { z } from "zod";
 import {
   heuristicGovernancePatternIds,
   listGovernancePatternOptions,
+  rankGovernancePatternCandidates,
 } from "@theforge/shared-types/mdd-governance-patterns";
 import { resolveGovernancePatternIncompatibilities } from "@theforge/shared-types/mdd-governance-pattern-compat";
 import { extractFirstJsonObject, parseJsonOrThrow } from "./parse-json.js";
+import { extractGovernancePatternDocContext } from "./suggest-mdd-governance-patterns-context.util.js";
 
 const responseSchema = z.object({
   patternIds: z.array(z.string()),
@@ -28,8 +30,8 @@ export type SuggestGovernancePatternsResult = {
   rationale?: string;
 };
 
-const FAST_PATH_MIN_PATTERNS = 2;
-const SLICE = 12_000;
+const SHORTLIST_MIN = 18;
+const SHORTLIST_MAX = 28;
 
 function finalizeSuggestedIds(
   patternIds: string[],
@@ -55,60 +57,101 @@ function hasSuggestableDocs(input: SuggestGovernancePatternsInput): boolean {
   );
 }
 
-/** Respuesta inmediata sin LLM cuando la heurística es suficiente. */
-export function suggestGovernancePatternIdsFast(
-  input: SuggestGovernancePatternsInput,
-): SuggestGovernancePatternsResult | null {
-  if (!hasSuggestableDocs(input)) {
-    return {
-      patternIds: [],
-      rationale: "No hay documentos de Fase 0, Benchmark ni BRD para analizar.",
-    };
+/** Catálogo acotado para el LLM: candidatos rankeados + grupos arquitectónicos base. */
+export function buildGovernancePatternShortlist(input: SuggestGovernancePatternsInput): string[] {
+  const catalog = listGovernancePatternOptions();
+  const byId = new Map(catalog.map((o) => [o.id, o]));
+  const ranked = rankGovernancePatternCandidates(input, { limit: SHORTLIST_MAX });
+  const ids = new Set<string>(ranked.map((c) => c.id));
+
+  for (const o of catalog) {
+    if (/PATRONES DE ARQUITECTURA GLOBAL/i.test(o.group)) ids.add(o.id);
   }
 
-  const heuristic = heuristicGovernancePatternIds(input);
-  if (heuristic.length < FAST_PATH_MIN_PATTERNS) return null;
+  const padGroups = [
+    /PERSISTENCIA/i,
+    /INTEGRACIÓN/i,
+    /COMPORTAMIENTO/i,
+    /ESTRUCTURALES/i,
+  ];
+  for (const groupRe of padGroups) {
+    if (ids.size >= SHORTLIST_MIN) break;
+    for (const o of catalog) {
+      if (!groupRe.test(o.group)) continue;
+      ids.add(o.id);
+      if (ids.size >= SHORTLIST_MIN) break;
+    }
+  }
 
-  return finalizeSuggestedIds(
-    heuristic,
-    "Preselección rápida desde Fase 0, Benchmark y BRD.",
-  );
+  return [...ids]
+    .filter((id) => byId.has(id))
+    .slice(0, SHORTLIST_MAX);
+}
+
+export function buildGovernancePatternSelectionPrompt(input: SuggestGovernancePatternsInput): string {
+  const shortlistIds = buildGovernancePatternShortlist(input);
+  const catalog = listGovernancePatternOptions();
+  const byId = new Map(catalog.map((o) => [o.id, o]));
+  const shortlist = shortlistIds
+    .map((id) => byId.get(id))
+    .filter(Boolean)
+    .map((o) => ({ id: o!.id, label: o!.label, group: o!.group }));
+
+  const ranked = rankGovernancePatternCandidates(input, { limit: 12 });
+  const seedHints =
+    ranked.length > 0
+      ? ranked
+          .map((c) => `- ${c.id} (score ${c.score}: ${c.reasons.slice(0, 2).join(", ")})`)
+          .join("\n")
+      : "(sin candidatos fuertes; infiere del contexto)";
+
+  const docContext = extractGovernancePatternDocContext(input);
+
+  return `Eres arquitecto de software. Preselecciona patrones del catálogo SSOT que encajan con el proyecto descrito.
+
+Reglas de precisión:
+- Devuelve SOLO ids del catálogo acotado (campo "id"), entre 4 y 10 patrones (máximo 12).
+- Prioriza stack, integraciones, persistencia, despliegue y estilo arquitectónico **explícitos** en el contexto.
+- NO marques patrones GoF creacionales (Abstract Factory, Builder, Factory Method, Prototype, Singleton) salvo evidencia explícita de construcción de familias/objetos en código.
+- "estrategia de inversión" o reglas de negocio ≠ patrón Strategy GoF; Strategy solo si hay algoritmos intercambiables en runtime.
+- "evento" en audit log ≠ Event-Driven Architecture salvo mensajería/colas/broker como núcleo del sistema.
+- "query" SQL o consultas de dominio ≠ CQRS salvo modelos de lectura/escritura separados.
+- Elige monolito modular **o** microservicios como estilo global principal, no ambos.
+- No inventes ids fuera del catálogo acotado.
+
+Candidatos preliminares (pistas deterministas; valida y descarta falsos positivos):
+${seedHints}
+
+Catálogo acotado (${shortlist.length} opciones — id, label, group):
+${JSON.stringify(shortlist)}
+
+Contexto del proyecto (extracto arquitectónico compacto):
+${docContext || "(vacío)"}
+
+Responde únicamente JSON: { "patternIds": string[], "rationale": string }`;
+}
+
+/** Sin documentos: respuesta vacía inmediata (no LLM). */
+export function suggestGovernancePatternIdsWithoutDocs(
+  input: SuggestGovernancePatternsInput,
+): SuggestGovernancePatternsResult | null {
+  if (hasSuggestableDocs(input)) return null;
+  return {
+    patternIds: [],
+    rationale: "No hay documentos de Fase 0, Benchmark ni BRD para analizar.",
+  };
 }
 
 export async function suggestGovernancePatternIds(
   llm: BaseChatModel,
   input: SuggestGovernancePatternsInput,
 ): Promise<SuggestGovernancePatternsResult> {
-  const fast = suggestGovernancePatternIdsFast(input);
-  if (fast) return fast;
+  const empty = suggestGovernancePatternIdsWithoutDocs(input);
+  if (empty) return empty;
 
   const catalog = listGovernancePatternOptions();
-  const validIds = new Set(catalog.map((o) => o.id));
-
-  const catalogJson = JSON.stringify(
-    catalog.map((o) => ({ id: o.id, label: o.label, group: o.group, affects: o.affects })),
-  );
-
-  const prompt = `Eres arquitecto de software. A partir de los documentos del proyecto (Fase 0 / DBGA, resumen de benchmark y BRD), preselecciona los patrones de desarrollo del catálogo que mejor encajan.
-
-Reglas:
-- Devuelve SOLO ids del catálogo (campo "id"), entre 3 y 12 patrones salvo proyecto trivial (mínimo 1).
-- Prioriza coherencia con stack, integración, persistencia y estilo arquitectónico descritos.
-- No inventes ids.
-
-Catálogo (id, label, group, affects):
-${catalogJson.slice(0, 24_000)}
-
-### DBGA / Fase 0
-${input.dbgaContent.slice(0, SLICE) || "(vacío)"}
-
-### Resumen Benchmark / Paso 0
-${input.phase0SummaryContent.slice(0, 4000) || "(vacío)"}
-
-### BRD
-${input.brdContent.slice(0, SLICE) || "(vacío)"}
-
-Responde únicamente JSON: { "patternIds": string[], "rationale": string }`;
+  const validIds = new Set(buildGovernancePatternShortlist(input));
+  const prompt = buildGovernancePatternSelectionPrompt(input);
 
   try {
     const response = await llm.invoke([new HumanMessage(prompt)]);
@@ -125,14 +168,44 @@ Responde únicamente JSON: { "patternIds": string[], "rationale": string }`;
     if (patternIds.length === 0) {
       return finalizeSuggestedIds(
         heuristicGovernancePatternIds(input),
-        "Preselección heurística (ids inválidos del modelo).",
+        "Preselección heurística (ids inválidos o fuera del catálogo acotado).",
       );
     }
-    return finalizeSuggestedIds(patternIds, parsed.rationale);
+    return finalizeSuggestedIds(
+      patternIds,
+      parsed.rationale ?? "Preselección con IA a partir de Fase 0, Benchmark y BRD.",
+    );
   } catch {
     return finalizeSuggestedIds(
       heuristicGovernancePatternIds(input),
       "Preselección heurística (error del modelo).",
     );
   }
+}
+
+/** @deprecated Alias interno; usar suggestGovernancePatternIdsWithoutDocs. */
+export const suggestGovernancePatternIdsFast = suggestGovernancePatternIdsWithoutDocs;
+
+export function buildGovernancePatternPromptStats(input: SuggestGovernancePatternsInput): {
+  promptChars: number;
+  shortlistSize: number;
+  docContextChars: number;
+  legacyCatalogChars: number;
+} {
+  const prompt = buildGovernancePatternSelectionPrompt(input);
+  const docContext = extractGovernancePatternDocContext(input);
+  const legacyCatalog = JSON.stringify(
+    listGovernancePatternOptions().map((o) => ({
+      id: o.id,
+      label: o.label,
+      group: o.group,
+      affects: o.affects,
+    })),
+  ).slice(0, 24_000);
+  return {
+    promptChars: prompt.length,
+    shortlistSize: buildGovernancePatternShortlist(input).length,
+    docContextChars: docContext.length,
+    legacyCatalogChars: legacyCatalog.length,
+  };
 }

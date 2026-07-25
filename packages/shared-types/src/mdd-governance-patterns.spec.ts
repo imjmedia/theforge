@@ -10,6 +10,7 @@ import {
   hasGovernanceSection,
   heuristicGovernancePatternIds,
   listGovernancePatternOptions,
+  rankGovernancePatternCandidates,
   mddHasSubstantialBody,
   mddNeedsPatternWizard,
   MDD_GOVERNANCE_WIZARD_BODY,
@@ -64,6 +65,29 @@ describe("mdd-governance-patterns", () => {
     const ids = heuristicGovernancePatternIds({});
     assert.ok(ids.includes(optsId("Repository")));
     assert.ok(ids.includes(optsId("Monolito Modular")));
+  });
+
+  it("rankGovernancePatternCandidates evita creacionales por stopwords españoles", () => {
+    const ranked = rankGovernancePatternCandidates({
+      dbgaContent:
+        "El sistema proporciona interfaz para separar operaciones y define permisos.",
+      brdContent: "Permite al inversor configurar estrategia semanal.",
+    });
+    const ids = ranked.map((c) => c.id);
+    assert.ok(!ids.includes(optsId("Abstract Factory")));
+    assert.ok(!ids.includes(optsId("Builder")));
+    assert.ok(!ids.includes(optsId("Prototype")));
+  });
+
+  it("rankGovernancePatternCandidates detecta señales de stack en documentos", () => {
+    const ranked = rankGovernancePatternCandidates({
+      dbgaContent: "Microservicio WebSocket, Redis, PostgreSQL multi-tenant, broker Alpaca.",
+      phase0SummaryContent: "Alpha Engine desacoplado con LLM orquestador.",
+    });
+    const ids = ranked.map((c) => c.id);
+    assert.ok(ids.includes(optsId("Repository")));
+    assert.ok(ids.includes(optsId("Observer / Pub-Sub")));
+    assert.ok(ids.includes(optsId("Microservicios")));
   });
 
   it("buildGovernanceBodySelectedOnly omite patrones no seleccionados", () => {

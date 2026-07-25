@@ -37,6 +37,8 @@ export const LLM_OUTPUT_TOKEN_PROFILES = {
   tasksDoc: 131_072,
   /** parseChecklist y salidas JSON cortas. */
   checklist: 4_096,
+  /** Wizard SSOT: JSON corto (patternIds + rationale). */
+  governancePatterns: 2_048,
 } as const;
 
 export type LlmOutputTokenPurpose = keyof typeof LLM_OUTPUT_TOKEN_PROFILES;

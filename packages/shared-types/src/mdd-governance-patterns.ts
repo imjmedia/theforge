@@ -132,15 +132,17 @@ export type HeuristicGovernancePatternInput = {
 };
 
 const STACK_KEYWORD_GOVERNANCE_HINTS: ReadonlyArray<{ re: RegExp; ids: readonly string[] }> = [
-  { re: /\b(nestjs|nestjs\.js|express\.js|fastify)\b/i, ids: ["monolito-modular", "repository", "arquitectura-hexagonal-ports-adapters"] },
+  { re: /\b(nestjs|nestjs\.js|express\.js|fastify|node\.js)\b/i, ids: ["monolito-modular", "repository", "arquitectura-hexagonal-ports-adapters"] },
   { re: /\b(postgres(?:ql)?|prisma|typeorm)\b/i, ids: ["repository", "data-mapper"] },
-  { re: /\b(redis|cache distribuida)\b/i, ids: ["observer-pub-sub", "strategy"] },
+  { re: /\b(redis|cache distribuida)\b/i, ids: ["observer-pub-sub"] },
+  { re: /\b(websocket|socket\.io|wss?)\b/i, ids: ["observer-pub-sub", "api-gateway"] },
   { re: /\b(rabbitmq|kafka|bullmq|message broker|event bus|cola de mensajes)\b/i, ids: ["event-driven-architecture-eda", "outbox-pattern", "observer-pub-sub"] },
   { re: /\b(jwt|oauth|openid|auth0|keycloak|passport)\b/i, ids: ["api-gateway", "facade-fachada"] },
-  { re: /\b(stripe|webhook|pasarela de pago)\b/i, ids: ["api-gateway", "circuit-breaker"] },
+  { re: /\b(stripe|webhook|pasarela de pago|payment|billing)\b/i, ids: ["api-gateway", "circuit-breaker", "adapter"] },
   { re: /\b(react|vite|frontend|spa|tailwind)\b/i, ids: ["bff-backend-for-frontend", "monolito-modular"] },
-  { re: /\b(langgraph|langchain|llm|agente|openai|anthropic)\b/i, ids: ["strategy", "chain-of-responsibility", "facade-fachada"] },
+  { re: /\b(langgraph|langchain|llm|openai|anthropic)\b/i, ids: ["strategy", "chain-of-responsibility", "facade-fachada"] },
   { re: /\b(docker|kubernetes|k8s|dokploy|compose)\b/i, ids: ["monolito-modular", "api-gateway"] },
+  { re: /\bmulti[- ]tenant\b/i, ids: ["repository", "facade-fachada"] },
   { re: /\bcqrs\b/i, ids: ["cqrs-command-query-responsibility-segregation"] },
   { re: /\bsaga\b/i, ids: ["saga-transacciones-distribuidas"] },
   { re: /\bcircuit breaker|resilien/i, ids: ["circuit-breaker"] },
@@ -149,62 +151,90 @@ const STACK_KEYWORD_GOVERNANCE_HINTS: ReadonlyArray<{ re: RegExp; ids: readonly 
   { re: /\bstrangler|legado\b/i, ids: ["strangler-fig-estrangulamiento"] },
 ];
 
+const EXPLICIT_PATTERN_SIGNALS: ReadonlyArray<{ re: RegExp; id: string; score: number }> = [
+  { re: /\b(microservicio|microservice)s?\b/i, id: "microservicios", score: 4 },
+  { re: /\b(monolito|monolith|monorepo)\b/i, id: "monolito-modular", score: 4 },
+  { re: /\bhexagonal\b|\bports?\s*&\s*adapters?\b/i, id: "arquitectura-hexagonal-ports-adapters", score: 4 },
+  { re: /\bclean architecture\b|\bonion architecture\b/i, id: "clean-architecture-onion-architecture", score: 4 },
+  { re: /\bcqrs\b/i, id: "cqrs-command-query-responsibility-segregation", score: 4 },
+  { re: /\bevent[- ]driven\b|\beda\b/i, id: "event-driven-architecture-eda", score: 4 },
+  { re: /\bsoa\b|\bservice[- ]oriented\b/i, id: "soa-service-oriented-architecture", score: 4 },
+  { re: /\boutbox pattern\b|\boutbox\b/i, id: "outbox-pattern", score: 3 },
+  { re: /\bunit of work\b/i, id: "unit-of-work", score: 3 },
+  { re: /\bactive record\b/i, id: "active-record", score: 3 },
+];
+
+export type RankedGovernancePatternCandidate = {
+  id: string;
+  score: number;
+  reasons: string[];
+};
+
+function governancePatternBlob(input: HeuristicGovernancePatternInput): string {
+  return `${input.dbgaContent ?? ""}\n${input.phase0SummaryContent ?? ""}\n${input.brdContent ?? ""}`;
+}
+
 /**
- * Preselección rápida de patrones SSOT sin LLM (Fase 0, benchmark, BRD).
- * Usada en API (fast path) y Workshop (apertura instantánea del wizard).
+ * Ranking determinista de candidatos SSOT (sin LLM). Evita falsos positivos por
+ * stopwords en español; alimenta el shortlist del prompt LLM y la preselección UI.
+ */
+export function rankGovernancePatternCandidates(
+  input: HeuristicGovernancePatternInput,
+  opts?: { limit?: number },
+): RankedGovernancePatternCandidate[] {
+  const blob = governancePatternBlob(input);
+  const blobLower = blob.toLowerCase();
+  const catalog = listGovernancePatternOptions();
+  const validIds = new Set(catalog.map((o) => o.id));
+  const scores = new Map<string, { score: number; reasons: string[] }>();
+
+  const bump = (id: string, score: number, reason: string) => {
+    if (!validIds.has(id)) return;
+    const prev = scores.get(id) ?? { score: 0, reasons: [] };
+    prev.score += score;
+    if (!prev.reasons.includes(reason)) prev.reasons.push(reason);
+    scores.set(id, prev);
+  };
+
+  for (const { re, ids } of STACK_KEYWORD_GOVERNANCE_HINTS) {
+    if (!re.test(blob)) continue;
+    const label = re.source.replace(/\\b/g, "").slice(0, 40);
+    for (const id of ids) bump(id, 3, `stack:${label}`);
+  }
+
+  for (const { re, id, score } of EXPLICIT_PATTERN_SIGNALS) {
+    if (re.test(blob)) bump(id, score, `explicit:${id}`);
+  }
+
+  const ranked = [...scores.entries()]
+    .map(([id, meta]) => ({ id, score: meta.score, reasons: meta.reasons }))
+    .filter((c) => c.score >= 2)
+    .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+
+  if (ranked.length === 0) {
+    for (const id of ["repository", "monolito-modular"]) {
+      bump(
+        id,
+        2,
+        blobLower.trim().length === 0 ? "default:sin-documentos" : "default:stack-minimo",
+      );
+    }
+    return [...scores.entries()]
+      .map(([id, meta]) => ({ id, score: meta.score, reasons: meta.reasons }))
+      .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+  }
+
+  const limit = opts?.limit ?? 20;
+  return ranked.slice(0, limit);
+}
+
+/**
+ * Preselección rápida en cliente (borrador). El servidor refina con LLM.
  */
 export function heuristicGovernancePatternIds(
   input: HeuristicGovernancePatternInput,
 ): string[] {
-  const blob = `${input.dbgaContent ?? ""}\n${input.phase0SummaryContent ?? ""}\n${input.brdContent ?? ""}`.toLowerCase();
-  const opts = listGovernancePatternOptions();
-  const validIds = new Set(opts.map((o) => o.id));
-  const hits = new Set<string>();
-
-  for (const o of opts) {
-    const labelTokens = o.label
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((t) => t.length >= 3);
-    if (labelTokens.some((t) => blob.includes(t))) hits.add(o.id);
-    const descTokens = o.description
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((t) => t.length > 5);
-    if (descTokens.some((t) => blob.includes(t))) hits.add(o.id);
-  }
-
-  for (const { re, ids } of STACK_KEYWORD_GOVERNANCE_HINTS) {
-    if (!re.test(blob)) continue;
-    for (const id of ids) {
-      if (validIds.has(id)) hits.add(id);
-    }
-  }
-
-  if (/microservicio|microservice/.test(blob)) {
-    const ms = opts.find((o) => o.label.toLowerCase().includes("microservicio"));
-    if (ms) hits.add(ms.id);
-  }
-  if (/hexagonal|ports?\s*&\s*adapters?/.test(blob)) {
-    const hx = opts.find((o) => o.label.toLowerCase().includes("hexagonal"));
-    if (hx) hits.add(hx.id);
-  }
-  if (/monolito|monolith|monorepo/.test(blob)) {
-    const mo = opts.find((o) => o.label.toLowerCase().includes("monolito"));
-    if (mo) hits.add(mo.id);
-  }
-  if (/clean architecture|onion architecture/.test(blob)) {
-    const ca = opts.find((o) => o.label.toLowerCase().includes("clean architecture"));
-    if (ca) hits.add(ca.id);
-  }
-
-  if (hits.size === 0) {
-    for (const id of ["repository", "monolito-modular"]) {
-      if (validIds.has(id)) hits.add(id);
-    }
-  }
-
-  return [...hits].slice(0, 12);
+  return rankGovernancePatternCandidates(input, { limit: 12 }).map((c) => c.id);
 }
 
 export function hasGovernanceSection(md: string): boolean {
