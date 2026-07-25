@@ -1,9 +1,11 @@
 /** Umbrales y patrones de routing del Manager MDD. */
 
+import { CASCADE_ACCURACY_THRESHOLD } from "@theforge/shared-types";
+
 /** >= 85: done (cede intervención al usuario). < 85: Manager asigna gaps a agentes para corregir. */
 export const QUALITY_THRESHOLD = 85;
 /** Nota < 9/10: por debajo de 90% el documento se devuelve al Clarifier con reporte de gaps para segunda iteración. */
-export const AUDITOR_RETRY_THRESHOLD = 90;
+export const AUDITOR_RETRY_THRESHOLD = CASCADE_ACCURACY_THRESHOLD;
 export const MAX_MDD_ITERATIONS = 3;
 
 /** Usuario pide explícitamente detenerse: done solo si Auditor >= 85% o el usuario lo pide. */

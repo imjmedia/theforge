@@ -4,7 +4,7 @@
  */
 
 import { ParsedTaskV2, TaskParseResult } from "./tasks-parser-v2.js";
-import { AUTH_ENTITY_FAMILY, type DomainInventory } from "@theforge/shared-types";
+import { AUTH_ENTITY_FAMILY, CASCADE_ACCURACY_THRESHOLD, type DomainInventory } from "@theforge/shared-types";
 
 export interface TaskAuditResult {
   score: number; // 0-100
@@ -78,7 +78,7 @@ function taskHasScope(task: ParsedTaskV2): boolean {
 }
 
 const BASE_SCORE = 100;
-const GREEN_THRESHOLD = 90;
+const GREEN_THRESHOLD = CASCADE_ACCURACY_THRESHOLD;
 const YELLOW_THRESHOLD = 75;
 
 // ---- Motor de auditoría ----
