@@ -38,6 +38,8 @@ export type CompositeReadinessResult = {
 };
 
 export const READINESS_CONSISTENCY_GREEN_MIN = 90;
+export const READINESS_CROSS_GAP_GREEN_TOLERANCE = 5;
+export const READINESS_HUMAN_GAP_GREEN_TOLERANCE = 3;
 export const READINESS_CROSS_GAP_AMARILLO_CAP = 82;
 export const READINESS_HUMAN_GAP_AMARILLO_CAP = 78;
 export const READINESS_CONSISTENCY_AMARILLO_CAP = 85;
@@ -170,19 +172,19 @@ export function applyCompositeReadinessGates(
   const conformanceOk = input.conformanceOk !== false;
   const consistency = input.consistencyScore;
 
-  if (humanGaps > 0) {
+  if (humanGaps > READINESS_HUMAN_GAP_GREEN_TOLERANCE) {
     status = "AMARILLO";
     precisionScore = Math.min(precisionScore, READINESS_HUMAN_GAP_AMARILLO_CAP);
     reasons.push(`${humanGaps} gap(s) requieren decisión humana (BRD/decision log)`);
   }
 
-  if (!conformanceOk || crossGaps > 0) {
+  if (!conformanceOk || crossGaps > READINESS_CROSS_GAP_GREEN_TOLERANCE) {
     status = "AMARILLO";
     precisionScore = Math.min(precisionScore, READINESS_CROSS_GAP_AMARILLO_CAP);
     if (!conformanceOk) {
       reasons.push(input.conformanceReason ?? "Conformidad MDD↔derivados incompleta");
     }
-    if (crossGaps > 0) reasons.push(`${crossGaps} brecha(s) transversal(es) SDD`);
+    if (crossGaps > READINESS_CROSS_GAP_GREEN_TOLERANCE) reasons.push(`${crossGaps} brecha(s) transversal(es) SDD`);
   }
 
   if (consistency != null && consistency < READINESS_CONSISTENCY_GREEN_MIN) {
@@ -195,7 +197,7 @@ export function applyCompositeReadinessGates(
 
   if (
     status === "VERDE" &&
-    (crossGaps > 0 || humanGaps > 0 || !conformanceOk || (consistency != null && consistency < READINESS_CONSISTENCY_GREEN_MIN))
+    (crossGaps > READINESS_CROSS_GAP_GREEN_TOLERANCE || humanGaps > READINESS_HUMAN_GAP_GREEN_TOLERANCE || !conformanceOk || (consistency != null && consistency < READINESS_CONSISTENCY_GREEN_MIN))
   ) {
     status = "AMARILLO";
   }

@@ -19,16 +19,48 @@ test("classifyGap: API falta → llm api_contracts", () => {
   assert.equal(g.targetDeliverable, "api_contracts");
 });
 
-test("applyCompositeReadinessGates: VERDE + cross gaps → AMARILLO cap 82", () => {
+test("applyCompositeReadinessGates: VERDE + 5 cross gaps ≤ tolerancia → VERDE", () => {
   const r = applyCompositeReadinessGates({
     baseStatus: "VERDE",
     basePrecisionScore: 95,
     crossArtifactGapCount: 5,
     conformanceOk: true,
   });
+  assert.equal(r.status, "VERDE");
+  assert.equal(r.precisionScore, 95);
+});
+
+test("applyCompositeReadinessGates: VERDE + 6 cross gaps > tolerancia → AMARILLO cap 82", () => {
+  const r = applyCompositeReadinessGates({
+    baseStatus: "VERDE",
+    basePrecisionScore: 95,
+    crossArtifactGapCount: 6,
+    conformanceOk: true,
+  });
   assert.equal(r.status, "AMARILLO");
   assert.equal(r.precisionScore, 82);
-  assert.ok(r.reasons.some((x) => x.includes("5 brecha")));
+  assert.ok(r.reasons.some((x) => x.includes("6 brecha")));
+});
+
+test("applyCompositeReadinessGates: VERDE + 3 human gaps ≤ tolerancia → VERDE", () => {
+  const r = applyCompositeReadinessGates({
+    baseStatus: "VERDE",
+    basePrecisionScore: 95,
+    humanRequiredGapCount: 3,
+    conformanceOk: true,
+  });
+  assert.equal(r.status, "VERDE");
+});
+
+test("applyCompositeReadinessGates: VERDE + 4 human gaps > tolerancia → AMARILLO", () => {
+  const r = applyCompositeReadinessGates({
+    baseStatus: "VERDE",
+    basePrecisionScore: 95,
+    humanRequiredGapCount: 4,
+    conformanceOk: true,
+  });
+  assert.equal(r.status, "AMARILLO");
+  assert.equal(r.precisionScore, 78);
 });
 
 test("classifyGap: HU↔Tasks → llm tasks", () => {

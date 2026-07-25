@@ -3,6 +3,7 @@
  */
 
 import type { MddDeliveryGateResult } from "@theforge/shared-types";
+import { CASCADE_ACCURACY_THRESHOLD } from "@theforge/shared-types";
 import { preRenderMddSanity } from "./mdd-pre-render.js";
 import {
   applyPreDeliveryGateFixes,
@@ -20,7 +21,7 @@ import { checkBrdDecisionLogClosure } from "../../engine/brd-decision-log.util.j
 
 export type { MddDeliveryGateResult };
 
-const DELIVERY_SCORE_THRESHOLD = 90;
+const DELIVERY_SCORE_THRESHOLD = CASCADE_ACCURACY_THRESHOLD;
 
 /** Mínimo de chars que una sección canónica debe tener para no ser considerada
  *  placeholder. 200 chars = ~3-4 líneas de prosa o un bloque SQL/JSON de
