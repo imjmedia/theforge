@@ -20,6 +20,12 @@ import {
   shouldStartBullmqWorkers,
 } from "../../common/bullmq-runtime.config.js";
 import { longRunningBullmqWorkerOptions } from "../../common/bullmq-long-job.worker-options.js";
+import {
+  BULLMQ_DELIVERABLES_ORPHAN_REASON,
+  forceFailBullMqActiveJob,
+  reconcileOrphanBullMqActiveJob,
+  recoverBullMqJobsAfterWorkerRestart,
+} from "../../common/bullmq-orphan-recovery.util.js";
 import { DocReconcileService } from "../documentation-gap/doc-reconcile.service.js";
 import { ProjectGenerationGuardService } from "./project-generation-guard.service.js";
 import { ProjectsService } from "./projects.service.js";
@@ -27,6 +33,12 @@ import { PluginArtifactService } from "../../plugins/plugin-artifact.service.js"
 import {
   toDeliverablesJobError,
 } from "./deliverables-job-error.util.js";
+
+/** Entregables no deben reintentar tras stall: cascada a medias es peor que fallar y verificar entregables. */
+const DELIVERABLES_MAX_STALLED_COUNT = 0;
+
+const DELIVERABLES_JOB_STALLED_REASON =
+  "Job de entregables bloqueado tras caída del worker; recarga el proyecto y verifica los documentos";
 
 export const DELIVERABLES_QUEUE_NAME = "theforge-deliverables";
 
@@ -183,6 +195,15 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
         },
       },
     });
+    const recovered = await recoverBullMqJobsAfterWorkerRestart(this.queue, {
+      reason: BULLMQ_DELIVERABLES_ORPHAN_REASON,
+      logger: this.logger,
+    });
+    if (recovered.failedActive > 0 || recovered.removedQueued > 0) {
+      this.logger.warn(
+        `BullMQ deliverables: recuperados tras reinicio — active→failed=${recovered.failedActive}, cola eliminada=${recovered.removedQueued}`,
+      );
+    }
     const concurrency = resolveDeliverablesWorkerConcurrency();
     if (shouldStartBullmqWorkers()) {
       this.worker = new Worker(
@@ -201,9 +222,15 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
         },
         {
           connection: { url },
-          ...longRunningBullmqWorkerOptions({ concurrency, maxStalledCount: 0 }),
+          ...longRunningBullmqWorkerOptions({
+            concurrency,
+            maxStalledCount: DELIVERABLES_MAX_STALLED_COUNT,
+          }),
         },
       );
+      this.worker.on("stalled", (jobId) => {
+        void this.handleStalledDeliverablesJob(String(jobId));
+      });
       this.worker.on("failed", (job, err) => {
         const data = job?.data as GenerateJobData | undefined;
         const transient = isTransientError(err);
@@ -218,7 +245,7 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
         this.logger.log(`BullMQ job ${job.id} (${data?.type ?? "?"}) completado en ${elapsed}s`);
       });
       this.logger.log(
-        `BullMQ worker activo (${DELIVERABLES_QUEUE_NAME}), maxAttempts=${this.MAX_ATTEMPTS}, concurrency=${concurrency}, backoff=exponential/4s`,
+        `BullMQ worker activo (${DELIVERABLES_QUEUE_NAME}), maxAttempts=${this.MAX_ATTEMPTS}, maxStalledCount=${DELIVERABLES_MAX_STALLED_COUNT}, concurrency=${concurrency}, backoff=exponential/4s`,
       );
     } else {
       this.logger.log(
@@ -231,6 +258,63 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
   async onModuleDestroy(): Promise<void> {
     await this.worker?.close();
     await this.queue?.close();
+  }
+
+  /** Stall BullMQ → no reencolar cascada; fallar/eliminar para liberar UI. */
+  private async handleStalledDeliverablesJob(jobId: string): Promise<void> {
+    if (!this.queue) return;
+    const job = await this.queue.getJob(jobId);
+    if (!job) return;
+    const state = await job.getState();
+    if (state === "active") {
+      const failed = await forceFailBullMqActiveJob(
+        this.queue,
+        job,
+        DELIVERABLES_JOB_STALLED_REASON,
+      );
+      if (failed) {
+        this.logger.warn(`BullMQ deliverables job ${jobId} fallido tras stall`);
+        return;
+      }
+    }
+    try {
+      await job.discard();
+      await job.remove();
+      this.logger.warn(`BullMQ deliverables job ${jobId} eliminado tras stall (${state})`);
+    } catch (err) {
+      this.logger.warn(
+        `BullMQ deliverables job ${jobId} no pudo limpiarse tras stall: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  /** Job BullMQ `active` sin lock ni worker local → huérfano; libera busy en generation-status. */
+  private async reconcileOrphanDeliverablesJob(job: Job): Promise<boolean> {
+    if (!this.queue) return false;
+    const result = await reconcileOrphanBullMqActiveJob(this.queue, job, {
+      reason: BULLMQ_DELIVERABLES_ORPHAN_REASON,
+      isLocallyRunning: (jobId) => this.jobAbortControllers.has(jobId),
+    });
+    if (result === "reconciled") {
+      this.logger.warn(`BullMQ deliverables job ${job.id} reconciliado (huérfano activo)`);
+      return true;
+    }
+    return false;
+  }
+
+  private async resolveBullMqJobRef(
+    job: Job,
+    state: "waiting" | "active" | "delayed",
+  ): Promise<DeliverablesActiveJobRef | null> {
+    const data = job.data as GenerateJobData | undefined;
+    if (!data?.projectId) return null;
+    if (state === "active") {
+      const reconciled = await this.reconcileOrphanDeliverablesJob(job);
+      if (reconciled) return null;
+    }
+    const status =
+      state === "active" ? "active" : state === "delayed" ? "retrying" : ("queued" as const);
+    return { jobId: String(job.id), type: data.type, status };
   }
 
   private throwIfAborted(signal?: AbortSignal): void {
@@ -644,15 +728,10 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
     for (const state of states) {
       const jobs = await this.queue.getJobs([state], 0, 200);
       for (const job of jobs) {
-        const data = job.data as GenerateJobData | undefined;
-        if (!data?.projectId) continue;
-        const status =
-          state === "active"
-            ? "active"
-            : state === "delayed"
-              ? "retrying"
-              : ("queued" as const);
-        push(data.projectId, { jobId: String(job.id), type: data.type, status });
+        const entry = await this.resolveBullMqJobRef(job, state);
+        if (!entry) continue;
+        const data = job.data as GenerateJobData;
+        push(data.projectId, entry);
       }
     }
     return map;
@@ -677,13 +756,8 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
       for (const job of jobs) {
         const data = job.data as GenerateJobData | undefined;
         if (data?.projectId !== projectId) continue;
-        const status =
-          state === "active"
-            ? "active"
-            : state === "delayed"
-              ? "retrying"
-              : ("queued" as const);
-        out.push({ jobId: String(job.id), type: data.type, status });
+        const entry = await this.resolveBullMqJobRef(job, state);
+        if (entry) out.push(entry);
       }
     }
     return out;

@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Job, Queue } from "bullmq";
 import {
+  BULLMQ_DELIVERABLES_ORPHAN_REASON,
   BULLMQ_WORKER_RESTARTED_REASON,
   forceFailBullMqActiveJob,
+  isBullMqJobLockHeld,
+  reconcileOrphanBullMqActiveJob,
   recoverBullMqJobsAfterWorkerRestart,
 } from "./bullmq-orphan-recovery.util.js";
 
@@ -12,8 +15,7 @@ function mockJob(state: string, id = "50"): Job {
   return {
     id,
     discard: async () => undefined,
-    moveToFailed: async (err: Error) => {
-      assert.equal(err.message, BULLMQ_WORKER_RESTARTED_REASON);
+    moveToFailed: async (_err: Error) => {
       currentState = "failed";
     },
     remove: async () => {
@@ -23,7 +25,7 @@ function mockJob(state: string, id = "50"): Job {
   } as unknown as Job;
 }
 
-function mockQueue(jobsByState: Record<string, Job[]>): Queue {
+function mockQueue(jobsByState: Record<string, Job[]>, lockHeld = false): Queue {
   const deletedLocks: string[] = [];
   return {
     client: Promise.resolve({
@@ -31,6 +33,7 @@ function mockQueue(jobsByState: Record<string, Job[]>): Queue {
         deletedLocks.push(key);
         return 1;
       },
+      exists: async (key: string) => (lockHeld && key.endsWith(":lock") ? 1 : 0),
     }),
     toKey: (jobId: string) => `bull:test:${jobId}`,
     getJobs: async (states: string[]) => {
@@ -73,5 +76,47 @@ describe("recoverBullMqJobsAfterWorkerRestart", () => {
     const result = await recoverBullMqJobsAfterWorkerRestart(queue);
     assert.equal(result.failedActive, 1);
     assert.equal(result.removedQueued, 2);
+  });
+});
+
+describe("isBullMqJobLockHeld", () => {
+  it("returns true when lock exists", async () => {
+    const queue = mockQueue({}, true);
+    assert.equal(await isBullMqJobLockHeld(queue, "218"), true);
+  });
+
+  it("returns false when lock is missing", async () => {
+    const queue = mockQueue({});
+    assert.equal(await isBullMqJobLockHeld(queue, "218"), false);
+  });
+});
+
+describe("reconcileOrphanBullMqActiveJob", () => {
+  it("skips when job runs locally", async () => {
+    const queue = mockQueue({});
+    const job = mockJob("active", "218");
+    const result = await reconcileOrphanBullMqActiveJob(queue, job, {
+      reason: BULLMQ_DELIVERABLES_ORPHAN_REASON,
+      isLocallyRunning: (id) => id === "218",
+    });
+    assert.equal(result, "running");
+  });
+
+  it("skips when Redis lock is held", async () => {
+    const queue = mockQueue({}, true);
+    const job = mockJob("active", "218");
+    const result = await reconcileOrphanBullMqActiveJob(queue, job, {
+      reason: BULLMQ_DELIVERABLES_ORPHAN_REASON,
+    });
+    assert.equal(result, "running");
+  });
+
+  it("reconciles orphan active jobs without lock", async () => {
+    const queue = mockQueue({});
+    const job = mockJob("active", "218");
+    const result = await reconcileOrphanBullMqActiveJob(queue, job, {
+      reason: BULLMQ_DELIVERABLES_ORPHAN_REASON,
+    });
+    assert.equal(result, "reconciled");
   });
 });

@@ -4,6 +4,10 @@ import type { Job, Queue } from "bullmq";
 export const BULLMQ_WORKER_RESTARTED_REASON =
   "Proceso API reiniciado; vuelve a generar el MDD";
 
+/** Mensaje estándar para jobs huérfanos de la cola de entregables (cascada, spec, etc.). */
+export const BULLMQ_DELIVERABLES_ORPHAN_REASON =
+  "Cola de entregables interrumpida (reinicio o caída del worker). Recarga el proyecto; si los documentos ya están, no regeneres la cascada.";
+
 type RecoverLogger = {
   log: (message: string) => void;
   warn: (message: string) => void;
@@ -85,4 +89,37 @@ export async function recoverBullMqJobsAfterWorkerRestart(
   }
 
   return { failedActive, removedQueued };
+}
+
+/** True si Redis aún tiene el lock de un worker BullMQ sobre el job. */
+export async function isBullMqJobLockHeld(queue: Queue, jobId: string): Promise<boolean> {
+  const client = await queue.client;
+  const lockKey = `${queue.toKey(String(jobId))}:lock`;
+  const held = await client.exists(lockKey);
+  return held === 1;
+}
+
+export type ReconcileOrphanBullMqActiveJobResult = "running" | "reconciled" | "skipped";
+
+/**
+ * Job `active` sin lock ni worker local → huérfano (p. ej. worker murió tras completar la cascada).
+ * Lo marca failed para liberar `generation-status.busy` sin reintentar la pipeline entera.
+ */
+export async function reconcileOrphanBullMqActiveJob(
+  queue: Queue,
+  job: Job,
+  options: {
+    reason: string;
+    isLocallyRunning?: (jobId: string) => boolean;
+  },
+): Promise<ReconcileOrphanBullMqActiveJobResult> {
+  const state = await job.getState();
+  if (state !== "active") return "skipped";
+
+  const jobId = String(job.id);
+  if (options.isLocallyRunning?.(jobId)) return "running";
+  if (await isBullMqJobLockHeld(queue, jobId)) return "running";
+
+  const ok = await forceFailBullMqActiveJob(queue, job, options.reason);
+  return ok ? "reconciled" : "skipped";
 }
