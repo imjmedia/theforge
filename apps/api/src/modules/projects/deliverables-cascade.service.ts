@@ -382,7 +382,6 @@ export class DeliverablesCascadeService {
 
       const project = await this.projects.findOne(projectId);
       const mdd = buildConstitutionMarkdown(project);
-      const stage = pickPrimaryStage(project.stages ?? []);
       const precisionGaps = collectSddPrecisionGaps({
         mdd,
         architecture: project.architectureContent,
