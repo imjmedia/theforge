@@ -149,7 +149,6 @@ export async function suggestGovernancePatternIds(
   const empty = suggestGovernancePatternIdsWithoutDocs(input);
   if (empty) return empty;
 
-  const catalog = listGovernancePatternOptions();
   const validIds = new Set(buildGovernancePatternShortlist(input));
   const prompt = buildGovernancePatternSelectionPrompt(input);
 
