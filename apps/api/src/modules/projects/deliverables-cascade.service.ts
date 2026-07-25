@@ -596,7 +596,8 @@ export class DeliverablesCascadeService {
   }
 
   private async runCascadeConvergenceLoop(projectId: string, signal?: AbortSignal): Promise<void> {
-    const MAX_ITERATIONS = 3;
+    const MAX_ITERATIONS = 1;
+    const GAP_TOLERANCE = 5;
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       if (signal?.aborted) throw new Error("Cancelado por el usuario");
@@ -622,8 +623,8 @@ export class DeliverablesCascadeService {
         gaps = collectConformanceGaps(this.conformance, mdd, source);
       }
 
-      if (gaps.length === 0) {
-        this.logger.log(`[Cascade] Convergence OK en iteración ${iteration + 1}`);
+      if (gaps.length <= GAP_TOLERANCE) {
+        this.logger.log(`[Cascade] Convergence OK en iteración ${iteration + 1}/${MAX_ITERATIONS} (${gaps.length} gap(s) ≤ tolerancia ${GAP_TOLERANCE})`);
         return;
       }
 
