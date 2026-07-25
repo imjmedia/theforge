@@ -8,6 +8,7 @@ import {
   extractGovernanceSection,
   formatActivePatternsPromptBlock,
   hasGovernanceSection,
+  heuristicGovernancePatternIds,
   listGovernancePatternOptions,
   mddHasSubstantialBody,
   mddNeedsPatternWizard,
@@ -47,6 +48,22 @@ describe("mdd-governance-patterns", () => {
     assert.equal(mddNeedsPatternWizard("   "), true);
     const seeded = buildMddWithGovernanceSkeleton("X", buildGovernanceBodySelectedOnly(new Set([optsId("Repository")])));
     assert.equal(mddNeedsPatternWizard(seeded), false);
+  });
+
+  it("heuristicGovernancePatternIds detecta stack NestJS y Postgres", () => {
+    const ids = heuristicGovernancePatternIds({
+      dbgaContent: "Backend NestJS con Prisma sobre PostgreSQL y API REST.",
+      brdContent: "Monolito modular desplegado con Docker.",
+    });
+    assert.ok(ids.length >= 2);
+    assert.ok(ids.includes(optsId("Repository")));
+    assert.ok(ids.includes(optsId("Monolito Modular")));
+  });
+
+  it("heuristicGovernancePatternIds usa defaults mínimos sin documentos", () => {
+    const ids = heuristicGovernancePatternIds({});
+    assert.ok(ids.includes(optsId("Repository")));
+    assert.ok(ids.includes(optsId("Monolito Modular")));
   });
 
   it("buildGovernanceBodySelectedOnly omite patrones no seleccionados", () => {

@@ -29,6 +29,7 @@ import {
   type MddPatternsWizardMode,
 } from "../components/MddPatternsWizardDialog";
 import {
+  heuristicGovernancePatternIds,
   mddNeedsPatternWizard,
   selectedPatternIdsFromMdd,
   updateMddGovernancePatterns,
@@ -558,16 +559,35 @@ export default function WorkshopView({
     async (mode: MddPatternsWizardMode) => {
       if (!projectId?.trim()) return;
       setMddPatternsWizardMode(mode);
-      setPatternsWizardPreselected(null);
       setPatternsAnalyzeRationale(null);
       setMddPatternsWizardOpen(true);
+
+      const heuristicInput = {
+        dbgaContent: (dbgaContent ?? project?.dbgaContent ?? "").trim(),
+        phase0SummaryContent: (phase0SummaryContent ?? project?.phase0SummaryContent ?? "").trim(),
+        brdContent: (activeWorkshopStage?.brdContent ?? "").trim(),
+      };
+      const instantIds = heuristicGovernancePatternIds(heuristicInput);
+      if (instantIds.length > 0) {
+        setPatternsWizardPreselected(new Set(instantIds));
+        setPatternsAnalyzeRationale(
+          instantIds.length >= 2
+            ? "Preselección rápida desde tus documentos. Puedes ajustar antes de continuar."
+            : "Preselección inicial; revisa y marca los patrones que apliquen.",
+        );
+      } else {
+        setPatternsWizardPreselected(null);
+      }
+
       setPatternsWizardAnalyzing(true);
       try {
         const { patternIds, rationale } = await suggestGovernancePatterns(
           projectId,
           activeStageId,
         );
-        setPatternsWizardPreselected(new Set(patternIds));
+        if (patternIds.length > 0) {
+          setPatternsWizardPreselected(new Set(patternIds));
+        }
         setPatternsAnalyzeRationale(
           rationale ??
             "Preselección a partir de Fase 0, Benchmark y BRD (puede variar si cambias esos documentos).",
@@ -576,12 +596,20 @@ export default function WorkshopView({
         setPatternsAnalyzeRationale(
           e instanceof Error ? e.message : "No se pudo analizar; elige patrones manualmente.",
         );
-        setPatternsWizardPreselected(null);
       } finally {
         setPatternsWizardAnalyzing(false);
       }
     },
-    [projectId, activeStageId, suggestGovernancePatterns],
+    [
+      projectId,
+      activeStageId,
+      suggestGovernancePatterns,
+      dbgaContent,
+      project?.dbgaContent,
+      phase0SummaryContent,
+      project?.phase0SummaryContent,
+      activeWorkshopStage?.brdContent,
+    ],
   );
 
   const openPatternsWizardInitial = useCallback(

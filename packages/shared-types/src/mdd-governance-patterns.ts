@@ -125,6 +125,88 @@ export function listGovernancePatternOptions(
   return out;
 }
 
+export type HeuristicGovernancePatternInput = {
+  dbgaContent?: string;
+  phase0SummaryContent?: string;
+  brdContent?: string;
+};
+
+const STACK_KEYWORD_GOVERNANCE_HINTS: ReadonlyArray<{ re: RegExp; ids: readonly string[] }> = [
+  { re: /\b(nestjs|nestjs\.js|express\.js|fastify)\b/i, ids: ["monolito-modular", "repository", "arquitectura-hexagonal-ports-adapters"] },
+  { re: /\b(postgres(?:ql)?|prisma|typeorm)\b/i, ids: ["repository", "data-mapper"] },
+  { re: /\b(redis|cache distribuida)\b/i, ids: ["observer-pub-sub", "strategy"] },
+  { re: /\b(rabbitmq|kafka|bullmq|message broker|event bus|cola de mensajes)\b/i, ids: ["event-driven-architecture-eda", "outbox-pattern", "observer-pub-sub"] },
+  { re: /\b(jwt|oauth|openid|auth0|keycloak|passport)\b/i, ids: ["api-gateway", "facade-fachada"] },
+  { re: /\b(stripe|webhook|pasarela de pago)\b/i, ids: ["api-gateway", "circuit-breaker"] },
+  { re: /\b(react|vite|frontend|spa|tailwind)\b/i, ids: ["bff-backend-for-frontend", "monolito-modular"] },
+  { re: /\b(langgraph|langchain|llm|agente|openai|anthropic)\b/i, ids: ["strategy", "chain-of-responsibility", "facade-fachada"] },
+  { re: /\b(docker|kubernetes|k8s|dokploy|compose)\b/i, ids: ["monolito-modular", "api-gateway"] },
+  { re: /\bcqrs\b/i, ids: ["cqrs-command-query-responsibility-segregation"] },
+  { re: /\bsaga\b/i, ids: ["saga-transacciones-distribuidas"] },
+  { re: /\bcircuit breaker|resilien/i, ids: ["circuit-breaker"] },
+  { re: /\bevent sourcing\b/i, ids: ["event-sourcing"] },
+  { re: /\bserverless|lambda|faas\b/i, ids: ["serverless-architecture"] },
+  { re: /\bstrangler|legado\b/i, ids: ["strangler-fig-estrangulamiento"] },
+];
+
+/**
+ * Preselección rápida de patrones SSOT sin LLM (Fase 0, benchmark, BRD).
+ * Usada en API (fast path) y Workshop (apertura instantánea del wizard).
+ */
+export function heuristicGovernancePatternIds(
+  input: HeuristicGovernancePatternInput,
+): string[] {
+  const blob = `${input.dbgaContent ?? ""}\n${input.phase0SummaryContent ?? ""}\n${input.brdContent ?? ""}`.toLowerCase();
+  const opts = listGovernancePatternOptions();
+  const validIds = new Set(opts.map((o) => o.id));
+  const hits = new Set<string>();
+
+  for (const o of opts) {
+    const labelTokens = o.label
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length >= 3);
+    if (labelTokens.some((t) => blob.includes(t))) hits.add(o.id);
+    const descTokens = o.description
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length > 5);
+    if (descTokens.some((t) => blob.includes(t))) hits.add(o.id);
+  }
+
+  for (const { re, ids } of STACK_KEYWORD_GOVERNANCE_HINTS) {
+    if (!re.test(blob)) continue;
+    for (const id of ids) {
+      if (validIds.has(id)) hits.add(id);
+    }
+  }
+
+  if (/microservicio|microservice/.test(blob)) {
+    const ms = opts.find((o) => o.label.toLowerCase().includes("microservicio"));
+    if (ms) hits.add(ms.id);
+  }
+  if (/hexagonal|ports?\s*&\s*adapters?/.test(blob)) {
+    const hx = opts.find((o) => o.label.toLowerCase().includes("hexagonal"));
+    if (hx) hits.add(hx.id);
+  }
+  if (/monolito|monolith|monorepo/.test(blob)) {
+    const mo = opts.find((o) => o.label.toLowerCase().includes("monolito"));
+    if (mo) hits.add(mo.id);
+  }
+  if (/clean architecture|onion architecture/.test(blob)) {
+    const ca = opts.find((o) => o.label.toLowerCase().includes("clean architecture"));
+    if (ca) hits.add(ca.id);
+  }
+
+  if (hits.size === 0) {
+    for (const id of ["repository", "monolito-modular"]) {
+      if (validIds.has(id)) hits.add(id);
+    }
+  }
+
+  return [...hits].slice(0, 12);
+}
+
 export function hasGovernanceSection(md: string): boolean {
   return (md ?? "").includes(MDD_GOVERNANCE_HEADING_MARKER);
 }

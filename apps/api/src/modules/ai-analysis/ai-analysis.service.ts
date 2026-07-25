@@ -2210,16 +2210,20 @@ export class AiAnalysisService {
     const stage =
       (stageId?.trim() && stages.find((s) => s.id === stageId.trim())) ||
       pickPrimaryStage(stages);
-    const { suggestGovernancePatternIds } = await import(
+    const { suggestGovernancePatternIds, suggestGovernancePatternIdsFast } = await import(
       "./utils/suggest-mdd-governance-patterns.util.js"
     );
-    const userId = await this.resolveUserId(projectId);
-    const llm = await createDbgaLLM(this.aiFactory, userId);
-    return suggestGovernancePatternIds(llm, {
+    const input = {
       dbgaContent: (project.dbgaContent ?? "").trim(),
       phase0SummaryContent: (project.phase0SummaryContent ?? "").trim(),
       brdContent: (stage?.brdContent ?? "").trim(),
-    });
+    };
+    const fast = suggestGovernancePatternIdsFast(input);
+    if (fast) return fast;
+
+    const userId = await this.resolveUserId(projectId);
+    const llm = await createDbgaLLM(this.aiFactory, userId);
+    return suggestGovernancePatternIds(llm, input);
   }
 
   /** Registra cada patrón [X] del wizard como ADR en el grafo del proyecto. */
