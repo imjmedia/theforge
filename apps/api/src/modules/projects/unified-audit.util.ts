@@ -22,6 +22,13 @@ export type UnifiedAuditReport = {
     logicFlows: ConformanceResult;
     infra: ConformanceResult;
   };
+  /** Opinión LLM opcional (no sustituye badges heurísticos). */
+  llmVerification?: {
+    blueprint: ConformanceResult;
+    api: ApiConformanceResult;
+    logicFlows: ConformanceResult;
+    infra: ConformanceResult;
+  };
   conformanceSummary: ConformanceSummary;
   crossArtifactGaps: string[];
   gapSummary: ReadinessGapSummary;
@@ -32,6 +39,7 @@ export type UnifiedAuditReport = {
 
 export function buildUnifiedAuditReport(params: {
   conformance: UnifiedAuditReport["conformance"];
+  llmVerification?: UnifiedAuditReport["llmVerification"];
   conformanceSummary: ConformanceSummary;
   crossArtifactGaps: string[];
   compositeReadiness?: CompositeReadinessResult;
@@ -42,6 +50,7 @@ export function buildUnifiedAuditReport(params: {
   return {
     generatedAt: new Date().toISOString(),
     conformance: params.conformance,
+    llmVerification: params.llmVerification,
     conformanceSummary: params.conformanceSummary,
     crossArtifactGaps: params.crossArtifactGaps.slice(0, limit),
     gapSummary: summarizeClassifiedGaps(params.crossArtifactGaps, limit),

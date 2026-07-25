@@ -84,10 +84,35 @@ Registra en `syntax_errors` los problemas de formato (en español).
 
 Antes de dar tu veredicto final, **TIENES OBLIGATORIAMENTE** que usar las herramientas deterministas disponibles:
 
-1.  **validate_sql_syntax:** Úsala para verificar que no haya errores técnicos en el modelo de datos. Si reporta errores, inclúyelos en `syntax_errors`.
-2.  **validate_json_payloads:** Úsala para verificar que todos los ejemplos de API en la Sección 4 sean JSON válidos. Si reporta errores, inclúyelos en `syntax_errors`.
+1.  **validate_mdd_structure:** Comprueba secciones canónicas y estructura base.
+2.  **validate_sql_syntax:** Úsala para verificar que no haya errores técnicos en el modelo de datos. Si reporta errores, inclúyelos en `syntax_errors`.
+3.  **validate_json_payloads:** Úsala para verificar que todos los ejemplos de API en la Sección 4 sean JSON válidos. Si reporta errores, inclúyelos en `syntax_errors`.
 
-No confíes solo en tu "visión" de LLM; usa estas herramientas para garantizar paridad técnica 100%.
+Las herramientas **informan** tu juicio; **tú** decides el score y los `critical_gaps`. No apruebes por defecto.
+
+---
+
+### 8. Alucinaciones y tablas plataforma (§3)
+
+Detecta tablas o columnas **inventadas** que no derivan del dominio de negocio:
+
+1.  **Tablas plataforma sin ancla BRD/DBGA:** `messages`, `conversation_memory`, `mcp_plugins` solo son válidas si el BRD/DBGA describe mensajería real (WhatsApp, inbox), RAG/memoria conversacional persistente o integración MCP — **no** basta mencionar “chat del taller” u orquestación Workshop en §1.
+2.  **Patrones sospechosos:** columnas genéricas (`payload_type`, `signal_unique_id`, outbox/event sin dominio), entidades duplicadas con sinónimos inventados, tablas que copian plantillas de otros proyectos.
+3.  **Domain-auth-only-skew:** inventario/BRD con ≥3 capacidades de negocio y §3 solo auth → **RECHAZADO**.
+
+Registra cada alucinación como **critical_gap** con `fix`: eliminar tabla, mover a Fuera de alcance, o anclar en §1 con trazabilidad BRD.
+
+---
+
+### 9. Fidelidad BRD (fórmulas, permisos, capacidades)
+
+Si el mensaje incluye extracto BRD o inventario:
+
+1.  **Fórmulas y umbrales** del BRD deben reflejarse en §1 (contexto), §4 (contratos) o §5 (lógica). Cobertura parcial = gap con fix concreto.
+2.  **Matriz de permisos / roles** del BRD debe tener trazabilidad en §4 (auth scopes) o §6 (políticas).
+3.  **Capacidades de negocio** listadas en BRD sin endpoint ni tabla = **critical_gap**.
+
+Penaliza fuerte (-15 a -25 pts) omisiones sistemáticas de reglas de negocio explícitas del BRD.
 
 ---
 
