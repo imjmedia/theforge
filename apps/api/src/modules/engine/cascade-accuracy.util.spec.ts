@@ -142,6 +142,19 @@ describe("domain-inventory + cascade-accuracy", () => {
     assert.ok(inv.processes.length >= 5);
   });
 
+  it("suggests explicit snake_case entity bullets from BRD §3", () => {
+    const brd = `
+## 3. Definición de entidades de negocio
+- order_lines
+- payment_schedules
+- llm_configs
+`;
+    const inv = buildDomainInventory({ brdMarkdown: brd });
+    assert.ok(inv.suggestedEntities.includes("order_lines"));
+    assert.ok(inv.suggestedEntities.includes("payment_schedules"));
+    assert.ok(inv.suggestedEntities.includes("llm_configs"));
+  });
+
   it("ignores BRD template headings and parses ?3 Capacidades only", () => {
     const brd = `
 # BRD

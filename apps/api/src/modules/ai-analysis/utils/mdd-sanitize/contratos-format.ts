@@ -220,9 +220,12 @@ export function isContratosPlaceholder(body: string | null | undefined): boolean
   return !CONTRATOS_HAS_ENDPOINTS.test(normalized);
 }
 
-/** True si §4 tiene contratos usables (endpoints o JSON y no es placeholder). */
+/** True si §4 tiene contratos usables (endpoints + JSON request/response y no es placeholder). */
 export function isContratosSubstantial(body: string | null | undefined): boolean {
-  return !!body && !isContratosPlaceholder(body) && CONTRATOS_HAS_ENDPOINTS.test(body);
+  if (!body || isContratosPlaceholder(body)) return false;
+  if (!CONTRATOS_HAS_ENDPOINTS.test(body)) return false;
+  if (!/```json/i.test(body)) return false;
+  return true;
 }
 
 /** Cuenta filas de endpoint (método + ruta) en §4. */

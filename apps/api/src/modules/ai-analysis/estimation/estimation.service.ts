@@ -49,7 +49,6 @@ import {
   validateMddForDelivery,
 } from "../utils/mdd-delivery-gate.util.js";
 import { rebuildDomainInventoryPreferringBrd } from "../../engine/domain-inventory-persist.util.js";
-import { reconcileMddSsotBeforeDeliveryGate } from "../../engine/mdd-ssot-repair.util.js";
 import {
   checkApiVsMdd,
   checkBlueprintVsMdd,
@@ -931,17 +930,11 @@ export class EstimationService {
       dbgaMarkdown: dbgaContent,
       mddMarkdown: content,
     });
-    const repaired = reconcileMddSsotBeforeDeliveryGate(content, {
+    const deliveryGate = validateMddForDelivery(content, {
       brdMarkdown: documents.brdContent,
       dbgaMarkdown: dbgaContent,
       specMarkdown: documents.specContent,
       inventory,
-    });
-    const gateMarkdown = repaired.markdown;
-    const deliveryGate = validateMddForDelivery(gateMarkdown, {
-      brdMarkdown: documents.brdContent,
-      dbgaMarkdown: dbgaContent,
-      specMarkdown: documents.specContent,
     });
     let status = applyDeliveryGateToSemaphoreStatus(metrics.status, deliveryGate);
 

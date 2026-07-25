@@ -1166,7 +1166,7 @@ export function deduplicateUatSections(draft: string): string {
   if (!sec1 || !sec5 || !uatSectionsAreSimilar(sec1.body, sec5.body)) return draft;
 
   const uatHeadingRe =
-    /(\n###[^\n]*(?:UAT|criterios\s+de\s+aceptaci[oó]n)[^\n]*\n)([\s\S]*?)(?=\n###|\n##|$)/i;
+    /((?:^|\n)###[^\n]*(?:UAT|criterios\s+de\s+aceptaci[oó]n)[^\n]*\n)((?:[-*]\s+.+\n?)+)/im;
   const match = sec5.body.match(uatHeadingRe);
   if (!match || /Ver\s+§1/i.test(match[2] ?? "")) return draft;
 

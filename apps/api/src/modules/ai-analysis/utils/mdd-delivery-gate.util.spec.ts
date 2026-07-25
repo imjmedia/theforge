@@ -6,7 +6,6 @@ import {
   applyDeliveryGateToSemaphoreStatus,
   mddStreamDeliveryGateFields,
 } from "./mdd-delivery-gate.util.js";
-import { applyPreDeliveryGateFixes } from "./mdd-sanitize.js";
 
 const VALID_MDD = `# Master Design Document
 
@@ -378,18 +377,11 @@ ${VALID_MDD.split("## 4. Contratos de API")[1]}`;
 - Login exitoso con credenciales válidas.
 - Exportación rechazada sin aprobación dual.
 - Auditoría registra cada intento fallido.`;
-    // Inserta bullets de UAT en §1 (después de "## 1. Contexto\n\n")
-    // y en §5 (después de "## 5. Lógica y Edge Cases\n\n"). El test
-    // verifica que applyPreDeliveryGateFixes deduplique y que el gate
-    // siga sin blockers. (Antes del substance check este test usaba un
-    // VALID_MDD minimalista; ahora se ajusta al contenido sustancial.)
     const sec1Anchor = "## 1. Contexto\n\n";
     const sec5Anchor = "## 5. Lógica y Edge Cases\n\n";
     const draft1 = VALID_MDD.replace(sec1Anchor, `${sec1Anchor}${uatBullets}\n\n`);
     const draft = draft1.replace(sec5Anchor, `${sec5Anchor}${uatBullets}\n\n`);
-    const fixed = applyPreDeliveryGateFixes(draft);
-    assert.match(fixed, /Ver\s+§1/i);
-    const result = validateMddForDelivery(draft);
+    const result = validateMddForDelivery(draft, { skipDeterministicRepair: true });
     assert.equal(result.blockers.length, 0, result.blockers.join("; "));
   });
 

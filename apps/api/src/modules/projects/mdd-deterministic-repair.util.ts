@@ -4,8 +4,10 @@
 
 import type { DomainInventory } from "@theforge/shared-types";
 import { patchMddFromBrdTraceability } from "../engine/brd-mdd-pre-patch.util.js";
+import { rebuildDomainInventoryPreferringBrd } from "../engine/domain-inventory-persist.util.js";
 import { reconcileDomainInventoryIntoMdd } from "../engine/domain-inventory-reconciler.util.js";
 import { reconcileMddSsotBeforeDeliveryGate } from "../engine/mdd-ssot-repair.util.js";
+import { applyPreDeliveryGateFixes } from "../ai-analysis/utils/mdd-sanitize.js";
 
 export type DeterministicMddRepairResult = {
   markdown: string;
@@ -59,6 +61,65 @@ export function applyDeterministicMddRepairs(
   return {
     markdown,
     changed: markdown.trim() !== mddMarkdown.trim(),
+    notes,
+  };
+}
+
+export type PrepareMddForDeliveryGateOptions = {
+  brdMarkdown?: string | null;
+  dbgaMarkdown?: string | null;
+  inventory?: DomainInventory | null;
+  specMarkdown?: string | null;
+  /** Si true, no aplica reparaciones deterministas (tests unitarios del gate en bruto). */
+  skipDeterministicRepair?: boolean;
+};
+
+/**
+ * Pipeline agnóstico de dominio antes de validateMddForDelivery:
+ * BRD patch → inventario §3/§4 → SSOT → fences/manifest/JSON.
+ */
+export function prepareMddForDeliveryGateValidation(
+  mddMarkdown: string,
+  params: PrepareMddForDeliveryGateOptions = {},
+): DeterministicMddRepairResult {
+  const base = (mddMarkdown ?? "").trim();
+  if (!base) {
+    return { markdown: base, changed: false, notes: [] };
+  }
+
+  let markdown = base;
+  const notes: string[] = [];
+
+  if (!params.skipDeterministicRepair) {
+    const inventory =
+      params.inventory ??
+      (params.brdMarkdown?.trim() || params.dbgaMarkdown?.trim()
+        ? rebuildDomainInventoryPreferringBrd({
+            brdMarkdown: params.brdMarkdown,
+            dbgaMarkdown: params.dbgaMarkdown,
+            mddMarkdown: base,
+          })
+        : null);
+
+    const repaired = applyDeterministicMddRepairs(base, {
+      brdMarkdown: params.brdMarkdown,
+      dbgaMarkdown: params.dbgaMarkdown,
+      inventory,
+      specMarkdown: params.specMarkdown,
+    });
+    markdown = repaired.markdown;
+    notes.push(...repaired.notes);
+  }
+
+  const formatted = applyPreDeliveryGateFixes(markdown);
+  if (formatted !== markdown) {
+    notes.push("pre-delivery-gate fixes");
+  }
+  markdown = formatted;
+
+  return {
+    markdown,
+    changed: markdown.trim() !== base.trim(),
     notes,
   };
 }

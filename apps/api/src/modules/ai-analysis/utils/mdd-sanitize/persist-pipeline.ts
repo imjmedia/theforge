@@ -71,6 +71,7 @@ import {
 import {
   alignInfraNodeVersionWithSection2,
   applyDeterministicCrossConsistencyFixes,
+  deduplicateUatSections,
   ensureSecurityLockoutInSection6,
   fixDeterministicMddCoherence,
 } from "./cross-consistency.js";
@@ -159,6 +160,9 @@ export function applyPreDeliveryGateFixes(draft: string): string {
   out = repairNestedJsonFencesInDraft(out);
   out = repairDisplacedJsonBracesInContratosSection(out);
   out = closeUnclosedCodeFencesInDraft(out);
+  out = repairManifestJsonClosing(out);
+  out = stripStrayParenAfterJsonCodeBlocks(out);
+  out = stripStrayBraceAfterJsonCodeBlocks(out);
   out = applyMddQualityAutoRepairs(out).markdown;
   out = applyDeterministicCrossConsistencyFixes(out);
   out = repairGluedMarkdownHeadings(out);
@@ -171,6 +175,7 @@ export function applyPreDeliveryGateFixes(draft: string): string {
       out = deduplicateAndReorderMddSections(out);
     }
   }
+  out = deduplicateUatSections(out);
   return out;
 }
 

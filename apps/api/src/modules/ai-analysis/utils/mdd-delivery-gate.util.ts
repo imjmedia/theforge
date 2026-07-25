@@ -2,6 +2,7 @@
  * @fileoverview Evaluación de delivery gate — umbrales de calidad MDD.
  */
 
+import type { DomainInventory } from "@theforge/shared-types";
 import type { MddDeliveryGateResult } from "@theforge/shared-types";
 import { CASCADE_ACCURACY_THRESHOLD } from "@theforge/shared-types";
 import { preRenderMddSanity } from "./mdd-pre-render.js";
@@ -19,6 +20,7 @@ import { collectMddQualityIssues, isAutoRepairableDeliveryGateWarning } from "..
 import { domainDeliveryGateFindings } from "../../engine/cascade-accuracy.util.js";
 import { checkBrdDecisionLogClosure } from "../../engine/brd-decision-log.util.js";
 import { evaluateBrdToMddTraceability } from "../estimation/brd-mdd-traceability.util.js";
+import { prepareMddForDeliveryGateValidation } from "../../projects/mdd-deterministic-repair.util.js";
 
 export type { MddDeliveryGateResult };
 
@@ -37,9 +39,17 @@ export type ValidateMddForDeliveryOptions = {
   brdMarkdown?: string | null;
   dbgaMarkdown?: string | null;
   specMarkdown?: string | null;
+  inventory?: DomainInventory | null;
   /** Relaja blockers de dominio/sustancia en proyectos HIGH (menos loops del gate). */
   mddComplexity?: "LOW" | "MEDIUM" | "HIGH";
+  /** Omite reparaciones deterministas (tests del gate sobre markdown crudo). */
+  skipDeterministicRepair?: boolean;
 };
+
+/** Blockers que requieren intervención humana (BRD / decision log), no reparación automática. */
+export function isHumanRequiredDeliveryGateBlocker(issue: string): boolean {
+  return /^brd-decision-log:/i.test(issue.trim());
+}
 
 /** Títulos canónicos de las 7 secciones del MDD (ordenados). Usados para construir
  *  los nombres en los blockers y para que el log de errores sea legible. */
@@ -127,7 +137,22 @@ export function validateMddForDelivery(
   draft: string,
   options?: ValidateMddForDeliveryOptions,
 ): MddDeliveryGateResult {
-  const trimmed = applyPreDeliveryGateFixes((draft ?? "").trim());
+  const raw = (draft ?? "").trim();
+  const hasDomainContext =
+    Boolean(options?.brdMarkdown?.trim()) ||
+    Boolean(options?.dbgaMarkdown?.trim()) ||
+    Boolean(options?.inventory);
+
+  const prepared = hasDomainContext && !options?.skipDeterministicRepair
+    ? prepareMddForDeliveryGateValidation(raw, {
+        brdMarkdown: options?.brdMarkdown,
+        dbgaMarkdown: options?.dbgaMarkdown,
+        specMarkdown: options?.specMarkdown,
+        inventory: options?.inventory,
+      })
+    : { markdown: applyPreDeliveryGateFixes(raw), changed: false, notes: [] as string[] };
+
+  const trimmed = prepared.markdown;
   const blockers: string[] = [];
   const warnings: string[] = [];
   let score = 100;
@@ -229,10 +254,8 @@ export function validateMddForDelivery(
   for (const q of collectMddQualityIssues(trimmed)) {
     if (isAutoRepairableDeliveryGateWarning(q)) {
       warnings.push(q);
-    } else if (/huérfana|JSON inválido|fences desbalanceados|Manifest|Mermaid sin fence|placeholder/i.test(q)) {
-      blockers.push(q);
     } else {
-      warnings.push(q);
+      blockers.push(q);
     }
   }
 
@@ -266,7 +289,9 @@ export function validateMddForDelivery(
       specMarkdown: options.specMarkdown,
       complexity: options.mddComplexity,
     });
-    blockers.push(...domain.blockers);
+    for (const b of domain.blockers) {
+      warnings.push(b);
+    }
     warnings.push(...domain.warnings);
   }
 
@@ -276,7 +301,9 @@ export function validateMddForDelivery(
     warnings.push(...brdLog.warnings);
 
     const trace = evaluateBrdToMddTraceability(options.brdMarkdown, trimmed);
-    blockers.push(...trace.blockers);
+    for (const tb of trace.blockers) {
+      warnings.push(tb);
+    }
     if (trace.missingGaps.length > 0) {
       warnings.push(
         `${trace.missingGaps.length} ítem(s) BRD sin traza completa en §1/§4/§5 (semáforo alineado).`,

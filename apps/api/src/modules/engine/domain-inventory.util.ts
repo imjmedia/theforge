@@ -166,6 +166,10 @@ export function suggestEntitiesFromProse(...docs: Array<string | null | undefine
       const aliased = ENTITY_ALIASES[key] ?? ENTITY_ALIASES[raw] ?? snakePlural(key);
       if (aliased.length >= 3) found.add(aliased);
     }
+    // Listas explícitas de entidades (BRD §3 «Definición de entidades», bullets snake_case).
+    for (const m of doc.matchAll(/^\s*[-*]\s+`?([a-z][a-z0-9_]{2,})`?\s*$/gim)) {
+      if (m[1]) found.add(m[1].toLowerCase());
+    }
     // CREATE TABLE already present
     for (const m of doc.matchAll(/\bcreate\s+table\s+(?:if\s+not\s+exists\s+)?["`]?([a-z_][a-z0-9_]*)/gi)) {
       if (m[1]) found.add(m[1].toLowerCase());
