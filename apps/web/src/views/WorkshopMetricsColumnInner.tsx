@@ -47,9 +47,8 @@ const WORKSHOP_METRICS_BADGE_WARN =
 const WORKSHOP_METRICS_BADGE_ERR =
   "inline-flex shrink-0 items-center rounded-full bg-[color-mix(in_oklch,var(--destructive)_14%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold leading-none text-[color-mix(in_oklch,var(--destructive)_90%,var(--foreground))]";
 
-/** Umbrales alineados con backend (PRECISION_RED_MAX=85, PRECISION_GREEN_MIN=95). */
+/** Umbrales alineados con backend. */
 const SEMAPHORE_PRECISION_RED_MAX = 85;
-const SEMAPHORE_PRECISION_GREEN_MIN = 95;
 const WORKSHOP_DELIVERY_ROLE_ORDER: readonly string[] = [
   "architect",
   "techLead",
@@ -361,7 +360,7 @@ export function WorkshopMetricsColumnInner({
       ? deliveryGate.blockers.length > 0
         ? "red"
         : "yellow"
-      : liveMetrics?.status ?? (precisionScore < SEMAPHORE_PRECISION_RED_MAX ? "red" : precisionScore < SEMAPHORE_PRECISION_GREEN_MIN ? "yellow" : "green");
+      : liveMetrics?.status ?? (projectStatus === "VERDE" ? "green" : projectStatus === "AMARILLO" ? "yellow" : "red");
   const statusDiffersByDeliveryGate =
     deliveryGate != null &&
     !deliveryGate.ok &&
