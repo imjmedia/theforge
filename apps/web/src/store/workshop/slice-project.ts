@@ -346,6 +346,8 @@ export const createProjectSlice: StateCreator<WorkshopState, [], [], ProjectSlic
         error: null,
         legacyMcpDebugTrace: null,
         synced: true,
+        liveMetrics: null,
+        deliveryGate: null,
         pluginData: (data.pluginData as Record<string, unknown> | null | undefined) ?? {},
       });
       void (async () => {

@@ -2,7 +2,11 @@
  * Interfaz de referencia para evaluar completitud del MDD (Semáforo).
  * El EstimationService compara el documento contra estas secciones.
  */
-import type { MddDeliveryGateResult } from "@theforge/shared-types";
+import {
+  READINESS_CONSISTENCY_GREEN_MIN,
+  READINESS_CROSS_GAP_GREEN_TOLERANCE,
+  type MddDeliveryGateResult,
+} from "@theforge/shared-types";
 export interface MDDReference {
   /** Modelo de datos / entidades */
   db?: boolean;
@@ -170,15 +174,28 @@ export const MXN_PER_USD = 20;
 export const MARKET_HOUR_RATE = 1_050;
 
 /**
- * Umbrales de precisión del semáforo:
+ * Umbrales de precisión del semáforo en vivo (alineados con READINESS_CONSISTENCY_GREEN_MIN):
  * - Rojo: < 85% — Documentación insuficiente para que la IA trabaje. El costo es una "suposición".
- * - Amarillo: 85%–94% — Documentación aceptable (meta mínima 85%). IA puede trabajar, pero hay detalles pendientes.
- * - Verde: 95%+ — Solo si además hay DB/entidades, Endpoints con payloads y Seguridad con decisiones documentadas (agnóstico de dominio).
+ * - Amarillo: 85%–89% — Documentación aceptable (meta mínima 85%). IA puede trabajar, pero hay detalles pendientes.
+ * - Verde: ≥ 90% — Con trazabilidad BRD→MDD ≥ 90% y ≤ 5 brechas transversales (misma tolerancia que cascade/readiness).
  */
 export const PRECISION_RED_MAX = 85;
-export const PRECISION_GREEN_MIN = 95;
+export const PRECISION_GREEN_MIN = READINESS_CONSISTENCY_GREEN_MIN;
 
-/** Factor de riesgo dinámico: < 85% → 1.25; ≥ 95% → 1.0. */
+/** Criterio verde para métrica integral multi-documento (panel Semáforo). */
+export function meetsIntegralLiveGreenCriteria(input: {
+  precision: number;
+  consistencyScore?: number;
+  crossDocumentGapCount: number;
+}): boolean {
+  return (
+    input.precision >= PRECISION_GREEN_MIN &&
+    (input.consistencyScore ?? 100) >= READINESS_CONSISTENCY_GREEN_MIN &&
+    input.crossDocumentGapCount <= READINESS_CROSS_GAP_GREEN_TOLERANCE
+  );
+}
+
+/** Factor de riesgo dinámico: < 85% → 1.25; ≥ 90% → 1.0. */
 export const RISK_FACTOR_LOW_PRECISION = 1.25;
 export const RISK_PRECISION_THRESHOLD = 85;
 

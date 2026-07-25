@@ -16,6 +16,7 @@ import type {
 import { liveSemaphoreToDbStatus } from "./live-semaphore-status.util.js";
 import {
   MARKET_HOUR_RATE,
+  meetsIntegralLiveGreenCriteria,
   PRECISION_GREEN_MIN,
   PRECISION_RED_MAX,
   RISK_FACTOR_LOW_PRECISION,
@@ -618,7 +619,7 @@ function buildReadinessHints(
     out.push(
       "Prioriza §3 (modelo de datos) y §4 (API con payloads y códigos HTTP) antes de cascadas largas con IA.",
     );
-  } else if (precision < 95) {
+  } else if (precision < PRECISION_GREEN_MIN) {
     out.push("Refuerza trazabilidad §2↔§7 y paridad Mermaid/SQL para subir efectividad en conformance y generación asistida.");
   }
   if (!sections.endpointsWithPayloads) {
@@ -1138,10 +1139,11 @@ export class EstimationService {
       }
       precision = Math.max(0, precision - conformancePenalty);
 
-      const hasGreenCriteria =
-        precision >= PRECISION_GREEN_MIN &&
-        gapCount === 0 &&
-        conformancePenalty === 0;
+      const hasGreenCriteria = meetsIntegralLiveGreenCriteria({
+        precision,
+        consistencyScore,
+        crossDocumentGapCount: gapCount,
+      });
       status = hasGreenCriteria ? "green" : precision >= PRECISION_RED_MAX ? "yellow" : "red";
 
       // 6. Hints separados: MDD vs trazabilidad BRD→MDD

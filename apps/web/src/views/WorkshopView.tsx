@@ -15,6 +15,7 @@ import {
   type Status,
 } from "../store/workshopStore";
 import { WORKSHOP_EXIT_BLOCKED_TITLE } from "@/utils/workshopAgentsBusy";
+import { isWorkshopSemaphoreGreen } from "@/utils/workshopSemaphoreStatus";
 import { apiFetch, API_BASE, getOfflineQueue } from "../utils/apiClient";
 import { isWorkshopConnectionError, isSsotPatternsNotice } from "../utils/workshopSyncStatus";
 import { activeGenerationLabel, generationJobAllowed, primaryMddJob } from "../utils/projectGenerationGate";
@@ -271,7 +272,7 @@ export default function WorkshopView({
   const uiScreensContent = uiScreensContentField ?? project?.uiScreensContent ?? null;
 
   const projectStatus: Status = project?.status ?? "ROJO";
-  const semaphoreGreen = liveMetrics ? liveMetrics.status === "green" : projectStatus === "VERDE";
+  const semaphoreGreen = isWorkshopSemaphoreGreen(liveMetrics, projectStatus);
   const hasSpec = (specContent ?? "").trim().length > 0;
   const complexity = project?.complexity ?? "HIGH";
   const isLegacyProject = project?.projectType === "LEGACY";

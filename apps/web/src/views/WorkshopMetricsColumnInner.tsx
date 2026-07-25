@@ -14,6 +14,7 @@ import {
   Package,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { resolveWorkshopSemaphoreStatus, isWorkshopSemaphoreGreen } from "@/utils/workshopSemaphoreStatus";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -135,8 +136,7 @@ export function WorkshopMetricsColumnInner({
     [mddContent, project?.mddContent],
   );
   const projectStatus: Status = project?.status ?? "ROJO";
-  const semaphoreGreen =
-    liveMetrics ? liveMetrics.status === "green" : projectStatus === "VERDE";
+  const semaphoreGreen = isWorkshopSemaphoreGreen(liveMetrics, projectStatus);
   const hasSpec = (specContent ?? "").trim().length > 0;
   const complexity = project?.complexity ?? "HIGH";
   const isLegacyProject = project?.projectType === "LEGACY";
@@ -360,7 +360,7 @@ export function WorkshopMetricsColumnInner({
       ? deliveryGate.blockers.length > 0
         ? "red"
         : "yellow"
-      : liveMetrics?.status ?? (projectStatus === "VERDE" ? "green" : projectStatus === "AMARILLO" ? "yellow" : "red");
+      : liveMetrics?.status ?? resolveWorkshopSemaphoreStatus(null, projectStatus);
   const statusDiffersByDeliveryGate =
     deliveryGate != null &&
     !deliveryGate.ok &&

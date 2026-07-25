@@ -26,7 +26,7 @@ const stageStatus = useWorkshopStore((s) => s.project?.status);
 
 | Capa                         | Archivo                                                          | Tipo / valores                                  | Comportamiento                                                  |
 | ---------------------------- | --------------------------------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------- |
-| **Viva (UI: calidad+costo)** | `apps/api/src/modules/ai-analysis/estimation/estimation.service.ts` (+ `.types.ts`) | `SemaphoreStatusLive = "red" \| "yellow" \| "green"` | `calculateLiveMetrics()` puntúa el MDD. Umbrales `PRECISION_RED_MAX=85`, `PRECISION_GREEN_MIN=95`; verde requiere `gapCount===0`. |
+| **Viva (UI: calidad+costo)** | `apps/api/src/modules/ai-analysis/estimation/estimation.service.ts` (+ `.types.ts`) | `SemaphoreStatusLive = "red" \| "yellow" \| "green"` | `calculateLiveMetrics()` puntúa el MDD. Umbrales `PRECISION_RED_MAX=85`, `PRECISION_GREEN_MIN=90`; verde requiere trazabilidad ≥90% y `gapCount≤5` (`meetsIntegralLiveGreenCriteria`). |
 | **Persistida (gate SDD)**    | `apps/api/src/modules/engine/semaphore.service.ts`              | Prisma `enum Status { ROJO, AMARILLO, VERDE }`  | `SemaphoreService.evaluate()` gatea por `ComplexityLevel` + presencia de entregables + MDD JSON (HIGH). |
 
 ```typescript
@@ -34,7 +34,7 @@ const stageStatus = useWorkshopStore((s) => s.project?.status);
 export type SemaphoreStatusLive = "red" | "yellow" | "green";
 
 // estimation.service.ts (regla de color)
-const hasGreenCriteria = precision >= PRECISION_GREEN_MIN && gapCount === 0;
+const hasGreenCriteria = meetsIntegralLiveGreenCriteria({ precision, consistencyScore, crossDocumentGapCount: gapCount });
 status = hasGreenCriteria ? "green" : precision >= PRECISION_RED_MAX ? "yellow" : "red";
 ```
 
