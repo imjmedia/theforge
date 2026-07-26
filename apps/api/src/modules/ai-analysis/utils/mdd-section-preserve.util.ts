@@ -8,6 +8,7 @@ import {
 } from "./mdd-sanitize/contratos-format.js";
 import {
   extractArquitecturaSectionBody,
+  extractContextSectionBody,
   extractSection3Body,
   extractSection5Body,
   extractSection6Body,
@@ -20,7 +21,8 @@ import {
   replaceSection6Or7InDraft,
 } from "./mdd-sanitize/section-merge.js";
 
-/** Mínimo de chars para considerar §2–§7 sustanciales (alineado con delivery gate). */
+/** Mínimo de chars para considerar §1–§7 sustanciales (alineado con delivery gate). */
+export const MIN_SUBSTANTIAL_SECTION1_BODY_LEN = 200;
 export const MIN_SUBSTANTIAL_SECTION2_BODY_LEN = 200;
 export const MIN_SUBSTANTIAL_SECTION3_BODY_LEN = 200;
 export const MIN_SUBSTANTIAL_SECTION4_BODY_LEN = 200;
@@ -40,6 +42,14 @@ function sectionBodyIsSubstantial(
   const trimmed = (body ?? "").trim();
   if (!trimmed || trimmed.length < minLen) return false;
   return !isMddSectionPipelinePlaceholderBody(trimmed);
+}
+
+/** True si §1 tiene contexto real (no placeholder ni vacío). */
+export function draftHasSubstantialSection1(draft: string): boolean {
+  return sectionBodyIsSubstantial(
+    extractContextSectionBody((draft ?? "").trim()),
+    MIN_SUBSTANTIAL_SECTION1_BODY_LEN,
+  );
 }
 
 /** True si §2 tiene cuerpo real (no placeholder del pipeline). */
@@ -251,6 +261,12 @@ export function preserveValidatedSectionsIfSubstantial(
   currentDraft: string,
   options?: PreserveValidatedSectionsOptions,
 ): string {
+  if (!draftHasSubstantialSection1(currentDraft)) {
+    console.warn(
+      `[MDD:SectionPreserve] Preserve: §1 insustancial → saltando; draft corrupto`,
+    );
+    return currentDraft;
+  }
   let out = currentDraft;
   for (const n of resolveValidatedSectionsToPreserve(options)) {
     out = preserveSectionByNumber(baselineDraft, out, n);
@@ -308,6 +324,13 @@ export function guardValidatedSectionsForPersist(
   const baseline = (prePrepareDraft ?? "").trim();
   const before = (postPrepareMarkdown ?? "").trim();
   if (!baseline) return { markdown: before, restored: false, failedSections: [] };
+
+  if (!draftHasSubstantialSection1(before)) {
+    console.warn(
+      `[MDD:SectionPreserve] §1 insustancial (${extractContextSectionBody(before)?.length ?? 0} chars) → saltando restauración; draft corrupto necesita regeneración completa`,
+    );
+    return { markdown: before, restored: false, failedSections: [] };
+  }
 
   const sectionsToCheck = resolveValidatedSectionsToPreserve(options);
   const checks = GUARD_SECTION_CHECKS.filter((c) => sectionsToCheck.includes(c.num));
