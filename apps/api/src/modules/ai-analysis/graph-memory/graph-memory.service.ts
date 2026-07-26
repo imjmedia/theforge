@@ -14,7 +14,7 @@ export class GraphMemoryService implements OnModuleInit, OnModuleDestroy {
     private readonly logger = new Logger(GraphMemoryService.name);
     private client: FalkorDB | null = null;
     private graph: Graph | null = null;
-    private readonly graphName = "theforge_memory";
+    /** FalkorDB disabled — memory graph decommissioned. */
     /** Dimensiones para las que ya se creó índice vectorial en Falkor. */
     private readonly vectorIndexDims = new Set<number>();
 
@@ -44,30 +44,7 @@ export class GraphMemoryService implements OnModuleInit, OnModuleDestroy {
     }
 
     async onModuleInit() {
-        const url =
-            process.env.FALKORDB_SDD_URL ||
-            process.env.FALKORDB_URL ||
-            "redis://localhost:6379";
-        this.logger.log(`[GraphMemoryService] onModuleInit start (url=${url})`);
-        try {
-            this.client = await FalkorDB.connect({ url });
-            this.graph = this.client.selectGraph(this.graphName);
-            this.logger.log(`Conectado a FalkorDB en ${url}`);
-
-            this.client.on("error", (err: unknown) => {
-                const msg = err instanceof Error ? err.message : String(err);
-                this.logger.error(`FalkorDB disconnected: ${msg}`);
-                this.client = null;
-                this.graph = null;
-            });
-
-            this.logger.log(
-                "Índices vectoriales Falkor: se crean bajo demanda por dimensión de embedding del usuario",
-            );
-        } catch (err) {
-            this.logger.error(`Error conectando a FalkorDB: ${err instanceof Error ? err.message : String(err)}`);
-        }
-        this.logger.log("[GraphMemoryService] onModuleInit end");
+        this.logger.log("[GraphMemoryService] Disabled — no longer connected to FalkorDB");
     }
 
     private async ensureVectorIndices(dim: number) {
