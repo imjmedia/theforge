@@ -196,6 +196,11 @@ export function resolveDeliveryGateFixTarget(
     return "section5";
   }
 
+  // Clarifier tiene prioridad máxima: §1/§2 destruidos → regenerar alcance completo
+  if (items.some((b) => CLARIFIER_BLOCKER_RE.test(b))) {
+    return "clarifier";
+  }
+
   if (items.some((b) => MISSING_SECTION7_BLOCKER_RE.test(b))) {
     return "integration";
   }
@@ -209,16 +214,11 @@ export function resolveDeliveryGateFixTarget(
 
   let integrationScore = 0;
   let architectScore = 0;
-  let clarifierScore = 0;
   for (const b of items) {
     if (INTEGRATION_BLOCKER_RE.test(b)) integrationScore++;
     if (SECTION3_BLOCKER_RE.test(b) || SECTION4_BLOCKER_RE.test(b) || SECTION2_BLOCKER_RE.test(b)) {
       architectScore++;
     }
-    if (CLARIFIER_BLOCKER_RE.test(b)) clarifierScore++;
-  }
-  if (clarifierScore > 0 && clarifierScore >= architectScore && clarifierScore >= integrationScore) {
-    return "clarifier";
   }
   if (integrationScore > architectScore) return "integration";
   if (architectScore > integrationScore) {
