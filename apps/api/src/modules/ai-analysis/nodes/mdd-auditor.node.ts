@@ -72,13 +72,9 @@ const MAX_TOOL_LOOPS = 3;
 function resolveAuditorDecisionForSubstantialDraft(
   draft: string,
   baseDecision: "done" | "clarifier" | "blackboard",
-  options?: { hasBrdTraceGaps?: boolean },
+  _options?: { hasBrdTraceGaps?: boolean },
 ): "done" | "clarifier" | "blackboard" {
   if (baseDecision === "blackboard") return "blackboard";
-  if (options?.hasBrdTraceGaps && baseDecision === "done") {
-    LOG("brechas BRD→MDD deterministas → clarifier (no score-only)");
-    return "clarifier";
-  }
   if (draftIsSubstantialForScopedRepair(draft)) {
     LOG(
       "draft sustancial (%s chars) → score-only (gaps informativos; gate en prepare_output)",

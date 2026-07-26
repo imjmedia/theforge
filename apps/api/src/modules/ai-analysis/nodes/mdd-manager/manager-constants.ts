@@ -6,7 +6,7 @@ import { CASCADE_ACCURACY_THRESHOLD } from "@theforge/shared-types";
 export const QUALITY_THRESHOLD = 85;
 /** Nota < 9/10: por debajo de 90% el documento se devuelve al Clarifier con reporte de gaps para segunda iteración. */
 export const AUDITOR_RETRY_THRESHOLD = CASCADE_ACCURACY_THRESHOLD;
-export const MAX_MDD_ITERATIONS = 3;
+export const MAX_MDD_ITERATIONS = 2;
 
 /** Usuario pide explícitamente detenerse: done solo si Auditor >= 85% o el usuario lo pide. */
 export const USER_STOP_PATTERN = /^(parar|detener|stop|terminar|salir|no\s+continuar|basta|listo)$/i;

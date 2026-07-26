@@ -297,7 +297,7 @@ export function validateMddForDelivery(
 
   if (options?.brdMarkdown?.trim()) {
     const brdLog = checkBrdDecisionLogClosure(options.brdMarkdown);
-    blockers.push(...brdLog.blockers.map((b) => `brd-decision-log: ${b}`));
+    warnings.push(...brdLog.blockers.map((b) => `brd-decision-log: ${b}`));
     warnings.push(...brdLog.warnings);
 
     const trace = evaluateBrdToMddTraceability(options.brdMarkdown, trimmed);

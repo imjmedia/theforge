@@ -163,7 +163,7 @@ export const SYSTEM_CONFIG_DEFINITIONS: readonly SystemConfigDefinition[] = [
     "langgraph_recursion_limit",
     "LANGGRAPH_RECURSION_LIMIT",
     "number",
-    "100",
+    "50",
     "LangGraph — límite de recursión",
     "Pasos máximos del grafo LangGraph por invocación (MDD Manager, pipeline). Bajo puede cortar pipelines; alto permite más reintentos del Auditor.",
     "llm",
