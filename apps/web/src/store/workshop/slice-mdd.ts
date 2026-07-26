@@ -61,7 +61,7 @@ export const createMddSlice: StateCreator<WorkshopState, [], [], MddSliceActions
   generateMddFromBenchmark: async (projectId) => {
     if (!projectId?.trim()) return null;
     const pid = projectId.trim();
-    const dbgaContent = (get().dbgaContent ?? get().project?.dbgaContent ?? "").trim();
+    const dbgaContent = (get().dbgaContent ?? get().project?.dbgaContent ?? get().project?.phase0SummaryContent ?? "").trim();
     const benchStage = get().activeStageId;
     set({ loading: true, loadingReason: "mdd", error: null, agentProgress: [] });
     void get().fetchGenerationStatus(pid);
