@@ -1,4 +1,5 @@
-# Dokploy (prod): db + api + web + FalkorDB (grafo SDD documental; TheForge MCP es externo)
+# Dokploy (prod): db + api + web
+# Traefik en Dokploy: / → theforge-web:80 (solo estáticos); /api → theforge-api:3000 (strip path).
 # Traefik en Dokploy: / → theforge-web:80 (solo estáticos); /api → theforge-api:3000 (strip path).
 #
 # Otros perfiles (no modifican este archivo):
@@ -55,21 +56,6 @@ services:
       timeout: 3s
       retries: 5
 
-  theforge-falkor-sdd:
-    image: falkordb/falkordb:latest
-    container_name: theforge-falkor-sdd
-    networks:
-      - default
-    ports:
-      - "6380:6379"
-    volumes:
-      - falkor_sdd_data:/var/lib/falkordb/data
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   theforge-api:
     build:
       context: .
@@ -95,9 +81,9 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://theforge-redis-queue:6379}
       # Obligatorio en producción; en local Dokploy sustituir por secreto fuerte.
       JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-replace-in-dokploy}
-      # Grafo documental SDD (Cypher, MDD_Section). TheForge MCP va aparte (THEFORGE_MCP_URL).
-      FALKORDB_SDD_URL: redis://theforge-falkor-sdd:6379
-      FALKORDB_URL: redis://theforge-falkor-sdd:6379
+      # Cola BullMQ (cascada generate-deliverables). Obligatorio en el stack Dokploy/compose oficial:
+      # sin Redis de cola, REDIS_URL vacío fuerza modo síncrono y riesgo de timeouts en cascadas largas.
+      REDIS_URL: ${REDIS_URL:-redis://theforge-redis-queue:6379}
       # Evaluador legacy + crítica en respuesta chat (opcional; por defecto desactivado).
       AGENT_EVALUATOR_LEGACY: ${AGENT_EVALUATOR_LEGACY:-}
       TOKEN_MASTER_KEYS: ${TOKEN_MASTER_KEYS:-}
@@ -145,8 +131,6 @@ services:
         condition: service_healthy
       theforge-redis-queue:
         condition: service_healthy
-      theforge-falkor-sdd:
-        condition: service_healthy
     expose:
       - "3000"
     healthcheck:
@@ -173,8 +157,6 @@ services:
     environment:
       DATABASE_URL: postgresql://theforge:theforge@theforge-db:5432/theforge
       REDIS_URL: ${REDIS_URL:-redis://theforge-redis-queue:6379}
-      FALKORDB_SDD_URL: redis://theforge-falkor-sdd:6379
-      FALKORDB_URL: redis://theforge-falkor-sdd:6379
       NODE_ENV: production
       THEFORGE_RUNTIME_ROLE: worker
       MDD_BULLMQ_CONCURRENCY: ${MDD_BULLMQ_CONCURRENCY:-2}
@@ -198,8 +180,6 @@ services:
       theforge-db:
         condition: service_healthy
       theforge-redis-queue:
-        condition: service_healthy
-      theforge-falkor-sdd:
         condition: service_healthy
     restart: unless-stopped
 
@@ -298,5 +278,4 @@ services:
 volumes:
   theforge_db_data:
   theforge_redis_queue_data:
-  falkor_sdd_data:
   theforge_plugins:
