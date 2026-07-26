@@ -325,6 +325,7 @@ export type ValidatedSectionPersistGuardResult = {
 export type TailSectionPersistGuardResult = ValidatedSectionPersistGuardResult;
 
 const GUARD_SECTION_CHECKS: Array<{ num: number; has: (d: string) => boolean }> = [
+  { num: 1, has: draftHasSubstantialSection1 },
   { num: 2, has: draftHasSubstantialSection2 },
   { num: 3, has: draftHasSubstantialSection3 },
   { num: 4, has: draftHasSubstantialSection4 },
