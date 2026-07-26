@@ -21,6 +21,8 @@ import { extractMddSectionBody } from "./section-body.util.js";
 import {
   deduplicateAndReorderMddSections,
   ensureMissingCanonicalSections,
+  extractContextSectionBody,
+  replaceContextSectionBody,
   fixGluedSection6Heading,
   mddHasDuplicateSectionHeadings,
   normalizeCanonicalMddSectionHeadings,
@@ -483,6 +485,14 @@ export function normalizeMddFormat(draft: string): string {
   }
   if (mddHasDuplicateSectionHeadings(out)) {
     out = stripTrailingDuplicateMddSections(out);
+  }
+
+  const ctxAfter = extractContextSectionBody(out);
+  if (!ctxAfter || ctxAfter.length < 200) {
+    const ctxBefore = extractContextSectionBody(draft);
+    if (ctxBefore && ctxBefore.length >= 200) {
+      out = replaceContextSectionBody(out, ctxBefore);
+    }
   }
 
   return out.trim();
