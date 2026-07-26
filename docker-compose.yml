@@ -81,9 +81,6 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://theforge-redis-queue:6379}
       # Obligatorio en producción; en local Dokploy sustituir por secreto fuerte.
       JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-replace-in-dokploy}
-      # Cola BullMQ (cascada generate-deliverables). Obligatorio en el stack Dokploy/compose oficial:
-      # sin Redis de cola, REDIS_URL vacío fuerza modo síncrono y riesgo de timeouts en cascadas largas.
-      REDIS_URL: ${REDIS_URL:-redis://theforge-redis-queue:6379}
       # Evaluador legacy + crítica en respuesta chat (opcional; por defecto desactivado).
       AGENT_EVALUATOR_LEGACY: ${AGENT_EVALUATOR_LEGACY:-}
       TOKEN_MASTER_KEYS: ${TOKEN_MASTER_KEYS:-}
