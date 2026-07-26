@@ -193,9 +193,19 @@ export function injectMissingJourneyEndpointsIntoMddSection4(
 ): { markdown: string; injected: string[] } {
   if (missing.length === 0) return { markdown: mddMarkdown, injected: [] };
 
+  const alreadyInjected = new Set(
+    Array.from(mddMarkdown.matchAll(/\(journey core — auto\)\s*\|\s*([A-Z]+)\s*\|\s*`([^`]+)`/gi)).map(
+      (m) => `${m[1]?.toUpperCase() ?? ""}:${m[2]?.replace(/\{id\}/g, "*") ?? ""}`,
+    ),
+  );
+  const deduped = missing.filter(
+    (m) => !alreadyInjected.has(`${m.method.toUpperCase()}:${m.path}`),
+  );
+  if (deduped.length === 0) return { markdown: mddMarkdown, injected: [] };
+
   const { core, uiUxSuffix } = splitMddUiUxDesignIntentSuffix(mddMarkdown);
 
-  const rows = missing.map(
+  const rows = deduped.map(
     (m) =>
       `| ${m.method} | \`${m.path.replace(/\*/g, "{id}")}\` | ${m.label} (journey core — auto) | Bearer | DBGA/BRD |`,
   );
@@ -213,7 +223,7 @@ export function injectMissingJourneyEndpointsIntoMddSection4(
   if (!section4 || section4.length < 40) {
     return {
       markdown: reattachMddUiUxDesignIntentSuffix(insertMddSection4Block(core, block.trim()), uiUxSuffix),
-      injected: missing.map((m) => m.id),
+      injected: deduped.map((m) => m.id),
     };
   }
 
@@ -221,7 +231,7 @@ export function injectMissingJourneyEndpointsIntoMddSection4(
   if (headingMatch?.index == null) {
     return {
       markdown: reattachMddUiUxDesignIntentSuffix(insertMddSection4Block(core, block.trim()), uiUxSuffix),
-      injected: missing.map((m) => m.id),
+      injected: deduped.map((m) => m.id),
     };
   }
 
@@ -233,6 +243,6 @@ export function injectMissingJourneyEndpointsIntoMddSection4(
   const mergedCore = core.slice(0, start) + newSection4 + core.slice(end);
   return {
     markdown: reattachMddUiUxDesignIntentSuffix(mergedCore, uiUxSuffix),
-    injected: missing.map((m) => m.id),
+    injected: deduped.map((m) => m.id),
   };
 }

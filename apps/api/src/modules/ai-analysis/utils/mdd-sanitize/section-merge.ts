@@ -1140,7 +1140,14 @@ export function deduplicateAndReorderMddSections(draft: string): string {
       }
     }
     if (candidates.length === 0) continue;
-    const best = candidates.reduce((a, b) => (a.body.length >= b.body.length ? a : b));
+    // Prefiere la última ocurrencia (más reciente) salvo que sea placeholder y la primera no
+    const first = candidates[0]!;
+    const last = candidates[candidates.length - 1]!;
+    const best = candidates.length === 1
+      ? first
+      : isMddSectionPipelinePlaceholderBody(last.body) && !isMddSectionPipelinePlaceholderBody(first.body)
+        ? first
+        : last;
     sections.push(best);
   }
   // El escaneo por SECTION_ORDER puede perder §6/§7 recién insertadas (p. ej. tras /seguridad).

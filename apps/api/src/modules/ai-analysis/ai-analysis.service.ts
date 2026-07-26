@@ -398,6 +398,7 @@ export class AiAnalysisService {
     await this.prisma.agentStateCheckpoint.deleteMany({
       where: { projectId: projectId.trim(), mddStageId: mddStageId.trim() },
     });
+    this.nodeCacheService.invalidateAll();
   }
 
   /**
@@ -848,7 +849,7 @@ export class AiAnalysisService {
         projectId: projectId.trim(),
         mddStageId: mddStageKey,
       },
-      update: {},
+      update: { threadId: randomUUID() },
     });
     const threadId = row.threadId;
 
