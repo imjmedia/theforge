@@ -623,7 +623,7 @@ export class AiAnalysisService {
       const p = await this.prisma.project.findUnique({
         where: { id: projectId.trim() },
         include: { stages: { orderBy: { ordinal: "asc" } } },
-      });
+    });
       if (p) {
         const route = await this.agentSupervisor.resolveRouteFromProject(p, stageId);
         estimationStage = route.stageId;
@@ -911,7 +911,8 @@ export class AiAnalysisService {
         this.logger.warn(`[MDD stream/manager] describeImages failed: ${String(e)}`);
       }
     }
-    let dbgaEffective = dbgaContent.trim() || "(Sin Benchmark. El usuario no tiene un documento de Benchmark; genera un MDD base.)";
+    let dbgaEffective = (dbgaContent || projRow?.dbgaContent || projRow?.phase0SummaryContent || "").trim()
+      || "(Sin Benchmark. El usuario no tiene un documento de Benchmark; genera un MDD base.)";
     const brdPreamble = composeBrdPreamble(brdContent);
     if (brdPreamble) dbgaEffective = brdPreamble + dbgaEffective;
     const initialState: MDDState = {
