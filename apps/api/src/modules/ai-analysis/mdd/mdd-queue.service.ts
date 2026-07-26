@@ -528,11 +528,16 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
     if (!this.queue) return;
     const job = await this.queue.getJob(jobId);
     if (!job) return;
+    const data = job.data as MddJobData | undefined;
     const state = await job.getState();
     if (state === "active") {
       const failed = await forceFailBullMqActiveJob(this.queue, job, MDD_JOB_STALLED_REASON);
       if (failed) {
         this.logger.warn(`BullMQ MDD job ${jobId} fallido tras stall`);
+        if (data?.projectId) {
+          this.generationGuard.unregisterMddStream(data.projectId);
+          this.logger.log(`BullMQ MDD job ${jobId} stream lock liberado projectId=${data.projectId}`);
+        }
         return;
       }
     }
@@ -544,6 +549,10 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(
         `BullMQ MDD job ${jobId} no pudo limpiarse tras stall: ${err instanceof Error ? err.message : err}`,
       );
+    }
+    if (data?.projectId) {
+      this.generationGuard.unregisterMddStream(data.projectId);
+      this.logger.log(`BullMQ MDD job ${jobId} stream lock liberado projectId=${data.projectId}`);
     }
   }
 
