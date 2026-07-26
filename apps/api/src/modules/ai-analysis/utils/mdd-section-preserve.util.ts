@@ -15,6 +15,7 @@ import {
   extractSection7Body,
   isMddSectionPipelinePlaceholderBody,
   replaceArquitecturaSectionBody,
+  replaceContextSectionBody,
   replaceMddSection3Body,
   replaceMddSection4Body,
   replaceMddSection5Body,
@@ -33,7 +34,7 @@ export const MIN_SUBSTANTIAL_SECTION7_BODY_LEN = 200;
 /** Borrador sustancial: evita Clarifier full-reset y enruta reparación acotada. */
 export const MIN_SCOPED_REPAIR_DRAFT_LEN = 15_000;
 
-const DEFAULT_VALIDATED_SECTIONS = [2, 3, 4, 5, 6, 7] as const;
+const DEFAULT_VALIDATED_SECTIONS = [1, 2, 3, 4, 5, 6, 7] as const;
 
 function sectionBodyIsSubstantial(
   body: string | null | undefined,
@@ -136,6 +137,17 @@ function preserveSectionBodyIfSubstantial(
   return restored;
 }
 
+export function preserveSection1IfSubstantial(baselineDraft: string, currentDraft: string): string {
+  return preserveSectionBodyIfSubstantial(
+    baselineDraft,
+    currentDraft,
+    extractContextSectionBody,
+    replaceContextSectionBody,
+    MIN_SUBSTANTIAL_SECTION1_BODY_LEN,
+    "§1",
+  );
+}
+
 export function preserveSection2IfSubstantial(baselineDraft: string, currentDraft: string): string {
   return preserveSectionBodyIfSubstantial(
     baselineDraft,
@@ -236,6 +248,8 @@ function preserveSectionByNumber(
   sectionNum: number,
 ): string {
   switch (sectionNum) {
+    case 1:
+      return preserveSection1IfSubstantial(baselineDraft, currentDraft);
     case 2:
       return preserveSection2IfSubstantial(baselineDraft, currentDraft);
     case 3:
@@ -261,13 +275,21 @@ export function preserveValidatedSectionsIfSubstantial(
   currentDraft: string,
   options?: PreserveValidatedSectionsOptions,
 ): string {
-  if (!draftHasSubstantialSection1(currentDraft)) {
+  let out = currentDraft;
+  if (!draftHasSubstantialSection1(out) && draftHasSubstantialSection1(baselineDraft)) {
+    out = preserveSectionByNumber(baselineDraft, out, 1);
+    if (!draftHasSubstantialSection1(out)) {
+      console.warn(
+        `[MDD:SectionPreserve] Preserve: §1 no pudo restaurarse → saltando; draft corrupto`,
+      );
+      return currentDraft;
+    }
+  } else if (!draftHasSubstantialSection1(out)) {
     console.warn(
-      `[MDD:SectionPreserve] Preserve: §1 insustancial → saltando; draft corrupto`,
+      `[MDD:SectionPreserve] Preserve: §1 insustancial sin baseline → saltando; draft corrupto`,
     );
     return currentDraft;
   }
-  let out = currentDraft;
   for (const n of resolveValidatedSectionsToPreserve(options)) {
     out = preserveSectionByNumber(baselineDraft, out, n);
   }
