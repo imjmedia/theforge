@@ -121,6 +121,7 @@ export function canUseSurgicalMergeBaseline(baselineDraft: string, minLength = 6
   if (!baseline) return false;
   if (baseline.length >= minLength) return true;
   if (draftHasSubstantialSection1(baseline)) return true;
+  if (draftHasSubstantialSection2(baseline)) return true;
   return draftHasSubstantialSection3(baseline);
 }
 
@@ -198,6 +199,37 @@ export function preserveSection2FromStackSnapshot(
   return preserveSection2IfSubstantial(snap, currentDraft);
 }
 
+/** Restaura §3 desde el snapshot de data_model si api_contracts/format/SSOT la vació (pipeline HIGH scoped). */
+export function preserveSection3FromDataModelSnapshot(
+  dataModelSnapshot: string | null | undefined,
+  currentDraft: string,
+): string {
+  const snap = (dataModelSnapshot ?? "").trim();
+  if (!snap || !draftHasSubstantialSection3(snap)) return currentDraft;
+
+  const snapBody = extractSection3Body(snap);
+  if (!snapBody) return currentDraft;
+
+  const curBody = extractSection3Body(currentDraft);
+  const snapTables = (snapBody.match(/\bCREATE\s+TABLE\b/gi) ?? []).length;
+  const curTables = (curBody?.match(/\bCREATE\s+TABLE\b/gi) ?? []).length;
+
+  if (
+    draftHasSubstantialSection3(currentDraft) &&
+    curTables >= Math.max(1, Math.ceil(snapTables * 0.5))
+  ) {
+    return currentDraft;
+  }
+
+  const restored = replaceMddSection3Body(currentDraft, snapBody);
+  if (restored !== currentDraft) {
+    console.warn(
+      `[MDD:SectionPreserve] §3 restaurada desde data_model snapshot (${curTables}→${snapTables} CREATE TABLE)`,
+    );
+  }
+  return restored;
+}
+
 /** Restaura §4 desde el snapshot de api_contracts si format/SSOT la vació (pipeline HIGH scoped). */
 export function preserveSection4FromApiContractsSnapshot(
   apiContractsSnapshot: string | null | undefined,
@@ -254,12 +286,22 @@ export function preserveSection4IfSubstantial(baselineDraft: string, currentDraf
   if (!baseline || !current) return current || baseline;
 
   const prevBody = extractContratosSectionBody(baseline);
-  if (!isContratosSubstantial(prevBody)) return current;
+  const baselineGateSubstantial = isContratosSubstantial(prevBody);
+  const baselinePersistable = draftHasPersistableSection4(baseline);
+  if (!baselineGateSubstantial && !baselinePersistable) return current;
 
   const curBody = extractContratosSectionBody(current);
-  const curSubstantial = isContratosSubstantial(curBody);
+  const curGateSubstantial = isContratosSubstantial(curBody);
+  const curPersistable = draftHasPersistableSection4(current);
   const curShorter = (curBody?.length ?? 0) < (prevBody?.length ?? 0) * 0.5;
-  if (curSubstantial && !curShorter) return current;
+
+  if (baselinePersistable) {
+    const baselineRows = countContratosEndpointRows(stripLeadingContratosPlaceholder(prevBody ?? ""));
+    const curRows = countContratosEndpointRows(stripLeadingContratosPlaceholder(curBody ?? ""));
+    if (curPersistable && curRows >= Math.max(3, Math.ceil(baselineRows * 0.5))) return current;
+  } else if (curGateSubstantial && !curShorter) {
+    return current;
+  }
 
   const restored = replaceMddSection4Body(current, prevBody!);
   if (restored !== current) {
