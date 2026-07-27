@@ -7,7 +7,10 @@ import { collectMddQualityIssues } from "../../../engine/mdd-quality-audit.util.
 import { isMddTailParallelEnabled } from "../mdd-tail-parallel.config.js";
 import { stripBrdPasteNoiseFromSection1 } from "../mdd-section1-cleanup.util.js";
 import {
+  countContratosEndpointRows,
+  isContratosPlaceholder,
   isContratosSectionRegression,
+  isContratosSubstantial,
   stripLeadingContratosPlaceholder,
 } from "./contratos-format.js";
 
@@ -1108,6 +1111,16 @@ export function ensureSection6WhenSection7Present(draft: string): string {
   );
 }
 
+function scoreContratosSectionBody(body: string): number {
+  const normalized = stripLeadingContratosPlaceholder((body ?? "").trim());
+  if (!normalized) return 0;
+  if (isContratosSubstantial(normalized)) return 10_000 + normalized.length;
+  const rows = countContratosEndpointRows(normalized);
+  if (rows >= 5 && !isContratosPlaceholder(normalized)) return 5_000 + rows * 100 + normalized.length;
+  if (isContratosPlaceholder(normalized)) return normalized.length;
+  return normalized.length;
+}
+
 /**
  * Elige la mejor ocurrencia cuando hay headings duplicados: preferir cuerpo sustancial y más largo.
  */
@@ -1115,6 +1128,12 @@ function pickBestMddSectionCandidate(
   candidates: Array<{ heading: string; body: string }>,
 ): { heading: string; body: string } {
   if (candidates.length === 1) return candidates[0]!;
+  const firstNum = canonicalSectionNumber(candidates[0]!.heading);
+  if (firstNum === 4) {
+    return candidates.reduce((best, cur) =>
+      scoreContratosSectionBody(cur.body) >= scoreContratosSectionBody(best.body) ? cur : best,
+    );
+  }
   return candidates.reduce((best, cur) => {
     const bestPh = isMddSectionPipelinePlaceholderBody(best.body);
     const curPh = isMddSectionPipelinePlaceholderBody(cur.body);
@@ -1133,8 +1152,11 @@ function mergeDuplicateSectionCandidates(
   const sectionNum = canonicalSectionNumber(best.heading);
   if (sectionNum !== 4) return best;
 
+  const ranked = [...candidates].sort(
+    (a, b) => scoreContratosSectionBody(b.body) - scoreContratosSectionBody(a.body),
+  );
   const uniqueBodies: string[] = [];
-  for (const candidate of candidates) {
+  for (const candidate of ranked) {
     const body = candidate.body.trim();
     if (!body) continue;
     const sig = body.slice(0, 100);
@@ -1144,7 +1166,7 @@ function mergeDuplicateSectionCandidates(
     uniqueBodies.push(body);
   }
   if (uniqueBodies.length <= 1) return best;
-  return { heading: best.heading, body: uniqueBodies.join("\n\n") };
+  return { heading: ranked[0]!.heading, body: uniqueBodies.join("\n\n") };
 }
 
 /**

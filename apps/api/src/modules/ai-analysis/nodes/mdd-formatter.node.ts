@@ -19,7 +19,7 @@ import {
   sanitizeContextSection,
 } from "../utils/mdd-sanitize.js";
 import { reconcileUiUxDesignIntent } from "../utils/mdd-enrich-uiux-intent.js";
-import { preserveTailSectionsIfSubstantial } from "../utils/mdd-section-preserve.util.js";
+import { preserveTailSectionsIfSubstantial, preserveSection4FromApiContractsSnapshot, draftHasPersistableSection4 } from "../utils/mdd-section-preserve.util.js";
 import { shouldPreferDraftOverStructured } from "../utils/mdd-prepare-output.js";
 import { mddStructuredToMarkdown } from "../render/mdd-structured-to-markdown.js";
 
@@ -56,6 +56,7 @@ export function createMddFormatterNode(): (state: MDDStateType) => Promise<Parti
         : "";
     const draftHasSubstantialSection6 =
       section6Body.length > 200 && !/^\s*\(Pendiente[^)]*\)\s*$/im.test(section6Body);
+    const draftHasSubstantialSection4Local = draftHasPersistableSection4(currentDraft);
     // No reemplazar por mddStructured si: directiva aceptada, §3 sustancial, o §6 sustancial (evitar pisar Seguridad generada por Security node).
     const preserveDraftFromArchitect =
       (state.acceptedProposalDirective ?? "").trim().length > 0 && currentDraftLen > 500;
@@ -66,6 +67,7 @@ export function createMddFormatterNode(): (state: MDDStateType) => Promise<Parti
     const preserveDraft =
       preserveDraftFromArchitect ||
       draftHasSubstantialSection3 ||
+      draftHasSubstantialSection4Local ||
       draftHasSubstantialSection6 ||
       executorSectionPreserve ||
       shouldPreferDraftOverStructured(currentDraft, state.mddStructured);
@@ -127,6 +129,10 @@ export function createMddFormatterNode(): (state: MDDStateType) => Promise<Parti
         return {};
       }
       formatted = preserveTailSectionsIfSubstantial(draft, formatted);
+      formatted = preserveSection4FromApiContractsSnapshot(
+        state.apiContractsArchitectMddDraftSnapshot,
+        formatted,
+      );
       const sum = getMddDraftSummary(formatted);
       LOG("formateado len=%s -> %s section2=%s", draft.length, sum.length, sum.section2);
       logMddNodeOutput("Formatter", formatted);

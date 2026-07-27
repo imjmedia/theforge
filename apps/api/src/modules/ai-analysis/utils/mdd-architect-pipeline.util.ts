@@ -6,9 +6,9 @@ import type { MddComplexityLevel } from "../state/mdd-state.schema.js";
 import type { MDDStateType } from "../state/index.js";
 import { isMddTailParallelEnabled } from "./mdd-tail-parallel.config.js";
 import {
+  draftHasPersistableSection4,
   draftHasSubstantialSection2,
   draftHasSubstantialSection3,
-  draftHasSubstantialSection4,
   preserveSection2IfSubstantial,
   preserveSection3IfSubstantial,
   preserveSection4IfSubstantial,
@@ -283,7 +283,7 @@ export function resolveLiveDraftForScopedArchitectStream(
   const section = architectScopeSectionNumber(scope);
   if (section === 2 && draftHasSubstantialSection2(draft)) return draft;
   if (section === 3 && draftHasSubstantialSection3(draft)) return draft;
-  if (section === 4 && draftHasSubstantialSection4(draft)) return draft;
+  if (section === 4 && draftHasPersistableSection4(draft)) return draft;
 
   if (looksLikeFullMddArchitectResponse(draft, scope)) {
     const stable = stableDraft.trim();
@@ -294,7 +294,7 @@ export function resolveLiveDraftForScopedArchitectStream(
     if (section === 3 && draftHasSubstantialSection3(draft)) {
       return preserveSection3IfSubstantial(draft, stable);
     }
-    if (section === 4 && draftHasSubstantialSection4(draft)) {
+    if (section === 4 && draftHasPersistableSection4(draft)) {
       return preserveSection4IfSubstantial(draft, stable);
     }
     return stable;

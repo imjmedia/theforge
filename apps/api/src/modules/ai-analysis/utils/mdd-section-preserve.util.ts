@@ -3,8 +3,12 @@
  */
 
 import {
+  countContratosEndpointRows,
   extractContratosSectionBody,
+  isContratosPlaceholder,
   isContratosSubstantial,
+  MIN_CONTRATOS_LENGTH,
+  stripLeadingContratosPlaceholder,
 } from "./mdd-sanitize/contratos-format.js";
 import {
   extractArquitecturaSectionBody,
@@ -72,6 +76,20 @@ export function draftHasSubstantialSection4(draft: string): boolean {
   return isContratosSubstantial(extractContratosSectionBody((draft ?? "").trim()));
 }
 
+/**
+ * §4 persistible tras api_contracts: JSON completo O tabla densa sin placeholder Auditor.
+ * Más permisivo que `draftHasSubstantialSection4` (gate) para no perder catálogos solo-tabla.
+ */
+export function draftHasPersistableSection4(draft: string): boolean {
+  const body = extractContratosSectionBody((draft ?? "").trim());
+  if (!body) return false;
+  if (isContratosSubstantial(body)) return true;
+  const normalized = stripLeadingContratosPlaceholder(body);
+  if (!normalized || normalized.length < MIN_CONTRATOS_LENGTH) return false;
+  if (isContratosPlaceholder(normalized)) return false;
+  return countContratosEndpointRows(normalized) >= 5;
+}
+
 /** True si §5 tiene cuerpo real (no placeholder del pipeline). */
 export function draftHasSubstantialSection5(draft: string): boolean {
   return sectionBodyIsSubstantial(
@@ -102,7 +120,8 @@ export function canUseSurgicalMergeBaseline(baselineDraft: string, minLength = 6
   const baseline = (baselineDraft ?? "").trim();
   if (!baseline) return false;
   if (baseline.length >= minLength) return true;
-  return draftHasSubstantialSection1(baseline);
+  if (draftHasSubstantialSection1(baseline)) return true;
+  return draftHasSubstantialSection3(baseline);
 }
 
 /**
@@ -177,6 +196,34 @@ export function preserveSection2FromStackSnapshot(
   const snap = (stackSnapshot ?? "").trim();
   if (!snap || !draftHasSubstantialSection2(snap)) return currentDraft;
   return preserveSection2IfSubstantial(snap, currentDraft);
+}
+
+/** Restaura §4 desde el snapshot de api_contracts si format/SSOT la vació (pipeline HIGH scoped). */
+export function preserveSection4FromApiContractsSnapshot(
+  apiContractsSnapshot: string | null | undefined,
+  currentDraft: string,
+): string {
+  const snap = (apiContractsSnapshot ?? "").trim();
+  if (!snap || !draftHasPersistableSection4(snap)) return currentDraft;
+
+  const snapBody = extractContratosSectionBody(snap);
+  if (!snapBody) return currentDraft;
+
+  const curBody = extractContratosSectionBody(currentDraft);
+  const snapRows = countContratosEndpointRows(stripLeadingContratosPlaceholder(snapBody));
+  const curRows = countContratosEndpointRows(stripLeadingContratosPlaceholder(curBody ?? ""));
+
+  if (draftHasPersistableSection4(currentDraft) && curRows >= Math.max(3, Math.ceil(snapRows * 0.5))) {
+    return currentDraft;
+  }
+
+  const restored = replaceMddSection4Body(currentDraft, snapBody);
+  if (restored !== currentDraft) {
+    console.warn(
+      `[MDD:SectionPreserve] §4 restaurada desde api_contracts snapshot (${curRows}→${snapRows} endpoints)`,
+    );
+  }
+  return restored;
 }
 
 export function preserveSection2IfSubstantial(baselineDraft: string, currentDraft: string): string {
