@@ -11,6 +11,7 @@ import {
   guardTailSectionsForPersist,
   preserveSection2IfSubstantial,
   preserveSection2FromStackSnapshot,
+  preserveSection3FromDataModelSnapshot,
   preserveSection4FromApiContractsSnapshot,
   draftHasPersistableSection4,
   preserveSection3IfSubstantial,
@@ -37,7 +38,13 @@ CREATE TABLE sessions (id UUID PRIMARY KEY, user_id UUID REFERENCES users(id));
 \`\`\`
 ${"Índices y constraints adicionales del dominio. ".repeat(10)}`;
 
-const S4_BODY = `| Método | Ruta | Descripción |
+const S4_BODY = `### POST /api/v1/auth/login
+
+\`\`\`json
+{"email":"string","password":"string"}
+\`\`\`
+
+| Método | Ruta | Descripción |
 | GET | /api/v1/health | Healthcheck |
 | POST | /api/v1/auth/login | Login JWT |
 ${"| GET | /api/v1/recursos | Listado paginado |\n".repeat(12)}`;
@@ -311,6 +318,16 @@ describe("preserveSection2FromStackSnapshot", () => {
     const afterDataModel = afterStack.replace(S2_BODY, "(Pendiente: Arquitecto de Software)");
     const out = preserveSection2FromStackSnapshot(afterStack, afterDataModel);
     assert.ok(out.includes("NestJS"));
+    assert.doesNotMatch(out, /\(Pendiente: Arquitecto de Software\)/);
+  });
+});
+
+describe("preserveSection3FromDataModelSnapshot", () => {
+  it("restaura §3 desde snapshot de data_model tras vaciado por api_contracts/format", () => {
+    const afterDataModel = `# MDD\n## 1. Contexto\n${"Alcance. ".repeat(40)}\n## 3. Modelo de Datos\n${S3_BODY}\n## 4. Contratos\n(Pendiente)\n`;
+    const afterApi = afterDataModel.replace(S3_BODY, "(Pendiente: Arquitecto de Software)");
+    const out = preserveSection3FromDataModelSnapshot(afterDataModel, afterApi);
+    assert.match(out, /CREATE TABLE users/i);
     assert.doesNotMatch(out, /\(Pendiente: Arquitecto de Software\)/);
   });
 });

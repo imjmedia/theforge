@@ -66,6 +66,8 @@ export const MDDStateAnnotation = Annotation.Root({
   clarifierMddDraftSnapshot: Annotation<string | undefined>(),
   /** Borrador post-stack_architect (§2 anclada) para restaurar tras data_model/api_contracts. */
   stackArchitectMddDraftSnapshot: Annotation<string | undefined>(),
+  /** Borrador post-data_model (§3 anclada) para restaurar tras api_contracts/format/SSOT. */
+  dataModelArchitectMddDraftSnapshot: Annotation<string | undefined>(),
   /** Borrador post-api_contracts (§4 anclada) para restaurar tras format/SSOT/tail. */
   apiContractsArchitectMddDraftSnapshot: Annotation<string | undefined>(),
   sectionsToRun: Annotation<string[] | undefined>(),

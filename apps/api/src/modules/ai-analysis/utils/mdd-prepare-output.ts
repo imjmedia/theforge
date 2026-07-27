@@ -13,6 +13,7 @@ import {
 } from "./mdd-diagram-suggestions.js";
 import {
   extractSection3Body,
+  extractSection5Body,
   finalizeMddDeliverable,
   getSection6Or7Range,
   hydrateStructuredFromDraft,
@@ -21,6 +22,10 @@ import {
   replaceContextWhenOnlyMetadata,
   replaceSection6Or7InDraft,
   replaceMddSection4Body,
+  replaceMddSection3Body,
+  replaceMddSection5Body,
+  replaceArquitecturaSectionBody,
+  extractArquitecturaSectionBody,
   sanitizeContextKeyValueAndObject,
   sanitizeContextSection,
   applyPreDeliveryGateFixes,
@@ -42,6 +47,8 @@ import {
 import { isPlaceholderSeguridad } from "./mdd-security-parse.js";
 import {
   draftHasPersistableSection4,
+  draftHasSubstantialSection2,
+  draftHasSubstantialSection3,
   draftHasSubstantialSection5,
   preserveValidatedSectionsIfSubstantial,
   guardValidatedSectionsForPersist,
@@ -74,7 +81,7 @@ export function draftHasSubstantialSection6(draft: string): boolean {
   return body.length > 200 && !/^\s*\(Pendiente[^)]*\)\s*$/im.test(body) && !/^\s*\{/.test(body);
 }
 
-function draftHasSubstantialSection3(draft: string): boolean {
+function draftHasSection3WithCreateTable(draft: string): boolean {
   const section3Body = extractSection3Body(draft);
   return (section3Body?.length ?? 0) > 200 && /\bCREATE\s+TABLE\b/i.test(section3Body ?? "");
 }
@@ -104,7 +111,7 @@ export function shouldPreferDraftOverStructured(
       return true;
     }
   }
-  if (draftHasSubstantialSection3(trimmed)) return true;
+  if (draftHasSection3WithCreateTable(trimmed)) return true;
   if (countH2Sections(trimmed) >= 4 && trimmed.length > 500) return true;
   if (!hasStructuredContent(structured)) return trimmed.length > 0;
   try {
@@ -154,6 +161,60 @@ function restoreSection4AfterNormalize(source: string, normalized: string): stri
     return replaceMddSection4Body(normalized, srcBody);
   }
   return normalized;
+}
+
+function restoreSectionBodyAfterNormalize(
+  source: string,
+  normalized: string,
+  extractBody: (draft: string) => string | null,
+  replaceBody: (draft: string, body: string) => string,
+  hasSubstantial: (draft: string) => boolean,
+): string {
+  if (mddHasDuplicateSectionHeadings(source)) return normalized;
+  const srcBody = extractBody(source);
+  if (!srcBody?.trim() || !hasSubstantial(source)) return normalized;
+  if (hasSubstantial(normalized)) return normalized;
+  return replaceBody(normalized, srcBody);
+}
+
+function restoreSection2AfterNormalize(source: string, normalized: string): string {
+  return restoreSectionBodyAfterNormalize(
+    source,
+    normalized,
+    extractArquitecturaSectionBody,
+    replaceArquitecturaSectionBody,
+    draftHasSubstantialSection2,
+  );
+}
+
+function restoreSection3AfterNormalize(source: string, normalized: string): string {
+  return restoreSectionBodyAfterNormalize(
+    source,
+    normalized,
+    extractSection3Body,
+    replaceMddSection3Body,
+    draftHasSubstantialSection3,
+  );
+}
+
+function restoreSection5AfterNormalize(source: string, normalized: string): string {
+  return restoreSectionBodyAfterNormalize(
+    source,
+    normalized,
+    extractSection5Body,
+    replaceMddSection5Body,
+    draftHasSubstantialSection5,
+  );
+}
+
+function restoreCoreSectionsAfterNormalize(source: string, normalized: string): string {
+  let out = normalized;
+  out = restoreSection2AfterNormalize(source, out);
+  out = restoreSection3AfterNormalize(source, out);
+  out = restoreSection4AfterNormalize(source, out);
+  out = restoreSection5AfterNormalize(source, out);
+  out = restoreSections6And7AfterNormalize(source, out);
+  return out;
 }
 
 /**
@@ -214,9 +275,9 @@ export async function prepareMddForOutput(
     null;
   const sanitized =
     replaceContextWhenOnlyMetadata(sanitizeContextKeyValueAndObject(sanitizeContextSection(raw)));
-  const normalized = restoreSection4AfterNormalize(
+  const normalized = restoreCoreSectionsAfterNormalize(
     raw,
-    restoreSections6And7AfterNormalize(raw, normalizeMddFormat(sanitized)),
+    normalizeMddFormat(sanitized),
   );
   const structuredForSection3 =
     typeof input === "string" ? undefined : input.mddStructured;

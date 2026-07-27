@@ -1121,6 +1121,17 @@ function scoreContratosSectionBody(body: string): number {
   return normalized.length;
 }
 
+function scoreSection3Body(body: string): number {
+  const normalized = (body ?? "").trim();
+  if (!normalized) return 0;
+  if (isMddSectionPipelinePlaceholderBody(normalized)) return normalized.length;
+  const tables = (normalized.match(/\bCREATE\s+TABLE\b/gi) ?? []).length;
+  const hasEr = /```mermaid\s*\nerDiagram/i.test(normalized);
+  if (tables >= 2) return 10_000 + tables * 100 + normalized.length;
+  if (tables >= 1 || hasEr) return 5_000 + normalized.length;
+  return normalized.length;
+}
+
 /**
  * Elige la mejor ocurrencia cuando hay headings duplicados: preferir cuerpo sustancial y más largo.
  */
@@ -1132,6 +1143,11 @@ function pickBestMddSectionCandidate(
   if (firstNum === 4) {
     return candidates.reduce((best, cur) =>
       scoreContratosSectionBody(cur.body) >= scoreContratosSectionBody(best.body) ? cur : best,
+    );
+  }
+  if (firstNum === 3) {
+    return candidates.reduce((best, cur) =>
+      scoreSection3Body(cur.body) >= scoreSection3Body(best.body) ? cur : best,
     );
   }
   return candidates.reduce((best, cur) => {

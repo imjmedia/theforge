@@ -19,7 +19,7 @@ import {
   sanitizeContextSection,
 } from "../utils/mdd-sanitize.js";
 import { reconcileUiUxDesignIntent } from "../utils/mdd-enrich-uiux-intent.js";
-import { preserveTailSectionsIfSubstantial, preserveSection4FromApiContractsSnapshot, draftHasPersistableSection4 } from "../utils/mdd-section-preserve.util.js";
+import { preserveTailSectionsIfSubstantial, preserveSection2FromStackSnapshot, preserveSection3FromDataModelSnapshot, preserveSection4FromApiContractsSnapshot, draftHasPersistableSection4 } from "../utils/mdd-section-preserve.util.js";
 import { shouldPreferDraftOverStructured } from "../utils/mdd-prepare-output.js";
 import { mddStructuredToMarkdown } from "../render/mdd-structured-to-markdown.js";
 
@@ -129,6 +129,8 @@ export function createMddFormatterNode(): (state: MDDStateType) => Promise<Parti
         return {};
       }
       formatted = preserveTailSectionsIfSubstantial(draft, formatted);
+      formatted = preserveSection2FromStackSnapshot(state.stackArchitectMddDraftSnapshot, formatted);
+      formatted = preserveSection3FromDataModelSnapshot(state.dataModelArchitectMddDraftSnapshot, formatted);
       formatted = preserveSection4FromApiContractsSnapshot(
         state.apiContractsArchitectMddDraftSnapshot,
         formatted,
