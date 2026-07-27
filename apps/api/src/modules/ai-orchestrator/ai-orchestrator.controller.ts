@@ -1,4 +1,5 @@
 import { BadRequestException, Body, Controller, Post, Res } from "@nestjs/common";
+import type { WorkshopChatScope } from "@theforge/shared-types";
 import { AiOrchestratorService } from "./ai-orchestrator.service.js";
 import { parseChatImageAttachments } from "../ai/utils/chat-image-attachments.util.js";
 import { writeSseFromAsyncGenerator, type SseWritable } from "./sse-stream.util.js";
@@ -8,6 +9,10 @@ interface SseResponse extends SseWritable {
   setHeader(name: string, value: string | number): void;
   end(cb?: () => void): void;
   flushHeaders(): void;
+}
+
+function parseChatScope(raw: unknown): WorkshopChatScope | undefined {
+  return raw === "stage" || raw === "global" ? raw : undefined;
 }
 
 @Controller("ai-orchestrator")
@@ -27,6 +32,7 @@ export class AiOrchestratorController {
       brdContent?: string | null;
       activeTab?: string;
       stageId?: string;
+      chatScope?: WorkshopChatScope;
       images?: unknown;
     },
   ) {
@@ -56,6 +62,7 @@ export class AiOrchestratorController {
       dbgaContent?.trim() || undefined,
       brdContent?.trim() || undefined,
       stageId?.trim() || undefined,
+      parseChatScope(body.chatScope),
       images,
     );
   }
@@ -82,6 +89,7 @@ export class AiOrchestratorController {
       infraContent?: string | null;
       activeTab?: string;
       stageId?: string;
+      chatScope?: WorkshopChatScope;
       images?: unknown;
     },
     @Res({ passthrough: false }) res: SseResponse,
@@ -140,6 +148,7 @@ export class AiOrchestratorController {
           tasksContent: tasksContent?.trim() || undefined,
           infraContent: infraContent?.trim() || undefined,
         },
+        parseChatScope(body.chatScope),
         images,
       );
       await writeSseFromAsyncGenerator(res, stream);
@@ -154,12 +163,27 @@ export class AiOrchestratorController {
   }
 
   @Post("welcome")
-  welcome(@Body() body: { projectId: string; sessionId?: string; activeTab?: string; stageId?: string }) {
+  welcome(
+    @Body()
+    body: {
+      projectId: string;
+      sessionId?: string;
+      activeTab?: string;
+      stageId?: string;
+      chatScope?: WorkshopChatScope;
+    },
+  ) {
     const { projectId, sessionId, activeTab, stageId } = body ?? {};
     if (!projectId?.trim()) {
       throw new BadRequestException("projectId is required");
     }
-    return this.orchestrator.welcome(projectId.trim(), sessionId?.trim(), activeTab?.trim(), stageId?.trim());
+    return this.orchestrator.welcome(
+      projectId.trim(),
+      sessionId?.trim(),
+      activeTab?.trim(),
+      stageId?.trim(),
+      parseChatScope(body.chatScope),
+    );
   }
 
   @Post("clear-chat")

@@ -24,6 +24,7 @@ import { useInterview } from "../hooks/useInterview";
 import { useWorkshopStore } from "../store/workshopStore";
 import { cn } from "@/lib/utils";
 import type { ChatImagePart } from "@theforge/shared-types";
+import { filterChatForWorkshopView } from "@theforge/shared-types";
 import { VISION_CONTEXT_HEADER } from "@theforge/shared-types/session";
 import { MDD_LONG_PASTE_WARN_CHARS } from "@theforge/shared-types/mdd-pipeline-limits";
 import {
@@ -518,6 +519,9 @@ export default function ChatContainer({
   const session = useWorkshopStore((s) => s.session);
   const workshopStages = useWorkshopStore((s) => s.project?.stages ?? []);
   const activeStageIdForChat = useWorkshopStore((s) => s.activeStageId);
+  const chatScope = useWorkshopStore((s) => s.chatScope);
+  const setChatScope = useWorkshopStore((s) => s.setChatScope);
+  const projectType = useWorkshopStore((s) => s.project?.projectType);
   const evaluatorCritique = useWorkshopStore((s) => s.evaluatorCritique);
   const clearEvaluatorCritique = useWorkshopStore((s) => s.clearEvaluatorCritique);
   const loadingReason = useWorkshopStore((s) => s.loadingReason);
@@ -608,7 +612,10 @@ export default function ChatContainer({
       }, 120);
       return () => window.clearTimeout(t);
     }
-    const count = (session.chatLog ?? []).filter((m: { tab?: string }) => (m.tab ?? "mdd") === tab).length;
+    const count = filterChatForWorkshopView(session.chatLog ?? [], tab, {
+      stageId: activeStageIdForChat,
+      scope: chatScope,
+    }).length;
     if (count > 0) return;
     // Evitar bucle infinito: si ya intentamos welcome para este tab sin éxito (sin mensaje agregado),
     // no reintentar. Ocurre cuando el backend decide no generar burbuja (ej. benchmark sin contenido).
@@ -618,7 +625,7 @@ export default function ChatContainer({
       void fetchWelcome(projectId, tab);
     }, 120);
     return () => window.clearTimeout(t);
-  }, [projectId, activeTab, session?.id, session?.chatLog, fetchWelcome, phase0AssistedActive]);
+  }, [projectId, activeTab, session?.id, session?.chatLog, fetchWelcome, phase0AssistedActive, activeStageIdForChat, chatScope]);
 
   useEffect(() => {
     if (!multiStageChat || !activeStageIdForChat) {
@@ -627,11 +634,11 @@ export default function ChatContainer({
       return;
     }
     const prev = prevStageForBannerRef.current;
-    if (prev !== null && prev !== activeStageIdForChat) {
+    if (chatScope === "global" && prev !== null && prev !== activeStageIdForChat) {
       setStageSwitchBannerOpen(true);
     }
     prevStageForBannerRef.current = activeStageIdForChat;
-  }, [activeStageIdForChat, multiStageChat]);
+  }, [activeStageIdForChat, multiStageChat, chatScope]);
 
   useEffect(() => {
     if (!isLegacyLongRun) {
@@ -1121,16 +1128,40 @@ export default function ChatContainer({
               </TooltipProvider>
             </div>
           </header>
-          {multiStageChat && stageSwitchBannerOpen && (
+          {multiStageChat && (
             <div
               className="shrink-0 mx-3 mt-2 mb-1 px-3 py-2 rounded-lg border border-[color-mix(in_oklch,var(--primary)_35%,var(--border))] bg-[color-mix(in_oklch,var(--primary)_10%,var(--card))] text-[color-mix(in_oklch,var(--primary)_55%,var(--foreground))] text-xs leading-snug flex gap-2 items-start"
               role="status"
             >
               <span className="flex-1">
-                <strong className="text-[color-mix(in_oklch,var(--primary)_72%,var(--foreground))]">Historial global:</strong> el chat no se filtra por etapa.
-                Los mensajes anteriores pueden referirse a otra línea de trabajo. El foco del MDD y el semáforo
-                sí corresponden a la etapa seleccionada arriba.
+                {chatScope === "stage" ? (
+                  <>
+                    <strong className="text-[color-mix(in_oklch,var(--primary)_72%,var(--foreground))]">Chat de etapa activa.</strong>{" "}
+                    Solo mensajes de esta etapa{projectType === "LEGACY" ? " (recomendado en brownfield)" : ""}.
+                    El MDD y el semáforo siguen la etapa seleccionada arriba.
+                  </>
+                ) : (
+                  <>
+                    <strong className="text-[color-mix(in_oklch,var(--primary)_72%,var(--foreground))]">Historial global.</strong>{" "}
+                    Mensajes de todas las etapas en este tab; pueden mezclar AS-IS y cambios de otras líneas.
+                  </>
+                )}
               </span>
+              <button
+                type="button"
+                onClick={() => setChatScope(chatScope === "stage" ? "global" : "stage")}
+                className="shrink-0 px-2 py-0.5 rounded bg-[color-mix(in_oklch,var(--muted)_82%,var(--card))] hover:bg-[var(--muted)] text-[var(--foreground)] text-[11px] whitespace-nowrap"
+              >
+                {chatScope === "stage" ? "Ver global" : "Solo etapa"}
+              </button>
+            </div>
+          )}
+          {multiStageChat && chatScope === "global" && stageSwitchBannerOpen && (
+            <div
+              className="shrink-0 mx-3 mt-0 mb-1 px-3 py-1.5 rounded-lg border border-[color-mix(in_oklch,var(--warning)_35%,var(--border))] bg-[color-mix(in_oklch,var(--warning)_8%,var(--card))] text-[color-mix(in_oklch,var(--warning)_70%,var(--foreground))] text-[11px] leading-snug flex gap-2 items-center"
+              role="status"
+            >
+              <span className="flex-1">Cambiaste de etapa; el historial global incluye mensajes de otras etapas.</span>
               <button
                 type="button"
                 onClick={() => setStageSwitchBannerOpen(false)}

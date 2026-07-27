@@ -1,4 +1,5 @@
-import type { ChatImagePart } from "@theforge/shared-types";
+import type { ChatImagePart, WorkshopChatScope } from "@theforge/shared-types";
+import { filterChatForWorkshopView } from "@theforge/shared-types";
 
 export function pickEvaluatorCritique(data: Record<string, unknown>): string | null {
   const c = data.evaluatorCritique;
@@ -26,4 +27,17 @@ export function lastMddUserMessageContent(
     if (m.role === "user" && (m.tab ?? "mdd") === "mdd") return m.content;
   }
   return null;
+}
+
+/** Mensajes visibles / contexto según tab y alcance por etapa. */
+export function filterWorkshopSessionMessages(
+  log: { role: string; content: string; tab?: string; stageId?: string }[] | undefined,
+  tab: string,
+  stageId: string | null | undefined,
+  chatScope: WorkshopChatScope,
+) {
+  return filterChatForWorkshopView((log ?? []) as import("@theforge/shared-types").ChatMessage[], tab, {
+    stageId,
+    scope: chatScope,
+  });
 }

@@ -147,7 +147,7 @@ const SECTIONS: HelpSection[] = [
       "",
       "- El **selector de etapa** (arriba a la derecha) define qué MDD se muestra.",
       "- El **hilo del Manager (LangGraph)** es **por etapa**: al cambiar de etapa, el front solicita el thread correcto.",
-      "- El chat es **global**: el historial no se filtra por etapa.",
+      "- En **brownfield multi-etapa**, el chat filtra por defecto a la **etapa activa**; usa **«Ver global»** en la barra del chat para ver todo el historial del tab.",
       "- Al cambiar de etapa aparece un aviso recordando que el historial es compartido.",
       "",
       "**Nueva etapa:** botón junto al selector → modal → `POST /projects/:projectId/stages`. Puedes copiar el MDD de otra etapa o empezar vacío.",

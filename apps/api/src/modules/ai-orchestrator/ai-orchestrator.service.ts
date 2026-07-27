@@ -1,5 +1,9 @@
 import { HttpException, HttpStatus, Inject, Injectable, NotFoundException } from "@nestjs/common";
-import type { ChatImagePart, ChatMessage } from "@theforge/shared-types";
+import type { ChatImagePart, ChatMessage, WorkshopChatScope } from "@theforge/shared-types";
+import {
+  filterChatForWorkshopView,
+  resolveWorkshopChatScope,
+} from "@theforge/shared-types";
 import {
   PROJECTS_ORCHESTRATOR_PORT,
   type IOrchestratorProjectsPort,
@@ -61,8 +65,21 @@ function docForActiveTab(
   return persisted || undefined;
 }
 
-function filterChatByTab(log: ChatMessage[], tab: string): ChatMessage[] {
-  return log.filter((m) => (m.tab ?? "mdd") === tab);
+function resolveOrchestratorChatScope(
+  project: { projectType?: string; stages?: unknown[] },
+  chatScopeFromClient?: WorkshopChatScope,
+): WorkshopChatScope {
+  const projectType = project.projectType === "LEGACY" ? "LEGACY" : "NEW";
+  return resolveWorkshopChatScope(projectType, project.stages?.length ?? 0, chatScopeFromClient);
+}
+
+function workshopTabHistory(
+  log: ChatMessage[],
+  tab: string,
+  stageId: string | undefined,
+  chatScope: WorkshopChatScope,
+): ChatMessage[] {
+  return filterChatForWorkshopView(log, tab, { stageId, scope: chatScope });
 }
 
 function mddForRouteStage(
@@ -253,6 +270,7 @@ export class AiOrchestratorService {
     dbgaContentFromClient?: string,
     brdContentFromClient?: string,
     stageIdFromClient?: string,
+    chatScopeFromClient?: WorkshopChatScope,
     userImages: ChatImagePart[] = [],
   ) {
     let project = await this.projects.findOne(projectId);
@@ -263,6 +281,7 @@ export class AiOrchestratorService {
     }
 
     const route = await this.agentSupervisor.resolveRouteFromProject(project, stageIdFromClient);
+    const chatScope = resolveOrchestratorChatScope(project, chatScopeFromClient);
 
     let session;
     if (sessionId) {
@@ -359,6 +378,7 @@ export class AiOrchestratorService {
       activeTab,
         systemPrompt,
         stageId: route.stageId,
+        chatScope,
         complexityInterviewContext,
         userImages,
         ...uxGuideLlmOptions(
@@ -497,6 +517,7 @@ export class AiOrchestratorService {
       phase0SummaryContentFromClient?: string;
       brdContentFromClient?: string;
       stageIdFromClient?: string;
+      chatScopeFromClient?: WorkshopChatScope;
     },
   ) {
     const session = await this.sessions.findOne(sessionId);
@@ -510,6 +531,7 @@ export class AiOrchestratorService {
       args.dbgaContentFromClient,
       args.brdContentFromClient,
       args.stageIdFromClient,
+      args.chatScopeFromClient,
       args.userImages ?? [],
     );
   }
@@ -529,6 +551,7 @@ export class AiOrchestratorService {
     brdContentFromClient?: string,
     stageIdFromClient?: string,
     clientDeliverables?: OrchestratorClientDeliverables,
+    chatScopeFromClient?: WorkshopChatScope,
     userImages: ChatImagePart[] = [],
   ): AsyncGenerator<{ event: string; data: unknown }> {
     let project = await this.projects.findOne(projectId);
@@ -539,6 +562,7 @@ export class AiOrchestratorService {
     }
 
     const routeStream = await this.agentSupervisor.resolveRouteFromProject(project, stageIdFromClient);
+    const chatScope = resolveOrchestratorChatScope(project, chatScopeFromClient);
 
     let session;
     if (sessionId) {
@@ -561,7 +585,12 @@ export class AiOrchestratorService {
     const isUxUiGuideStream = tab === "ux-ui-guide";
     const tabAllowsDocPersist = orchestratorTabAllowsDocPersist(tab);
 
-    const historyForPropagate = filterChatByTab((session.chatLog ?? []) as ChatMessage[], tab);
+    const historyForPropagate = workshopTabHistory(
+      (session.chatLog ?? []) as ChatMessage[],
+      tab,
+      routeStream.stageId,
+      chatScope,
+    );
     const propagateConfirm = detectUpstreamPropagateConfirmation(message, historyForPropagate, tab);
     if (propagateConfirm.confirmed) {
       const enqueued = await this.upstreamPropagate.enqueue(
@@ -723,6 +752,7 @@ export class AiOrchestratorService {
       activeTab: tab,
       systemPrompt: systemPromptStream,
       stageId: routeStream.stageId,
+      chatScope,
       complexityInterviewContext,
       userImages,
       ...uxGuideLlmOptions(
@@ -885,9 +915,16 @@ export class AiOrchestratorService {
    * Obtiene o crea sesión, persiste solo el mensaje del asistente y devuelve sesión + proyecto.
    * `stageId` opcional: alinea el contexto MDD del mensaje con la etapa del Workshop (no solo el MDD aplanado del proyecto).
    */
-  async welcome(projectId: string, sessionId?: string, activeTab?: string, stageId?: string) {
+  async welcome(
+    projectId: string,
+    sessionId?: string,
+    activeTab?: string,
+    stageId?: string,
+    chatScopeFromClient?: WorkshopChatScope,
+  ) {
     const project = await this.projects.findOne(projectId);
     const route = await this.agentSupervisor.resolveRouteFromProject(project, stageId);
+    const chatScope = resolveOrchestratorChatScope(project, chatScopeFromClient);
     const stageMdd = mddForRouteStage(project, route.stageId) ?? project.mddContent ?? null;
 
     let session;
@@ -908,8 +945,8 @@ export class AiOrchestratorService {
       }
     }
 
-    const chatLog = ((session.chatLog ?? []) as ChatMessage[]);
-    const messagesForTab = filterChatByTab(chatLog, activeTab ?? "mdd");
+    const chatLog = (session.chatLog ?? []) as ChatMessage[];
+    const messagesForTab = workshopTabHistory(chatLog, activeTab ?? "mdd", route.stageId, chatScope);
     if (messagesForTab.length > 0) {
       return { session, project };
     }

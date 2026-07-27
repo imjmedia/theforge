@@ -1,7 +1,7 @@
 /**
  * @fileoverview Estado inicial del store Workshop: defaults para todos los slices (UI, project, MDD, deliverables, chat, clarify, legacy).
  */
-import type { ChatImagePart, MddDeliveryGateResult, PlanValidationPersisted, ProjectGenerationStatus } from "@theforge/shared-types";
+import type { ChatImagePart, MddDeliveryGateResult, PlanValidationPersisted, ProjectGenerationStatus, WorkshopChatScope } from "@theforge/shared-types";
 import type { AgentProgressItem } from "../../utils/agentProgress";
 import type { WorkshopDocumentTimestamps } from "../../utils/workshop-document-content.util";
 import type {
@@ -119,6 +119,8 @@ export const workshopInitialState = {
   adrs: null as any[] | null,
   workshopStages: [] as WorkshopStage[],
   activeStageId: null as string | null,
+  /** Alcance del chat: etapa activa (brownfield multi-etapa) o historial global del tab. */
+  chatScope: "global" as WorkshopChatScope,
   workshopActiveDocPanel: "mdd",
   generationStatus: null as ProjectGenerationStatus | null,
   activeDeliverablesJobId: null as string | null,

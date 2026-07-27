@@ -6,6 +6,7 @@ import {
   type Project,
   type Session,
 } from "../store/workshopStore";
+import { filterWorkshopSessionMessages } from "../store/workshop/helpers/session-message";
 
 export interface UseInterviewReturn {
   messages: ChatMessage[];
@@ -38,10 +39,14 @@ export function useInterview(
   const streamingContent = useWorkshopStore((s) => s.streamingContent);
   const streamingTab = useWorkshopStore((s) => s.streamingTab);
   const activeStageId = useWorkshopStore((s) => s.activeStageId);
+  const chatScope = useWorkshopStore((s) => s.chatScope);
 
-  const baseMessages = (session?.chatLog ?? []).filter(
-    (m) => (m.tab ?? "mdd") === activeTabNorm,
-  );
+  const baseMessages = filterWorkshopSessionMessages(
+    session?.chatLog,
+    activeTabNorm,
+    activeStageId,
+    chatScope,
+  ) as ChatMessage[];
   const messages =
     streamingUserMessage != null && (streamingTab ?? "mdd") === activeTabNorm
       ? [

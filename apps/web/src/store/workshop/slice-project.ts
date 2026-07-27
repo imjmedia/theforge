@@ -5,6 +5,10 @@ import { shouldPreserveWorkshopBusyState } from "../../utils/workshopBusyRefresh
 import { normalizeWorkshopDocumentForEditor } from "../../utils/workshop-document-content.util";
 import { resolveMddFetchMerge } from "../../utils/workshop-mdd-sync.util";
 import { pickDefaultStageId } from "./helpers/pick-default-stage";
+import {
+  resolveWorkshopChatScopeForProject,
+  saveWorkshopChatScopePreference,
+} from "./helpers/chat-scope";
 import { patchWorkshopMddStagesWithEditorContent } from "./helpers/mdd-editor";
 import {
   legacyDebugFromStages,
@@ -13,6 +17,7 @@ import {
 } from "./helpers/stage-focus";
 import { shouldApplyWorkshopUpdate, workshopScopeProjectId } from "./helpers/workshop-scope";
 import { selectPersistedMddBaseline } from "./selectors";
+import type { WorkshopChatScope } from "@theforge/shared-types";
 import type { Project, Session, WorkshopStage } from "./types";
 import type { WorkshopState } from "./workshop-state.types";
 
@@ -22,6 +27,7 @@ type ProjectSliceActions = Pick<
   | "setProject"
   | "patchPluginData"
   | "setActiveStageId"
+  | "setChatScope"
   | "createWorkshopStage"
   | "patchWorkshopStage"
   | "setProjectRequireBrdTobeGate"
@@ -118,6 +124,7 @@ export const createProjectSlice: StateCreator<WorkshopState, [], [], ProjectSlic
       uiScreensContent: focused.uiScreensContent,
       phase0SummaryContent: focused.phase0SummaryContent,
       aemContent: focused.aemContent,
+      lastLegacyDeliverablesDebug: legacyDebugFromStages(stages, stageId),
     });
     const pid = projectId ?? project.id;
     if (pid?.trim()) {
@@ -133,6 +140,12 @@ export const createProjectSlice: StateCreator<WorkshopState, [], [], ProjectSlic
         .fetchEstimation(pid.trim())
         .catch(() => {});
     }
+  },
+
+  setChatScope: (scope: WorkshopChatScope) => {
+    const pid = get().projectId ?? get().project?.id ?? "";
+    if (pid.trim()) saveWorkshopChatScopePreference(pid, scope);
+    set({ chatScope: scope });
   },
 
   createWorkshopStage: async (opts) => {
@@ -321,10 +334,16 @@ export const createProjectSlice: StateCreator<WorkshopState, [], [], ProjectSlic
         nextStages = patched.stages;
         nextProject = patched.project;
       }
+      const chatScope = resolveWorkshopChatScopeForProject(
+        data.projectType,
+        stages.length,
+        requestedId,
+      );
       set({
         project: nextProject,
         workshopStages: nextStages,
         activeStageId,
+        chatScope,
         mddContent: nextMddContent,
         ...(updatePersistedBaseline ? { mddPersistedBaseline: nextMddContent } : {}),
         documentTimestamps: focused.documentTimestamps,

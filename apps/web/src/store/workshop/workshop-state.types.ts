@@ -9,6 +9,7 @@ import type {
   PlanValidationPersisted,
   ProjectGenerationStatus,
   TraceabilitySuggestFixResponse,
+  WorkshopChatScope,
 } from "@theforge/shared-types";
 import type { ClarifyableDocumentField } from "@theforge/shared-types";
 import type { AgentProgressItem } from "../../utils/agentProgress";
@@ -176,6 +177,9 @@ export interface WorkshopState {
   /** Etapa cuyo MDD edita el Workshop (vista en vivo). */
   activeStageId: string | null;
   setActiveStageId: (stageId: string | null) => void;
+  /** Filtro del chat: `stage` (etapa activa) o `global` (historial completo del tab). */
+  chatScope: WorkshopChatScope;
+  setChatScope: (scope: WorkshopChatScope) => void;
   /** Panel central de documentos (pestaña activa); sincroniza barra global y `WorkshopView`. */
   workshopActiveDocPanel: string;
   setWorkshopActiveDocPanel: (panel: string) => void;

@@ -70,6 +70,7 @@ import {
   workshopStateFromProjectStage,
 } from "./helpers/stage-focus";
 import {
+  filterWorkshopSessionMessages,
   lastMddUserMessageContent,
   pickEvaluatorCritique,
   sessionMessageBody,
@@ -146,6 +147,7 @@ export const createSessionChatSlice: StateCreator<WorkshopState, [], [], Session
           sessionId: session?.id,
           activeTab: activeTab ?? undefined,
           ...(stageWelcome ? { stageId: stageWelcome } : {}),
+          chatScope: get().chatScope,
         }),
       });
       if (!r.ok) {
@@ -839,7 +841,15 @@ export const createSessionChatSlice: StateCreator<WorkshopState, [], [], Session
 
           set({ streamingUserMessage: null, streamingUserImages: null });
 
-          const enrichedFromChat = lastMddUserMessageContent(sessionForManager?.chatLog);
+          const mddStage = get().activeStageId;
+          const enrichedFromChat = lastMddUserMessageContent(
+            filterWorkshopSessionMessages(
+              sessionForManager?.chatLog,
+              "mdd",
+              mddStage,
+              get().chatScope,
+            ),
+          );
           const managerText =
             enrichedFromChat && contentIncludesVisionBlock(enrichedFromChat)
               ? enrichedFromChat
@@ -851,7 +861,6 @@ export const createSessionChatSlice: StateCreator<WorkshopState, [], [], Session
             managerThreadId != null
               ? `${API_BASE}/ai-analysis/mdd/stream/resume`
               : `${API_BASE}/ai-analysis/mdd/stream/manager`;
-          const mddStage = get().activeStageId;
           const draftForMdd = (get().mddContent ?? get().project?.mddContent ?? "").trim() || undefined;
           const mddSnapshotBeforeStream = draftForMdd ?? "";
           const body =
@@ -1177,6 +1186,7 @@ export const createSessionChatSlice: StateCreator<WorkshopState, [], [], Session
         {
           const sf = get().activeStageId;
           if (sf) body.stageId = sf;
+          body.chatScope = get().chatScope;
         }
         if (tab === "benchmark") {
           const dbga = get().dbgaContent ?? get().project?.dbgaContent ?? null;
