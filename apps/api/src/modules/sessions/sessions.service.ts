@@ -17,6 +17,8 @@ import {
   type AppendChatDto,
   type ChatMessage,
   type ChatImagePart,
+  filterChatForWorkshopView,
+  type WorkshopChatScope,
 } from "@theforge/shared-types";
 import {
   formatVisionContextBlock,
@@ -96,8 +98,13 @@ import {
   finTagForWorkshopTab,
 } from "./document-refine.util.js";
 
-function filterChatByTab(log: ChatMessage[], tab: string): ChatMessage[] {
-  return log.filter((m) => (m.tab ?? "mdd") === tab);
+function workshopHistoryForTurn(
+  fullLog: ChatMessage[],
+  activeTab: string,
+  stageId: string | undefined,
+  chatScope: WorkshopChatScope,
+): ChatMessage[] {
+  return filterChatForWorkshopView(fullLog, activeTab, { stageId, scope: chatScope });
 }
 
 /** Solo texto al LLM; las imágenes viven en el log para la UI y en el bloque de visión del content. */
@@ -658,7 +665,8 @@ export class SessionsService {
     const activeTab = options?.activeTab ?? "mdd";
     const tab = activeTab;
     const stageId = options?.stageId?.trim();
-    const history = filterChatByTab(fullLog, activeTab);
+    const chatScope = options?.chatScope ?? "global";
+    const history = workshopHistoryForTurn(fullLog, activeTab, stageId, chatScope);
     const userTurn = await this.resolveUserTurnForLlm(
       userMessage,
       options?.userImages,

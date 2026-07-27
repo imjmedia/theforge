@@ -58,9 +58,11 @@ Cada proyecto puede tener **varias etapas** (`Stage`): cada una tiene su propio 
 
 En el **Workshop**, el **selector de etapa** (cuando hay más de una) define el foco: el MDD central, el semáforo y la estimación se leen/escriben con **`stageId`** en `PATCH` del proyecto y en los streams MDD (`/ai-analysis/mdd/...`). La **bienvenida** del orquestador acepta `stageId` para alinear el contexto al MDD de esa etapa (no solo al aplanado por defecto).
 
-**Hilo del Manager (LangGraph)** y **checkpoint** (`AgentStateCheckpoint`) son **por etapa**: al cambiar de etapa, el front pide `GET /ai-analysis/mdd/thread?projectId=&stageId=` para rehidratar el `threadId` correcto. El chat sigue siendo **una sesión global**; el historial **no** se filtra por etapa.
+**Hilo del Manager (LangGraph)** y **checkpoint** (`AgentStateCheckpoint`) son **por etapa**: al cambiar de etapa, el front pide `GET /ai-analysis/mdd/thread?projectId=&stageId=` para rehidratar el `threadId` correcto.
 
-**En la UI:** con **más de una etapa**, al **cambiar el selector** de etapa (arriba a la derecha) puede aparecer un **aviso** recordando que el historial del chat es compartido; puedes cerrarlo. Los mensajes **nuevos** pueden mostrar una etiqueta **«Etapa: …»** cuando el sistema guardó la etapa en foco al enviarlos (los mensajes antiguos pueden no tenerla).
+**Chat por etapa (brownfield):** con **más de una etapa** en proyectos **LEGACY**, el chat filtra por defecto a la **etapa activa** (`chatScope: stage`). Puedes alternar **«Ver global»** en la barra del chat para el historial completo del tab. El contexto enviado al LLM (orquestador) usa el mismo alcance. Mensajes antiguos sin `stageId` no aparecen en vista por etapa.
+
+**En la UI:** con **más de una etapa**, la barra sobre el chat indica si ves solo la etapa activa o el historial global. Al cambiar de etapa en modo global, un aviso recuerda que pueden mezclarse líneas AS-IS y delta.
 
 **Nueva etapa:** botón **Nueva etapa** junto al selector → modal y `POST /projects/:projectId/stages` (respuesta `{ stage }`). En el modal, **Copiar MDD desde** permite elegir cualquier etapa existente o dejar el MDD vacío. El selector del header cambia la **vista en vivo** (MDD/semáforo de la etapa activa).
 

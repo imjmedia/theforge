@@ -1,6 +1,6 @@
 import type { GenerateResponseOptions } from "../ai/interfaces/llm-provider.interface.js";
 import type { IntentRouteResult } from "../ai/intent-route.types.js";
-import type { ChatImagePart } from "@theforge/shared-types";
+import type { ChatImagePart, WorkshopChatScope } from "@theforge/shared-types";
 
 /** Opciones de turno compartidas por `SessionsService.chat` y `chatStream`. */
 export type SessionChatTurnOptions = {
@@ -21,6 +21,8 @@ export type SessionChatTurnOptions = {
   activeTab?: string;
   systemPrompt?: string;
   stageId?: string;
+  /** `stage` = solo mensajes de `stageId`; `global` = historial completo del tab. */
+  chatScope?: WorkshopChatScope;
   complexityInterviewContext?: string;
   projectTypeForUxGuide?: GenerateResponseOptions["projectTypeForUxGuide"];
   uxGuideAdditionalDocs?: GenerateResponseOptions["uxGuideAdditionalDocs"];

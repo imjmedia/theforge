@@ -47,6 +47,7 @@ export class SessionsController {
       images?: unknown;
       activeTab?: string;
       stageId?: string;
+      chatScope?: "stage" | "global";
       mddContent?: string | null;
       uxUiGuideContent?: string | null;
       dbgaContent?: string | null;
@@ -67,6 +68,8 @@ export class SessionsController {
       dbgaContentFromClient: body.dbgaContent?.trim() || undefined,
       phase0SummaryContentFromClient: body.phase0SummaryContent?.trim() || undefined,
       stageIdFromClient: body.stageId?.trim() || undefined,
+      chatScopeFromClient:
+        body.chatScope === "stage" || body.chatScope === "global" ? body.chatScope : undefined,
     });
   }
 
