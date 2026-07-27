@@ -1,11 +1,13 @@
 import { AlertTriangle, GitMerge } from "lucide-react";
-import type { MddUpstreamSyncStatus } from "@theforge/shared-types";
-import { MDD_UPSTREAM_SOURCE_LABELS } from "@theforge/shared-types";
+import type { MddUpstreamSyncStatus, ProjectGenerationStatus } from "@theforge/shared-types";
+import { effectiveMddUpstreamSyncStatus, MDD_UPSTREAM_SOURCE_LABELS } from "@theforge/shared-types";
 import { cn } from "@/lib/utils";
 import { WorkshopPanelButton, WorkshopButtonIcon } from "@/components/WorkshopButtons";
 
 export interface MddUpstreamSyncBannerProps {
   syncStatus: MddUpstreamSyncStatus | null | undefined;
+  /** Estado de generación para ocultar el banner mientras corre pipeline/upstream-sync. */
+  generationStatus?: Pick<ProjectGenerationStatus, "mddJobs"> | null;
   disabled?: boolean;
   onOpenSyncDialog: () => void;
 }
@@ -15,13 +17,15 @@ export interface MddUpstreamSyncBannerProps {
  */
 export default function MddUpstreamSyncBanner({
   syncStatus,
+  generationStatus,
   disabled = false,
   onOpenSyncDialog,
 }: MddUpstreamSyncBannerProps) {
-  if (!syncStatus?.pendingSync || !syncStatus.canSync) return null;
+  const effectiveSync = effectiveMddUpstreamSyncStatus(syncStatus, generationStatus);
+  if (!effectiveSync?.pendingSync || !effectiveSync.canSync) return null;
 
   const sources =
-    syncStatus.changedSources?.map((s) => MDD_UPSTREAM_SOURCE_LABELS[s] ?? s).join(", ") ||
+    effectiveSync.changedSources?.map((s) => MDD_UPSTREAM_SOURCE_LABELS[s] ?? s).join(", ") ||
     "documentos upstream";
 
   return (
@@ -44,7 +48,7 @@ export default function MddUpstreamSyncBanner({
           <p className="min-w-0 text-sm leading-snug text-[var(--foreground)]">
             <span className="font-semibold">MDD desactualizado:</span> hay cambios en {sources} que no están reflejados
             en el MDD. Puedes sincronizar solo las secciones afectadas (§
-            {(syncStatus.expandedSections ?? []).join(", §")}) o regenerar el documento completo.
+            {(effectiveSync.expandedSections ?? []).join(", §")}) o regenerar el documento completo.
           </p>
         </div>
         <WorkshopPanelButton tone="primary" disabled={disabled} onClick={onOpenSyncDialog}>

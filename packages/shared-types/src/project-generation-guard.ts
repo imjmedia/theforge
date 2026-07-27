@@ -170,6 +170,31 @@ export function primaryMddJob(
   return status.mddJobs.find((j) => j.status === "active") ?? status.mddJobs[0] ?? null;
 }
 
+const MDD_UPSTREAM_REGEN_MODES: MddJobMode[] = ["pipeline", "manager", "upstream-sync"];
+
+/** true si hay un job MDD que ya está regenerando/sincronizando desde upstream. */
+export function isMddUpstreamRegenerationBusy(
+  status: Pick<ProjectGenerationStatus, "mddJobs"> | null | undefined,
+): boolean {
+  return (status?.mddJobs ?? []).some(
+    (j) =>
+      (j.status === "active" || j.status === "queued" || j.status === "retrying") &&
+      MDD_UPSTREAM_REGEN_MODES.includes(j.mode),
+  );
+}
+
+/** Oculta pendingSync mientras corre regeneración/sincronización MDD (evita banner duplicado). */
+export function effectiveMddUpstreamSyncStatus(
+  sync: MddUpstreamSyncStatus | null | undefined,
+  status: Pick<ProjectGenerationStatus, "mddJobs"> | null | undefined,
+): MddUpstreamSyncStatus | null | undefined {
+  if (!sync?.pendingSync) return sync;
+  if (isMddUpstreamRegenerationBusy(status)) {
+    return { ...sync, pendingSync: false };
+  }
+  return sync;
+}
+
 /** Etiqueta humana del job/generación en curso (Workshop banner y carpetas del dashboard). */
 export function activeGenerationLabel(status: ProjectGenerationStatus | null | undefined): string | null {
   if (!status?.busy) return null;

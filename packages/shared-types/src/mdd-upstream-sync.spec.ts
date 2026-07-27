@@ -52,6 +52,26 @@ describe("mdd-upstream-sync", () => {
     assert.deepEqual(analysis.changedSources, []);
   });
 
+  it("no marca pendingSync con JSON benchmark reordenado (mismo contenido)", () => {
+    const benchmarkV1 = JSON.stringify({ z: 1, a: { y: 2, x: 3 } });
+    const benchmarkV2 = JSON.stringify({ a: { x: 3, y: 2 }, z: 1 });
+    const baseline = buildMddUpstreamBaseline({
+      dbgaContent: "dbga",
+      brdContent: "brd",
+      benchmarkContent: benchmarkV1,
+      mddContent: "# MDD\n\n## 1. Contexto\n\nx".repeat(30),
+    });
+    const analysis = analyzeMddUpstreamChanges({
+      baseline,
+      dbgaContent: "dbga",
+      brdContent: "brd",
+      benchmarkContent: benchmarkV2,
+      mddContent: "# MDD\n\n## 1. Contexto\n\nx".repeat(30),
+    });
+    assert.equal(analysis.pendingSync, false);
+    assert.deepEqual(analysis.changedSources, []);
+  });
+
   it("hash estable para mismo contenido", () => {
     assert.equal(hashUpstreamDocumentBody(" a \n"), hashUpstreamDocumentBody("a"));
   });

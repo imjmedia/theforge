@@ -3,6 +3,7 @@ import type { ComplexityLevel } from "@theforge/shared-types";
 import {
   buildDeliverableReadiness,
   buildGenerationGates,
+  effectiveMddUpstreamSyncStatus,
   evaluateGenerationGate,
   toMddUpstreamSyncStatus,
   activeGenerationLabel,
@@ -108,7 +109,9 @@ export class ProjectGenerationGuardService {
     let mddUpstreamSync = null;
     try {
       const analysis = await this.mddUpstreamSync.analyze(projectId, stageId);
-      mddUpstreamSync = toMddUpstreamSyncStatus(analysis);
+      mddUpstreamSync = effectiveMddUpstreamSyncStatus(toMddUpstreamSyncStatus(analysis), {
+        mddJobs: light.mddJobs,
+      });
     } catch {
       mddUpstreamSync = null;
     }

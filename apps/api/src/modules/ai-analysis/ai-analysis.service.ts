@@ -2414,7 +2414,7 @@ export class AiAnalysisService {
         // es que un MDD de baja calidad (placeholder con excepciones, modelo
         // débil) puede pasar el gate y quedar cacheado para siempre. La
         // regeneración ahora siempre ejecuta el pipeline LLM completo.
-        return await consume(
+        const jobResult = await consume(
           this.streamMddAnalysis(
             data.dbgaContent ?? "",
             projectId,
@@ -2422,12 +2422,16 @@ export class AiAnalysisService {
             data.mddContent,
           ) as AsyncGenerator<MddJobEvent>,
         );
+        if (jobResult.ok && jobResult.outcome === "done") {
+          return this.finalizeMddJobUpstreamBaseline(projectId, stageId, jobResult);
+        }
+        return jobResult;
       }
       case "manager": {
         // PR #505: el cache se eliminó del flujo de regeneración.
         // El manager mode también siempre corre el pipeline LLM completo
         // sin reusar contenido cacheado.
-        return await consume(
+        const jobResult = await consume(
           this.streamMddAnalysisWithManager(
             data.dbgaContent ?? "",
             projectId,
@@ -2436,6 +2440,10 @@ export class AiAnalysisService {
             stageId,
           ),
         );
+        if (jobResult.ok && jobResult.outcome === "done") {
+          return this.finalizeMddJobUpstreamBaseline(projectId, stageId, jobResult);
+        }
+        return jobResult;
       }
       case "section": {
         const rawSection = data.section;
