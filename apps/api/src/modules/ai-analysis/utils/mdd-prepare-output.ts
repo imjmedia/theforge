@@ -41,6 +41,7 @@ import {
 } from "../../ui-mcp/ui-component-resolver.js";
 import { isPlaceholderSeguridad } from "./mdd-security-parse.js";
 import {
+  draftHasPersistableSection4,
   draftHasSubstantialSection5,
   preserveValidatedSectionsIfSubstantial,
   guardValidatedSectionsForPersist,
@@ -140,6 +141,21 @@ function restoreSections6And7AfterNormalize(source: string, normalized: string):
   return out;
 }
 
+/** Evita que normalizeMddFormat/dedupe dejen §4 en stub tras api_contracts. */
+function restoreSection4AfterNormalize(source: string, normalized: string): string {
+  if (mddHasDuplicateSectionHeadings(source)) return normalized;
+  const srcBody = extractContratosSectionBody(source);
+  const normBody = extractContratosSectionBody(normalized);
+  if (!srcBody?.trim()) return normalized;
+  if (isContratosSectionRegression(srcBody, normBody) && srcBody) {
+    return replaceMddSection4Body(normalized, srcBody);
+  }
+  if (draftHasPersistableSection4(source) && !draftHasPersistableSection4(normalized)) {
+    return replaceMddSection4Body(normalized, srcBody);
+  }
+  return normalized;
+}
+
 /**
  * Fuente del markdown a enviar. Se prefiere mddDraft cuando es sustancial para no reconstruir desde
  * mddStructured (que podría tener §3 desactualizado o solo §6). Luego sanitize, normalize e inyección.
@@ -198,7 +214,10 @@ export async function prepareMddForOutput(
     null;
   const sanitized =
     replaceContextWhenOnlyMetadata(sanitizeContextKeyValueAndObject(sanitizeContextSection(raw)));
-  const normalized = restoreSections6And7AfterNormalize(raw, normalizeMddFormat(sanitized));
+  const normalized = restoreSection4AfterNormalize(
+    raw,
+    restoreSections6And7AfterNormalize(raw, normalizeMddFormat(sanitized)),
+  );
   const structuredForSection3 =
     typeof input === "string" ? undefined : input.mddStructured;
   const withSection3 = composeSection3FromStructured(normalized, structuredForSection3);

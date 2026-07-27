@@ -11,6 +11,8 @@ import {
   guardTailSectionsForPersist,
   preserveSection2IfSubstantial,
   preserveSection2FromStackSnapshot,
+  preserveSection4FromApiContractsSnapshot,
+  draftHasPersistableSection4,
   preserveSection3IfSubstantial,
   preserveSection4IfSubstantial,
   preserveSection5IfSubstantial,
@@ -310,6 +312,30 @@ describe("preserveSection2FromStackSnapshot", () => {
     const out = preserveSection2FromStackSnapshot(afterStack, afterDataModel);
     assert.ok(out.includes("NestJS"));
     assert.doesNotMatch(out, /\(Pendiente: Arquitecto de Software\)/);
+  });
+});
+
+describe("preserveSection4FromApiContractsSnapshot", () => {
+  it("restaura §4 desde snapshot de api_contracts tras vaciado por format", () => {
+    const afterApi = `# MDD\n## 1. Contexto\n${"Alcance. ".repeat(40)}\n## 4. Contratos de API\n${S4_BODY}\n## 5. Lógica\n(Pendiente)\n`;
+    const stub = `(Falta: definir endpoints con request/response en JSON. El Auditor ha detectado este hueco.)
+
+### Endpoints journey core (sincronización determinista)
+| GET | /api/v1/credentials | list | Bearer | DBGA/BRD |`;
+    const afterFormat = afterApi.replace(S4_BODY, stub);
+    const out = preserveSection4FromApiContractsSnapshot(afterApi, afterFormat);
+    assert.match(out, /\/api\/v1\/auth\/login/);
+    assert.doesNotMatch(out, /Falta: definir endpoints/i);
+  });
+});
+
+describe("draftHasPersistableSection4", () => {
+  it("true con tabla densa sin json (catálogo api_contracts)", () => {
+    const tableOnly = `| Método | Ruta | Descripción |
+${"| GET | /api/v1/tenants | list |\n".repeat(8)}`;
+    const draft = `# MDD\n## 4. Contratos de API\n${tableOnly}\n`;
+    assert.equal(draftHasPersistableSection4(draft), true);
+    assert.equal(draftHasSubstantialSection4(draft), false);
   });
 });
 
