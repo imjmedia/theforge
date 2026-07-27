@@ -95,6 +95,17 @@ export function draftHasSubstantialSection7(draft: string): boolean {
 }
 
 /**
+ * Baseline válido para merge quirúrgico §2/§3/§4: borrador largo o skeleton post-Clarificador con §1 real.
+ * Sin esto, pipeline HIGH rechaza merge cuando el Clarificador dejó <600 chars pero §1 sustancial.
+ */
+export function canUseSurgicalMergeBaseline(baselineDraft: string, minLength = 600): boolean {
+  const baseline = (baselineDraft ?? "").trim();
+  if (!baseline) return false;
+  if (baseline.length >= minLength) return true;
+  return draftHasSubstantialSection1(baseline);
+}
+
+/**
  * True si el borrador ya tiene masa suficiente para reparación acotada (no Clarifier full-reset).
  * Criterio: len ≥15k O §2+§3+§4 sustanciales.
  */
@@ -156,6 +167,16 @@ export function preserveSection1FromClarifierSnapshot(
   const snap = (clarifierSnapshot ?? "").trim();
   if (!snap || !draftHasSubstantialSection1(snap)) return currentDraft;
   return preserveSection1IfSubstantial(snap, currentDraft);
+}
+
+/** Restaura §2 desde el snapshot de stack_architect si un nodo posterior la vació (pipeline HIGH scoped). */
+export function preserveSection2FromStackSnapshot(
+  stackSnapshot: string | null | undefined,
+  currentDraft: string,
+): string {
+  const snap = (stackSnapshot ?? "").trim();
+  if (!snap || !draftHasSubstantialSection2(snap)) return currentDraft;
+  return preserveSection2IfSubstantial(snap, currentDraft);
 }
 
 export function preserveSection2IfSubstantial(baselineDraft: string, currentDraft: string): string {

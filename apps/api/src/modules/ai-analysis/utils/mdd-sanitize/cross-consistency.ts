@@ -63,12 +63,39 @@ export function stripAlternateBackendFromSection1(draft: string): string {
 }
 
 /**
+ * erDiagram en §4 es artefacto de formato: mover a §3 o eliminar si §3 ya lo tiene.
+ */
+export function relocateErDiagramFromSection4ToSection3(draft: string): string {
+  if (!draft?.trim()) return draft;
+  const contratosHeading = "## 4. Contratos de API";
+  const s4 = extractMddSectionBody(draft, contratosHeading);
+  if (!s4) return draft;
+  const erBlockRe = /```mermaid\s*[\s\S]*?\berDiagram\b[\s\S]*?```/gi;
+  const erMatch = erBlockRe.exec(s4.body);
+  if (!erMatch) return draft;
+
+  const erBlock = erMatch[0];
+  const s3 = extractMddSectionBody(draft, "## 3. Modelo de Datos");
+  let out = draft;
+
+  if (s3 && !/```mermaid[\s\S]*?\berDiagram\b/i.test(s3.body)) {
+    const newS3Body = `${s3.body.trimEnd()}\n\n### Diagrama entidad-relación\n\n${erBlock}\n`;
+    out = out.slice(0, s3.start) + newS3Body + out.slice(s3.end);
+  }
+
+  const s4Updated = extractMddSectionBody(out, contratosHeading);
+  if (!s4Updated) return out;
+  const strippedS4 = s4Updated.body.replace(erBlockRe, "").replace(/\n{3,}/g, "\n\n").trim();
+  return out.slice(0, s4Updated.start) + strippedS4 + out.slice(s4Updated.end);
+}
+
+/**
  * Correcciones deterministas de coherencia cross-sección (sin LLM): monolito vs microservicios,
  * prefijo API en manifest, retención de auditoría.
  */
 export function fixDeterministicMddCoherence(draft: string): string {
   if (!draft || typeof draft !== "string") return draft;
-  let out = draft;
+  let out = relocateErDiagramFromSection4ToSection3(draft);
 
   const arch = extractMddSectionBody(out, "## 2. Arquitectura y Stack");
   const isModularMonolith =

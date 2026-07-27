@@ -130,4 +130,13 @@ describe("mdd-architect-pipeline.util", () => {
     const live = resolveLiveDraftForScopedArchitectStream("data_model", frankenstein, stable);
     assert.equal(live, stable);
   });
+
+  it("resolveLiveDraftForScopedArchitectStream publica §2 sustancial aunque parezca MDD completo", () => {
+    const stable = "## 2. Arquitectura y Stack\n(Pendiente: Arquitecto de Software)\n\n## 3. Modelo\n(Pendiente)";
+    const s2 = `${"| Backend | NestJS | 10.x |\n".repeat(20)}${"Detalle de arquitectura. ".repeat(15)}`;
+    const frankenstein = `# Master Design Document\n\n## 2. Arquitectura y Stack\n${s2}\n\n## 3. Modelo de Datos\n(Pendiente)\n`;
+    const live = resolveLiveDraftForScopedArchitectStream("stack_architect", frankenstein, stable);
+    assert.ok(live.includes("NestJS"));
+    assert.doesNotMatch(live, /\(Pendiente: Arquitecto de Software\)/);
+  });
 });

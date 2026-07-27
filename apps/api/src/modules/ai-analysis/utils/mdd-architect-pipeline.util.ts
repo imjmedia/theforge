@@ -6,6 +6,14 @@ import type { MddComplexityLevel } from "../state/mdd-state.schema.js";
 import type { MDDStateType } from "../state/index.js";
 import { isMddTailParallelEnabled } from "./mdd-tail-parallel.config.js";
 import {
+  draftHasSubstantialSection2,
+  draftHasSubstantialSection3,
+  draftHasSubstantialSection4,
+  preserveSection2IfSubstantial,
+  preserveSection3IfSubstantial,
+  preserveSection4IfSubstantial,
+} from "./mdd-section-preserve.util.js";
+import {
   extractArquitecturaSectionBody,
   extractSection3Body,
   extractSection4Body,
@@ -261,6 +269,7 @@ const STREAM_NODE_TO_SCOPE: Record<string, MddSoftwareArchitectScope> = {
 
 /**
  * Evita publicar en vivo un MDD completo sin merge (Frankenstein con §2 Pendiente, etc.).
+ * Si el borrador intermedio ya tiene la §N objetivo sustancial, se publica aunque parezca MDD completo.
  */
 export function resolveLiveDraftForScopedArchitectStream(
   nodeName: string | undefined,
@@ -270,8 +279,25 @@ export function resolveLiveDraftForScopedArchitectStream(
   if (!nodeName || !SCOPED_ARCHITECT_STREAM_NODES.has(nodeName)) return draft;
   const scope = STREAM_NODE_TO_SCOPE[nodeName];
   if (!scope) return draft;
+
+  const section = architectScopeSectionNumber(scope);
+  if (section === 2 && draftHasSubstantialSection2(draft)) return draft;
+  if (section === 3 && draftHasSubstantialSection3(draft)) return draft;
+  if (section === 4 && draftHasSubstantialSection4(draft)) return draft;
+
   if (looksLikeFullMddArchitectResponse(draft, scope)) {
-    return stableDraft.trim() || draft;
+    const stable = stableDraft.trim();
+    if (!stable) return draft;
+    if (section === 2 && draftHasSubstantialSection2(draft)) {
+      return preserveSection2IfSubstantial(draft, stable);
+    }
+    if (section === 3 && draftHasSubstantialSection3(draft)) {
+      return preserveSection3IfSubstantial(draft, stable);
+    }
+    if (section === 4 && draftHasSubstantialSection4(draft)) {
+      return preserveSection4IfSubstantial(draft, stable);
+    }
+    return stable;
   }
   return draft;
 }
