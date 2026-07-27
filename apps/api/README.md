@@ -10,7 +10,9 @@ Backend NestJS de TheForge.
 
 **BullMQ:** `REDIS_URL` obligatorio en `NODE_ENV=production`. Colas: `theforge-deliverables`, `theforge-mdd`, `theforge-legacy-deliverables`. Sin Redis: fallback in-memory solo en desarrollo.
 
-**Runtime:** `THEFORGE_RUNTIME_ROLE=all|http|worker`. Compose prod: `theforge-api` (`http`, encola) + `theforge-worker` (`worker`, consume). Local: `all`.
+**Runtime:** `THEFORGE_RUNTIME_ROLE=all|http|worker`. Compose prod: `theforge-api` (`http`, encola) + `theforge-worker` (`worker`, consume; **misma imagen** `theforge-api:compose`, sin segundo build). Local: `all`.
+
+**Deploy:** el entrypoint ejecuta `migrate deploy` en la API; el worker omite migraciones y espera a que la API esté healthy. Healing Prisma (P3009, drift) solo corre si `migrate deploy` falla. Detalle: [`docker/README.md`](../../docker/README.md).
 
 **Concurrencia:** configurable en **Ajustes → Sistema** (o env legacy): MDD (default 2, max 8), entregables (default 2), legacy entregables (default 1). Ver `modules/system-config/`.
 

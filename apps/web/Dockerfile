@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.4
 # Build stage — context = repo root
 # Imágenes fijas en ECR Public (evita TLS timeout a Docker Hub y fallos de ARG en Dokploy).
 FROM public.ecr.aws/docker/library/node:20-alpine AS builder
@@ -16,7 +17,8 @@ COPY packages/shared-types/package.json packages/shared-types/
 COPY packages/business-rules/package.json packages/business-rules/
 COPY apps/web/package.json apps/web/
 
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=theforge-pnpm-store,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
 
 COPY packages/config packages/config
 COPY packages/shared-types packages/shared-types
