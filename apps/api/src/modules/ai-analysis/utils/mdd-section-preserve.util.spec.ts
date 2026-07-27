@@ -14,6 +14,7 @@ import {
   preserveSection5IfSubstantial,
   preserveSection6IfSubstantial,
   preserveSection7IfSubstantial,
+  preserveSection1FromClarifierSnapshot,
   preserveTailSectionsIfSubstantial,
   preserveValidatedSectionsIfSubstantial,
 } from "./mdd-section-preserve.util.js";
@@ -270,5 +271,38 @@ Docker
     assert.ok(guard.restored);
     assert.deepEqual(guard.failedSections, []);
     assert.ok(guard.markdown.includes("JWT tras credenciales"));
+  });
+});
+
+describe("preserveSection1FromClarifierSnapshot", () => {
+  const S1 = "Contexto del sistema con alcance detallado. ".repeat(25);
+
+  it("restaura §1 desde snapshot del Clarificador tras vaciado por stack_architect", () => {
+    const clarifier = `# MDD\n## 1. Contexto\n${S1}\n## 2. Arquitectura y Stack\n(Pendiente)\n`;
+    const afterStack = `# MDD\n## 1. Contexto\n\n---\n\n## 2. Arquitectura y Stack\n${S2_BODY}\n`;
+    const out = preserveSection1FromClarifierSnapshot(clarifier, afterStack);
+    assert.ok(out.includes(S1.slice(0, 80)));
+    assert.ok(out.includes("NestJS"));
+  });
+});
+
+describe("deduplicateAndReorderMddSections §1 duplicada", () => {
+  it("prefiere §1 sustancial sobre ocurrencia vacía posterior", () => {
+    const s1 = "Alcance completo del producto. ".repeat(30);
+    const draft = `# Master Design Document
+## 1. Contexto
+${s1}
+
+## 2. Arquitectura y Stack
+${S2_BODY}
+
+## 1. Contexto
+
+## 3. Modelo de Datos
+${S3_BODY}
+`;
+    const out = deduplicateAndReorderMddSections(draft);
+    assert.ok(out.includes(s1.slice(0, 60)));
+    assert.equal((out.match(/^##\s+1\.\s*Contexto/gim) ?? []).length, 1);
   });
 });

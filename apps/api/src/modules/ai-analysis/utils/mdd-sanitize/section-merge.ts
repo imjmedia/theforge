@@ -1109,6 +1109,22 @@ export function ensureSection6WhenSection7Present(draft: string): string {
 }
 
 /**
+ * Elige la mejor ocurrencia cuando hay headings duplicados: preferir cuerpo sustancial y más largo.
+ */
+function pickBestMddSectionCandidate(
+  candidates: Array<{ heading: string; body: string }>,
+): { heading: string; body: string } {
+  if (candidates.length === 1) return candidates[0]!;
+  return candidates.reduce((best, cur) => {
+    const bestPh = isMddSectionPipelinePlaceholderBody(best.body);
+    const curPh = isMddSectionPipelinePlaceholderBody(cur.body);
+    if (bestPh && !curPh) return cur;
+    if (!bestPh && curPh) return best;
+    return cur.body.trim().length >= best.body.trim().length ? cur : best;
+  });
+}
+
+/**
  * Reordena el MDD a 1..7 y elimina secciones duplicadas.
  * No parte en ## que estén dentro de bloques ```. Si la sección 2 contiene ## 3/## 4 embebidos, la reemplaza por placeholder.
  */
@@ -1140,15 +1156,7 @@ export function deduplicateAndReorderMddSections(draft: string): string {
       }
     }
     if (candidates.length === 0) continue;
-    // Prefiere la última ocurrencia (más reciente) salvo que sea placeholder y la primera no
-    const first = candidates[0]!;
-    const last = candidates[candidates.length - 1]!;
-    const best = candidates.length === 1
-      ? first
-      : isMddSectionPipelinePlaceholderBody(last.body) && !isMddSectionPipelinePlaceholderBody(first.body)
-        ? first
-        : last;
-    sections.push(best);
+    sections.push(pickBestMddSectionCandidate(candidates));
   }
   // El escaneo por SECTION_ORDER puede perder §6/§7 recién insertadas (p. ej. tras /seguridad).
   // Recuperarlas del borrador original con getSection6Or7Range antes de reconstruir.

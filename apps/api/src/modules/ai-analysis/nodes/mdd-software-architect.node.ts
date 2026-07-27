@@ -51,6 +51,7 @@ import { getUserBrief, getUserExplicitRequirements } from "../utils/mdd-user-bri
 import { ensureSection5TailParallelPlaceholder } from "../utils/mdd-tail-parallel.util.js";
 import {
   preserveNonTargetValidatedSectionsAfterArchitectMerge,
+  preserveSection1FromClarifierSnapshot,
   preserveValidatedSectionsIfSubstantial,
 } from "../utils/mdd-section-preserve.util.js";
 import {
@@ -970,6 +971,7 @@ export function createMddSoftwareArchitectNode(
             );
           }
         }
+        out = preserveSection1FromClarifierSnapshot(state.clarifierMddDraftSnapshot, out);
         if (mergeBaseline.length >= minLength) {
           out =
             scopeSection !== null

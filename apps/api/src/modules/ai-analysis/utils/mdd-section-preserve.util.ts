@@ -19,6 +19,7 @@ import {
   replaceMddSection3Body,
   replaceMddSection4Body,
   replaceMddSection5Body,
+  replaceSection1BodyFromAnyHeading,
   replaceSection6Or7InDraft,
 } from "./mdd-sanitize/section-merge.js";
 
@@ -142,10 +143,20 @@ export function preserveSection1IfSubstantial(baselineDraft: string, currentDraf
     baselineDraft,
     currentDraft,
     extractContextSectionBody,
-    replaceContextSectionBody,
+    replaceSection1BodyFromAnyHeading,
     MIN_SUBSTANTIAL_SECTION1_BODY_LEN,
     "§1",
   );
+}
+
+/** Restaura §1 desde el snapshot del Clarificador si el borrador actual la vació (pipeline HIGH scoped). */
+export function preserveSection1FromClarifierSnapshot(
+  clarifierSnapshot: string | null | undefined,
+  currentDraft: string,
+): string {
+  const snap = (clarifierSnapshot ?? "").trim();
+  if (!snap || !draftHasSubstantialSection1(snap)) return currentDraft;
+  return preserveSection1IfSubstantial(snap, currentDraft);
 }
 
 export function preserveSection2IfSubstantial(baselineDraft: string, currentDraft: string): string {

@@ -62,6 +62,8 @@ export const MDDStateAnnotation = Annotation.Root({
   askedInitialTopicQuestion: Annotation<boolean | undefined>(),
   delegateTarget: Annotation<"clarifier_only" | "full_pipeline" | "sections" | undefined>(),
   previousMddDraftForMerge: Annotation<string | undefined>(),
+  /** Borrador post-Clarificador (§1 anclada) para restaurar tras nodos scoped HIGH. */
+  clarifierMddDraftSnapshot: Annotation<string | undefined>(),
   sectionsToRun: Annotation<string[] | undefined>(),
   acceptedProposalDirective: Annotation<string | undefined>(),
   lastStepFailed: Annotation<{ node: string; error: string } | undefined>(),
