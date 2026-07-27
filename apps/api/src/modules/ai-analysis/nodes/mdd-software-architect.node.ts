@@ -50,8 +50,11 @@ import {
 import { getUserBrief, getUserExplicitRequirements } from "../utils/mdd-user-brief.js";
 import { ensureSection5TailParallelPlaceholder } from "../utils/mdd-tail-parallel.util.js";
 import {
+  canUseSurgicalMergeBaseline,
+  draftHasSubstantialSection2,
   preserveNonTargetValidatedSectionsAfterArchitectMerge,
   preserveSection1FromClarifierSnapshot,
+  preserveSection2FromStackSnapshot,
   preserveValidatedSectionsIfSubstantial,
 } from "../utils/mdd-section-preserve.util.js";
 import {
@@ -955,7 +958,7 @@ export function createMddSoftwareArchitectNode(
           out = replaceSectionBody(out, /##\s+(?:7\.\s+)?Infraestructura\b[^\n]*/i, `## 7. Infraestructura\n\n${incomingSection7}`);
           LOG("preservada sección 7 desde baseline (el Arquitecto puso placeholder)");
         }
-        if (sectionsToPreserve.length > 0 && mergeBaseline.length >= minLength) {
+        if (sectionsToPreserve.length > 0 && canUseSurgicalMergeBaseline(mergeBaseline, minLength)) {
           out = preserveUntouchedMddSectionsFromBaseline(out, mergeBaseline, sectionsToPreserve);
           LOG("preservadas secciones fuera de plan desde baseline: %s", sectionsToPreserve.join(","));
         }
@@ -972,7 +975,8 @@ export function createMddSoftwareArchitectNode(
           }
         }
         out = preserveSection1FromClarifierSnapshot(state.clarifierMddDraftSnapshot, out);
-        if (mergeBaseline.length >= minLength) {
+        out = preserveSection2FromStackSnapshot(state.stackArchitectMddDraftSnapshot, out);
+        if (canUseSurgicalMergeBaseline(mergeBaseline, minLength)) {
           out =
             scopeSection !== null
               ? preserveNonTargetValidatedSectionsAfterArchitectMerge(mergeBaseline, out, scopeSection)
@@ -1013,13 +1017,13 @@ export function createMddSoftwareArchitectNode(
         }
 
         let mergeResult =
-          scopeSection !== null && mergeBaseline.length >= minLength
+          scopeSection !== null && canUseSurgicalMergeBaseline(mergeBaseline, minLength)
             ? tryMergeSingleArchitectSectionIntoDraft(mergeBaseline, architectFragment, scopeSection)
             : { draft: mergeBaseline, merged: false as const, rejectReason: "empty" as const };
 
         if (mergeResult.merged) {
           mddDraft = mergeResult.draft;
-        } else if (scopeSection !== null && mergeBaseline.length >= minLength) {
+        } else if (scopeSection !== null && canUseSurgicalMergeBaseline(mergeBaseline, minLength)) {
           LOG(
             "merge rechazado scope=%s section=%s reason=%s extractedFromFullMdd=%s; reintento scoped (máx 1)",
             scope,
@@ -1158,12 +1162,16 @@ export function createMddSoftwareArchitectNode(
             : scope === "full" && !isHighSplitArchitectPipeline(state)
               ? { architectCriticPhase: "after_full" as const }
               : {};
+      const stackSnapshotUpdate =
+        scope === "stack" && draftHasSubstantialSection2(mddDraft)
+          ? { stackArchitectMddDraftSnapshot: mddDraft }
+          : {};
 
       if (Object.keys(slice).length > 0) {
         const merged = mergeMddStructured(state.mddStructured ?? undefined, slice, state.mddDraft ?? "");
-        return { mddStructured: merged, mddDraft, ...meshUpdate, ...phaseUpdate };
+        return { mddStructured: merged, mddDraft, ...meshUpdate, ...phaseUpdate, ...stackSnapshotUpdate };
       }
-      return { mddDraft, ...meshUpdate, ...phaseUpdate };
+      return { mddDraft, ...meshUpdate, ...phaseUpdate, ...stackSnapshotUpdate };
     } catch (err) {
       LOG("error: %s", err instanceof Error ? err.message : String(err));
       throw err;

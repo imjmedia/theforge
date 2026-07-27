@@ -267,7 +267,7 @@ export async function enrichMddWithUiUxDesignIntent(
 function stripEmbeddedDesignIntentBlocks(markdown: string): string {
   return markdown
     .replace(
-      /\n#{2,3}\s*(?:UI\/UX\s+)?Design\s+Intent[\s\S]*?(?=\n##\s+(?!#)|\n---\s*\n##|$)/gi,
+      /\n#{2,3}\s*(?:UI\/UX\s+)?Design\s+Intent[\s\S]*?(?=\n##\s+(?!#)|\n#\s+[-–—]{2,}|\n---\s*\n##|\n##\s+[1-7]\.\s|$)/gi,
       "",
     )
     .trimEnd();

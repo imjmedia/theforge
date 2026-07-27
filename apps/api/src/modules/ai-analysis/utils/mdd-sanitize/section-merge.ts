@@ -1124,6 +1124,29 @@ function pickBestMddSectionCandidate(
   });
 }
 
+/** Fusiona ocurrencias duplicadas de la misma §N (p. ej. §4 principal + journey core al final). */
+function mergeDuplicateSectionCandidates(
+  candidates: Array<{ heading: string; body: string }>,
+): { heading: string; body: string } {
+  if (candidates.length <= 1) return candidates[0]!;
+  const best = pickBestMddSectionCandidate(candidates);
+  const sectionNum = canonicalSectionNumber(best.heading);
+  if (sectionNum !== 4) return best;
+
+  const uniqueBodies: string[] = [];
+  for (const candidate of candidates) {
+    const body = candidate.body.trim();
+    if (!body) continue;
+    const sig = body.slice(0, 100);
+    if (uniqueBodies.some((existing) => existing.includes(sig) || body.includes(existing.slice(0, 100)))) {
+      continue;
+    }
+    uniqueBodies.push(body);
+  }
+  if (uniqueBodies.length <= 1) return best;
+  return { heading: best.heading, body: uniqueBodies.join("\n\n") };
+}
+
 /**
  * Reordena el MDD a 1..7 y elimina secciones duplicadas.
  * No parte en ## que estén dentro de bloques ```. Si la sección 2 contiene ## 3/## 4 embebidos, la reemplaza por placeholder.
@@ -1155,8 +1178,8 @@ export function deduplicateAndReorderMddSections(draft: string): string {
         candidates.push({ heading: actualHeading, body: bodyToUse });
       }
     }
-    if (candidates.length === 0) continue;
-    sections.push(pickBestMddSectionCandidate(candidates));
+  if (candidates.length === 0) continue;
+    sections.push(mergeDuplicateSectionCandidates(candidates));
   }
   // El escaneo por SECTION_ORDER puede perder §6/§7 recién insertadas (p. ej. tras /seguridad).
   // Recuperarlas del borrador original con getSection6Or7Range antes de reconstruir.

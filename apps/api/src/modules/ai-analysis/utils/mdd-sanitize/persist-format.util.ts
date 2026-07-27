@@ -42,6 +42,36 @@ export function stripStrayParenAfterJsonCodeBlocks(draft: string): string {
   return draft.replace(/(```json[\s\S]*?```)\s*\)/g, "$1");
 }
 
+/** Elimina líneas `# ---` que el LLM usa como separador falso (no son headings válidos). */
+export function stripHashDashSeparatorLines(draft: string): string {
+  if (!draft?.trim()) return draft ?? "";
+  return draft
+    .split("\n")
+    .filter((line) => !/^#\s+[-–—\s]{2,}\s*$/.test(line.trim()))
+    .join("\n");
+}
+
+/** Une viñetas partidas en líneas distintas: `- \n\n **Escenario` → `- **Escenario`. */
+export function repairSplitMarkdownBullets(draft: string): string {
+  if (!draft?.trim()) return draft ?? "";
+  let out = draft.replace(/^-\s*\n+\s+(\*\*)/gm, "- $1");
+  out = out.replace(/^-\s*\n+\s+(\S)/gm, "- $1");
+  out = out.replace(/^-\s*\n+\s*$/gm, "");
+  return out;
+}
+
+/** Despega cierre de fence pegado al siguiente H2: ` ```## 4. Contratos` → salto real. */
+export function repairGluedClosingFenceToHeading(draft: string): string {
+  if (!draft?.trim()) return draft ?? "";
+  return draft.replace(/```[ \t]*(\n)?(?=##\s+\d+\.)/g, "```\n\n");
+}
+
+/** Quita pares de backticks vacíos (` `` `) que rompen el render. */
+export function stripLoneBacktickPairLines(draft: string): string {
+  if (!draft?.trim()) return draft ?? "";
+  return draft.replace(/^\s*``\s*$/gm, "").replace(/\n``\s*\n/g, "\n");
+}
+
 export function collapseInlineHorizontalRules(draft: string): string {
   let out = draft.replace(/(?:^|\n)\s*---(?:\s+---\s*)+(?=\s*(?:\n|$))/g, "\n---\n");
   out = out.replace(/\n\s*--\s*\n(?=\s*##\s+)/g, "\n---\n");
@@ -64,8 +94,7 @@ export function closeUnclosedCodeFencesInDraft(draft: string): string {
 }
 
 export function stripEmptyBareCodeFences(draft: string): string {
-  let result = draft
-    .replace(/\n```[ \t]*\n\s*```[ \t]*\n/g, "\n");
+  let result = stripLoneBacktickPairLines(draft).replace(/\n```[ \t]*\n\s*```[ \t]*\n/g, "\n");
   result = result.replace(/\n```[ \t]*\n(?=\s*---\s*\n|\s*##\s+|\s*###\s+(?:GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+)/g, (match, offset) => {
     const before = result.slice(0, offset);
     const fenceCount = (before.match(/```/g) ?? []).length;
@@ -116,7 +145,9 @@ export function ensureHorizontalRuleBeforeH2(draft: string): string {
 
 export function finalizeMddPersistFormatting(mddMarkdown: string): string {
   if (!mddMarkdown?.trim()) return mddMarkdown;
-  let out = repairGluedMarkdownHeadings(mddMarkdown);
+  let out = stripHashDashSeparatorLines(repairGluedMarkdownHeadings(mddMarkdown));
+  out = repairGluedClosingFenceToHeading(out);
+  out = repairSplitMarkdownBullets(out);
   out = collapseInlineHorizontalRules(out);
   out = ensureHorizontalRuleBeforeH2(out);
   out = collapseConsecutiveHorizontalRules(out);

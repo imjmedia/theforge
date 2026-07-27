@@ -64,6 +64,8 @@ export const MDDStateAnnotation = Annotation.Root({
   previousMddDraftForMerge: Annotation<string | undefined>(),
   /** Borrador post-Clarificador (§1 anclada) para restaurar tras nodos scoped HIGH. */
   clarifierMddDraftSnapshot: Annotation<string | undefined>(),
+  /** Borrador post-stack_architect (§2 anclada) para restaurar tras data_model/api_contracts. */
+  stackArchitectMddDraftSnapshot: Annotation<string | undefined>(),
   sectionsToRun: Annotation<string[] | undefined>(),
   acceptedProposalDirective: Annotation<string | undefined>(),
   lastStepFailed: Annotation<{ node: string; error: string } | undefined>(),

@@ -3,12 +3,14 @@ import assert from "node:assert";
 import { deduplicateUatSections } from "./mdd-sanitize/cross-consistency.js";
 import { deduplicateAndReorderMddSections, extractSection5Body } from "./mdd-sanitize/section-merge.js";
 import {
+  canUseSurgicalMergeBaseline,
   draftHasSubstantialSection2,
   draftHasSubstantialSection3,
   draftHasSubstantialSection4,
   draftHasSubstantialSection5,
   guardTailSectionsForPersist,
   preserveSection2IfSubstantial,
+  preserveSection2FromStackSnapshot,
   preserveSection3IfSubstantial,
   preserveSection4IfSubstantial,
   preserveSection5IfSubstantial,
@@ -283,6 +285,31 @@ describe("preserveSection1FromClarifierSnapshot", () => {
     const out = preserveSection1FromClarifierSnapshot(clarifier, afterStack);
     assert.ok(out.includes(S1.slice(0, 80)));
     assert.ok(out.includes("NestJS"));
+  });
+});
+
+describe("canUseSurgicalMergeBaseline", () => {
+  const S1_SHORT = "Contexto del sistema con alcance detallado. ".repeat(5);
+
+  it("true con borrador corto pero §1 sustancial (post-Clarificador HIGH)", () => {
+    const shortSkeleton = `# MDD\n## 1. Contexto\n${S1_SHORT}\n## 2. Arquitectura y Stack\n(Pendiente: Arquitecto de Software)\n## 3. Modelo de Datos\n(Pendiente)\n`;
+    assert.ok(shortSkeleton.length < 600);
+    assert.equal(canUseSurgicalMergeBaseline(shortSkeleton), true);
+  });
+
+  it("false con borrador vacío o sin §1 sustancial", () => {
+    assert.equal(canUseSurgicalMergeBaseline(""), false);
+    assert.equal(canUseSurgicalMergeBaseline("## 2. Arquitectura\n(Pendiente)\n"), false);
+  });
+});
+
+describe("preserveSection2FromStackSnapshot", () => {
+  it("restaura §2 desde snapshot de stack_architect tras vaciado por data_model", () => {
+    const afterStack = `# MDD\n## 1. Contexto\n${"Alcance. ".repeat(40)}\n## 2. Arquitectura y Stack\n${S2_BODY}\n## 3. Modelo\n(Pendiente)\n`;
+    const afterDataModel = afterStack.replace(S2_BODY, "(Pendiente: Arquitecto de Software)");
+    const out = preserveSection2FromStackSnapshot(afterStack, afterDataModel);
+    assert.ok(out.includes("NestJS"));
+    assert.doesNotMatch(out, /\(Pendiente: Arquitecto de Software\)/);
   });
 });
 

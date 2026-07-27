@@ -45,7 +45,10 @@ import {
   collapseInlineHorizontalRules,
   demoteProseHeadingsInSectionBody,
   finalizeMddPersistFormatting,
+  repairGluedClosingFenceToHeading,
+  repairSplitMarkdownBullets,
   stripEmptyBareCodeFences,
+  stripHashDashSeparatorLines,
   stripOrphanFenceWrappingProse,
   stripStrayBraceAfterJsonCodeBlocks,
   stripStrayParenAfterJsonCodeBlocks,
@@ -203,7 +206,8 @@ export function stripUiUxSectionForApiOnlyMvp(markdown: string): string {
 
 export function repairGarbageHeadings(draft: string): string {
   if (!draft) return draft;
-  let text = draft.replace(/^#\s+([A-ZÁÉÍÓÚÑ][^\n#]{40,})$/gm, "$1");
+  let text = stripHashDashSeparatorLines(draft);
+  text = text.replace(/^#\s+([A-ZÁÉÍÓÚÑ][^\n#]{40,})$/gm, "$1");
   text = text.replace(/^#\s+(_[^\n]+_\.?)\s*$/gm, "$1");
   text = text.replace(/^#\s+(_[^\n]+)$/gm, "$1");
   const lines = text.split("\n");
@@ -262,6 +266,8 @@ export function sanitizeMddAtPersist(mddMarkdown: string): string {
   if (!mddMarkdown?.trim()) return mddMarkdown;
   let out = fixGluedSection6Heading(mddMarkdown);
   out = repairGarbageHeadings(out);
+  out = repairGluedClosingFenceToHeading(out);
+  out = repairSplitMarkdownBullets(out);
   out = stripOrphanFenceWrappingProse(out);
   out = stripEmptyBareCodeFences(out);
   out = closeUnclosedCodeFencesInDraft(out);
@@ -323,6 +329,7 @@ export function normalizeMddFormat(draft: string): string {
   out = unescapeMermaidLiteralNewlines(out);
   out = stripUserResponsesAndConversationHistory(out);
   out = sanitizeContextSection(out);
+  out = repairSplitMarkdownBullets(out);
   out = replaceContextWhenInstructions(out);
   out = forceStripBrokenPrefix(out);
   out = collapseDuplicateMainTitle(out);
@@ -477,6 +484,7 @@ export function normalizeMddFormat(draft: string): string {
   out = stripStandaloneArquitecturaFrontendSection(out);
 
   out = fixDeterministicMddCoherence(out);
+  out = repairGluedClosingFenceToHeading(out);
   out = sanitizeAllSqlBlocksInDraft(out);
   out = stripMeshDirectivesFromDraft(out);
 
