@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.4
 # Build stage — context = repo root
 # Imágenes fijas en ECR Public (evita TLS timeout a Docker Hub y fallos de ARG en Dokploy).
 FROM public.ecr.aws/docker/library/node:20-alpine AS builder
@@ -19,7 +20,8 @@ COPY packages/business-rules/package.json packages/business-rules/
 COPY packages/config/package.json packages/config/
 COPY apps/api/package.json apps/api/
 
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=theforge-pnpm-store,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
 
 COPY packages/database packages/database
 COPY packages/shared-types packages/shared-types
@@ -30,8 +32,9 @@ COPY scripts/rotate-master-key.ts scripts/rotate-master-key.ts
 
 ENV DATABASE_URL="postgresql://local:local@db:5432/theforge"
 ENV THEFORGE_BUILD_SHA="${GIT_SHA}"
-# --force: evita que turbo remote cache restaure dist con injection tokens (deadlock DI)
-RUN pnpm exec turbo run build --force \
+# Validación post-build detecta dist obsoleto (injection tokens / forwardRef). Sin --force: turbo
+# reutiliza paquetes sin cambios (database, shared-types) y acorta rebuilds incrementales.
+RUN pnpm exec turbo run build \
   --filter=@theforge/database \
   --filter=@theforge/shared-types \
   --filter=@theforge/business-rules \

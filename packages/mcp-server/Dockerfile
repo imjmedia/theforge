@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.4
 # Build stage — context = repo root (necesario para resolver @theforge/shared-types workspace)
 FROM public.ecr.aws/docker/library/node:20-alpine AS builder
 
@@ -14,7 +15,8 @@ COPY packages/shared-types/package.json packages/shared-types/
 COPY packages/config/package.json packages/config/
 COPY packages/mcp-server/package.json packages/mcp-server/
 
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=theforge-pnpm-store,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
 
 # Copy all source code
 COPY packages/shared-types packages/shared-types

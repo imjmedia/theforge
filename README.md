@@ -94,6 +94,8 @@ pnpm run dev
 | **Local full-docker** | `pnpm run compose:local` o merge con `docker-compose.local.yml` |
 | **Coolify** | Ver [docs/DEPLOY-COOLIFY.md](./docs/DEPLOY-COOLIFY.md) |
 
+Build: 3 imágenes (`api`, `web`, `mcp`); el worker reutiliza la imagen de la API. Ver [docker/README.md](./docker/README.md) para tiempos de deploy en HDD.
+
 Desarrollo nativo: [README-LOCAL.md](./README-LOCAL.md).
 
 Un solo contenedor legacy (Postgres + API + Web): ver `Dockerfile` raíz (no usado por el compose multi-servicio).

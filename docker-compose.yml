@@ -76,6 +76,8 @@ services:
       dockerfile: apps/api/Dockerfile
       args:
         BUILD_CACHE_BUST: ${BUILD_CACHE_BUST:-98}
+    # Imagen compartida con theforge-worker (mismo Dockerfile) — evita compilar la API dos veces por deploy.
+    image: theforge-api:compose
     container_name: theforge-api
     # Carga THEFORGE_MCP_URL / MCP_* desde `.env` local sin pisar con "" si Compose no
     # tiene esas claves al interpolar `${VAR:-}`. En Dokploy: también inyecta por servicio
@@ -157,13 +159,9 @@ services:
       start_period: 120s
       retries: 3
 
-  # BullMQ consumers (MDD + entregables). Misma imagen que theforge-api; sin HTTP.
+  # BullMQ consumers (MDD + entregables). Reutiliza imagen theforge-api:compose (sin segundo build).
   theforge-worker:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
-      args:
-        BUILD_CACHE_BUST: ${BUILD_CACHE_BUST:-98}
+    image: theforge-api:compose
     container_name: theforge-worker
     env_file:
       - path: .env
@@ -195,6 +193,8 @@ services:
     volumes:
       - theforge_plugins:/app/plugins-enabled
     depends_on:
+      theforge-api:
+        condition: service_healthy
       theforge-db:
         condition: service_healthy
       theforge-redis-queue:
