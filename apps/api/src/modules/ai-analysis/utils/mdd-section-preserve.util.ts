@@ -15,7 +15,6 @@ import {
   extractSection7Body,
   isMddSectionPipelinePlaceholderBody,
   replaceArquitecturaSectionBody,
-  replaceContextSectionBody,
   replaceMddSection3Body,
   replaceMddSection4Body,
   replaceMddSection5Body,
