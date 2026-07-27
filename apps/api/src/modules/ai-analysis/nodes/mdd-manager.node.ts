@@ -6,7 +6,6 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { Command } from "@langchain/langgraph";
 import type { LivePrecisionCalculator } from "../estimation/estimation.types.js";
 import type { MDDStateType } from "../state/index.js";
-import { GraphMemoryService } from "../graph-memory/graph-memory.service.js";
 import { hasRealBenchmark, LOG, mddHasContent } from "./mdd-manager/manager-context.util.js";
 import { handleManagerDelegateOutcome } from "./mdd-manager/manager-delegate.js";
 import { runManagerLlmTurn } from "./mdd-manager/manager-llm-turn.js";
@@ -27,7 +26,6 @@ export type { MddManagerToolDeps } from "./mdd-manager/manager-types.js";
  */
 export function createMddManagerNode(
   llm: BaseChatModel,
-  graphMemory: GraphMemoryService,
   precisionCalculator?: LivePrecisionCalculator | null,
   toolDeps?: MddManagerToolDeps | null,
 ) {
@@ -51,7 +49,6 @@ export function createMddManagerNode(
     const hasDraft = mddHasContent(state);
     const turn = await runManagerLlmTurn({
       llm,
-      graphMemory,
       toolDeps,
       state,
       userMessage,

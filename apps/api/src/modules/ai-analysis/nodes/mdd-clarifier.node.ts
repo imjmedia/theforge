@@ -10,6 +10,7 @@ import { getMddTemplatePlaceholder } from "../state/mdd-structured.schema.js";
 import { mergeMddStructured } from "../utils/mdd-merge-structured.js";
 import { getMddDraftSummary, extractAlreadyDocumentedTopics, extractIdentifiedInfraFromText, logMddNodeOutput, deduplicateMddDraftSections, mergeSection1IntoDraft } from "../utils/mdd-sanitize.js";
 import { draftIsSubstantialForScopedRepair } from "../utils/mdd-section-preserve.util.js";
+import { finalizeClarifierDraft } from "../utils/mdd-clarifier-draft.util.js";
 import { getUserBrief } from "../utils/mdd-user-brief.js";
 import { buildUserDeclaredStackPromptBlock } from "../utils/user-declared-stack.util.js";
 import { extractFirstJsonObject, parseJsonOrThrow } from "../utils/parse-json.js";
@@ -273,16 +274,19 @@ export function createMddClarifierNode(llm: BaseChatModel) {
         slice = slice ? { ...slice, contextoAlcance: slice.contextoAlcance || contextoAlcance } : { contextoAlcance };
       }
       const merged = slice ? mergeMddStructured(state.mddStructured, slice, state.mddDraft ?? "") : state.mddStructured;
-      // Usar siempre el draft directo del LLM, que contiene el documento COMPLETO (incluye §1-7).
-      // useRendered reemplazaba el draft del LLM por mddStructuredToMarkdown, perdiendo modificaciones
-      // que el usuario pidió (ej. "cambia Argon2id por bcrypt"). El structured solo se usa para
-      // downstream nodes (graph_populator), no para el documento final.
-      const mddDraftRaw = (draft && draft.length > 80 ? draft : (getMddTemplatePlaceholder(scope)));
-      const mergedDraft = hasSubstantialDraft && draftTrimmed.length > 200
-        ? mergeSection1IntoDraft(draftTrimmed, mddDraftRaw)
-        : mddDraftRaw;
-      if (hasSubstantialDraft && mergedDraft !== mddDraftRaw) {
-        LOG("draft sustancial: merge §1 only, preservadas §2–§7 (len %s→%s)", mddDraftRaw.length, mergedDraft.length);
+      const finalizedDraft = finalizeClarifierDraft({
+        llmDraft: draft,
+        previousDraft: draftTrimmed,
+        clarifiedScope: scope,
+        dbgaContent: state.dbgaContent ?? "",
+        log: LOG,
+      });
+      const mergedDraft =
+        hasSubstantialDraft && draftTrimmed.length > 200 && finalizedDraft !== draftTrimmed
+          ? mergeSection1IntoDraft(draftTrimmed, finalizedDraft)
+          : finalizedDraft;
+      if (hasSubstantialDraft && mergedDraft !== finalizedDraft) {
+        LOG("draft sustancial: merge §1 only, preservadas §2–§7 (len %s→%s)", finalizedDraft.length, mergedDraft.length);
       }
       const mddDraft = deduplicateMddDraftSections(mergedDraft);
       const outStructured = merged ?? (slice ? mergeMddStructured(undefined, slice) : undefined);

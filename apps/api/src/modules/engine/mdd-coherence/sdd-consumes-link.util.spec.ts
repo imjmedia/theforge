@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
 import {
   extractForeignKeyTargetsByTable,
   extractTableRefsFromSql,
@@ -12,8 +13,14 @@ CREATE TABLE public.users (id UUID PRIMARY KEY);
 CREATE TABLE public.roles (id UUID PRIMARY KEY);
 `;
     const refs = extractTableRefsFromSql(sql);
-    expect(refs.map((r) => r.storageName)).toEqual(["public.users", "public.roles"]);
-    expect(refs.map((r) => r.bareName)).toEqual(["users", "roles"]);
+    assert.deepEqual(
+      refs.map((r) => r.storageName),
+      ["public.users", "public.roles"],
+    );
+    assert.deepEqual(
+      refs.map((r) => r.bareName),
+      ["users", "roles"],
+    );
   });
 
   it("maps FK REFERENCES between tables", () => {
@@ -26,8 +33,8 @@ CREATE TABLE public.user_roles (
 CREATE TABLE public.roles (id UUID PRIMARY KEY);
 `;
     const fk = extractForeignKeyTargetsByTable(sql);
-    expect(fk.get("public.user_roles")?.has("public.users")).toBe(true);
-    expect(fk.get("public.user_roles")?.has("public.roles")).toBe(true);
+    assert.equal(fk.get("public.user_roles")?.has("public.users"), true);
+    assert.equal(fk.get("public.user_roles")?.has("public.roles"), true);
   });
 
   it("matches path segments to bare table names (not substring false positives)", () => {
@@ -36,8 +43,8 @@ CREATE TABLE public.users (id UUID PRIMARY KEY);
 CREATE TABLE public.applications (id UUID PRIMARY KEY);
 `);
     const consumed = inferConsumedTableStorageNames("/api/v1/users/{id}", tables);
-    expect(consumed).toContain("public.users");
-    expect(consumed).not.toContain("public.applications");
+    assert.ok(consumed.includes("public.users"));
+    assert.ok(!consumed.includes("public.applications"));
   });
 
   it("includes FK targets for matched owner tables", () => {
@@ -50,6 +57,6 @@ CREATE TABLE public.order_items (
     const tables = extractTableRefsFromSql(sql);
     const fk = extractForeignKeyTargetsByTable(sql);
     const consumed = inferConsumedTableStorageNames("/api/v1/orders", tables, fk);
-    expect(consumed).toContain("public.orders");
+    assert.ok(consumed.includes("public.orders"));
   });
 });

@@ -1,76 +1,9 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { GraphMemoryService } from "../graph-memory/graph-memory.service.js";
 import { MDD_SECTION_ORDER } from "../state/mdd-structured.schema.js";
 import { replaceOrAppendSection } from "../nodes/mdd-section-merge.js";
 import { ProjectsService } from "../../projects/projects.service.js";
 import type { AiService } from "../../ai/ai.service.js";
-
-/**
- * Cypher de solo lectura sobre el grafo SDD; inyecta `projectId` y opcionalmente `stageId` en params.
- */
-export function createQuerySddGraphTool(
-  graphMemory: GraphMemoryService,
-  projectId: string,
-  activeStageId?: string,
-) {
-  return tool(
-    async ({ cypher, params }) => {
-      try {
-        const merged: Record<string, unknown> = { ...(params ?? {}), projectId };
-        if (activeStageId?.trim()) merged.stageId = activeStageId.trim();
-        const res = await graphMemory.querySddGraphReadOnly(cypher, merged);
-        const payload = res && typeof res === "object" && "data" in res ? (res as { data: unknown }).data : res;
-        const text = JSON.stringify(payload ?? [], null, 2);
-        return text.length > 14000 ? text.slice(0, 14000) + "\n…(truncado)" : text;
-      } catch (err) {
-        return `Error query_sdd_graph: ${err instanceof Error ? err.message : String(err)}`;
-      }
-    },
-    {
-      name: "query_sdd_graph",
-      description:
-        "Ejecuta Cypher de SOLO LECTURA contra el Grafo SDD (FalkorDB local): Stage, MDD_Section, DB_Entity, API_Endpoint, relaciones CONSUMES/IMPLEMENTS. Usa $projectId y preferiblemente $stageId en el MATCH. Sin escrituras.",
-      schema: z.object({
-        cypher: z.string().describe("Consulta Cypher (MATCH/RETURN/CALL db.idx…); sin escrituras."),
-        params: z.record(z.unknown()).optional().describe("Parámetros además de projectId / stageId inyectados"),
-      }),
-    },
-  );
-}
-
-/**
- * Misma capacidad que `query_sdd_graph`, expuesta para el supervisor con énfasis en árboles de dependencia por etapa.
- */
-export function createSupervisorSddGraphTool(
-  graphMemory: GraphMemoryService,
-  projectId: string,
-  activeStageId?: string,
-) {
-  return tool(
-    async ({ cypher, params }) => {
-      try {
-        const merged: Record<string, unknown> = { ...(params ?? {}), projectId };
-        if (activeStageId?.trim()) merged.stageId = activeStageId.trim();
-        const res = await graphMemory.querySddGraphReadOnly(cypher, merged);
-        const payload = res && typeof res === "object" && "data" in res ? (res as { data: unknown }).data : res;
-        const text = JSON.stringify(payload ?? [], null, 2);
-        return text.length > 18000 ? text.slice(0, 18000) + "\n…(truncado)" : text;
-      } catch (err) {
-        return `Error supervisor_query_sdd_graph: ${err instanceof Error ? err.message : String(err)}`;
-      }
-    },
-    {
-      name: "supervisor_query_sdd_graph",
-      description:
-        "Consultas Cypher complejas (solo lectura) sobre el SDD en FalkorDB: dependencias DB_Entity ↔ API_Endpoint por etapa, secciones MDD, reconstrucción del árbol si se pierde el código. Requiere acotar con $projectId y $stageId.",
-      schema: z.object({
-        cypher: z.string(),
-        params: z.record(z.unknown()).optional(),
-      }),
-    },
-  );
-}
 
 /**
  * Sustituye el cuerpo de una sección canónica 1..7 del MDD (markdown) y persiste en la etapa activa.
@@ -156,18 +89,15 @@ export function createProposeMddAmendmentTool(
 }
 
 /**
- * Agentic RAG: consulta/patch SDD + enmienda MDD + herramienta supervisor para Cypher expresivo.
+ * Herramientas SDD sobre markdown (patch/enmienda; sin Cypher/FalkorDB).
  */
 export function getSddAgentTools(
-  graphMemory: GraphMemoryService,
   projects: ProjectsService,
   ai: AiService,
   projectId: string,
   activeStageId?: string,
 ) {
   return [
-    createQuerySddGraphTool(graphMemory, projectId, activeStageId),
-    createSupervisorSddGraphTool(graphMemory, projectId, activeStageId),
     createPatchMddSectionTool(projects, projectId, activeStageId),
     createProposeMddAmendmentTool(projects, ai, projectId, activeStageId),
   ];

@@ -10,8 +10,6 @@ import {
   createValidateSqlTool,
   createValidateJsonPayloadsTool,
 } from "./linter-tools.js";
-import { createQueryIntentGraphTool } from "./graph-query.tool.js";
-import { GraphMemoryService } from "../graph-memory/graph-memory.service.js";
 import { getSddAgentTools } from "./agent-sdd-tools.js";
 import { getLegacyTheForgeAgentTools } from "./agent-theforge-tools.js";
 import { TheForgeService } from "../../theforge/theforge.service.js";
@@ -76,24 +74,16 @@ export function getMddDiagramTools(): StructuredToolInterface[] {
 }
 
 /**
- * Tools para el Manager: búsqueda en grafo semántico.
- */
-export function getManagerTools(graphMemory: GraphMemoryService): StructuredToolInterface[] {
-  return [createQueryIntentGraphTool(graphMemory)];
-}
-
-/**
- * Agentic RAG: consulta/patch sobre Grafo SDD + herramientas TheForge para legacy (Coordinador).
+ * Agentic RAG: patch/enmienda MDD + herramientas TheForge para legacy (Coordinador).
  */
 export function getAgenticRagToolset(
-  graphMemory: GraphMemoryService,
   projects: ProjectsService,
   theforge: TheForgeService,
   ai: AiService,
   projectId: string,
   opts: { legacy: boolean; theforgeProjectId: string | null; activeStageId?: string },
 ): StructuredToolInterface[] {
-  const sdd = getSddAgentTools(graphMemory, projects, ai, projectId, opts.activeStageId);
+  const sdd = getSddAgentTools(projects, ai, projectId, opts.activeStageId);
   if (!opts.legacy || !opts.theforgeProjectId || !theforge.isConfigured()) {
     return sdd;
   }

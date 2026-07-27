@@ -26,7 +26,6 @@ import { StageStatus } from "@theforge/database";
 import { PrismaService } from "../../../prisma/prisma.service.js";
 import { getRequestUserId } from "../../../common/request-user.store.js";
 import { ChangeLogService } from "../../change-log/change-log.service.js";
-import { GraphMemoryService } from "../../ai-analysis/graph-memory/graph-memory.service.js";
 import { TheForgeService } from "../../theforge/theforge.service.js";
 import { LegacyCoordinatorService } from "../../legacy-flow/legacy-coordinator.service.js";
 import { ProjectsService } from "../projects.service.js";
@@ -92,7 +91,6 @@ export class ProjectIntegrationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly changeLog: ChangeLogService,
-    private readonly graphMemory: GraphMemoryService,
     private readonly theforge: TheForgeService,
     @Inject(forwardRef(() => LegacyCoordinatorService))
     private readonly legacyCoordinator: LegacyCoordinatorService,
@@ -228,7 +226,6 @@ export class ProjectIntegrationService {
           where: { id: legacyId },
           data: { linkedNewProjectId: projectId },
         });
-        await this.graphMemory.syncProjectIntegrationLink(projectId, legacyId).catch(() => {});
       } else {
         const prev = project.linkedLegacyProjectId;
         await this.prisma.project.update({
@@ -262,7 +259,6 @@ export class ProjectIntegrationService {
           where: { id: newId },
           data: { linkedLegacyProjectId: projectId },
         });
-        await this.graphMemory.syncProjectIntegrationLink(newId, projectId).catch(() => {});
       } else {
         const prev = project.linkedNewProjectId;
         await this.prisma.project.update({
@@ -878,11 +874,11 @@ export class ProjectIntegrationService {
     };
   }
 
-  /** Snapshot deliverables, persist change spec, enrich Falkor graph after handoff import/promote. */
+  /** Snapshot deliverables and persist change spec after handoff import/promote. */
   private async finalizeHandoffStageSetup(
     legacyProjectId: string,
     stageId: string,
-    newProjectId: string,
+    _newProjectId: string,
     activeItems: IntegrationHandoffItem[],
   ): Promise<void> {
     const [stage, projectRow] = await Promise.all([
@@ -920,19 +916,6 @@ export class ProjectIntegrationService {
         data: { changeSpecContent: prependDocumentTimestamps(changeSpec) },
       });
     }
-
-    await this.graphMemory
-      .syncHandoffItemsToStage({
-        newProjectId,
-        legacyProjectId,
-        legacyStageId: stageId,
-        items: activeItems.map((i) => ({
-          id: i.id,
-          title: i.title,
-          description: i.description,
-        })),
-      })
-      .catch(() => {});
   }
 
   private async applyHandoffPayloadToStage(
@@ -999,11 +982,6 @@ export class ProjectIntegrationService {
         legacyStageId: dto.legacyStageId === null ? null : dto.legacyStageId ?? undefined,
       },
     });
-    if (dto.legacyStoryId && trace.newLegId) {
-      await this.graphMemory
-        .syncHandoffSatisfies(trace.newProjectId, trace.legacyProjectId, trace.newLegId, dto.legacyStoryId)
-        .catch(() => {});
-    }
     return this.getStatus(projectId);
   }
 
@@ -1094,7 +1072,6 @@ export class ProjectIntegrationService {
         },
         update: { legacyStoryId: legId, legacyStageId: stageId, status: "ACCEPTED" },
       });
-      await this.graphMemory.syncHandoffSatisfies(newProjectId, legacyProjectId, newLegId, legId).catch(() => {});
     }
   }
 

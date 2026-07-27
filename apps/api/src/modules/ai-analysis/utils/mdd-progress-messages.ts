@@ -27,7 +27,7 @@ export const MDD_NODE_PROGRESS_MESSAGE: Record<string, string> = {
   cross_consistency_checker: "Consistencia entre secciones verificada",
   diagram_injector: "Diagramas Mermaid añadidos",
   prepare_output: "Salida del MDD preparada",
-  graph_populator: "Grafo de dependencias actualizado",
+  structured_hydrator: "Estructura MDD actualizada",
   auditor: "Calidad del MDD evaluada",
 };
 
@@ -54,7 +54,7 @@ export const MDD_NODE_ACTIVE_PROGRESS_MESSAGE: Record<string, string> = {
   cross_consistency_checker: "Verificando consistencia entre secciones…",
   diagram_injector: "Añadiendo diagramas Mermaid…",
   prepare_output: "Preparando salida del MDD…",
-  graph_populator: "Actualizando grafo de dependencias…",
+  structured_hydrator: "Actualizando estructura del MDD…",
   auditor: "Evaluando calidad del MDD…",
 };
 

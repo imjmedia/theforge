@@ -35,7 +35,6 @@ No mezcles **npm** y **pnpm** en la misma raíz: usa solo `pnpm-lock.yaml`.
 | Contenedor | Puerto host | Uso |
 |------------|-------------|-----|
 | `theforge-db` | 5432 | PostgreSQL |
-| `theforge-falkor-sdd` | 6379 | Grafo SDD (FalkorDB) |
 | `theforge-redis-queue` | 6381 | Cola BullMQ (`REDIS_URL`) |
 
 En Mac sin Docker Desktop, el script intenta arrancar **Colima** (`brew install colima`).
@@ -48,8 +47,6 @@ En la raíz del repo, crea `.env` (plantilla: **`.env.example`**).
 
 ```env
 DATABASE_URL=postgresql://theforge:theforge@localhost:5432/theforge
-FALKORDB_SDD_URL=redis://localhost:6379
-FALKORDB_URL=redis://localhost:6379
 REDIS_URL=redis://localhost:6381
 JWT_SECRET=local-dev-jwt-secret
 TOKEN_MASTER_KEYS={"1":"<openssl rand -base64 32>"}
@@ -106,7 +103,7 @@ no desde `src/`. Si necesitas forzar el rebuild a mano:
 ### Parar contenedores de infra
 
 ```bash
-docker stop theforge-db theforge-falkor-sdd theforge-redis-queue
+docker stop theforge-db theforge-redis-queue
 ```
 
 ---
@@ -143,7 +140,7 @@ Si tienes PostgreSQL 15 en local:
 2. Ajusta `DATABASE_URL` en `.env`.
 3. `pnpm install` → `db:generate` → `db:push` → `pnpm run dev`.
 
-Sigue necesitando Falkor y Redis de cola para paridad con prod (vía `ensure-infra.js` o contenedores manuales).
+Sigue necesitando Redis de cola para paridad con prod (vía `ensure-infra.js` o contenedor manual).
 
 ---
 

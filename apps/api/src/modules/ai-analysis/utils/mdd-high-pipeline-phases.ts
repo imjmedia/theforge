@@ -30,7 +30,7 @@ const HIGH_PIPELINE_PHASES: ReadonlyArray<{ label: string; nodes: readonly strin
       "diagram_injector",
       "prepare_output",
       "auditor",
-      "graph_populator",
+      "structured_hydrator",
       "section5",
     ],
   },

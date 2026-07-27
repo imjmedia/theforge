@@ -33,7 +33,6 @@ import {
   restoreMddSectionsFromBaselineStrict,
 } from "./utils/mdd-sanitize.js";
 import { guardTailSectionsForPersist } from "./utils/mdd-section-preserve.util.js";
-import { GraphMemoryService } from "./graph-memory/graph-memory.service.js";
 import { ProjectsService } from "../projects/projects.service.js";
 import { pickPrimaryStage } from "../projects/stage-helpers.js";
 import { TheForgeService } from "../theforge/theforge.service.js";
@@ -104,6 +103,10 @@ import { mddStreamDeliveryGateFields } from "./utils/mdd-delivery-gate.util.js";
 import { cleanDocumentContent } from "../sessions/document-content.util.js";
 import type { MddJobData, MddJobProgress, MddJobResult } from "./mdd/mdd-queue.service.js";
 import { MddUpstreamSyncService } from "./mdd/mdd-upstream-sync.service.js";
+import {
+  listProjectAdrsFromGovernance,
+  persistProjectAdrsToGovernance,
+} from "../engine/mdd-coherence/project-adrs-from-governance.util.js";
 
 import type { EstimationComplexity, PrecisionBreakdown } from "./estimation/estimation.types.js";
 
@@ -235,7 +238,6 @@ export class AiAnalysisService {
     private readonly checkpointerService: CheckpointerService,
     private readonly preferences: PreferencesService,
     private readonly estimationService: EstimationService,
-    private readonly graphMemory: GraphMemoryService,
     private readonly nodeCacheService: NodeCacheService,
     @Inject(forwardRef(() => ProjectsService))
     private readonly projects: ProjectsService,
@@ -653,12 +655,13 @@ export class AiAnalysisService {
     try {
       const userId = await this.resolveUserId(projectId);
       const preflightRuntime = await resolveMddRuntimeWithPreflight(this.aiFactory, userId);
-      graph = await createMddGraph(this.aiFactory, userId, this.graphMemory, {
+      graph = await createMddGraph(this.aiFactory, userId, {
         theforge: this.theforge,
         nodeCache: this.nodeCacheService,
         uiMcpFrontendLibraryLabel,
         onNodeStart: nodeStart.onNodeStart,
         preflightRuntime,
+        prisma: this.prisma,
       });
     } catch (err) {
       const formatted = formatDbgaStreamError(err);
@@ -862,7 +865,6 @@ export class AiAnalysisService {
         this.aiFactory,
         mddUserId,
         checkpointer,
-        this.graphMemory,
         this.estimationService,
         {
           projects: this.projects,
@@ -874,6 +876,7 @@ export class AiAnalysisService {
           nodeCache: this.nodeCacheService,
           uiMcpFrontendLibraryLabel,
           preflightRuntime,
+          prisma: this.prisma,
         },
       );
     } catch (err) {
@@ -1233,7 +1236,6 @@ export class AiAnalysisService {
         this.aiFactory,
         resumeUserId,
         checkpointer,
-        this.graphMemory,
         this.estimationService,
         {
           projects: this.projects,
@@ -1245,6 +1247,7 @@ export class AiAnalysisService {
           nodeCache: this.nodeCacheService,
           uiMcpFrontendLibraryLabel,
           preflightRuntime,
+          prisma: this.prisma,
         },
       );
     } catch (err) {
@@ -2199,10 +2202,14 @@ export class AiAnalysisService {
   }
 
   /**
-   * Obtiene las decisiones arquitectónicas (ADRs) guardadas en el grafo para un proyecto.
+   * Obtiene las decisiones arquitectónicas (ADRs) del proyecto desde agentGovernanceContent.
    */
   async getProjectDecisions(projectId: string) {
-    return this.graphMemory.getDecisionsByProject(projectId);
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { agentGovernanceContent: true },
+    });
+    return listProjectAdrsFromGovernance(project?.agentGovernanceContent);
   }
 
   /** Preselección de patrones SSOT a partir de DBGA (Fase 0), resumen benchmark y BRD. */
@@ -2231,26 +2238,25 @@ export class AiAnalysisService {
     return suggestGovernancePatternIds(llm, input);
   }
 
-  /** Registra cada patrón [X] del wizard como ADR en el grafo del proyecto. */
+  /** Registra cada patrón [X] del wizard como ADR en agentGovernanceContent. */
   async recordGovernancePatternAdrs(
     projectId: string,
     patterns: Array<{ label: string; group: string; affects: string; description: string }>,
   ) {
-    await Promise.all(patterns.map((p) =>
-      this.graphMemory.saveDecision(projectId, {
+    await persistProjectAdrsToGovernance(
+      this.prisma,
+      projectId,
+      patterns.map((p) => ({
         title: `Patrón SSOT: ${p.label}`,
         context: `Selección en el wizard del MDD (grupo: ${p.group}). Derivada del análisis de Fase 0 / Benchmark / BRD.`,
-        consequence: [
-          p.description,
-          p.affects ? `Afecta a: ${p.affects}` : "",
-        ]
+        consequence: [p.description, p.affects ? `Afecta a: ${p.affects}` : ""]
           .filter(Boolean)
           .join(" ")
           .slice(0, 2000),
         status: "Accepted",
-      }),
-    ));
-    return this.graphMemory.getDecisionsByProject(projectId);
+      })),
+    );
+    return this.getProjectDecisions(projectId);
   }
 
   /**

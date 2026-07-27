@@ -1,24 +1,24 @@
-/** Estado del grafo SDD local (FalkorDB) respecto al MDD de la etapa activa. */
+/** Estado de coherencia §3/§4 del MDD (inferido del markdown; antes FalkorDB). */
 export type SddGraphSyncState = "synced" | "empty" | "stale" | "unavailable";
 
 export const SDD_GRAPH_SYNC_STATE_LABELS: Record<SddGraphSyncState, string> = {
-  synced: "Sincronizado",
-  empty: "Vacío",
-  stale: "Desactualizado",
-  unavailable: "No disponible",
+  synced: "Coherente",
+  empty: "Sin §3/§4",
+  stale: "Incoherente",
+  unavailable: "No evaluable",
 };
 
 export type SddGraphSyncStatus = {
   state: SddGraphSyncState;
-  /** Entidades (`DB_Entity`) en Falkor para la etapa. */
+  /** Tablas detectadas en §3 (SQL). */
   entityCount: number;
-  /** Endpoints (`API_Endpoint`) en Falkor para la etapa. */
+  /** Endpoints detectados en §4. */
   endpointCount: number;
-  /** Tablas detectadas en §3 del MDD (SQL). */
+  /** Tablas esperadas en §3. */
   expectedEntities: number;
-  /** Endpoints detectados en §4 del MDD. */
+  /** Endpoints esperados en §4. */
   expectedEndpoints: number;
-  /** Resultado de `evaluateSddDependencyHealth` (CONSUMES bidireccional). */
+  /** Coherencia endpoint↔tabla (sin huérfanos). */
   isCoherent: boolean;
   orphanEntityCount: number;
   orphanEndpointCount: number;
@@ -26,52 +26,39 @@ export type SddGraphSyncStatus = {
   message: string;
 };
 
-export type ResolveSddGraphSyncInput = {
-  falkorAvailable: boolean;
+export type ResolveMddCoherenceInput = {
   expectedEntities: number;
   expectedEndpoints: number;
-  graphEntities: number;
-  graphEndpoints: number;
-  isCoherent: boolean | null;
+  entityCount: number;
+  endpointCount: number;
+  isCoherent: boolean;
   orphanEntityCount?: number;
   orphanEndpointCount?: number;
   mddChangedSinceSync?: boolean;
 };
 
-const countTolerance = (expected: number, actual: number): boolean =>
-  Math.abs(expected - actual) <= (expected > 10 ? 2 : 1);
+/** @deprecated Usar ResolveMddCoherenceInput. Alias legacy para tests. */
+export type ResolveSddGraphSyncInput = ResolveMddCoherenceInput & {
+  falkorAvailable?: boolean;
+  graphEntities?: number;
+  graphEndpoints?: number;
+};
 
-/** Resuelve estado UI/API a partir de expectativas MDD vs snapshot Falkor. */
-export function resolveSddGraphSyncState(input: ResolveSddGraphSyncInput): SddGraphSyncStatus {
+/** Resuelve estado UI/API desde coherencia markdown §3/§4. */
+export function resolveMddCoherenceState(input: ResolveMddCoherenceInput): SddGraphSyncStatus {
   const {
-    falkorAvailable,
     expectedEntities,
     expectedEndpoints,
-    graphEntities,
-    graphEndpoints,
+    entityCount,
+    endpointCount,
     isCoherent,
     orphanEntityCount = 0,
     orphanEndpointCount = 0,
     mddChangedSinceSync = false,
   } = input;
 
-  if (!falkorAvailable) {
-    return {
-      state: "unavailable",
-      entityCount: graphEntities,
-      endpointCount: graphEndpoints,
-      expectedEntities,
-      expectedEndpoints,
-      isCoherent: false,
-      orphanEntityCount,
-      orphanEndpointCount,
-      lastSyncedAt: null,
-      message: "FalkorDB no disponible; el grafo SDD no se puede consultar.",
-    };
-  }
-
   const indexable = expectedEntities > 0 || expectedEndpoints > 0;
-  if (!indexable && graphEntities === 0 && graphEndpoints === 0) {
+  if (!indexable) {
     return {
       state: "empty",
       entityCount: 0,
@@ -83,59 +70,73 @@ export function resolveSddGraphSyncState(input: ResolveSddGraphSyncInput): SddGr
       orphanEndpointCount: 0,
       lastSyncedAt: null,
       message:
-        "El MDD no expone tablas SQL ni contratos API indexables (p. ej. legacy Strapi); el grafo §3/§4 queda vacío.",
+        "El MDD no expone tablas SQL ni contratos API indexables (p. ej. legacy Strapi).",
     };
   }
 
-  const entitiesMatch = countTolerance(expectedEntities, graphEntities);
-  const endpointsMatch = countTolerance(expectedEndpoints, graphEndpoints);
-  const coherent = isCoherent === true;
-  const synced =
-    !mddChangedSinceSync &&
-    entitiesMatch &&
-    endpointsMatch &&
-    coherent &&
-    graphEntities > 0 &&
-    graphEndpoints > 0;
-
-  if (synced) {
+  if (mddChangedSinceSync) {
     return {
-      state: "synced",
-      entityCount: graphEntities,
-      endpointCount: graphEndpoints,
+      state: "stale",
+      entityCount,
+      endpointCount,
       expectedEntities,
       expectedEndpoints,
-      isCoherent: true,
+      isCoherent,
       orphanEntityCount,
       orphanEndpointCount,
       lastSyncedAt: null,
-      message: "Grafo SDD alineado con §3/§4 del MDD.",
+      message: "El MDD cambió desde la última evaluación de coherencia.",
     };
   }
 
-  let message = "Grafo SDD desactualizado respecto al MDD.";
-  if (graphEntities === 0 && graphEndpoints === 0 && indexable) {
-    message = "Aún no se ha sincronizado el MDD al grafo SDD (o la sync falló).";
-  } else if (mddChangedSinceSync) {
-    message = "El MDD cambió después de la última sincronización al grafo.";
-  } else if (!entitiesMatch || !endpointsMatch) {
-    message = "Los conteos §3/§4 del MDD no coinciden con el grafo Falkor.";
-  } else if (isCoherent === false) {
-    message = "Hay endpoints o entidades huérfanas en el grafo (relaciones CONSUMES incompletas).";
+  if (isCoherent && entityCount > 0 && endpointCount > 0) {
+    return {
+      state: "synced",
+      entityCount,
+      endpointCount,
+      expectedEntities,
+      expectedEndpoints,
+      isCoherent: true,
+      orphanEntityCount: 0,
+      orphanEndpointCount: 0,
+      lastSyncedAt: null,
+      message: "Coherencia §3/§4 OK (tablas y endpoints enlazados).",
+    };
+  }
+
+  let message = "Coherencia §3/§4 pendiente o incompleta.";
+  if (orphanEndpointCount > 0 || orphanEntityCount > 0) {
+    message = `Hay ${orphanEndpointCount} endpoint(s) y ${orphanEntityCount} entidad(es) sin enlace CONSUMES inferido.`;
+  } else if (entityCount === 0 || endpointCount === 0) {
+    message = "Faltan tablas SQL (§3) o contratos API (§4) sustanciales.";
   }
 
   return {
     state: "stale",
-    entityCount: graphEntities,
-    endpointCount: graphEndpoints,
+    entityCount,
+    endpointCount,
     expectedEntities,
     expectedEndpoints,
-    isCoherent: coherent,
+    isCoherent: false,
     orphanEntityCount,
     orphanEndpointCount,
     lastSyncedAt: null,
     message,
   };
+}
+
+/** @deprecated Usar resolveMddCoherenceState. */
+export function resolveSddGraphSyncState(input: ResolveSddGraphSyncInput): SddGraphSyncStatus {
+  return resolveMddCoherenceState({
+    expectedEntities: input.expectedEntities,
+    expectedEndpoints: input.expectedEndpoints,
+    entityCount: input.graphEntities ?? input.entityCount ?? 0,
+    endpointCount: input.graphEndpoints ?? input.endpointCount ?? 0,
+    isCoherent: input.isCoherent === true,
+    orphanEntityCount: input.orphanEntityCount,
+    orphanEndpointCount: input.orphanEndpointCount,
+    mddChangedSinceSync: input.mddChangedSinceSync,
+  });
 }
 
 /** Huella ligera del MDD para detectar cambios post-sync sin hash completo. */

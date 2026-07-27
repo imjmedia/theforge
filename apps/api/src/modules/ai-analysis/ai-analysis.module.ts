@@ -10,15 +10,14 @@ import { AiAnalysisService } from "./ai-analysis.service.js";
 import { CheckpointerService } from "./checkpoint/checkpointer.service.js";
 import { NodeCacheService } from "./checkpoint/node-cache.service.js";
 import { EstimationModule } from "./estimation/estimation.module.js";
-import { SddIngestorService } from "./sdd-ingestor.service.js";
 import { MddManualAuditService } from "./mdd/mdd-manual-audit.service.js";
 import { MddQueueService } from "./mdd/mdd-queue.service.js";
 import { MddUpstreamSyncService } from "./mdd/mdd-upstream-sync.service.js";
 import { TraceabilitySuggestService } from "./traceability/traceability-suggest.service.js";
 import { TokenUsageService } from "./token-usage/token-usage.service.js";
-import { GraphMemoryModule } from "./graph-memory/graph-memory.module.js";
 import { Phase0Module } from "./phase0/phase0.module.js";
 import { UiMcpModule } from "../ui-mcp/ui-mcp.module.js";
+import { MddCoherenceModule } from "../engine/mdd-coherence/mdd-coherence.module.js";
 
 @Module({
   imports: [
@@ -28,7 +27,7 @@ import { UiMcpModule } from "../ui-mcp/ui-mcp.module.js";
     forwardRef(() => LegacyFlowModule),
     TheForgeModule,
     AgentSupervisorModule,
-    GraphMemoryModule,
+    MddCoherenceModule,
     Phase0Module,
     UiMcpModule,
     EstimationModule,
@@ -38,7 +37,6 @@ import { UiMcpModule } from "../ui-mcp/ui-mcp.module.js";
     NodeCacheService,
     CheckpointerService,
     AiAnalysisService,
-    SddIngestorService,
     MddManualAuditService,
     MddQueueService,
     MddUpstreamSyncService,
@@ -48,8 +46,7 @@ import { UiMcpModule } from "../ui-mcp/ui-mcp.module.js";
   exports: [
     AiAnalysisService,
     EstimationModule,
-    GraphMemoryModule,
-    SddIngestorService,
+    MddCoherenceModule,
     Phase0Module,
     MddManualAuditService,
     MddQueueService,

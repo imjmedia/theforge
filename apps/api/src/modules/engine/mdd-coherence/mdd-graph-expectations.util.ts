@@ -1,5 +1,5 @@
-import type { MddStructured } from "../state/mdd-structured.schema.js";
-import { markdownToMddStructured } from "../utils/mdd-markdown-to-structured.js";
+import type { MddStructured } from "../../ai-analysis/state/mdd-structured.schema.js";
+import { markdownToMddStructured } from "../../ai-analysis/utils/mdd-markdown-to-structured.js";
 import { extractTableRefsFromSql } from "./sdd-consumes-link.util.js";
 
 export type MddGraphExpectations = {
@@ -8,7 +8,7 @@ export type MddGraphExpectations = {
   structured: MddStructured;
 };
 
-/** Artefactos §3/§4 indexables que el grafo SDD debería reflejar. */
+/** Artefactos §3/§4 indexables en el MDD (markdown). */
 export function parseMddGraphExpectations(mddMarkdown: string): MddGraphExpectations {
   const structured = markdownToMddStructured(mddMarkdown ?? "");
   const tables = extractTableRefsFromSql(structured.modeloDatos?.sql ?? "");

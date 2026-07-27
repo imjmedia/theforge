@@ -80,6 +80,31 @@ const SECTION4_TRUNCATED_BLOCKER_RE =
 const MISSING_SECTION7_BLOCKER_RE =
   /secciones obligatorias faltantes:\s*7\.\s*infraestructura\b/i;
 
+const MISSING_SECTIONS_BLOCKER_RE = /secciones obligatorias faltantes:/i;
+
+const SECTION1_BROKEN_BLOCKER_RE =
+  /1\.\s*contexto.*(?:insuficiente|placeholder|\(pendiente\))/i;
+
+const SECTION2_BROKEN_BLOCKER_RE =
+  /2\.\s*arquitectura.*(?:insuficiente|placeholder|\(pendiente\)|pendiente:\s*arquitecto)/i;
+
+/** §1–§2 rotas y varias secciones §3–§7 ausentes → pasada completa del arquitecto, no Clarifier. */
+export function needsFullArchitectPipelineRegeneration(blockers: string[]): boolean {
+  if (blockers.length === 0) return false;
+
+  const s1Broken = blockers.some((b) => SECTION1_BROKEN_BLOCKER_RE.test(b));
+  const s2Broken = blockers.some((b) => SECTION2_BROKEN_BLOCKER_RE.test(b));
+  if (!s1Broken && !s2Broken) return false;
+
+  const missingBlocker = blockers.find((b) => MISSING_SECTIONS_BLOCKER_RE.test(b));
+  if (!missingBlocker) return false;
+
+  const missingSectionNums = new Set(
+    [...missingBlocker.matchAll(/\b([3-7])\.\s/gi)].map((m) => m[1]),
+  );
+  return missingSectionNums.size >= 3;
+}
+
 /** Decide si el siguiente paso del auto-loop debe ser arquitecto (§3/§4), integración (§7),
  *  clarifier (§1) o section5 (§5 sólo). Prioriza el match más específico:
  *  si el substance check sólo menciona §5, enruta a "section5" (más eficiente
@@ -105,7 +130,9 @@ function gapTextTargetsSection5(text: string): boolean {
 
 /** True si algún blocker de sustancia apunta a §5 (insuficiente, placeholder, pendiente). */
 export function gateHasSection5SubstanceBlocker(blockers: string[]): boolean {
-  return blockers.some((b) => SECTION5_BLOCKER_RE.test(b));
+  return blockers.some(
+    (b) => SECTION5_BLOCKER_RE.test(b) && !MISSING_SECTIONS_BLOCKER_RE.test(b),
+  );
 }
 
 /**
@@ -196,7 +223,12 @@ export function resolveDeliveryGateFixTarget(
     return "section5";
   }
 
-  // Clarifier tiene prioridad máxima: §1/§2 destruidos → regenerar alcance completo
+  // Borrador cascarón: §1/§2 rotas y faltan §3–§7 → software_architect completo (no Clarifier acotado).
+  if (needsFullArchitectPipelineRegeneration(items)) {
+    return "software_architect";
+  }
+
+  // Clarifier: §1/§2 destruidos pero el resto del doc aún tiene masa (reparación de alcance).
   if (items.some((b) => CLARIFIER_BLOCKER_RE.test(b))) {
     return "clarifier";
   }

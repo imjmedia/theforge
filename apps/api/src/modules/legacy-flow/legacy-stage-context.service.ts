@@ -4,7 +4,6 @@ import {
   forwardRef,
   Inject,
   Injectable,
-  Logger,
 } from "@nestjs/common";
 import { getLegacyChangeState } from "@theforge/shared-types";
 import { PrismaService } from "../../prisma/prisma.service.js";
@@ -15,7 +14,7 @@ import {
   legacyIndexHasUsableGraphEvidence,
   type LegacyIndexSignalsGathered,
 } from "../theforge/theforge-evidence-context.util.js";
-import { GraphMemoryService } from "../ai-analysis/graph-memory/graph-memory.service.js";
+import { buildSddStageSnapshotFromMdd } from "../engine/mdd-coherence/mdd-coherence.util.js";
 import { evaluateLegacyIndexSddGate } from "./legacy-index-sdd-alignment.util.js";
 import { isLegacyBaselineStage, pickPrimaryStage } from "../projects/stage-helpers.js";
 import { isLegacySddIndexGateEnabled } from "./legacy-coordinator.util.js";
@@ -23,14 +22,11 @@ import type { LegacyFlowState } from "./legacy-coordinator.types.js";
 
 @Injectable()
 export class LegacyStageContextService {
-  private readonly logger = new Logger(LegacyStageContextService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => ProjectsService))
     private readonly projects: ProjectsService,
     private readonly theforge: TheForgeService,
-    private readonly graphMemory: GraphMemoryService,
   ) {}
 
   async getLegacyProject(projectId: string) {
@@ -70,41 +66,9 @@ export class LegacyStageContextService {
     });
   }
 
-  async syncCurrentLegacyStageToGraph(projectId: string, stageId: string): Promise<void> {
-    try {
-      const [stage, project] = await Promise.all([
-        this.prisma.stage.findUnique({ where: { id: stageId } }),
-        this.prisma.project.findUnique({
-          where: { id: projectId },
-          select: { theforgeProjectId: true },
-        }),
-      ]);
-      if (!stage) {
-        this.logger.warn(`[LegacyCoordinator] syncCurrentLegacyStage: stage ${stageId} no encontrada`);
-        return;
-      }
-      let parentStageId: string | undefined;
-      if (stage.ordinal > 1) {
-        const baseline = await this.prisma.stage.findFirst({
-          where: { projectId: stage.projectId, ordinal: stage.ordinal - 1 },
-          select: { id: true },
-        });
-        if (baseline) parentStageId = baseline.id;
-      }
-      await this.graphMemory.syncLegacyStage({
-        stageId: stage.id,
-        projectId,
-        ordinal: stage.ordinal,
-        name: stage.name ?? "",
-        description: (stage as { description?: string | null }).description ?? undefined,
-        parentStageId,
-        theforgeProjectId: project?.theforgeProjectId ?? undefined,
-      });
-    } catch (err) {
-      this.logger.warn(
-        `[LegacyCoordinator] syncCurrentLegacyStageToGraph falló (no crítico): ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+  /** No-op: FalkorDB legacy stage sync retirado. */
+  async syncCurrentLegacyStageToGraph(_projectId: string, _stageId: string): Promise<void> {
+    return;
   }
 
   async assertLegacyIndexSddGate(
@@ -120,11 +84,14 @@ export class LegacyStageContextService {
       where: { id: projectId },
       include: { stages: true },
     });
-    const stageId = row?.stages?.length ? pickPrimaryStage(row.stages)?.id : undefined;
+    const stage = row?.stages?.length ? pickPrimaryStage(row.stages) : undefined;
+    const stageId = stage?.id;
     if (!stageId?.trim()) return null;
 
-    const snapshot = await this.graphMemory.getSddStageSnapshot(projectId, stageId);
-    if (!snapshot) return null;
+    const mddMarkdown = stage?.mddContent?.trim() ?? "";
+    if (!mddMarkdown) return null;
+
+    const snapshot = buildSddStageSnapshotFromMdd(mddMarkdown);
 
     const gathered = await gatherLegacyIndexSignals(this.theforge, theforgeId, {
       semanticQueries: options?.semanticQueries,

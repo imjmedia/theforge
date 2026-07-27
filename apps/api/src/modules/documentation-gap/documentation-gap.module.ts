@@ -1,7 +1,6 @@
 import { Module, forwardRef } from "@nestjs/common";
 import { ChangeLogModule } from "../change-log/change-log.module.js";
 import { EngineModule } from "../engine/engine.module.js";
-import { GraphMemoryModule } from "../ai-analysis/graph-memory/graph-memory.module.js";
 import { ProjectsModule } from "../projects/projects.module.js";
 import { UiMcpModule } from "../ui-mcp/ui-mcp.module.js";
 import { AgentSessionLogController } from "./agent-session-log.controller.js";
@@ -12,7 +11,7 @@ import { DocumentationGapController } from "./documentation-gap.controller.js";
 import { DocumentationGapService } from "./documentation-gap.service.js";
 
 @Module({
-  imports: [ChangeLogModule, EngineModule, GraphMemoryModule, UiMcpModule, forwardRef(() => ProjectsModule)],
+  imports: [ChangeLogModule, EngineModule, UiMcpModule, forwardRef(() => ProjectsModule)],
   controllers: [DocumentationGapController, AgentSessionLogController],
   providers: [
     DocumentationGapService,

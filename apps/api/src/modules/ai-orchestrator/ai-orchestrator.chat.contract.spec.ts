@@ -10,7 +10,6 @@ import type { IOrchestratorProjectsPort } from "../projects/projects-service.por
 import type { IOrchestratorTheForgePort } from "../theforge/theforge-service.port.js";
 import type { SessionsService } from "../sessions/sessions.service.js";
 import type { AgentSupervisorService } from "../agent-supervisor/agent-supervisor.service.js";
-import type { SddIngestorService } from "../ai-analysis/sdd-ingestor.service.js";
 import type { AgentEvaluatorService } from "../agent-supervisor/agent-evaluator.service.js";
 
 const STAGE_ID = "stage-contract-1";
@@ -94,21 +93,21 @@ function buildOrchestrator(mocks: {
     getRecentEpisodicMemory: async () => [],
   } as unknown as AgentSupervisorService;
 
-  const sddIngestor = {
-    ingestProjectMdd: async () => undefined,
-  } as unknown as SddIngestorService;
-
   const agentEvaluator = {
     evaluateLegacyProposal: async () => ({ approved: true, critique: "" }),
   } as unknown as AgentEvaluatorService;
+
+  const upstreamPropagate = {
+    propagateFromChat: async () => ({ queued: false }),
+  } as unknown as import("../projects/upstream-propagate.service.js").UpstreamPropagateService;
 
   return new AiOrchestratorService(
     sessions,
     projects,
     theforge,
     agentSupervisor,
-    sddIngestor,
     agentEvaluator,
+    upstreamPropagate,
   );
 }
 

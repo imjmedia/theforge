@@ -40,7 +40,6 @@ services:
       timeout: 3s
       retries: 5
 
-  # Grafo SDD (MDD, entregables, RAG agéntico). Aislado del índice de código en TheForge.
   # Cola BullMQ (cascada generate-deliverables). Obligatorio en el stack Dokploy/compose oficial:
   # sin Redis de cola, REDIS_URL vacío fuerza modo síncrono y riesgo de timeouts en cascadas largas.
   theforge-redis-queue:

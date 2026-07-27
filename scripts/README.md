@@ -35,7 +35,6 @@ Asegura runtime Docker (Colima en Mac si hace falta) y contenedores:
 | Contenedor | Puerto host |
 |------------|-------------|
 | `theforge-db` | 5432 |
-| `theforge-falkor-sdd` | 6379 |
 | `theforge-redis-queue` | 6381 |
 
 Usado por `dev:local` y `dev:api`. Ver [README-LOCAL.md](../README-LOCAL.md).
@@ -50,7 +49,7 @@ Si solo levantas el front (`dev:web`), el API debe estar ya en marcha o el scrip
 
 ## ensure-postgres.js
 
-Asegura que Colima (runtime de contenedores) y el contenedor Docker `theforge-db` (Postgres) estén en ejecución. **Preferir `ensure-infra.js`** (Postgres + Falkor + Redis cola).
+Asegura que Colima (runtime de contenedores) y el contenedor Docker `theforge-db` (Postgres) estén en ejecución. **Preferir `ensure-infra.js`** (Postgres + Redis cola).
 
 1. **Colima:** si no está corriendo, ejecuta `colima start --cpu 2 --memory 4`.
 2. **Postgres:** si el contenedor no existe, lo crea; si existe pero está parado, lo inicia; si ya está Up, no hace nada.
@@ -66,23 +65,7 @@ En **Docker Compose** (`docker-compose.yml`) el servicio **`theforge-redis-queue
 **Procesos separados:** `theforge-api` (`THEFORGE_RUNTIME_ROLE=http`) encola jobs; `theforge-worker` (`THEFORGE_RUNTIME_ROLE=worker`) ejecuta workers BullMQ (MDD, entregables, legacy). Desarrollo local: `THEFORGE_RUNTIME_ROLE=all` en un solo `nest start`.
 
 - **Local sin Compose:** levanta Redis (p. ej. `redis-server` o un contenedor en `localhost:6379`) y en `.env` define `REDIS_URL=redis://localhost:6379`. Si `REDIS_URL` está vacío en dev, la API usa cola in-memory (no usar en prod).
-- **No confundir** con **FalkorDB** (`theforge-falkor-sdd`): ese servicio es el grafo SDD (Cypher / MDD_Section), no la cola BullMQ.
 
-## audit-falkor-sdd.mjs
+## audit-falkor-sdd.mjs (obsoleto)
 
-Audita conectividad al grafo SDD local (FalkorDB) y compara nodos de una etapa vs §3/§4 del MDD (tablas SQL y endpoints).
-
-**Requisitos:**
-
-- Falkor SDD en marcha (`theforge-falkor-sdd` vía `ensure-infra.js`, puerto host **6380** en dev local si aplica)
-- `FALKORDB_SDD_URL` o `FALKORDB_URL` (default `redis://localhost:6380`)
-
-**Uso:**
-
-```bash
-node scripts/audit-falkor-sdd.mjs --project-id <UUID> --stage-id <UUID> --mdd-file /tmp/project.json
-```
-
-Opcional: `AUDIT_PROJECT_ID` / `AUDIT_STAGE_ID` en entorno. El `--mdd-file` puede ser JSON de `get_project` (campos `mddContent`, `id`, `activeStageId`) o markdown plano del MDD.
-
-Imprime conteos `DB_Entity` / `API_Endpoint`, huérfanos CONSUMES, diff MDD↔grafo y heurística `sddDomainGraphOk`. Alineado con la lógica de `SddGraphSyncService` / Workshop (`generation-status.sddGraph`).
+Script legacy para auditar FalkorDB SDD (retirado del API en v1.7.0). Usar coherencia §3/§4 vía Workshop (`generation-status.sddGraph`) o `MddCoherenceService` en código.

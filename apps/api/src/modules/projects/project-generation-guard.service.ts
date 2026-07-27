@@ -15,8 +15,8 @@ import { ProjectsService } from "./projects.service.js";
 import { DeliverablesQueueService } from "./deliverables-queue.service.js";
 import { MddQueueService } from "../ai-analysis/mdd/mdd-queue.service.js";
 import { MddUpstreamSyncService } from "../ai-analysis/mdd/mdd-upstream-sync.service.js";
-import { SddGraphSyncService } from "../ai-analysis/graph-memory/sdd-graph-sync.service.js";
-import { readSddGraphContext } from "../ai-analysis/graph-memory/sdd-graph-context.util.js";
+import { MddCoherenceService } from "../engine/mdd-coherence/mdd-coherence.service.js";
+import { readSddGraphContext } from "../engine/mdd-coherence/sdd-graph-context.util.js";
 import { pickPrimaryStage } from "./stage-helpers.js";
 
 type TrackedBgJob = {
@@ -42,7 +42,7 @@ export class ProjectGenerationGuardService {
     private readonly mddQueue: MddQueueService,
     @Inject(forwardRef(() => MddUpstreamSyncService))
     private readonly mddUpstreamSync: MddUpstreamSyncService,
-    private readonly sddGraphSync: SddGraphSyncService,
+    private readonly mddCoherence: MddCoherenceService,
   ) {}
 
   registerMddStream(projectId: string): void {
@@ -126,7 +126,7 @@ export class ProjectGenerationGuardService {
       if (stage?.id) {
         const mdd = String(stage.mddContent ?? (project as { mddContent?: string }).mddContent ?? "");
         const { context } = readSddGraphContext(stage.shortTermContext);
-        sddGraph = await this.sddGraphSync.evaluateFromMdd(projectId, String(stage.id), mdd, context);
+        sddGraph = await this.mddCoherence.evaluateFromMdd(projectId, String(stage.id), mdd, context);
       }
     } catch {
       sddGraph = null;
