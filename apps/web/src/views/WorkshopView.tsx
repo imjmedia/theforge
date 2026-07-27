@@ -2625,6 +2625,7 @@ export default function WorkshopView({
         {!isLegacyProject ? (
           <MddUpstreamSyncBanner
             syncStatus={generationStatus?.mddUpstreamSync}
+            generationStatus={generationStatus}
             disabled={loading || generationStatus?.busy === true}
             onOpenSyncDialog={openMddSyncDialog}
           />

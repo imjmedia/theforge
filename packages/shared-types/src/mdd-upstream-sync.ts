@@ -98,6 +98,18 @@ export function normalizeUpstreamDocumentBody(text: string | null | undefined): 
   return body.trim();
 }
 
+/** Ordena claves JSON recursivamente para comparar benchmarks con distinto serializado. */
+function canonicalizeJsonValue(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((item) => canonicalizeJsonValue(item));
+  const obj = value as Record<string, unknown>;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(obj).sort()) {
+    sorted[key] = canonicalizeJsonValue(obj[key]);
+  }
+  return sorted;
+}
+
 /** Normaliza JSON de benchmark/phase0Summary para hashing estable (orden de claves). */
 export function normalizeBenchmarkDocumentBody(text: string | null | undefined): string {
   const body = normalizeUpstreamDocumentBody(text);
@@ -105,7 +117,7 @@ export function normalizeBenchmarkDocumentBody(text: string | null | undefined):
   const first = body.trimStart()[0];
   if (first !== "{" && first !== "[") return body;
   try {
-    return JSON.stringify(JSON.parse(body));
+    return JSON.stringify(canonicalizeJsonValue(JSON.parse(body)));
   } catch {
     return body;
   }
