@@ -122,6 +122,8 @@ export const MDDStateAnnotation = Annotation.Root({
   deliveryGateFixTarget: Annotation<DeliveryGateFixTarget | undefined>(),
   /** Fingerprint placeholder blockers (circuit breaker). */
   deliveryGatePlaceholderFingerprint: Annotation<string | undefined>(),
+  /** F3: post_critic_parallel completó §4∥§6∥§7 (skip tail_parallel). */
+  postCriticParallelDone: Annotation<boolean | undefined>(),
 });
 
 export type MDDStateType = typeof MDDStateAnnotation.State;

@@ -36,6 +36,7 @@ import {
 } from "../utils/mdd-sanitize.js";
 import { isMddSectionPipelinePlaceholderBody } from "../utils/mdd-sanitize/section-merge.js";
 import { stripThinkingTags } from "../utils/mdd-security-parse.js";
+import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Section5] ${msg}`, ...args);
 
@@ -80,6 +81,7 @@ export function createMddSection5Node(llm: BaseChatModel) {
       const directivesBlock = getInternalDirectivesContext(state, "section5");
 
       const prompt = `${SECTION5_MDD_PROMPT}\n\n---\n${briefBlock}${scopeBlock}${dbgaBlock}${draftBlock}${directivesBlock ? `---\n${directivesBlock}\n\n` : ""}`;
+      const startedAt = Date.now();
 
       const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], { tag: "Section5" });
       if (!response) {
@@ -87,6 +89,7 @@ export function createMddSection5Node(llm: BaseChatModel) {
         return {};
       }
       const raw = stripThinkingTags(extractLlmText(response));
+      logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, raw.length));
       if (!raw.trim()) {
         LOG("LLM vacío, preservando draft actual");
         return {};

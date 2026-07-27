@@ -56,7 +56,6 @@ import {
   resolveLiveDraftForScopedArchitectStream,
   type MddSoftwareArchitectScope,
 } from "./utils/mdd-architect-pipeline.util.js";
-import { createMddClarifierNode } from "./nodes/mdd-clarifier.node.js";
 import { getMddArchitectTools } from "./tools/tool-registry.js";
 import { contextSynthesizerComplexityAppendix } from "./utils/mdd-complexity-rigor.js";
 import { formatDbgaStreamError } from "./utils/dbga-stream-error.util.js";
@@ -67,7 +66,6 @@ import {
   isContextSynthesizerBodySubstantial,
   MIN_SECTION1_REGEN_BODY_LENGTH,
   normalizeContextSynthesizerBody,
-  resolveUpstreamSyncSection1Body,
 } from "./utils/mdd-section1-regen.util.js";
 import {
   INSUFFICIENT_DBGA_IDEA_MESSAGE,
@@ -1986,6 +1984,7 @@ export class AiAnalysisService {
 
   /**
    * Sincroniza el MDD existente con cambios en DBGA/BRD/Benchmark regenerando solo las secciones indicadas.
+   * Misma mecánica que `streamMddRegenerateSection` por cada §N (§1 = sintetizador de contexto, no Clarifier).
    */
   async *streamMddUpstreamSync(
     projectId: string,
@@ -2027,145 +2026,51 @@ export class AiAnalysisService {
     const baselineMddBeforeSync = mddContent;
     const sectionsToPreserve = [1, 2, 3, 4, 5, 6, 7].filter((n) => !ordered.includes(n));
 
-    const brdContent = sid
-      ? (await this.prisma.stage.findUnique({ where: { id: sid }, select: { brdContent: true } }))?.brdContent ?? null
-      : null;
     const upstreamCtx = { dbgaContent, changeSummary };
     const gapLines = changeSummary.trim() ? [changeSummary.trim()] : [];
 
     for (const section of ordered) {
       const title = MDD_SECTION_TITLES[section] ?? `§${section}`;
+      const syncAgent =
+        section === 1
+          ? "Contexto"
+          : section === 5
+            ? getAgentLabel("section5")
+            : section === 6
+              ? getAgentLabel("security")
+              : section === 7
+                ? getAgentLabel("integration")
+                : getAgentLabel("software_architect");
       yield {
         type: "progress",
-        agent: getAgentLabel(section === 1 ? "clarifier" : section === 6 ? "security" : section === 7 ? "integration" : "software_architect"),
+        agent: syncAgent,
         message: `Sincronizando ${title}…`,
         phase: "active",
       };
 
-      if (section === 1) {
-        try {
-          const regenUserId = await this.resolveUserId(pid);
-          const llm = await createDbgaLLM(this.aiFactory, regenUserId);
-          let dbgaEffective = dbgaContent.trim() || mddContent.slice(0, 4000);
-          const pre = composeBrdPreamble(brdContent);
-          if (pre) dbgaEffective = pre + dbgaEffective;
-          const clarifierNode = createMddClarifierNode(llm);
-          const agentCtx = await this.buildMddAgentContext(pid, sid ?? null);
-          const prevSection1 = extractContextSectionBody(mddContent) ?? "";
-          const result = await clarifierNode({
-            ...defaultMDDState,
-            dbgaContent: dbgaEffective,
-            brdContent: (brdContent ?? "").trim() || undefined,
-            mddDraft: mddContent,
-            projectId: pid,
-            auditorFeedback: changeSummary.trim() || undefined,
-            ...agentCtx,
-          } as MDDStateType);
-          const body = resolveUpstreamSyncSection1Body({
-            clarifierMddDraft: result.mddDraft,
-            clarifiedScope: result.clarifiedScope,
-          });
-          if (!body) {
-            this.logger.warn(
-              `[MDD upstream-sync] §1 sin sustancia tras Clarifier (prevLen=${prevSection1.length}); se preserva §1 previa projectId=${pid}`,
-            );
-            yield {
-              type: "error",
-              message:
-                "La sincronización de §1 no produjo contenido suficiente (Clarifier JSON inválido, " +
-                "dump DBGA como scope, o cuerpo < 200 chars). Se preservó la sección anterior; " +
-                "reintenta con un modelo más capaz o regenera el MDD completo.",
-            };
-            return;
-          }
-          // Clarifier en fallback (JSON inválido) reusa mddDraft previo + scope dump `#…`.
-          // No marcar sync OK ni capturar baseline si §1 no cambió y no hay scope usable.
-          const scopeRaw = (result.clarifiedScope ?? "").trim();
-          let scopeUsable = false;
-          if (scopeRaw && !scopeRaw.startsWith("#") && !/\n##\s+/m.test(scopeRaw)) {
-            scopeUsable = isContextSynthesizerBodySubstantial(
-              normalizeContextSynthesizerBody(scopeRaw).body,
-            );
-          } else if (scopeRaw) {
-            const ex = extractContextSectionBody(scopeRaw);
-            scopeUsable = Boolean(ex && isContextSynthesizerBodySubstantial(ex));
-          }
-          if (
-            isContextSynthesizerBodySubstantial(prevSection1) &&
-            body.trim() === prevSection1.trim() &&
-            !scopeUsable
-          ) {
-            this.logger.warn(
-              `[MDD upstream-sync] Clarifier no actualizó §1 (fallback/sin scope usable) projectId=${pid}`,
-            );
-            yield {
-              type: "error",
-              message:
-                "El Clarificador no generó un §1 nuevo usable (respuesta JSON inválida o scope = dump DBGA). " +
-                "Se preservó el MDD anterior; reintenta con un modelo más capaz o regenera el documento completo.",
-            };
-            return;
-          }
-          // No degradar §1 sustancial previa con un cuerpo mucho más corto (ratio < 40%).
-          if (
-            isContextSynthesizerBodySubstantial(prevSection1) &&
-            body.length < Math.max(MIN_SECTION1_REGEN_BODY_LENGTH, Math.floor(prevSection1.length * 0.4))
-          ) {
-            this.logger.warn(
-              `[MDD upstream-sync] §1 candidato demasiado corto vs previa (prev=${prevSection1.length} new=${body.length}); abort projectId=${pid}`,
-            );
-            yield {
-              type: "error",
-              message:
-                "La sincronización de §1 habría acortado demasiado el contexto existente. " +
-                "Se preservó la sección anterior; reintenta o regenera el MDD completo.",
-            };
-            return;
-          }
-          mddContent = replaceSection1BodyFromAnyHeading(mddContent, body);
-          const afterBody = extractContextSectionBody(mddContent) ?? "";
-          if (!isContextSynthesizerBodySubstantial(afterBody)) {
-            mddContent = baselineMddBeforeSync;
-            yield {
-              type: "error",
-              message:
-                "La sincronización de §1 dejó el contexto insuficiente tras el merge. " +
-                "Se restauró el MDD previo; reintenta o regenera el documento completo.",
-            };
-            return;
-          }
-        } catch (err) {
-          yield {
-            type: "error",
-            message: `Error al sincronizar §1: ${err instanceof Error ? err.message : String(err)}`,
-          };
+      let sectionMarkdown = "";
+      for await (const event of this.streamMddRegenerateSection(
+        pid,
+        section,
+        mddContent,
+        stageId,
+        gapLines,
+        upstreamCtx,
+      )) {
+        if (event.type === "progress") yield event;
+        if (event.type === "error") {
+          yield event;
           return;
         }
-      } else {
-        let sectionMarkdown = "";
-        for await (const event of this.streamMddRegenerateSection(
-          pid,
-          section,
-          mddContent,
-          stageId,
-          gapLines,
-          upstreamCtx,
-        )) {
-          if (event.type === "progress") yield event;
-          if (event.type === "error") {
-            yield event;
-            return;
-          }
-          if (event.type === "done" && event.markdown?.trim()) {
-            sectionMarkdown = event.markdown;
-          }
+        if (event.type === "done" && event.markdown?.trim()) {
+          sectionMarkdown = event.markdown;
         }
-        if (!sectionMarkdown.trim()) {
-          yield { type: "error", message: `La sincronización de §${section} no devolvió contenido.` };
-          return;
-        }
-        mddContent = sectionMarkdown;
       }
+      if (!sectionMarkdown.trim()) {
+        yield { type: "error", message: `La sincronización de §${section} no devolvió contenido.` };
+        return;
+      }
+      mddContent = sectionMarkdown;
 
       yield {
         type: "progress",

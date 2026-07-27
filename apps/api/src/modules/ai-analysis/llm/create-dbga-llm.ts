@@ -56,7 +56,35 @@ export type CreateDbgaLLMOptions = {
   temperature?: number;
   /** Perfil de salida; default `langgraph` (16K por nodo). */
   outputTokenPurpose?: LlmOutputTokenPurpose;
+  /** Tope explícito de salida (F6 per-scope); acotado por `llmMaxTokens()`. */
+  maxTokensOverride?: number;
 };
+
+/** Alcance Arquitecto MDD para tope de tokens de salida (F6). */
+export type MddArchitectScopeToken =
+  | "stack"
+  | "data_model"
+  | "api_contracts"
+  | "section5"
+  | "security"
+  | "integration"
+  | "full";
+
+/** Topes F6 por pasada scoped (chars ≈ tokens en modelos modernos). */
+export const MDD_ARCHITECT_SCOPE_MAX_TOKENS: Record<MddArchitectScopeToken, number> = {
+  stack: 4_096,
+  data_model: 8_192,
+  api_contracts: 12_288,
+  section5: 3_072,
+  security: 4_096,
+  integration: 4_096,
+  full: 65_536,
+};
+
+export function resolveMddArchitectScopeMaxTokens(scope: MddArchitectScopeToken): number {
+  const cap = MDD_ARCHITECT_SCOPE_MAX_TOKENS[scope] ?? MDD_ARCHITECT_SCOPE_MAX_TOKENS.full;
+  return Math.min(cap, resolveLlmMaxTokensForPurpose("langgraph"));
+}
 
 function buildChatOpenAI(
   runtime: UserLLMRuntime,
@@ -146,7 +174,10 @@ function buildWithFallbacks(
 export function createDbgaLLMFromRuntime(runtime: UserLLMRuntime, opts?: CreateDbgaLLMOptions): BaseChatModel {
   const models = chatModelChain(runtime);
   const purpose = opts?.outputTokenPurpose ?? "langgraph";
-  const maxTokens = resolveLlmMaxTokensForPurpose(purpose);
+  const maxTokens =
+    opts?.maxTokensOverride != null
+      ? resolveLlmMaxTokensForPurpose(purpose, opts.maxTokensOverride)
+      : resolveLlmMaxTokensForPurpose(purpose);
   return buildWithFallbacks(
     runtime,
     models,
@@ -187,5 +218,25 @@ export async function createMddHighComplexityLLM(
   opts?: CreateDbgaLLMOptions,
 ): Promise<BaseChatModel> {
   const runtime = await aiFactory.resolveHighComplexityRuntime(userId);
-  return createDbgaLLMFromRuntime(runtime, opts);
+  const maxTokensOverride = opts?.maxTokensOverride ?? resolveMddArchitectScopeMaxTokens("data_model");
+  return createDbgaLLMFromRuntime(runtime, { ...opts, maxTokensOverride });
+}
+
+/**
+ * LLM rápido para chunks §4 (F6): primer fallback del runtime estructural, si existe.
+ */
+export function createMddApiContractsChunkLlmFromRuntime(
+  runtime: UserLLMRuntime,
+  opts?: Omit<CreateDbgaLLMOptions, "maxTokensOverride">,
+): BaseChatModel | null {
+  const fast = runtime.chatModelFallbacks?.[0]?.trim();
+  if (!fast) return null;
+  return createDbgaLLMFromRuntime(
+    { ...runtime, chatModel: fast, chatModelFallbacks: [] },
+    {
+      temperature: opts?.temperature,
+      outputTokenPurpose: opts?.outputTokenPurpose,
+      maxTokensOverride: resolveMddArchitectScopeMaxTokens("api_contracts"),
+    },
+  );
 }

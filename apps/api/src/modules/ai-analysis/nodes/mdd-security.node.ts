@@ -24,8 +24,17 @@ import {
   logMddNodeOutput,
   seguridadItemsToSection6Markdown,
 } from "../utils/mdd-sanitize.js";
+import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
+import { buildTrimmedTailAgentContext } from "../utils/mdd-tail-parallel.util.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Security] ${msg}`, ...args);
+
+export type MddSecurityNodeOptions = {
+  /** F3: solo devuelve slice structured (sin mddDraft). */
+  sliceOnly?: boolean;
+  /** F3: contexto §1+§2+DDL§3+tabla§4 (sin JSON). */
+  trimmedTailContext?: boolean;
+};
 
 const PENDING_SEGURIDAD: MddSeguridadItem[] = [
   mddSeguridadItemSchema.parse({ title: "Seguridad", content: ["(Pendiente de definir.)"] }),
@@ -67,21 +76,27 @@ function buildMddDraftWithSection6(state: MDDStateType, seguridad: MddSeguridadI
 }
 
 /** Creates the MDD Security Architect node. Outputs structured seguridad; merge into mddStructured and derive mddDraft. */
-export function createMddSecurityNode(llm: BaseChatModel) {
+export function createMddSecurityNode(llm: BaseChatModel, opts?: MddSecurityNodeOptions) {
   return async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
-    LOG("entry mddDraftLen=%s", (state.mddDraft ?? "").length);
+    const sliceOnly = opts?.sliceOnly === true;
+    LOG("entry mddDraftLen=%s sliceOnly=%s", (state.mddDraft ?? "").length, sliceOnly);
     try {
       const brief = getUserBrief(state);
       const briefBlock = brief
         ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Elaborar la sección 6. Seguridad para una aplicación que cumple este objetivo.\n\n---\n\n`
         : "";
+      const draftBlock = opts?.trimmedTailContext
+        ? buildTrimmedTailAgentContext(state.mddDraft ?? "")
+        : (state.mddDraft ?? "(vacío)");
       const contextParts = [
         briefBlock,
         "**Alcance clarificado:**",
         state.clarifiedScope || "(vacío)",
         "",
-        "**Borrador actual del MDD:**",
-        state.mddDraft || "(vacío)",
+        opts?.trimmedTailContext
+          ? "**Contexto MDD (referencia acotada):**"
+          : "**Borrador actual del MDD:**",
+        draftBlock,
       ];
       if (state.acceptedProposalDirective?.trim()) {
         const directive = state.acceptedProposalDirective.trim();
@@ -108,8 +123,10 @@ export function createMddSecurityNode(llm: BaseChatModel) {
       }
       const context = contextParts.filter(Boolean).join("\n");
       const prompt = `${SECURITY_ARCHITECT_MDD_PROMPT}\n\n---\n${context}`;
+      const startedAt = Date.now();
       const response = await llm.invoke([new HumanMessage(prompt)]);
       const text = stripThinkingTags(typeof response.content === "string" ? response.content : "");
+      logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, text.length));
 
       LOG("[DIAG §6] LLM text len=%s rawPrefix=%s", text.length, text.slice(0, 200).replace(/\n/g, " "));
       const llmItems = text.trim() ? parseSecurityLlmResponse(text) : null;
@@ -145,6 +162,10 @@ export function createMddSecurityNode(llm: BaseChatModel) {
       const slice = { seguridad };
       const merged = mergeMddStructured(state.mddStructured, slice, state.mddDraft ?? "");
       const securitySectionMd = seguridadItemsToSection6Markdown(merged.seguridad ?? seguridad);
+      if (sliceOnly) {
+        LOG("ok sliceOnly seguridad items=%s", seguridad.length);
+        return { mddStructured: { seguridad: merged.seguridad ?? seguridad }, securitySectionMd };
+      }
       const mddDraft = buildMddDraftWithSection6(state, merged.seguridad ?? seguridad);
       const sum = getMddDraftSummary(mddDraft);
       LOG("ok seguridad §6 actualizada mddDraftLen=%s section2=%s", sum.length, sum.section2);

@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, it } from "node:test";
+import assert from "node:assert";
 import {
   draftThroughSection4ForTailParallelFirstPass,
   ensureSection5TailParallelPlaceholder,
+  extractContratosRoutesTableOnly,
   isTailParallelFirstPassDraft,
+  mergePostCriticParallelResults,
   mergeTailParallelResults,
 } from "./mdd-tail-parallel.util.js";
 import { MDD_SECTION5_TAIL_PLACEHOLDER } from "./mdd-tail-parallel.config.js";
@@ -23,6 +26,51 @@ ${MDD_SECTION5_TAIL_PLACEHOLDER}
 (Pendiente: Arquitecto de Seguridad)
 ## 7. Infraestructura
 (Pendiente: Ingeniero de Integración)`;
+
+describe("extractContratosRoutesTableOnly", () => {
+  it("elimina bloques json y conserva tabla", () => {
+    const body = `| Método | Ruta |\n|--------|------|\n| GET | /health |\n\n### POST /api/login\n\n**Request body:**\n\`\`\`json\n{"x":1}\n\`\`\``;
+    const out = extractContratosRoutesTableOnly(body);
+    assert.ok(out.includes("| GET | /health |"));
+    assert.ok(!out.includes("```json"));
+    assert.ok(out.includes("### POST /api/login"));
+  });
+});
+
+describe("mergePostCriticParallelResults", () => {
+  it("combina §4 del api_contracts con slices §6/§7 sin mddDraft de security", () => {
+    const apiDraft = BASE_DRAFT.replace(
+      /## 4\. Contratos de API[\s\S]*?(?=## 5\.)/,
+      `## 4. Contratos de API\n\n| GET | /api/v1/health |\n\n### GET /api/v1/health\n\n\`\`\`json\n{}\n\`\`\`\n\n`,
+    );
+    const s6 = `${"Política JWT RS256. ".repeat(20)}`;
+    const s7 = `${"Docker Compose prod. ".repeat(15)}`;
+
+    const merged = mergePostCriticParallelResults(
+      { mddDraft: BASE_DRAFT } as never,
+      { mddDraft: apiDraft },
+      {
+        mddStructured: {
+          seguridad: [{ title: "Seguridad", content: [s6] }],
+        },
+      },
+      {
+        mddStructured: {
+          integracion: {
+            subsections: [{ title: "Integración", content: [s7] }],
+          },
+        },
+      },
+    );
+
+    const out = merged.mddDraft ?? "";
+    assert.strictEqual(merged.postCriticParallelDone, true);
+    assert.ok(out.includes("/api/v1/health"));
+    assert.ok(out.includes("JWT RS256"));
+    assert.ok(out.includes("Docker Compose"));
+    assert.match(out, /## 5\. Lógica/);
+  });
+});
 
 describe("mergeTailParallelResults", () => {
   it("preserva §1–§4 e inyecta §5, §6 y §7 desde resultados paralelos", () => {
@@ -45,12 +93,12 @@ describe("mergeTailParallelResults", () => {
     );
 
     const out = merged.mddDraft ?? "";
-    expect(out).toContain("Alcance ForgeOps SaaS");
-    expect(out).toContain("CREATE TABLE tenants");
-    expect(out).toContain("JWT emitido");
-    expect(out).toContain("Argon2id");
-    expect(out).toContain("Docker Compose");
-    expect(out).not.toContain(MDD_SECTION5_TAIL_PLACEHOLDER);
+    assert.ok(out.includes("Alcance ForgeOps SaaS"));
+    assert.ok(out.includes("CREATE TABLE tenants"));
+    assert.ok(out.includes("JWT emitido"));
+    assert.ok(out.includes("Argon2id"));
+    assert.ok(out.includes("Docker Compose"));
+    assert.ok(!out.includes(MDD_SECTION5_TAIL_PLACEHOLDER));
   });
 
   it("conserva placeholder §5 si section5 no devolvió contenido sustancial", () => {
@@ -71,9 +119,9 @@ describe("mergeTailParallelResults", () => {
       },
     );
     const out = merged.mddDraft ?? "";
-    expect(out).toContain(MDD_SECTION5_TAIL_PLACEHOLDER);
-    expect(out).toContain("Política RS256");
-    expect(out).toContain("CI/CD GitHub Actions");
+    assert.ok(out.includes(MDD_SECTION5_TAIL_PLACEHOLDER));
+    assert.ok(out.includes("Política RS256"));
+    assert.ok(out.includes("CI/CD GitHub Actions"));
   });
 
   it("no pierde §6 si integration falla pero security OK", () => {
@@ -87,7 +135,7 @@ describe("mergeTailParallelResults", () => {
       { mddDraft: secDraft },
       { mddDraft: BASE_DRAFT },
     );
-    expect(merged.mddDraft).toContain("Lockout 5 intentos");
+    assert.ok(merged.mddDraft?.includes("Lockout 5 intentos"));
   });
 });
 
@@ -95,14 +143,14 @@ describe("ensureSection5TailParallelPlaceholder", () => {
   it("inserta placeholder §5 cuando falta", () => {
     const without5 = BASE_DRAFT.replace(/## 5\.[\s\S]*?(?=## 6\.)/, "");
     const out = ensureSection5TailParallelPlaceholder(without5);
-    expect(out).toMatch(/## 5\. Lógica y Edge Cases/);
-    expect(out).toContain(MDD_SECTION5_TAIL_PLACEHOLDER);
+    assert.match(out, /## 5\. Lógica y Edge Cases/);
+    assert.ok(out.includes(MDD_SECTION5_TAIL_PLACEHOLDER));
   });
 });
 
 describe("isTailParallelFirstPassDraft", () => {
   it("detecta borrador pre-merge (§6/§7 pendientes)", () => {
-    expect(isTailParallelFirstPassDraft(BASE_DRAFT)).toBe(true);
+    assert.strictEqual(isTailParallelFirstPassDraft(BASE_DRAFT), true);
   });
 
   it("false cuando §6 ya es sustancial", () => {
@@ -110,15 +158,15 @@ describe("isTailParallelFirstPassDraft", () => {
       /\(Pendiente: Arquitecto de Seguridad\)/,
       `${"Argon2id hashing policy. ".repeat(20)}`,
     );
-    expect(isTailParallelFirstPassDraft(withS6)).toBe(false);
+    assert.strictEqual(isTailParallelFirstPassDraft(withS6), false);
   });
 });
 
 describe("draftThroughSection4ForTailParallelFirstPass", () => {
   it("trunca después de §4", () => {
     const out = draftThroughSection4ForTailParallelFirstPass(BASE_DRAFT);
-    expect(out).toContain("Contratos de API");
-    expect(out).not.toContain("## 6. Seguridad");
+    assert.ok(out.includes("Contratos de API"));
+    assert.ok(!out.includes("## 6. Seguridad"));
   });
 });
 
@@ -135,7 +183,7 @@ describe("cross-consistency tras merge paralelo", () => {
       { mddDraft: BASE_DRAFT },
     );
     const fixed = applyDeterministicCrossConsistencyFixes(merged.mddDraft ?? "");
-    expect(fixed).toContain("5 intentos");
-    expect(fixed.length).toBeGreaterThan((merged.mddDraft ?? "").length - 500);
+    assert.ok(fixed.includes("5 intentos"));
+    assert.ok(fixed.length > (merged.mddDraft ?? "").length - 500);
   });
 });

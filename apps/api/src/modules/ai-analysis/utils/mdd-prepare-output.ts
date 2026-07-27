@@ -54,7 +54,8 @@ import {
   guardValidatedSectionsForPersist,
 } from "./mdd-section-preserve.util.js";
 import { ensureMddGovernanceSection, extractGovernanceSection } from "@theforge/shared-types/mdd-governance-patterns";
-import { validateMddForDelivery, type MddDeliveryGateResult } from "./mdd-delivery-gate.util.js";
+import { validateMddForDeliveryMemo } from "./mdd-off-graph-memo.util.js";
+import type { MddDeliveryGateResult } from "./mdd-delivery-gate.util.js";
 import { composeSection3FromStructured } from "./schema-owner.util.js";
 import {
   injectUiMcpIntoMddFrontendSection,
@@ -361,7 +362,7 @@ export async function prepareMddForOutput(
   const preservedMarkdown = preserveValidatedSectionsIfSubstantial(preserveBaseline, finalMarkdown);
   const tailGuard = guardValidatedSectionsForPersist(preserveBaseline, preservedMarkdown, "prepareMddForOutput");
   const gatedMarkdown = tailGuard.markdown;
-  const deliveryGate = validateMddForDelivery(gatedMarkdown, {
+  const deliveryGate = validateMddForDeliveryMemo(gatedMarkdown, {
     brdMarkdown: options?.brdMarkdown,
     dbgaMarkdown: options?.dbgaMarkdown,
     specMarkdown: options?.specMarkdown,

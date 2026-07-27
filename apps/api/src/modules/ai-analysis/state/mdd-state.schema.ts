@@ -178,6 +178,8 @@ export const mddStateSchema = z.object({
     .optional(),
   /** Fingerprint de blockers placeholder del intento anterior (circuit breaker gate). */
   deliveryGatePlaceholderFingerprint: z.string().optional(),
+  /** F3: §4∥§6∥§7 ya ejecutados tras critic (omitir tail_parallel en primera pasada). */
+  postCriticParallelDone: z.boolean().optional(),
 });
 
 export type MDDState = z.infer<typeof mddStateSchema>;
@@ -232,4 +234,5 @@ export const defaultMDDState: MDDState = {
   deliveryGateLoopActive: undefined,
   deliveryGateFixTarget: undefined,
   deliveryGatePlaceholderFingerprint: undefined,
+  postCriticParallelDone: undefined,
 };

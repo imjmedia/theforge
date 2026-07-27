@@ -3,13 +3,44 @@
  * cuando el DBGA aporta contexto amplio (p. ej. 90k chars).
  */
 
+import { stripGovernanceSection } from "@theforge/shared-types/mdd-governance-patterns";
 import { getMddTemplatePlaceholder } from "../state/mdd-structured.schema.js";
+import { buildDbgaHydrationSource } from "./mdd-clarifier-dbga-brief.util.js";
 import { extractContextSectionBody, replaceSection1BodyFromAnyHeading } from "./mdd-sanitize.js";
 import {
   draftHasSubstantialSection1,
+  draftHasSubstantialSection2,
+  draftHasSubstantialSection3,
   draftIsSubstantialForScopedRepair,
   MIN_SUBSTANTIAL_SECTION1_BODY_LEN,
 } from "./mdd-section-preserve.util.js";
+
+/** Removes governance wizard from LLM draft — system re-injects on persist. */
+export function stripClarifierGovernanceFromDraft(draft: string): string {
+  const trimmed = (draft ?? "").trim();
+  if (!trimmed) return trimmed;
+  return stripGovernanceSection(trimmed).trim();
+}
+
+/**
+ * Assembles full MDD shell when LLM returned only §1 or placeholders for §2–7.
+ * Preserves substantial §1 from LLM; fills missing sections from template.
+ */
+export function assembleClarifierMddDraft(llmDraft: string, section1Fallback?: string): string {
+  const stripped = stripClarifierGovernanceFromDraft(llmDraft);
+  const s1Body = extractContextSectionBody(stripped)?.trim();
+  const hasCanonSections = /\n##\s*2\.\s*Arquitectura/i.test(stripped);
+  if (hasCanonSections) {
+    if (draftIsSubstantialForScopedRepair(stripped)) return stripped;
+    if (draftHasSubstantialSection2(stripped) || draftHasSubstantialSection3(stripped)) return stripped;
+    if (s1Body && s1Body.length >= 20) return stripped;
+  }
+  const s1 =
+    s1Body && s1Body.length >= 20
+      ? s1Body
+      : (section1Fallback ?? s1Body ?? "(Pendiente)").trim() || "(Pendiente)";
+  return getMddTemplatePlaceholder(s1);
+}
 
 /** DBGA grande: exigir §1 sustancial o preservar/hidratar baseline. */
 export const MIN_DBGA_LEN_FOR_STRICT_CLARIFIER_DRAFT = 5_000;
@@ -29,7 +60,7 @@ export type FinalizeClarifierDraftParams = {
  */
 export function finalizeClarifierDraft(params: FinalizeClarifierDraftParams): string {
   const log = params.log ?? (() => {});
-  const llmDraft = (params.llmDraft ?? "").trim();
+  const llmDraft = stripClarifierGovernanceFromDraft(params.llmDraft ?? "");
   const previousDraft = (params.previousDraft ?? "").trim();
   const scope = (params.clarifiedScope ?? "").trim();
   const dbgaContent = (params.dbgaContent ?? "").trim();
@@ -54,12 +85,15 @@ export function finalizeClarifierDraft(params: FinalizeClarifierDraftParams): st
   }
 
   if (dbgaLen >= MIN_DBGA_LEN_FOR_STRICT_CLARIFIER_DRAFT && !draftHasSubstantialSection1(llmDraft)) {
-    const scopeBody =
-      scope.length >= MIN_SUBSTANTIAL_SECTION1_BODY_LEN
-        ? scope.slice(0, 12_000)
-        : dbgaContent.slice(0, 8_000);
+    const scopeBody = buildDbgaHydrationSource({
+      clarifiedScope: scope,
+      dbgaContent,
+      minScopeLen: MIN_SUBSTANTIAL_SECTION1_BODY_LEN,
+    });
     const shell =
-      llmDraft.length > 80 ? llmDraft : getMddTemplatePlaceholder(scope.slice(0, 300) || "(Desde DBGA)");
+      llmDraft.length > 80
+        ? assembleClarifierMddDraft(llmDraft, scope.slice(0, 300) || "(Desde DBGA)")
+        : getMddTemplatePlaceholder(scope.slice(0, 300) || "(Desde DBGA)");
     const hydrated = replaceSection1BodyFromAnyHeading(shell, scopeBody);
     const hydratedS1Len = extractContextSectionBody(hydrated)?.length ?? 0;
     log("hydrate §1 from scope/dbga (dbgaLen=%s, §1Len=%s)", dbgaLen, hydratedS1Len);

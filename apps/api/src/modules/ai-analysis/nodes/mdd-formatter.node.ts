@@ -22,6 +22,7 @@ import { reconcileUiUxDesignIntent } from "../utils/mdd-enrich-uiux-intent.js";
 import { preserveTailSectionsIfSubstantial, preserveSection2FromStackSnapshot, preserveSection3FromDataModelSnapshot, preserveSection4FromApiContractsSnapshot, draftHasPersistableSection4 } from "../utils/mdd-section-preserve.util.js";
 import { shouldPreferDraftOverStructured } from "../utils/mdd-prepare-output.js";
 import { mddStructuredToMarkdown } from "../render/mdd-structured-to-markdown.js";
+import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Formatter] ${msg}`, ...args);
 
@@ -44,6 +45,7 @@ function hasStructuredContent(mdd: MDDStateType["mddStructured"]): boolean {
  */
 export function createMddFormatterNode(): (state: MDDStateType) => Promise<Partial<MDDStateType>> {
   return async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
+    const startedAt = Date.now();
     const currentDraft = (state.mddDraft ?? "").trim();
     const currentDraftLen = currentDraft.length;
     const section3Body = extractSection3Body(currentDraft);
@@ -125,6 +127,7 @@ export function createMddFormatterNode(): (state: MDDStateType) => Promise<Parti
       }
       if (formatted === draft) {
         const sum = getMddDraftSummary(draft);
+        logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, 0, draft.length), { unchanged: true });
         LOG("sin cambios len=%s section2=%s", sum.length, sum.section2);
         return {};
       }
@@ -136,6 +139,7 @@ export function createMddFormatterNode(): (state: MDDStateType) => Promise<Parti
         formatted,
       );
       const sum = getMddDraftSummary(formatted);
+      logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, 0, formatted.length));
       LOG("formateado len=%s -> %s section2=%s", draft.length, sum.length, sum.section2);
       logMddNodeOutput("Formatter", formatted);
       return { mddDraft: formatted };

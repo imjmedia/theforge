@@ -11,6 +11,9 @@ import { createMddSecurityNode } from "../nodes/mdd-security.node.js";
 import { createMddIntegrationNode } from "../nodes/mdd-integration.node.js";
 import { createMddSection5Node } from "../nodes/mdd-section5.node.js";
 import { createMddTailParallelNode } from "../nodes/mdd-tail-parallel.node.js";
+import { createMddPostCriticParallelNode } from "../nodes/mdd-post-critic-parallel.node.js";
+import { createMddDataModelPatchNode } from "../nodes/mdd-data-model-patch.node.js";
+import { isTableOnlyCriticGap } from "../utils/mdd-data-model-patch.util.js";
 import { isMddTailParallelEnabled } from "../utils/mdd-tail-parallel.config.js";
 import { createMddSecurityIntegrationNode } from "../nodes/mdd-security-integration.node.js";
 // `createMddLlmFormatterNode` import ELIMINADO: el nodo llm_formatter fue
@@ -33,7 +36,7 @@ import { draftIsSubstantialForScopedRepair } from "../utils/mdd-section-preserve
 import { mddStateHasDomainAuthSkew } from "../utils/mdd-domain-prompt.util.js";
 import { detectSection3CompositionBlockers } from "../utils/schema-owner.util.js";
 import type { UserLLMRuntime } from "../../ai/providers/llm-runtime.types.js";
-import { createDbgaLLM, createDbgaLLMFromRuntime, createMddAuditorLLM, createMddHighComplexityLLM } from "../llm/create-dbga-llm.js";
+import { createDbgaLLM, createDbgaLLMFromRuntime, createMddApiContractsChunkLlmFromRuntime, createMddAuditorLLM, createMddHighComplexityLLM, resolveMddArchitectScopeMaxTokens } from "../llm/create-dbga-llm.js";
 import type { AIFactory } from "../../ai/ai.factory.js";
 import { getMddAuditorTools, getMddArchitectTools } from "../tools/tool-registry.js";
 import type { TheForgeService } from "../../theforge/theforge.service.js";
@@ -53,6 +56,21 @@ const MAX_MDD_ITERATIONS = 2;
 
 /** Temperatura baja para nodos estructurales (architect/security/integration): reproducibilidad de diseño. */
 const STRUCTURAL_TEMPERATURE = 0.2;
+
+async function resolveStructuralRuntime(
+  aiFactory: AIFactory,
+  userId: string,
+  preflight?: UserLLMRuntime | null,
+): Promise<UserLLMRuntime> {
+  return preflight ?? aiFactory.resolveRuntime(userId);
+}
+
+function createTailStructuralLlm(runtime: UserLLMRuntime): ReturnType<typeof createDbgaLLMFromRuntime> {
+  return createDbgaLLMFromRuntime(runtime, {
+    temperature: STRUCTURAL_TEMPERATURE,
+    maxTokensOverride: resolveMddArchitectScopeMaxTokens("security"),
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Cache wrapper — wraps an LLM node function so it checks the in-memory
@@ -145,12 +163,25 @@ export async function createMddGraph(
   userId: string,
   options?: MddGraphCompileOptions,
 ) {
+  const structuralRuntime = await resolveStructuralRuntime(aiFactory, userId, options?.preflightRuntime);
   const llm = options?.preflightRuntime
     ? createDbgaLLMFromRuntime(options.preflightRuntime)
     : await createDbgaLLM(aiFactory, userId);
-  const structuralLlm = options?.preflightRuntime
-    ? createDbgaLLMFromRuntime(options.preflightRuntime, { temperature: STRUCTURAL_TEMPERATURE })
-    : await createDbgaLLM(aiFactory, userId, { temperature: STRUCTURAL_TEMPERATURE });
+  const section5Llm = createDbgaLLMFromRuntime(structuralRuntime, {
+    maxTokensOverride: resolveMddArchitectScopeMaxTokens("section5"),
+  });
+  const structuralLlm = createTailStructuralLlm(structuralRuntime);
+  const stackLlm = createDbgaLLMFromRuntime(structuralRuntime, {
+    temperature: STRUCTURAL_TEMPERATURE,
+    maxTokensOverride: resolveMddArchitectScopeMaxTokens("stack"),
+  });
+  const apiContractsLlm = createDbgaLLMFromRuntime(structuralRuntime, {
+    temperature: STRUCTURAL_TEMPERATURE,
+    maxTokensOverride: resolveMddArchitectScopeMaxTokens("api_contracts"),
+  });
+  const apiContractsChunkLlm = createMddApiContractsChunkLlmFromRuntime(structuralRuntime, {
+    temperature: STRUCTURAL_TEMPERATURE,
+  });
   const highComplexityLlm = await createMddHighComplexityLLM(aiFactory, userId, {
     temperature: STRUCTURAL_TEMPERATURE,
   });
@@ -180,7 +211,7 @@ export async function createMddGraph(
   const stackArchitectNode = createScopedArchitectNode(
     "stack_architect",
     "stack",
-    structuralLlm,
+    stackLlm,
     getMddArchitectTools(),
     options,
     nodeCache,
@@ -198,7 +229,7 @@ export async function createMddGraph(
   const apiContractsNode = createScopedArchitectNode(
     "api_contracts",
     "api_contracts",
-    structuralLlm,
+    apiContractsLlm,
     getMddArchitectTools(),
     options,
     nodeCache,
@@ -279,7 +310,7 @@ export async function createMddGraph(
   });
   const section5Node = wrapNodeStart(
     "section5",
-    wrapCache(nodeCache, "section5", section5Input, createMddSection5Node(llm)),
+    wrapCache(nodeCache, "section5", section5Input, createMddSection5Node(section5Llm)),
     onNodeStart,
   );
   const tailParallelNode = wrapNodeStart(
@@ -292,6 +323,56 @@ export async function createMddGraph(
     ),
     onNodeStart,
   );
+  const apiContractsFastArchitectNode = apiContractsChunkLlm
+    ? createScopedArchitectNode(
+        "api_contracts",
+        "api_contracts",
+        apiContractsChunkLlm,
+        getMddArchitectTools(),
+        options,
+        nodeCache,
+        onNodeStart,
+      )
+    : null;
+  const postCriticParallelNode = wrapNodeStart(
+    "post_critic_parallel",
+    wrapCache(
+      nodeCache,
+      "post_critic_parallel",
+      softwareArchitectInput,
+      createMddPostCriticParallelNode(structuralLlm, {
+        apiContractsFn: async (state) => apiContractsNode(state),
+        ...(apiContractsFastArchitectNode
+          ? {
+              apiContractsChunkFn: async (chunkIndex, state) =>
+                chunkIndex === 0 ? apiContractsNode(state) : apiContractsFastArchitectNode(state),
+            }
+          : {}),
+      }),
+    ),
+    onNodeStart,
+  );
+  const dataModelPatchNode = wrapNodeStart(
+    "data_model_patch",
+    wrapCache(
+      nodeCache,
+      "data_model_patch",
+      softwareArchitectInput,
+      createMddDataModelPatchNode(highComplexityLlm),
+    ),
+    onNodeStart,
+  );
+
+  function routeAfterSection5OneShot(state: MDDStateType): string {
+    if (state.deliveryGateLoopActive === true && state.deliveryGateFixTarget === "section5") {
+      return "prepare_output";
+    }
+    return "format_after_architect";
+  }
+
+  function shouldUsePostCriticParallel(state: MDDStateType): boolean {
+    return isMddTailParallelEnabled() && isHighSplitArchitectPipeline(state);
+  }
 
   function routeAfterPrepareOutput(state: MDDStateType): string {
     if (state.deliveryGateLoopActive === true) {
@@ -307,6 +388,9 @@ export async function createMddGraph(
   }
 
   function routeAfterFormatArchitectGateLoop(state: MDDStateType): string {
+    if (state.postCriticParallelDone === true) {
+      return "format_after_redactor";
+    }
     if (
       (state.deliveryGateAttempt ?? 0) > 0 &&
       draftHasSubstantialSections6And7(state.mddDraft ?? "")
@@ -352,7 +436,11 @@ export async function createMddGraph(
     const hasFeedback = !!(state.architectCriticFeedback?.trim());
     const attempts = state.architectCriticAttempts ?? 0;
     if (state.architectCriticPhase === "after_section3") {
-      if (hasFeedback && attempts <= 1) return "data_model";
+      if (hasFeedback && attempts <= 1) {
+        if (isTableOnlyCriticGap(state.architectCriticFeedback ?? "")) return "data_model_patch";
+        return "data_model";
+      }
+      if (shouldUsePostCriticParallel(state)) return "post_critic_parallel";
       return "api_contracts";
     }
     if (hasFeedback && attempts <= 1) return "software_architect";
@@ -383,6 +471,8 @@ export async function createMddGraph(
     // únicamente en §5. CHANGELOG [Unreleased] → Added → "Dedicated §5 pass".
     .addNode("section5", section5Node)
     .addNode("tail_parallel", tailParallelNode)
+    .addNode("post_critic_parallel", postCriticParallelNode)
+    .addNode("data_model_patch", dataModelPatchNode)
     .addEdge(START, "clarifier")
     .addConditionalEdges("clarifier", routeAfterClarifierOneShot, {
       stack_architect: "stack_architect",
@@ -390,6 +480,8 @@ export async function createMddGraph(
     })
     .addEdge("stack_architect", "data_model")
     .addEdge("data_model", "architect_critic")
+    .addEdge("data_model_patch", "architect_critic")
+    .addEdge("post_critic_parallel", "section5")
     .addEdge("api_contracts", "format_after_architect")
     .addConditionalEdges("software_architect", routeAfterSoftwareArchitectOneShot, {
       architect_critic: "architect_critic",
@@ -397,7 +489,9 @@ export async function createMddGraph(
     })
     .addConditionalEdges("architect_critic", routeAfterArchitectCriticOneShot, {
       data_model: "data_model",
+      data_model_patch: "data_model_patch",
       api_contracts: "api_contracts",
+      post_critic_parallel: "post_critic_parallel",
       software_architect: "software_architect",
       format_after_architect: "format_after_architect",
     })
@@ -416,9 +510,11 @@ export async function createMddGraph(
     .addEdge("format_after_redactor", "diagram_injector")
     .addEdge("cross_consistency_checker", "auditor")
     .addEdge("diagram_injector", "auditor")
-    // section5 (dedicated §5 pass) vuelve a prepare_output para re-evaluar el gate.
-    // Ver CHANGELOG [Unreleased] → Added → "Dedicated §5 pass".
-    .addEdge("section5", "prepare_output")
+    // section5: pipeline F3 → format; gate loop → prepare_output.
+    .addConditionalEdges("section5", routeAfterSection5OneShot, {
+      format_after_architect: "format_after_architect",
+      prepare_output: "prepare_output",
+    })
     .addConditionalEdges("auditor", routeAuditor, {
       clarifier: "clarifier",
       prepare_output: "prepare_output",
@@ -453,12 +549,25 @@ export async function createMddGraphWithManager(
   managerToolDeps?: MddManagerToolDeps | null,
   compileOptions?: MddGraphCompileOptions,
 ) {
+  const structuralRuntime = await resolveStructuralRuntime(aiFactory, userId, compileOptions?.preflightRuntime);
   const llm = compileOptions?.preflightRuntime
     ? createDbgaLLMFromRuntime(compileOptions.preflightRuntime)
     : await createDbgaLLM(aiFactory, userId);
-  const structuralLlm = compileOptions?.preflightRuntime
-    ? createDbgaLLMFromRuntime(compileOptions.preflightRuntime, { temperature: STRUCTURAL_TEMPERATURE })
-    : await createDbgaLLM(aiFactory, userId, { temperature: STRUCTURAL_TEMPERATURE });
+  const section5Llm = createDbgaLLMFromRuntime(structuralRuntime, {
+    maxTokensOverride: resolveMddArchitectScopeMaxTokens("section5"),
+  });
+  const structuralLlm = createTailStructuralLlm(structuralRuntime);
+  const stackLlm = createDbgaLLMFromRuntime(structuralRuntime, {
+    temperature: STRUCTURAL_TEMPERATURE,
+    maxTokensOverride: resolveMddArchitectScopeMaxTokens("stack"),
+  });
+  const apiContractsLlm = createDbgaLLMFromRuntime(structuralRuntime, {
+    temperature: STRUCTURAL_TEMPERATURE,
+    maxTokensOverride: resolveMddArchitectScopeMaxTokens("api_contracts"),
+  });
+  const apiContractsChunkLlm = createMddApiContractsChunkLlmFromRuntime(structuralRuntime, {
+    temperature: STRUCTURAL_TEMPERATURE,
+  });
   const highComplexityLlm = await createMddHighComplexityLLM(aiFactory, userId, {
     temperature: STRUCTURAL_TEMPERATURE,
   });
@@ -482,7 +591,7 @@ export async function createMddGraphWithManager(
     nodeCache,
     "stack_architect",
     softwareArchitectInput,
-    createMddSoftwareArchitectNode(structuralLlm, getMddArchitectTools(), {
+    createMddSoftwareArchitectNode(stackLlm, getMddArchitectTools(), {
       theforge: theForgeForArchitect,
       uiMcpFrontendLibraryLabel: compileOptions?.uiMcpFrontendLibraryLabel ?? null,
       scope: "stack",
@@ -502,7 +611,7 @@ export async function createMddGraphWithManager(
     nodeCache,
     "api_contracts",
     softwareArchitectInput,
-    createMddSoftwareArchitectNode(structuralLlm, getMddArchitectTools(), {
+    createMddSoftwareArchitectNode(apiContractsLlm, getMddArchitectTools(), {
       theforge: theForgeForArchitect,
       uiMcpFrontendLibraryLabel: compileOptions?.uiMcpFrontendLibraryLabel ?? null,
       scope: "api_contracts",
@@ -551,7 +660,7 @@ export async function createMddGraphWithManager(
       clarifiedScope: s.clarifiedScope ?? "",
       dbgaContent: s.dbgaContent ?? "",
     }),
-    createMddSection5Node(llm),
+    createMddSection5Node(section5Llm),
   );
   const tailParallelNode = wrapCache(
     nodeCache,
@@ -559,6 +668,59 @@ export async function createMddGraphWithManager(
     (s) => ({ mddDraft: s.mddDraft ?? "", dbgaContent: s.dbgaContent ?? "" }),
     createMddTailParallelNode(llm, structuralLlm),
   );
+  const apiContractsFastArchitectNodeManager = apiContractsChunkLlm
+    ? wrapCache(
+        nodeCache,
+        "api_contracts",
+        softwareArchitectInput,
+        createMddSoftwareArchitectNode(apiContractsChunkLlm, getMddArchitectTools(), {
+          theforge: theForgeForArchitect,
+          uiMcpFrontendLibraryLabel: compileOptions?.uiMcpFrontendLibraryLabel ?? null,
+          scope: "api_contracts",
+        }),
+      )
+    : null;
+  const postCriticParallelNode = wrapCache(
+    nodeCache,
+    "post_critic_parallel",
+    softwareArchitectInput,
+    createMddPostCriticParallelNode(structuralLlm, {
+      apiContractsFn: async (state) => apiContractsNode(state),
+      ...(apiContractsFastArchitectNodeManager
+        ? {
+            apiContractsChunkFn: async (chunkIndex, state) =>
+              chunkIndex === 0
+                ? apiContractsNode(state)
+                : apiContractsFastArchitectNodeManager(state),
+          }
+        : {}),
+    }),
+  );
+  const dataModelPatchNode = wrapCache(
+    nodeCache,
+    "data_model_patch",
+    softwareArchitectInput,
+    createMddDataModelPatchNode(highComplexityLlm),
+  );
+
+  function shouldUsePostCriticParallelManager(state: MDDStateType): boolean {
+    return isMddTailParallelEnabled() && isHighSplitArchitectPipeline(state) && state.delegateTarget !== "sections";
+  }
+
+  function routeAfterSection5Manager(state: MDDStateType): string {
+    if (state.executorControlled === true) return "executor";
+    if (state.deliveryGateLoopActive === true && state.deliveryGateFixTarget === "section5") {
+      return "prepare_output";
+    }
+    return "format_after_architect";
+  }
+
+  function routeAfterPostCriticParallel(state: MDDStateType): string {
+    if (state.executorControlled === true) return "executor";
+    const next = nextInSections(state, "post_critic_parallel");
+    if (next) return next;
+    return "section5";
+  }
 
   function routeAfterPrepareOutput(state: MDDStateType): string {
     if (state.executorControlled === true) return "executor";
@@ -591,13 +753,21 @@ export async function createMddGraphWithManager(
     return "format_after_architect";
   }
 
-  /** Tras critic: retry §3 (HIGH) o SA monolítico; si ok tras §3 → api_contracts. */
+  /** Tras critic: retry §3 (HIGH) o SA monolítico; si ok tras §3 → post_critic_parallel o api_contracts. */
   function routeAfterArchitectCritic(state: MDDStateType): string {
     if (state.executorControlled === true) return "executor";
     const hasFeedback = !!(state.architectCriticFeedback?.trim());
     const attempts = state.architectCriticAttempts ?? 0;
     if (state.architectCriticPhase === "after_section3") {
-      if (hasFeedback && attempts <= 1) return "data_model";
+      if (hasFeedback && attempts <= 1) {
+        const next = nextInSections(state, "architect_critic");
+        if (next) return next;
+        if (isTableOnlyCriticGap(state.architectCriticFeedback ?? "")) return "data_model_patch";
+        return "data_model";
+      }
+      const next = nextInSections(state, "architect_critic");
+      if (next) return next;
+      if (shouldUsePostCriticParallelManager(state)) return "post_critic_parallel";
       return "api_contracts";
     }
     if (hasFeedback && attempts <= 1) return "software_architect";
@@ -640,6 +810,9 @@ export async function createMddGraphWithManager(
     if (state.executorControlled === true) return "executor";
     const next = nextInSections(state, "format_after_architect");
     if (next) return next;
+    if (state.postCriticParallelDone === true) {
+      return "format_after_redactor";
+    }
     if (
       (state.deliveryGateAttempt ?? 0) > 0 &&
       draftHasSubstantialSections6And7(state.mddDraft ?? "")
@@ -715,6 +888,8 @@ export async function createMddGraphWithManager(
     "data_model",
     "api_contracts",
     "architect_critic",
+    "post_critic_parallel",
+    "data_model_patch",
     "format_after_architect",
     "security",
     "integration",
@@ -736,6 +911,8 @@ export async function createMddGraphWithManager(
     "data_model",
     "api_contracts",
     "architect_critic",
+    "post_critic_parallel",
+    "data_model_patch",
     "format_after_architect",
     "security",
     "integration",
@@ -768,9 +945,11 @@ export async function createMddGraphWithManager(
     .addNode("integration", integrationNode)
     .addNode("security_integration", securityIntegrationNode)
     .addNode("tail_parallel", tailParallelNode)
+    .addNode("post_critic_parallel", postCriticParallelNode)
+    .addNode("data_model_patch", dataModelPatchNode)
     // Dedicated §5 pass: regenera SOLO §5 cuando el substance check falla
     // únicamente en §5. CHANGELOG [Unreleased] → Added → "Dedicated §5 pass".
-    .addNode("section5", section5Node, { ends: ["prepare_output"] })
+    .addNode("section5", section5Node)
     .addNode("format_after_redactor", formatterNode)
     .addNode("cross_consistency_checker", consistencyNode)
     .addNode("diagram_injector", diagramInjectorNode)
@@ -800,6 +979,7 @@ export async function createMddGraphWithManager(
       executor: "executor",
       manager: "manager",
     })
+    .addEdge("data_model_patch", "architect_critic")
     .addConditionalEdges("api_contracts", routeAfterApiContracts, {
       format_after_architect: "format_after_architect",
       executor: "executor",
@@ -819,9 +999,22 @@ export async function createMddGraphWithManager(
     })
     .addConditionalEdges("architect_critic", routeAfterArchitectCritic, {
       data_model: "data_model",
+      data_model_patch: "data_model_patch",
       api_contracts: "api_contracts",
+      post_critic_parallel: "post_critic_parallel",
       software_architect: "software_architect",
       format_after_architect: "format_after_architect",
+      executor: "executor",
+    })
+    .addConditionalEdges("post_critic_parallel", routeAfterPostCriticParallel, {
+      section5: "section5",
+      executor: "executor",
+      manager: "manager",
+    })
+    .addConditionalEdges("section5", routeAfterSection5Manager, {
+      format_after_architect: "format_after_architect",
+      prepare_output: "prepare_output",
+      executor: "executor",
     })
     .addConditionalEdges("format_after_architect", routeAfterFormatArchitect, {
       security: "security",

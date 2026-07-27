@@ -31,7 +31,16 @@ import {
 import { extractFirstJsonObject, parseJsonOrThrow } from "../utils/parse-json.js";
 import { getInternalDirectivesContext, extractInternalDirectives } from "../utils/mdd-mesh-topology.js";
 import { stripThinkingTags } from "../utils/mdd-security-parse.js";
+import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
+import { buildTrimmedTailAgentContext } from "../utils/mdd-tail-parallel.util.js";
 import { z } from "zod";
+
+export type MddIntegrationNodeOptions = {
+  /** F3: solo devuelve slice structured (sin mddDraft). */
+  sliceOnly?: boolean;
+  /** F3: contexto §1+§2+DDL§3+tabla§4 (sin JSON). */
+  trimmedTailContext?: boolean;
+};
 
 /** Schema de salida estructurada: integracion con subsections y manifest opcional. */
 const integrationStructuredSchema = z.object({
@@ -180,9 +189,10 @@ function getIntegrationHint(title: string, scope: string): string {
 }
 
 /** Creates the MDD Integration Engineer node. Outputs structured integracion; merge into mddStructured and derive mddDraft. */
-export function createMddIntegrationNode(llm: BaseChatModel) {
+export function createMddIntegrationNode(llm: BaseChatModel, opts?: MddIntegrationNodeOptions) {
   return async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
-    LOG("entry mddDraftLen=%s", (state.mddDraft ?? "").length);
+    const sliceOnly = opts?.sliceOnly === true;
+    LOG("entry mddDraftLen=%s sliceOnly=%s", (state.mddDraft ?? "").length, sliceOnly);
     try {
       const brief = getUserBrief(state);
       const briefBlock = brief
@@ -233,9 +243,14 @@ export function createMddIntegrationNode(llm: BaseChatModel) {
       if (scope) {
         contextParts.push("**Alcance clarificado:**", scope, "");
       }
+      const draftBlock = opts?.trimmedTailContext
+        ? buildTrimmedTailAgentContext(state.mddDraft ?? "")
+        : (state.mddDraft ?? "(vacío)");
       contextParts.push(
-        "**Borrador actual del MDD (usa las secciones 1–4 y Seguridad para derivar ## Integración):**",
-        state.mddDraft || "(vacío)",
+        opts?.trimmedTailContext
+          ? "**Contexto MDD (referencia acotada para Integración):**"
+          : "**Borrador actual del MDD (usa las secciones 1–4 y Seguridad para derivar ## Integración):**",
+        draftBlock,
         getInternalDirectivesContext(state, "integration_engineer"),
       );
       if (state.auditorFeedback?.trim()) {
@@ -247,8 +262,10 @@ export function createMddIntegrationNode(llm: BaseChatModel) {
       }
       const context = contextParts.join("\n");
       const prompt = `${INTEGRATION_ENGINEER_MDD_PROMPT}\n\n---\n${context}`;
+      const startedAt = Date.now();
       const response = await llm.invoke([new HumanMessage(prompt)]);
       const text = stripThinkingTags(typeof response.content === "string" ? response.content : "");
+      logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, text.length));
       if (!text.trim()) {
         LOG("LLM vacío, usando fallback");
         const slice = {
@@ -268,6 +285,12 @@ export function createMddIntegrationNode(llm: BaseChatModel) {
           }),
         };
         const merged = mergeMddStructured(state.mddStructured, slice, state.mddDraft ?? "");
+        if (sliceOnly) {
+          return {
+            mddStructured: { integracion: merged.integracion ?? slice.integracion },
+            integrationSectionMd: integracionToSection7Markdown(slice.integracion),
+          };
+        }
         let fallbackDraft = replaceSection6Or7InDraft(state.mddDraft ?? "", 7, integracionToSection7Markdown(slice.integracion));
         if (state.executorControlled === true && state.previousMddDraftForMerge?.trim()) {
           const preserve = getSectionsToPreserveFromExecutorPlan(state.sectionsToRun);
@@ -335,6 +358,16 @@ export function createMddIntegrationNode(llm: BaseChatModel) {
         ? { subsections: merged.integracion }
         : (merged.integracion ?? slice.integracion);
       const section7Md = integracionToSection7Markdown(integracionForMd);
+
+      if (sliceOnly) {
+        LOG("ok sliceOnly integracion subs=%s", integracionForMd.subsections?.length ?? 0);
+        return {
+          mddStructured: { integracion: merged.integracion ?? slice.integracion },
+          integrationSectionMd: section7Md,
+          ...meshUpdate,
+        };
+      }
+
       const draftWithSection6 = ensureSection6WhenSection7Present(state.mddDraft ?? "");
       let mddDraft = replaceSection6Or7InDraft(draftWithSection6, 7, section7Md);
       if (state.executorControlled === true && state.previousMddDraftForMerge?.trim()) {

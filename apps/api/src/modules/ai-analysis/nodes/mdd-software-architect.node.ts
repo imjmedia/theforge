@@ -5,7 +5,7 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage, AIMessage, ToolMessage } from "@langchain/core/messages";
 import type { StructuredToolInterface } from "@langchain/core/tools";
-import { SOFTWARE_ARCHITECT_MDD_PROMPT } from "../prompts/load-prompts.js";
+import { softwareArchitectMddPrompt } from "../prompts/load-prompts.js";
 import type { MDDStateType } from "../state/index.js";
 import { mddContratosApiSchema } from "../state/mdd-structured.schema.js";
 import { mddStructuredToMarkdown } from "../render/mdd-structured-to-markdown.js";
@@ -71,6 +71,9 @@ import { getInternalDirectivesContext, extractInternalDirectives } from "../util
 import { softwareArchitectComplexityAppendix } from "../utils/mdd-complexity-rigor.js";
 import { buildUiMcpFrontendArchitectHint } from "../utils/mdd-inject-ui-mcp-frontend.util.js";
 import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
+import { invokeScopedArchitectLlmWithHeadingCap } from "../utils/mdd-scoped-stream.util.js";
+import { buildArchitectScopedContext } from "../utils/build-architect-scoped-context.util.js";
+import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
 import {
   domainInventoryPromptBlock,
   mddStateHasDomainAuthSkew,
@@ -528,6 +531,7 @@ export function createMddSoftwareArchitectNode(
     LOG("entry mddDraftLen=%s tools=%s (allowed=%s)", (state.mddDraft ?? "").length, toolsToUse.length, allowed?.length ?? "all");
     if (state.clarifiedScope) LOG("Context/Scope received: %s...", state.clarifiedScope.slice(0, 100));
     LOG("Draft Preview (Section 2 search): %s", (state.mddDraft ?? "").match(/##\s*2\.[^#]*/)?.[0]?.slice(0, 100) ?? "Not found");
+    const startedAt = Date.now();
     try {
       const draftTrimmed = (state.mddDraft ?? "").trim();
       const { baseline: mergeBaseline, source: mergeBaselineSource } = resolveArchitectMergeBaseline(
@@ -561,21 +565,23 @@ export function createMddSoftwareArchitectNode(
       const mustRewriteSection3 = hasExplicitRequirements || domainAuthSkew;
       const stepGoal = state.currentStepGoal?.trim();
       const goalBlock = stepGoal ? `**Objetivo de este paso (del plan):** ${stepGoal}\n\n` : "";
+      const scopedNoRepeat =
+        " **NO repitas §1–§N anteriores en tu respuesta**; el pipeline las conserva vía merge quirúrgico. Responde **solo** con el cuerpo de tu sección asignada.";
       const briefBlock = brief
         ? mustRewriteSection3
           ? scope === "stack"
-            ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Actualiza **solo ## 2. Arquitectura y Stack** según la directiva. Copia §1 del borrador. No modifiques §3 ni §4.${decoupleSection5 ? " Deja §5 con placeholder de paso dedicado." : ""}\n\n---\n\n`
+            ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Actualiza **solo ## 2. Arquitectura y Stack** según la directiva.${scopedNoRepeat} No modifiques §3 ni §4.${decoupleSection5 ? " Deja §5 con placeholder de paso dedicado." : ""}\n\n---\n\n`
             : scope === "data_model"
-              ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Reescribe **solo ## 3. Modelo de Datos** (SQL + ER) según el dominio y requisitos. Copia §1–§2 del borrador. No modifiques §4.${decoupleSection5 ? " Deja §5 con placeholder." : ""}\n\n---\n\n`
+              ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Reescribe **solo ## 3. Modelo de Datos** (SQL + ER) según el dominio y requisitos.${scopedNoRepeat} No modifiques §4.${decoupleSection5 ? " Deja §5 con placeholder." : ""}\n\n---\n\n`
               : scope === "api_contracts"
-                ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Redacta **solo ## 4. Contratos de API** alineados a §3. Copia §1–§3 del borrador.${decoupleSection5 ? " Deja §5 con placeholder." : ""}\n\n---\n\n`
+                ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Redacta **solo ## 4. Contratos de API** alineados a §3.${scopedNoRepeat}${decoupleSection5 ? " Deja §5 con placeholder." : ""}\n\n---\n\n`
                 : `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Debes **actualizar** ## 3. Modelo de Datos y ## 4. Contratos de API para reflejar el dominio de negocio (BRD/inventario) y los requisitos explícitos. **No copies §3 del borrador** si está sesgado a auth o incompleto frente al inventario; genera el SQL, diagrama ER y endpoints que cubran las capacidades de dominio. Copia solo ## 1. Contexto del borrador. Elabora §2 (Arquitectura y Stack)${decoupleSection5 ? "; deja §5 con placeholder de paso dedicado" : " y §5 (Lógica y Edge Cases)"}.${affectsSection2 ? " Actualiza también ## 2. Arquitectura y Stack si la directiva lo indica." : ""}\n\n---\n\n`
           : scope === "stack"
-            ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Elaborar **solo ## 2. Arquitectura y Stack** para una aplicación que cumple este objetivo. Copia §1 del borrador; no reescribas §3 ni §4.${decoupleSection5 ? " Deja §5 con placeholder." : ""}\n\n---\n\n`
+            ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Elaborar **solo ## 2. Arquitectura y Stack** para una aplicación que cumple este objetivo.${scopedNoRepeat} No reescribas §3 ni §4.${decoupleSection5 ? " Deja §5 con placeholder." : ""}\n\n---\n\n`
             : scope === "data_model"
-              ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Elaborar **solo ## 3. Modelo de Datos** coherente con §1–§2. Copia §1–§2 del borrador.${decoupleSection5 ? " Deja §5 con placeholder." : ""}\n\n---\n\n`
+              ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Elaborar **solo ## 3. Modelo de Datos** coherente con §1–§2 del contexto de referencia.${scopedNoRepeat}${decoupleSection5 ? " Deja §5 con placeholder." : ""}\n\n---\n\n`
               : scope === "api_contracts"
-                ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Elaborar **solo ## 4. Contratos de API** a partir de §3. Copia §1–§3 del borrador.${decoupleSection5 ? " Deja §5 con placeholder." : ""}\n\n---\n\n`
+                ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Elaborar **solo ## 4. Contratos de API** a partir del SQL de §3 en contexto.${scopedNoRepeat}${decoupleSection5 ? " Deja §5 con placeholder." : ""}\n\n---\n\n`
                 : `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Elaborar secciones 2 (Arquitectura y Stack) y 4 (Contratos de API)${decoupleSection5 ? "" : " y 5 (Lógica y Edge Cases)"} para una aplicación que cumple este objetivo. Copia 1 y 3 del borrador; no las reescribas salvo directiva explícita.\n\n---\n\n`
         : "";
       const contextParts = [
@@ -584,25 +590,34 @@ export function createMddSoftwareArchitectNode(
         "**Alcance clarificado:**",
         (state.clarifiedScope ?? "").trim() || "(vacío)",
         "",
-        "**Borrador actual del MDD (Contexto + Modelo de datos del Experto en Datos):**",
-        draftTrimmed || "(vacío)",
-        getInternalDirectivesContext(state, "software_architect"),
       ];
-      const inventoryBlock = domainInventoryPromptBlock(state);
-      if (inventoryBlock) {
-        contextParts.unshift(inventoryBlock.trim(), "");
-      }
-      try {
-        const { buildInventoryFromMddState } = await import("../utils/mdd-domain-prompt.util.js");
-        const { domainSchemaCompositionPromptBlock } = await import(
-          "../../engine/compose-section3-from-inventory.util.js"
+
+      if (scope === "full") {
+        contextParts.push(
+          "**Borrador actual del MDD (Contexto + Modelo de datos del Experto en Datos):**",
+          draftTrimmed || "(vacío)",
         );
-        const { inventory } = buildInventoryFromMddState(state);
-        const schemaBlock = domainSchemaCompositionPromptBlock(inventory, draftTrimmed);
-        if (schemaBlock) contextParts.unshift(schemaBlock, "");
-      } catch {
-        /* optional */
+        const inventoryBlock = domainInventoryPromptBlock(state);
+        if (inventoryBlock) {
+          contextParts.unshift(inventoryBlock.trim(), "");
+        }
+        try {
+          const { buildInventoryFromMddState } = await import("../utils/mdd-domain-prompt.util.js");
+          const { domainSchemaCompositionPromptBlock } = await import(
+            "../../engine/compose-section3-from-inventory.util.js"
+          );
+          const { inventory } = buildInventoryFromMddState(state);
+          const schemaBlock = domainSchemaCompositionPromptBlock(inventory, draftTrimmed);
+          if (schemaBlock) contextParts.unshift(schemaBlock, "");
+        } catch {
+          /* optional */
+        }
+      } else {
+        const scopedCtx = await buildArchitectScopedContext(state, scope);
+        contextParts.push(...scopedCtx.lines);
       }
+
+      contextParts.push(getInternalDirectivesContext(state, "software_architect"));
       if (domainAuthSkew) {
         contextParts.unshift(
           "**ALERTA domain-auth-only-skew:** El §3 actual solo tiene entidades de auth mientras el BRD lista capacidades de dominio. **Reescribe §3 y §4** con entidades y endpoints de negocio del inventario. Auth permanece como complemento.",
@@ -747,7 +762,8 @@ export function createMddSoftwareArchitectNode(
       }
       const context = contextParts.join("\n");
       const scopePrefix = architectScopePromptPrefix(scope);
-      const prompt = `${scopePrefix ? `${scopePrefix}\n\n---\n\n` : ""}${SOFTWARE_ARCHITECT_MDD_PROMPT}${softwareArchitectComplexityAppendix(state.mddComplexity)}\n\n---\n${context}`;
+      const architectPrompt = softwareArchitectMddPrompt(scope);
+      const prompt = `${scopePrefix ? `${scopePrefix}\n\n---\n\n` : ""}${architectPrompt}${softwareArchitectComplexityAppendix(state.mddComplexity)}\n\n---\n${context}`;
       const messages = [new HumanMessage(prompt)];
 
       let text = "";
@@ -794,12 +810,18 @@ export function createMddSoftwareArchitectNode(
           loopCount++;
         }
       } else {
-        const response = await invokeLlmWithRetry(llm, messages, { tag: "SoftwareArchitect:no-tools" });
+        const response =
+          scope !== "full"
+            ? await invokeScopedArchitectLlmWithHeadingCap(llm, messages, {
+                tag: `SoftwareArchitect:scoped-${scope}`,
+              })
+            : await invokeLlmWithRetry(llm, messages, { tag: "SoftwareArchitect:no-tools" });
         text = response ? extractLlmText(response) : "";
       }
       text = stripThinkingTags(text);
 
       if (!text.trim()) {
+        logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, 0), { scope, empty: true });
         LOG("LLM vacío, devolviendo borrador sin transformar");
         return {};
       }
@@ -1120,6 +1142,11 @@ export function createMddSoftwareArchitectNode(
       }
       mddDraft = deduplicateMddDraftSections(mddDraft);
       const sum = getMddDraftSummary(mddDraft);
+      logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, text.length), {
+        scope,
+        mddDraftLen: sum.length,
+        section3: sum.section3,
+      });
       LOG("ok mddDraftLen=%s section3=%s", sum.length, sum.section3);
       logMddNodeOutput("SoftwareArchitect", mddDraft);
       logSection3Debug("post-SoftwareArchitect", mddDraft);

@@ -118,6 +118,8 @@ export const createMddSlice: StateCreator<WorkshopState, [], [], MddSliceActions
         });
         const recovered = await get().fetchProject(pid, { preferServerMdd: true });
         applyMddFromFetchedProject(get, set, recovered ?? get().project);
+        // fetchProject siempre pone error:null — reponer el fallo del job.
+        set({ ...errorStateFromCaught(e), loading: false, loadingReason: null });
       }
       void get().fetchGenerationStatus(pid);
       return null;
@@ -202,6 +204,8 @@ export const createMddSlice: StateCreator<WorkshopState, [], [], MddSliceActions
         });
         const recovered = await get().fetchProject(pid, { preferServerMdd: true });
         applyMddFromFetchedProject(get, set, recovered ?? get().project);
+        // fetchProject siempre pone error:null — reponer el fallo del job.
+        set({ ...errorStateFromCaught(e), loading: false, loadingReason: null });
       }
       void get().fetchGenerationStatus(pid);
       return null;

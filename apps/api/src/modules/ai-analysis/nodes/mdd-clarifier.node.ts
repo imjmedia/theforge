@@ -13,12 +13,14 @@ import {
   draftHasSubstantialSection1,
   draftIsSubstantialForScopedRepair,
 } from "../utils/mdd-section-preserve.util.js";
-import { finalizeClarifierDraft } from "../utils/mdd-clarifier-draft.util.js";
+import { finalizeClarifierDraft, assembleClarifierMddDraft, stripClarifierGovernanceFromDraft } from "../utils/mdd-clarifier-draft.util.js";
+import { buildClarifierDbgaBrief } from "../utils/mdd-clarifier-dbga-brief.util.js";
+import { enrichClarifiedScopeFromInventory } from "../utils/enrich-clarified-scope.util.js";
 import { getUserBrief } from "../utils/mdd-user-brief.js";
 import { buildUserDeclaredStackPromptBlock } from "../utils/user-declared-stack.util.js";
 import { extractFirstJsonObject, parseJsonOrThrow } from "../utils/parse-json.js";
 import { clarifierComplexityAppendix } from "../utils/mdd-complexity-rigor.js";
-import { domainInventoryPromptBlock } from "../utils/mdd-domain-prompt.util.js";
+import { buildInventoryFromMddState, domainInventoryPromptBlock } from "../utils/mdd-domain-prompt.util.js";
 import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
 import { z } from "zod";
 
@@ -130,8 +132,14 @@ export function createMddClarifierNode(llm: BaseChatModel) {
     }
 
     try {
+      const startedAt = Date.now();
       const brief = getUserBrief(state);
       const draftTrimmed = (state.mddDraft ?? "").trim();
+      const dbgaRaw = state.dbgaContent ?? "";
+      const { brief: dbgaBrief, briefChars: dbgaBriefChars, usedFullDbga } = buildClarifierDbgaBrief({
+        dbgaContent: dbgaRaw,
+      });
+      const { inventory } = buildInventoryFromMddState(state);
       const hasSubstantialDraft =
         draftIsSubstantialForScopedRepair(draftTrimmed) ||
         (draftTrimmed.length > 500 && /##\s*2\.\s*Arquitectura/i.test(draftTrimmed));
@@ -140,17 +148,17 @@ export function createMddClarifierNode(llm: BaseChatModel) {
         : brief && hasSubstantialDraft
           ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Revisa y modifica el borrador existente del MDD según el objetivo. Preserva el contenido completo de todas las secciones (1-7) y solo aplica los cambios necesarios para cumplir el objetivo.\n\n---\n\n`
           : "";
-      let prompt = `${CLARIFIER_MDD_PROMPT}${clarifierComplexityAppendix(state.mddComplexity)}\n\n---\n${briefBlock}**DBGA (entrada):**\n${state.dbgaContent}`;
+      let prompt = `${CLARIFIER_MDD_PROMPT}${clarifierComplexityAppendix(state.mddComplexity)}\n\n---\n${briefBlock}**DBGA (entrada):**\n${dbgaBrief || "(vacío)"}`;
       const stackBlock = buildUserDeclaredStackPromptBlock(
         state.userInputAccumulated,
         state.lastUserMessage,
         brief,
-        state.dbgaContent?.slice(0, 1500),
+        dbgaBrief.slice(0, 1500) || dbgaRaw.slice(0, 1500),
       );
       if (stackBlock) {
         prompt += `\n\n---\n${stackBlock}`;
       }
-      const inventoryBlock = domainInventoryPromptBlock(state);
+      const inventoryBlock = domainInventoryPromptBlock(state, { maxChars: 4_800 });
       if (inventoryBlock) {
         prompt += inventoryBlock;
         prompt +=
@@ -219,7 +227,19 @@ export function createMddClarifierNode(llm: BaseChatModel) {
         };
       }
       let scope = String(parsed.clarifiedScope ?? "").trim();
-      let draft = String(parsed.mddDraft ?? "").trim();
+      let draft = stripClarifierGovernanceFromDraft(String(parsed.mddDraft ?? "").trim());
+      draft = assembleClarifierMddDraft(draft, scope.split(/\n\n+/)[0]?.trim());
+
+      const enriched = enrichClarifiedScopeFromInventory(scope, inventory);
+      if (enriched.enriched) {
+        scope = enriched.scope;
+        LOG(
+          "clarifiedScope enriched from inventory (entities=%s capabilities=%s len=%s)",
+          enriched.addedEntities,
+          enriched.addedCapabilities,
+          scope.length,
+        );
+      }
 
       if (scope.length < 300 && (state.userInputAccumulated ?? "").trim().length > 80) {
         const acc = state.userInputAccumulated!.trim();
@@ -294,7 +314,17 @@ export function createMddClarifierNode(llm: BaseChatModel) {
       const mddDraft = deduplicateMddDraftSections(mergedDraft);
       const outStructured = merged ?? (slice ? mergeMddStructured(undefined, slice) : undefined);
       const sum = getMddDraftSummary(mddDraft);
-      LOG("ok clarifiedScopeLen=%s mddDraftLen=%s section3=%s", scope.length, sum.length, sum.section3);
+      const durationMs = Date.now() - startedAt;
+      LOG(
+        "ok durationMs=%s promptChars=%s dbgaBriefChars=%s dbgaFull=%s clarifiedScopeLen=%s mddDraftLen=%s section3=%s",
+        durationMs,
+        prompt.length,
+        dbgaBriefChars,
+        usedFullDbga,
+        scope.length,
+        sum.length,
+        sum.section3,
+      );
       logMddNodeOutput("Clarifier", mddDraft);
       const out: Partial<MDDStateType> = {
         clarifiedScope: scope,
