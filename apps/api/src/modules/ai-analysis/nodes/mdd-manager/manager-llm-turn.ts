@@ -1,7 +1,6 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage } from "@langchain/core/messages";
 import { z } from "zod";
-import type { GraphMemoryService } from "../../graph-memory/graph-memory.service.js";
 import { MANAGER_MDD_PROMPT } from "../../prompts/load-prompts.js";
 import type { MDDStateType } from "../../state/index.js";
 import { getUserBrief } from "../../utils/mdd-user-brief.js";
@@ -58,7 +57,6 @@ export type ManagerLlmTurnResult = {
 
 export type RunManagerLlmTurnOptions = {
   llm: BaseChatModel;
-  graphMemory: GraphMemoryService;
   toolDeps?: MddManagerToolDeps | null;
   state: MDDStateType;
   userMessage: string;
@@ -174,7 +172,7 @@ async function parseManagerLlmResponse(
 
 /** Invoca el LLM del Manager (structured output + opcional búsqueda en memoria) y aplica guardrails de reply. */
 export async function runManagerLlmTurn(options: RunManagerLlmTurnOptions): Promise<ManagerLlmTurnResult> {
-  const { llm, graphMemory, toolDeps, state, userMessage, hasBench, hasDraft } = options;
+  const { llm, toolDeps, state, userMessage, hasBench, hasDraft } = options;
   const round = (state.managerRound ?? 0) + 1;
   const prompt = buildManagerPromptContext(state, userMessage, hasBench, round);
   let messages: HumanMessage[] = [new HumanMessage(prompt)];
@@ -192,32 +190,12 @@ export async function runManagerLlmTurn(options: RunManagerLlmTurnOptions): Prom
     sectionsToRun = parsed.sectionsToRun;
 
     if (parsed.action === "search_memory" && parsed.memoryQuery && i < 2) {
-      LOG("ejecutando búsqueda en memoria semántica: %s", parsed.memoryQuery);
-      const [projects, decisions] = await Promise.all([
-        graphMemory.searchSimilarProjects(parsed.memoryQuery),
-        graphMemory.searchSimilarDecisions(parsed.memoryQuery),
-      ]);
-
-      let memoryContext = "";
-      if (projects && projects.length > 0) {
-        memoryContext += "### Proyectos Similares:\n" +
-          (projects as Array<{ title: string; id: string; tables: string[]; endpoints: string[] }>).map((r) =>
-            `- Proyecto: ${r.title} (ID: ${r.id})\n  Tablas: ${r.tables.join(", ")}\n  Endpoints: ${r.endpoints.join(", ")}`,
-          ).join("\n") + "\n\n";
-      }
-      if (decisions && decisions.length > 0) {
-        memoryContext += "### Decisiones Arquitectónicas (ADRs) Relevantes:\n" +
-          (decisions as Array<{ title: string; projectTitle: string; context: string; consequence: string }>).map((d) =>
-            `- **${d.title}** (Proyecto: ${d.projectTitle})\n  Contexto: ${d.context}\n  Consecuencia: ${d.consequence}`,
-          ).join("\n") + "\n";
-      }
-
-      if (!memoryContext) memoryContext = "No se encontraron proyectos o decisiones previas similares.";
+      LOG("ejecutando herramientas agénticas MDD/TheForge: %s", parsed.memoryQuery);
+      let memoryContext = "La búsqueda semántica en grafo FalkorDB fue retirada; usa el borrador MDD y las herramientas disponibles.";
 
       if (toolDeps && state.projectId?.trim() && parsed.memoryQuery) {
         try {
           const tools = getAgenticRagToolset(
-            graphMemory,
             toolDeps.projects,
             toolDeps.theforge,
             toolDeps.ai,
@@ -230,14 +208,14 @@ export async function runManagerLlmTurn(options: RunManagerLlmTurnOptions): Prom
           );
           if (tools.length > 0) {
             const toolSummary = await runAgentToolsRound(llm, tools, parsed.memoryQuery);
-            memoryContext += "\n\n### Herramientas Grafo SDD / TheForge (query_sdd_graph, patch, MCP):\n" + toolSummary;
+            memoryContext = "### Herramientas MDD / TheForge (patch, enmienda, MCP):\n" + toolSummary;
           }
         } catch (err) {
           memoryContext += `\n\n(Error ejecutando herramientas agénticas: ${err instanceof Error ? err.message : String(err)})`;
         }
       }
 
-      messages.push(new HumanMessage(`[Resultados de búsqueda en memoria semántica para "${parsed.memoryQuery}"]:\n${memoryContext}\n\nInstrucción: Usa esta información para decidir la mejor arquitectura o delegación.`));
+      messages.push(new HumanMessage(`[Resultados para "${parsed.memoryQuery}"]:\n${memoryContext}\n\nInstrucción: Usa esta información para decidir la mejor arquitectura o delegación.`));
       continue;
     }
     break;

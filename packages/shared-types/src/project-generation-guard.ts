@@ -153,7 +153,7 @@ export type ProjectGenerationStatus = {
   gates: Partial<Record<GenerationJobType, GenerationGateEntry>>;
   /** Cambios upstream pendientes de reflejar en el MDD (si hay MDD y baseline). */
   mddUpstreamSync?: MddUpstreamSyncStatus | null;
-  /** Estado del grafo SDD (FalkorDB) vs §3/§4 del MDD de la etapa. */
+  /** Coherencia §3/§4 del MDD (inferida del markdown de la etapa). */
   sddGraph?: SddGraphSyncStatus | null;
 };
 

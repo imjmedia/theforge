@@ -8,7 +8,7 @@ import { StageStatus } from "@theforge/database";
 import { isAppRole } from "../common/roles.js";
 import { isInsufficientDbgaIdea } from "../modules/ai-analysis/utils/dbga-idea-validation.util.js";
 import { enrichMddWithUiUxDesignIntent } from "../modules/ai-analysis/utils/mdd-enrich-uiux-intent.js";
-import { validateSddReadQuery } from "../modules/ai-analysis/graph-memory/sdd-query-guard.js";
+import { evaluateMddCoherenceFromMarkdown } from "../modules/engine/mdd-coherence/mdd-coherence.util.js";
 import { PROVIDER_IDS } from "../modules/ai/providers/provider-catalog.js";
 import { enrichBlueprintWithUiDesignSystem } from "../modules/engine/blueprint-enrich-ui-system.js";
 import { pickPrimaryStage } from "../modules/projects/stage-helpers.js";
@@ -47,11 +47,10 @@ describe("smoke API: ai-analysis", () => {
     assert.match(out, /Contexto/);
   });
 
-  it("graph-memory sdd-query-guard rechaza escritura", () => {
-    assert.throws(
-      () => validateSddReadQuery("CREATE (n) RETURN n"),
-      /Consulta no permitida/i,
-    );
+  it("mdd-coherence evalúa markdown §3/§4", () => {
+    const mdd = `## 3. Modelo de Datos\n\n\`\`\`sql\nCREATE TABLE users (id UUID PRIMARY KEY);\n\`\`\`\n\n## 4. Contratos de API\n\nGET /users\n`;
+    const health = evaluateMddCoherenceFromMarkdown(mdd);
+    assert.equal(health.entityCount >= 1, true);
   });
 });
 

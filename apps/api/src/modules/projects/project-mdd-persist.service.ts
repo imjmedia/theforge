@@ -37,7 +37,7 @@ import type { DomainInventory } from "@theforge/shared-types";
 import { pickPrimaryStage, type StageWithEstimation } from "./stage-helpers.js";
 import {
   mergeSddGraphIntoShortTermContext,
-} from "../ai-analysis/graph-memory/sdd-graph-context.util.js";
+} from "../engine/mdd-coherence/sdd-graph-context.util.js";
 
 export type PersistMddFromPatchInput = {
   projectId: string;

@@ -5,6 +5,7 @@ import {
   guardFixTargetAgainstSection5Blockers,
   hasRepeatedPlaceholderBlockers,
   mapAuditorGapsToFixTarget,
+  needsFullArchitectPipelineRegeneration,
   resolveDeliveryGateFixTarget,
   resolveDeliveryGateFixTargetFromGate,
 } from "./mdd-delivery-gate-loop.util.js";
@@ -47,6 +48,21 @@ describe("resolveDeliveryGateFixTarget (CHANGELOG [Unreleased] → Added → \"D
       "Sección 5. Lógica y Edge Cases tiene contenido insuficiente (0 chars; mínimo 200).",
     ]);
     assert.equal(target, "clarifier");
+  });
+
+  it("draft cascarón (§1+§2 rotas y §3–§7 faltantes) → software_architect, no clarifier", () => {
+    const blockers = [
+      "Secciones obligatorias faltantes: 3. Modelo de Datos, 4. Contratos de API, 5. Lógica y Edge Cases, 6. Seguridad, 7. Infraestructura",
+      "Sección 1. Contexto tiene contenido insuficiente (64 chars; mínimo 200).",
+      'Sección 2. Arquitectura y Stack es un placeholder del pipeline (ej. "Pendiente: Arquitecto"). Regenera antes de persistir.',
+    ];
+    assert.equal(needsFullArchitectPipelineRegeneration(blockers), true);
+    assert.equal(resolveDeliveryGateFixTarget(blockers), "software_architect");
+    assert.equal(
+      resolveDeliveryGateFixTarget(blockers, { splitArchitectPipeline: true }),
+      "software_architect",
+    );
+    assert.equal(resolveDeliveryGateFixTargetFromGate(blockers, []), "software_architect");
   });
 
   it("comportamiento legacy preservado: blockers sin §5 van a su ruta normal", () => {

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ComplexityLevel, Status } from "@theforge/database";
 import type { SddGraphSyncStatus } from "@theforge/shared-types";
-import { SddGraphSyncService } from "../ai-analysis/graph-memory/sdd-graph-sync.service.js";
+import { MddCoherenceService } from "./mdd-coherence/mdd-coherence.service.js";
 import { SemaphoreService, type SemaphoreEvaluationInput } from "./semaphore.service.js";
 import { prepareMddForOutput } from "../ai-analysis/utils/mdd-prepare-output.js";
 import { validateMddForDelivery } from "../ai-analysis/utils/mdd-delivery-gate.util.js";
@@ -22,12 +22,12 @@ export class MddUpdatePipelineService {
 
   constructor(
     private readonly semaphore: SemaphoreService,
-    private readonly sddGraphSync: SddGraphSyncService,
+    private readonly mddCoherence: MddCoherenceService,
   ) {}
 
   /**
    * Valida el borrador, sanitiza bloques Mermaid y evalúa semáforo.
-   * Con `graphScope`, sincroniza Falkor **antes** del semáforo (await) y aplica alivio `sddDomainGraphOk` en HIGH.
+   * Con `graphScope`, evalúa coherencia §3/§4 desde markdown antes del semáforo (`sddDomainGraphOk` en HIGH).
    */
   async process(
     rawMddContent: string,
@@ -65,16 +65,16 @@ export class MddUpdatePipelineService {
     const sid = graphScope?.stageId?.trim();
     if (pid && sid && semaphoreBase.complexity === ComplexityLevel.HIGH) {
       try {
-        sddGraph = await this.sddGraphSync.syncMddAndEvaluate(pid, sid, sanitizedMdd);
+        sddGraph = await this.mddCoherence.syncMddAndEvaluate(pid, sid, sanitizedMdd);
         sddDomainGraphOk = sddGraph.isCoherent && sddGraph.state === "synced";
         if (!sddDomainGraphOk) {
           this.logger.debug(
-            `[MddPipeline] Grafo SDD sin alivio semáforo: state=${sddGraph.state} entities=${sddGraph.entityCount}/${sddGraph.expectedEntities} endpoints=${sddGraph.endpointCount}/${sddGraph.expectedEndpoints}`,
+            `[MddPipeline] Coherencia §3/§4 sin alivio semáforo: state=${sddGraph.state} entities=${sddGraph.entityCount}/${sddGraph.expectedEntities} endpoints=${sddGraph.endpointCount}/${sddGraph.expectedEndpoints}`,
           );
         }
       } catch (e) {
         this.logger.warn(
-          `[MddPipeline] FalkorDB / grafo SDD no aplicado al semáforo: ${e instanceof Error ? e.message : String(e)}`,
+          `[MddPipeline] Evaluación coherencia MDD no aplicada al semáforo: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     }

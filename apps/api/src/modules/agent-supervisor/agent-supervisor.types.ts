@@ -1,6 +1,6 @@
 /**
  * Perfil de herramientas que el orquestador inyecta al grafo ReAct / LLM.
- * - sdd: Grafo documental (FalkorDB SDD local, Cypher / GraphMemory).
+ * - sdd: Coherencia §3/§4 inferida del markdown MDD (patch/enmienda).
  * - theforge: MCP TheForge (código) vía TheForgeService / bridge; solo flujo legacy.
  */
 export type AgentToolsProfile = "sdd_only" | "sdd_and_theforge";

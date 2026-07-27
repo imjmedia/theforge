@@ -16,7 +16,7 @@ const DETERMINISTIC_NODES = new Set([
   "format_after_architect",
   "format_after_redactor",
   "format_sec_int",
-  "graph_populator",
+  "structured_hydrator",
   "prepare_output",
 ]);
 

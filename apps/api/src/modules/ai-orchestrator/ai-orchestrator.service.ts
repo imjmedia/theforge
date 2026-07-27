@@ -13,7 +13,6 @@ import { LEGACY_DOCUMENTATION_PROMPT } from "../ai/prompts/legacy-documentation-
 import { AgentSupervisorService } from "../agent-supervisor/agent-supervisor.service.js";
 import { resolvePlatformConfigBoolean } from "../system-config/platform-config.runtime.js";
 import type { SupervisorRouteResult } from "../agent-supervisor/agent-supervisor.types.js";
-import { SddIngestorService } from "../ai-analysis/sdd-ingestor.service.js";
 import { AgentEvaluatorService } from "../agent-supervisor/agent-evaluator.service.js";
 import { EpisodicMemoryKind } from "@theforge/database";
 import { mddContextForUxGuide, uxGuideLlmOptions } from "../ai/ux-guide-llm-context.js";
@@ -89,17 +88,9 @@ export class AiOrchestratorService {
     @Inject(PROJECTS_ORCHESTRATOR_PORT) private readonly projects: IOrchestratorProjectsPort,
     @Inject(THEFORGE_ORCHESTRATOR_PORT) private readonly theforge: IOrchestratorTheForgePort,
     private readonly agentSupervisor: AgentSupervisorService,
-    private readonly sddIngestor: SddIngestorService,
     private readonly agentEvaluator: AgentEvaluatorService,
     private readonly upstreamPropagate: UpstreamPropagateService,
   ) { }
-
-  private scheduleSddIngest(projectId: string, ingestMdd: boolean): void {
-    if (!ingestMdd) return;
-    void this.sddIngestor.ingestProjectMdd(projectId).catch((err) => {
-      console.error("[Orchestrator] SDD ingest failed:", err);
-    });
-  }
 
   private lastAssistantContentForTab(
     session: { chatLog?: unknown } | null | undefined,
@@ -460,11 +451,6 @@ export class AiOrchestratorService {
       (finalProject as { uxUiGuideContent: string | null }).uxUiGuideContent = uxToReturn;
     }
 
-    const shouldIngestMdd =
-      tab === "mdd" &&
-      ((mddFromResponse != null && mddFromResponse.length > 0) ||
-        (mddContentFromClient != null && mddContentFromClient.trim().length > 0));
-    this.scheduleSddIngest(projectId, shouldIngestMdd);
     const evaluatorCritique = await this.maybeEvaluatorCritique(projectId, route, hitlLine);
 
     let documentPersist: OrchestratorDocumentPersist | undefined;
@@ -826,11 +812,6 @@ export class AiOrchestratorService {
             : finalProject?.uxUiGuideContent ?? null;
         const projectOut = { ...finalProject } as typeof finalProject & { uxUiGuideContent?: string | null };
         if (uxToReturn != null) projectOut.uxUiGuideContent = uxToReturn;
-        const shouldIngestMddStream =
-          tab === "mdd" &&
-          ((msg.mddContent != null && msg.mddContent.length > 0) ||
-            (mddContentFromClient != null && mddContentFromClient.trim().length > 0));
-        this.scheduleSddIngest(projectId, shouldIngestMddStream);
         const evaluatorCritique = await this.maybeEvaluatorCritique(projectId, routeStream, hitlLineStream);
 
         let documentPersist: OrchestratorDocumentPersist | undefined;

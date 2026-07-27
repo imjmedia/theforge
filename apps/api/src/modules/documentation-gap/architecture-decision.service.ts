@@ -1,6 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
 import type { AffectedArtifact, DocumentationGapEvidence } from "@theforge/shared-types";
-import { GraphMemoryService } from "../ai-analysis/graph-memory/graph-memory.service.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
 import {
   appendArchitectureDecisionToScaffold,
@@ -18,7 +17,6 @@ export class ArchitectureDecisionService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly graphMemory: GraphMemoryService,
   ) {}
 
   async recordFromSddConflict(
@@ -91,14 +89,6 @@ export class ArchitectureDecisionService {
       where: { id: projectId },
       data: { agentGovernanceContent: serialized },
     });
-
-    try {
-      await this.graphMemory.saveDecision(projectId, record.graphPayload);
-    } catch (err) {
-      this.logger.warn(
-        `ADR grafo no persistido (${record.id}): ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
 
     this.logger.log(`ADR registrado: ${record.path} (${record.source})`);
   }

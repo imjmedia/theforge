@@ -23,7 +23,7 @@ Subcomponentes extraídos de `WorkshopView.tsx` (Fase 5b del [GOD-REFACTOR](../.
 | **useWorkshopDocToolbarProps.ts** | Hook que construye `WorkshopDocToolbarProps`, `docEditToolbarToggle` y `phase0EntryModeToolbarToggle`. Tipos en `useWorkshopDocToolbarProps.types.ts`. |
 | **useWorkshopDocBubbleMenuItems.ts** | Hook del bubble menu contextual del documento (regenerar, limpiar, descargar, imprimir). Tipos en `useWorkshopDocBubbleMenuItems.types.ts`. |
 | **useWorkshopModalsProps.ts** | Hook que construye `WorkshopModalsProps`. Tipos en `useWorkshopModalsProps.types.ts`. |
-| **WorkshopMetricsColumn.tsx** | Columna métricas: panel móvil + flyout desktop (semáforo). Tipos en `workshopMetricsColumn.types.ts`. Usa `WorkshopMetricsColumnInner` (semáforo, **Grafo SDD** desde `generation-status.sddGraph`, Brechas SDD: lista clasificada, **Corregir auto/LLM** → `POST …/repair-sdd-gaps`, **Abrir BRD**, link a auditoría). |
+| **WorkshopMetricsColumn.tsx** | Columna métricas: panel móvil + flyout desktop (semáforo). Tipos en `workshopMetricsColumn.types.ts`. Usa `WorkshopMetricsColumnInner` (semáforo, **Coherencia §3/§4** desde `generation-status.sddGraph`, Brechas SDD: lista clasificada, **Corregir auto/LLM** → `POST …/repair-sdd-gaps`, **Abrir BRD**, link a auditoría). |
 | **WorkshopLayoutShell.tsx** | Grid principal lg (chat + docs + métricas) con slots para overlays móviles y modales. |
 | **WorkshopChatColumn.tsx** | Columna A: chat redimensionable + rail de expansión en desktop. |
 | **WorkshopMobileNav.tsx** | Barra inferior móvil Chat / Docs / Estado. |

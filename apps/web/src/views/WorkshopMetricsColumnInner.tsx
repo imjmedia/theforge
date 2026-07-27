@@ -551,7 +551,7 @@ export function WorkshopMetricsColumnInner({
                 title={sddGraph.message}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-[11px] font-semibold text-[var(--foreground)]">Grafo SDD</p>
+                  <p className="text-[11px] font-semibold text-[var(--foreground)]">Coherencia §3/§4</p>
                   <span className={sddGraphBadgeClass}>
                     {SDD_GRAPH_SYNC_STATE_LABELS[sddGraph.state]}
                   </span>

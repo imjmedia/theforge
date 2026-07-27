@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 /**
  * Asegura que Colima (runtime de contenedores) y los contenedores de infraestructura
- * (Postgres, FalkorDB y Redis de cola BullMQ) existan y estén en ejecución.
+ * (Postgres y Redis de cola BullMQ) existan y estén en ejecución.
  */
 
 const { spawnSync } = require('child_process');
 
 const POSTGRES_NAME = 'theforge-db';
-const FALKOR_NAME = 'theforge-falkor-sdd';
 const REDIS_QUEUE_NAME = 'theforge-redis-queue';
 const COLIMA_START_ARGS = '--cpu 2 --memory 4';
 
@@ -21,15 +20,7 @@ const POSTGRES_RUN_ARGS = [
   'postgres:15-alpine',
 ];
 
-/** FalkorDB (grafo SDD). Puerto host 6379. */
-const FALKOR_RUN_ARGS = [
-  '-d',
-  '--name', FALKOR_NAME,
-  '-p', '6379:6379',
-  'falkordb/falkordb:latest',
-];
-
-/** Redis BullMQ (cola de entregables). Puerto host 6381 (Falkor ya usa 6379). */
+/** Redis BullMQ (cola de entregables). Puerto host 6381. */
 const REDIS_QUEUE_RUN_ARGS = [
   '-d',
   '--name', REDIS_QUEUE_NAME,
@@ -149,9 +140,6 @@ function main() {
 
   const pgReady = waitForPostgres();
   if (pgReady !== 0) return pgReady;
-
-  const falkorOk = ensureContainer(FALKOR_NAME, FALKOR_RUN_ARGS);
-  if (falkorOk !== 0) return falkorOk;
 
   const redisOk = ensureContainer(REDIS_QUEUE_NAME, REDIS_QUEUE_RUN_ARGS);
   return redisOk;

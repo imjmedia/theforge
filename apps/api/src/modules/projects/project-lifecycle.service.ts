@@ -7,7 +7,6 @@ import {
   createProjectSchema,
   type CreateProjectDto,
 } from "@theforge/shared-types";
-import { GraphMemoryService } from "../ai-analysis/graph-memory/graph-memory.service.js";
 import { TheForgeService } from "../theforge/theforge.service.js";
 import { PluginDocumentPipelineService } from "../../plugins/plugin-document-pipeline.service.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
@@ -27,7 +26,6 @@ export class ProjectLifecycleService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly theforge: TheForgeService,
-    private readonly graphMemory: GraphMemoryService,
     private readonly pluginPipeline: PluginDocumentPipelineService,
     private readonly projectGroups: ProjectGroupsService,
   ) {}
@@ -115,26 +113,6 @@ export class ProjectLifecycleService {
         group: { select: { name: true } },
       },
     });
-
-    if (source.projectType === "LEGACY") {
-      const sortedStages = [...created.stages].sort((a, b) => a.ordinal - b.ordinal);
-      for (const stage of sortedStages) {
-        const parentStage =
-          stage.ordinal > 1
-            ? sortedStages.find((candidate) => candidate.ordinal === stage.ordinal - 1)
-            : undefined;
-        this.graphMemory
-          .syncLegacyStage({
-            stageId: stage.id,
-            projectId: created.id,
-            ordinal: stage.ordinal,
-            name: stage.name ?? "",
-            parentStageId: parentStage?.id,
-            theforgeProjectId: source.theforgeProjectId ?? undefined,
-          })
-          .catch(() => {});
-      }
-    }
 
     return {
       ...toApiProject(created),

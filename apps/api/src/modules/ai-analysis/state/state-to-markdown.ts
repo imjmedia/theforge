@@ -27,7 +27,7 @@ const AGENT_LABELS: Record<string, string> = {
   cross_consistency_checker: "Consistencia cruzada (MDD)",
   diagram_injector: "Inyector de diagramas (MDD)",
   prepare_output: "Preparación de salida (MDD)",
-  graph_populator: "Poblador de grafo (MDD)",
+  structured_hydrator: "Hidratación estructurada (MDD)",
   section5: "Ingeniero de Lógica (§5)",
   redactor: "Redactor (MDD)",
   // "auditor" ya existe para DBGA; para MDD el nodo se llama "auditor" pero el mensaje es distinto

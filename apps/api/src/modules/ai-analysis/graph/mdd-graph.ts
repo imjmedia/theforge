@@ -22,7 +22,8 @@ import { createMddManagerNode, type MddManagerToolDeps } from "../nodes/mdd-mana
 import { createMddPlanApprovalNode } from "../nodes/mdd-plan-approval.node.js";
 import { createMddExecutorNode } from "../nodes/mdd-executor.node.js";
 import { createMddMergeSection1Node } from "../nodes/mdd-merge-section1.node.js";
-import { createMddGraphPopulatorNode } from "../nodes/mdd-graph-populator.node.js";
+import { createMddStructuredHydratorNode } from "../nodes/mdd-structured-hydrator.node.js";
+import type { PrismaService } from "../../../prisma/prisma.service.js";
 import { createMddCrossConsistencyNode } from "../nodes/mdd-cross-consistency.node.js";
 import { createMddFormatSecIntNode } from "../nodes/mdd-format-sec-int.node.js";
 import { createMddPrepareOutputNode } from "../nodes/mdd-prepare-output.node.js";
@@ -30,7 +31,6 @@ import { createMddBlackboardNode } from "../nodes/mdd-blackboard.node.js";
 import { draftHasSubstantialSections6And7 } from "../utils/mdd-delivery-gate-loop.util.js";
 import { draftIsSubstantialForScopedRepair } from "../utils/mdd-section-preserve.util.js";
 import { mddStateHasDomainAuthSkew } from "../utils/mdd-domain-prompt.util.js";
-import { GraphMemoryService } from "../graph-memory/graph-memory.service.js";
 import { detectSection3CompositionBlockers } from "../utils/schema-owner.util.js";
 import type { UserLLMRuntime } from "../../ai/providers/llm-runtime.types.js";
 import { createDbgaLLM, createDbgaLLMFromRuntime, createMddAuditorLLM, createMddHighComplexityLLM } from "../llm/create-dbga-llm.js";
@@ -131,6 +131,8 @@ export type MddGraphCompileOptions = {
   onNodeStart?: (nodeName: string) => void;
   /** Runtime tras sonda MDD (modelo reordenado si el principal falló). */
   preflightRuntime?: UserLLMRuntime | null;
+  /** Prisma para persistir ADRs extraídos al hidratar mddStructured. */
+  prisma?: PrismaService | null;
 };
 
 /**
@@ -141,7 +143,6 @@ export type MddGraphCompileOptions = {
 export async function createMddGraph(
   aiFactory: AIFactory,
   userId: string,
-  graphMemory: GraphMemoryService,
   options?: MddGraphCompileOptions,
 ) {
   const llm = options?.preflightRuntime
@@ -257,9 +258,9 @@ export async function createMddGraph(
     createMddAuditorNode(auditorLlm, getMddAuditorTools(), null),
     onNodeStart,
   );
-  const graphPopulatorNode = wrapNodeStart(
-    "graph_populator",
-    createMddGraphPopulatorNode(llm, graphMemory),
+  const structuredHydratorNode = wrapNodeStart(
+    "structured_hydrator",
+    createMddStructuredHydratorNode(llm, options?.prisma ?? null),
     onNodeStart,
   );
   const prepareOutputNode = wrapNodeStart(
@@ -302,7 +303,7 @@ export async function createMddGraph(
       if (state.deliveryGateFixTarget === "api_contracts") return "api_contracts";
       return "software_architect";
     }
-    return "graph_populator";
+    return "structured_hydrator";
   }
 
   function routeAfterFormatArchitectGateLoop(state: MDDStateType): string {
@@ -377,7 +378,7 @@ export async function createMddGraph(
     .addNode("diagram_injector", diagramInjectorNode)
     .addNode("auditor", auditorNode)
     .addNode("prepare_output", prepareOutputNode)
-    .addNode("graph_populator", graphPopulatorNode)
+    .addNode("structured_hydrator", structuredHydratorNode)
     // Dedicated §5 pass: regenera SOLO §5 cuando el substance check falla
     // únicamente en §5. CHANGELOG [Unreleased] → Added → "Dedicated §5 pass".
     .addNode("section5", section5Node)
@@ -430,9 +431,9 @@ export async function createMddGraph(
       integration: "integration",
       clarifier: "clarifier",
       section5: "section5",
-      graph_populator: "graph_populator",
+      structured_hydrator: "structured_hydrator",
     })
-    .addEdge("graph_populator", END);
+    .addEdge("structured_hydrator", END);
 
   return builder.compile();
 }
@@ -448,7 +449,6 @@ export async function createMddGraphWithManager(
   aiFactory: AIFactory,
   userId: string,
   checkpointer: BaseCheckpointSaver | null,
-  graphMemory: GraphMemoryService,
   precisionCalculator?: LivePrecisionCalculator | null,
   managerToolDeps?: MddManagerToolDeps | null,
   compileOptions?: MddGraphCompileOptions,
@@ -464,7 +464,7 @@ export async function createMddGraphWithManager(
   });
   const auditorLlm = await createMddAuditorLLM(aiFactory, userId);
   const nodeCache = compileOptions?.nodeCache ?? null;
-  const managerNode = createMddManagerNode(llm, graphMemory, precisionCalculator, managerToolDeps ?? null);
+  const managerNode = createMddManagerNode(llm, precisionCalculator, managerToolDeps ?? null);
   const askInitialTopicNode = createMddAskInitialTopicNode();
   const clarifierNode = wrapCache(nodeCache, "clarifier", clarifierInput, createMddClarifierNode(llm));
   const theForgeForArchitect = compileOptions?.theforge ?? managerToolDeps?.theforge ?? null;
@@ -537,7 +537,7 @@ export async function createMddGraphWithManager(
     precisionCalculator ?? null,
   );
   const blackboardNode = createMddBlackboardNode(llm);
-  const graphPopulatorNode = createMddGraphPopulatorNode(llm, graphMemory);
+  const structuredHydratorNode = createMddStructuredHydratorNode(llm, compileOptions?.prisma ?? null);
   const prepareOutputNode = createMddPrepareOutputNode({
     uiMcpLibraryLabel: compileOptions?.uiMcpFrontendLibraryLabel ?? null,
   });
@@ -571,7 +571,7 @@ export async function createMddGraphWithManager(
       if (state.deliveryGateFixTarget === "api_contracts") return "api_contracts";
       return "software_architect";
     }
-    return "graph_populator";
+    return "structured_hydrator";
   }
 
   /** Si hay directiva/requisitos, SQL blockers, o BRD domain skew y §3 con contenido y attempts < 1 → critic. */
@@ -691,7 +691,7 @@ export async function createMddGraphWithManager(
     if (state.executorControlled === true) return "executor";
     return state.sectionsToRun?.[0] || "manager";
   }
-  function routeAfterGraphPopulator(state: MDDStateType): string {
+  function routeAfterStructuredHydrator(state: MDDStateType): string {
     if (state.executorControlled === true) return "executor";
     return "manager";
   }
@@ -721,7 +721,7 @@ export async function createMddGraphWithManager(
     "section5",
     "tail_parallel",
     "cross_consistency_checker",
-    "graph_populator",
+    "structured_hydrator",
     "blackboard",
     "prepare_output",
   ] as const;
@@ -745,7 +745,7 @@ export async function createMddGraphWithManager(
     "cross_consistency_checker",
     "diagram_injector",
     "auditor",
-    "graph_populator",
+    "structured_hydrator",
     "blackboard",
     "manager",
     "prepare_output",
@@ -777,7 +777,7 @@ export async function createMddGraphWithManager(
     .addNode("auditor", auditorNode)
     .addNode("prepare_output", prepareOutputNode)
     .addNode("blackboard", blackboardNode)
-    .addNode("graph_populator", graphPopulatorNode)
+    .addNode("structured_hydrator", structuredHydratorNode)
     .addEdge(START, "manager")
     .addConditionalEdges("clarifier", routeAfterClarifier, {
       manager: "manager",
@@ -893,7 +893,7 @@ export async function createMddGraphWithManager(
       integration: "integration",
       clarifier: "clarifier",
       section5: "section5",
-      graph_populator: "graph_populator",
+      structured_hydrator: "structured_hydrator",
     })
     .addConditionalEdges("blackboard", routeAfterBlackboard, {
       executor: "executor",
@@ -902,7 +902,7 @@ export async function createMddGraphWithManager(
       security: "security",
       integration: "integration",
     })
-    .addConditionalEdges("graph_populator", routeAfterGraphPopulator, {
+    .addConditionalEdges("structured_hydrator", routeAfterStructuredHydrator, {
       executor: "executor",
       manager: "manager",
     });

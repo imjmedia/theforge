@@ -14,7 +14,6 @@ import { AiModule } from "../ai/ai.module.js";
 import { Phase0Module } from "../ai-analysis/phase0/phase0.module.js";
 import { ScraperModule } from "../scraper/scraper.module.js";
 import { TheForgeModule } from "../theforge/theforge.module.js";
-import { GraphMemoryModule } from "../ai-analysis/graph-memory/graph-memory.module.js";
 import { ChangeLogModule } from "../change-log/change-log.module.js";
 import { DocumentSnapshotModule } from "../document-snapshot/document-snapshot.module.js";
 import { LegacyFlowModule } from "../legacy-flow/legacy-flow.module.js";
@@ -50,7 +49,6 @@ import { PluginModule } from "../../plugins/plugin.module.js";
     Phase0Module,
     ScraperModule,
     forwardRef(() => TheForgeModule),
-    GraphMemoryModule,
     ChangeLogModule,
     DocumentSnapshotModule,
     forwardRef(() => LegacyFlowModule),

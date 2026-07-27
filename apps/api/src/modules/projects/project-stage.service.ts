@@ -13,7 +13,6 @@ import {
 } from "@theforge/shared-types";
 import { getRequestUserId } from "../../common/request-user.store.js";
 import { prependDocumentTimestamps } from "../engine/document-date-header.util.js";
-import { GraphMemoryService } from "../ai-analysis/graph-memory/graph-memory.service.js";
 import { ChangeLogService } from "../change-log/change-log.service.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
 import {
@@ -38,7 +37,6 @@ export class ProjectStageService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly estimationRecalc: ProjectEstimationRecalcService,
-    private readonly graphMemory: GraphMemoryService,
     private readonly changeLog: ChangeLogService,
   ) {}
 
@@ -164,30 +162,6 @@ export class ProjectStageService {
       include: { estimation: true },
     });
     if (!out) throw new NotFoundException("Etapa no encontrada tras crear");
-
-    if (isLegacy) {
-      this.graphMemory.syncLegacyStage({
-        stageId: out.id,
-        projectId,
-        ordinal: out.ordinal,
-        name: out.name ?? "",
-        theforgeProjectId: project.theforgeProjectId ?? undefined,
-      }).catch(() => {});
-      if (out.ordinal > 1) {
-        const parentOrdinal = out.ordinal - 1;
-        const parentStage = project.stages.find((s) => s.ordinal === parentOrdinal);
-        if (parentStage) {
-          this.graphMemory.syncLegacyStage({
-            stageId: out.id,
-            projectId,
-            ordinal: out.ordinal,
-            name: out.name ?? "",
-            parentStageId: parentStage.id,
-            theforgeProjectId: project.theforgeProjectId ?? undefined,
-          }).catch(() => {});
-        }
-      }
-    }
 
     return { stage: out };
   }

@@ -74,6 +74,36 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
   - `CONTRIBUTING.md`: sub-sección "Githooks (recomendado)" en "Local development" + nota en "Tests and lint" sobre `pnpm typecheck` vs `pnpm test:types`.
   - `README-LOCAL.md`: paso 6 "Githooks (recomendado)" tras los pasos de Docker / dev.
 
+## [v1.7.0] — 2026-07-27
+
+> **Coherencia MDD sin Falkor + fixes pipeline MDD (Clarifier / delivery gate)** — El API deja de depender de FalkorDB para el grafo SDD documental; la coherencia §3↔§4 se infiere del markdown. ADRs y legacy gate migran a fuentes Prisma/markdown. Incluye correcciones cuando el Clarifier devuelve §1 vacío con DBGA grande y cuando un cascarón MDD debe re-enrutar al arquitecto completo.
+
+### Added
+
+- **`engine/mdd-coherence/`** — `MddCoherenceService`, `evaluateMddCoherenceFromMarkdown`, `buildSddStageSnapshotFromMdd`, utilidades CONSUMES desde SQL §3 y rutas §4; snapshot en `Stage.shortTermContext.sddGraph`.
+- **`finalizeClarifierDraft`** (`mdd-clarifier-draft.util.ts`) — preserva baseline si el LLM devuelve §1 insustancial; hidrata §1 desde scope/DBGA cuando DBGA ≥ 5k.
+- **Nodo LangGraph `structured_hydrator`** — sustituye `graph_populator`: hidrata `mddStructured` y extrae ADRs a `agentGovernanceContent` (sin Falkor).
+- **`persistProjectAdrsToGovernance`** — ADRs de patrones SSOT y extracción MDD en `agentGovernanceContent`.
+
+### Changed
+
+- **FalkorDB retirado del API:** eliminados `graph-memory/`, `SddIngestorService`, dependencia `falkordb`, tools Cypher (`query_sdd_graph`, `supervisor_query_sdd_graph`), contenedor `theforge-falkor-sdd` en `ensure-infra.js` y vars `FALKORDB_*` en `.env.example`.
+- **Semáforo / pipeline HIGH:** `sddDomainGraphOk` vía `MddCoherenceService` (markdown) en lugar de `GraphMemoryService.evaluateSddDependencyHealth`.
+- **Legacy index gate:** `assertLegacyIndexSddGate` usa snapshot §3/§4 parseado del MDD de la etapa, no Falkor.
+- **Manager MDD:** `search_memory` ejecuta patch/enmienda MDD y MCP legacy; sin búsqueda semántica Falkor. Prompt y README alineados.
+- **Workshop:** badge «Coherencia §3/§4» (antes «Grafo SDD»). Labels `SDD_GRAPH_SYNC_STATE_LABELS`: Coherente / Incoherente / Sin §3/§4.
+- **Docs locales:** `README-LOCAL.md`, `scripts/README.md`, `agent-supervisor/README.md` sin Falkor SDD.
+
+### Fixed
+
+- **Clarifier con DBGA grande (1.3):** draft corrupto (§1 ~64 chars, §3–§7 faltantes) ya no pisa el baseline cuando el LLM devuelve §1 insustancial.
+- **Delivery gate cascarón (1.4):** §1/§2 rotas + ≥3 secciones §3–§7 faltantes enrutan a `software_architect`, no a `clarifier`. `gateHasSection5SubstanceBlocker` no confunde blocker de secciones faltantes con sustancia §5.
+
+### Architecture
+
+- ADRs: única fuente en `agentGovernanceContent` (`ArchitectureDecisionService`, `getProjectDecisions`, wizard de patrones SSOT).
+- Integración legacy/new: eliminados sync Falkor (`INTEGRATES_WITH`, handoff `SATISFIES`); persistencia Prisma intacta.
+
 ## [v1.6.3] — 2026-07-21
 
 > **Tasks — contratos livianos y map-reduce por capa** — Sustituye el dump masivo de documentos SDD por manifiesto JSON, Context Anchors por HU y prompts segmentados Backend / Frontend / Infra / QA / Integración.

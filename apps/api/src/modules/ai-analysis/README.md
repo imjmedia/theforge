@@ -12,9 +12,8 @@ Módulo de análisis agentic para **Domain Benchmark & Gap Analysis (DBGA)**. Or
 - **graph/** – `dbga-graph.ts` – StateGraph compilado; edges Scout → Auditor → Critic → (Scout | Synthesis) → END
 - **nodes/** – Nodos por agente: Scout (con tools), Auditor (con tools), Critic, Synthesis
 - **tools/** – ToolRegistry e integración externa
-  - `tool-registry.ts` – `getScoutTools()` (Tavily + scrape_url), `getAuditorTools()` (scrape_url), `getAgenticRagToolset()` (SDD: Cypher lectura + supervisor + patch secciones + `propose_mdd_amendment`; TheForge legacy opcional)
-  - `graph-memory/graph-memory.service.ts` – ingesta SDD por **Stage**: nodos `Stage`, `MDD_Section`, `DB_Entity`, `API_Endpoint`, relaciones `CONSUMES` / `IMPLEMENTS` (vía `syncMddToGraph` + `activeStageId` en el estado MDD)
-  - `agent-sdd-tools.ts` – `query_sdd_graph` (Cypher lectura), `patch_mdd_section` (secciones 1–7)
+  - `tool-registry.ts` – `getScoutTools()` (Tavily + scrape_url), `getAuditorTools()` (scrape_url), `getAgenticRagToolset()` (patch secciones + `propose_mdd_amendment`; TheForge legacy opcional)
+  - `agent-sdd-tools.ts` – `patch_mdd_section` (secciones 1–7), `propose_mdd_amendment` (§3/§4)
   - `agent-theforge-tools.ts` – `ask_codebase`, `get_modification_plan`, `validate_before_edit`, `get_file_content`, `get_legacy_impact`, … (fijadas a `theforgeProjectId`); subconjunto **Arquitecto MDD** (`getMddArchitectTheForgeTools`): `get_contract_specs`, `get_implementation_details`, `get_legacy_impact`
   - `tavily.tool.ts` – Búsqueda web para Scout (`TAVILY_API_KEY`)
   - `scrape-cheerio.tool.ts` – Scrape URL → markdown + metadata (Cheerio + fetch; sin API key)
@@ -27,9 +26,8 @@ Módulo de análisis agentic para **Domain Benchmark & Gap Analysis (DBGA)**. Or
   - `live-semaphore-status.util.ts` – mapeo `green|yellow|red` ↔ `VERDE|AMARILLO|ROJO`.
 - **ai-analysis.controller.ts** – `GET /ai-analysis/estimation?projectId=` y opcional `&stageId=` (MDD de esa etapa; sin param, etapa primaria); `POST /ai-analysis/estimation` body puede incluir `stageId`; `clear-draft` igual. `POST /ai-analysis/start` con body `{ idea, projectId? }`; `POST /ai-analysis/stream` (DBGA); `GET /ai-analysis/mdd/thread?projectId=&stageId=` — `threadId` del Manager por etapa (`AgentStateCheckpoint` único por `projectId` + `mddStageId`). `POST /ai-analysis/mdd/stream` body opcional `stageId` (borrador en vivo / checkpoint alineados a la etapa); `mdd/stream/manager` y `mdd/stream/regenerate-section` igual; `mdd/stream/resume` resuelve etapa desde el checkpoint. **`mdd/stream/manager`** y **`mdd/stream/resume`** aceptan `images` (mismo formato que chat: `parseChatImageAttachments`); el servicio fusiona visión vía `AiService.describeImagesForMddPipeline` en `lastUserMessage`. NDJSON: `progress` / `done` / `error`
 - **state/state-to-markdown.ts** – `stateToMarkdown(state)` genera el documento markdown final del DBGA; `getAgentLabel(nodeName, context?)` para etiquetas de agentes DBGA y MDD
-- **graph-memory/** – FalkorDB (`FALKORDB_SDD_URL`): `graph-memory.service.ts` (`syncMddToGraph`, `evaluateSddDependencyHealth` vía Cypher, `querySddGraphReadOnly`); `graph-memory.module.ts` exporta el servicio para `EngineModule` / pipeline de MDD sin ciclo con `ProjectsModule`
-- **sdd-ingestor.service.ts** – Parsea MDD markdown → estructurado y sincroniza el grafo (lo dispara `AiOrchestratorService` tras chat/stream si el MDD cambió)
-- **ai-analysis.module.ts** – Módulo NestJS
+- **nodes/mdd-structured-hydrator.node.ts** – Hidrata `mddStructured` al final del pipeline LangGraph (sin FalkorDB); extrae ADRs a `agentGovernanceContent`.
+- **ai-analysis.module.ts** – Módulo NestJS; importa `MddCoherenceModule` para semáforo §3/§4.
 
 ## Flujo MDD (Master Design Document)
 
