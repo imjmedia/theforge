@@ -79,6 +79,7 @@ export function createMddPrepareOutputNode(options?: { uiMcpLibraryLabel?: strin
         .join("\n\n");
       return {
         mddDraft: prepared,
+        previousMddDraftForMerge: state.mddDraft,
         deliveryGate: gate,
         deliveryGateAttempt: attempt + 1,
         deliveryGateLoopActive: true,
