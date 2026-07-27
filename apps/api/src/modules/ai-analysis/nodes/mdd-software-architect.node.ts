@@ -53,9 +53,11 @@ import {
   canUseSurgicalMergeBaseline,
   draftHasPersistableSection4,
   draftHasSubstantialSection2,
+  draftHasSubstantialSection3,
   preserveNonTargetValidatedSectionsAfterArchitectMerge,
   preserveSection1FromClarifierSnapshot,
   preserveSection2FromStackSnapshot,
+  preserveSection3FromDataModelSnapshot,
   preserveSection4FromApiContractsSnapshot,
   preserveValidatedSectionsIfSubstantial,
 } from "../utils/mdd-section-preserve.util.js";
@@ -978,6 +980,7 @@ export function createMddSoftwareArchitectNode(
         }
         out = preserveSection1FromClarifierSnapshot(state.clarifierMddDraftSnapshot, out);
         out = preserveSection2FromStackSnapshot(state.stackArchitectMddDraftSnapshot, out);
+        out = preserveSection3FromDataModelSnapshot(state.dataModelArchitectMddDraftSnapshot, out);
         out = preserveSection4FromApiContractsSnapshot(state.apiContractsArchitectMddDraftSnapshot, out);
         if (canUseSurgicalMergeBaseline(mergeBaseline, minLength)) {
           out =
@@ -1169,6 +1172,10 @@ export function createMddSoftwareArchitectNode(
         scope === "stack" && draftHasSubstantialSection2(mddDraft)
           ? { stackArchitectMddDraftSnapshot: mddDraft }
           : {};
+      const dataModelSnapshotUpdate =
+        scope === "data_model" && draftHasSubstantialSection3(mddDraft)
+          ? { dataModelArchitectMddDraftSnapshot: mddDraft }
+          : {};
       const apiContractsSnapshotUpdate =
         scope === "api_contracts" && draftHasPersistableSection4(mddDraft)
           ? { apiContractsArchitectMddDraftSnapshot: mddDraft }
@@ -1182,10 +1189,18 @@ export function createMddSoftwareArchitectNode(
           ...meshUpdate,
           ...phaseUpdate,
           ...stackSnapshotUpdate,
+          ...dataModelSnapshotUpdate,
           ...apiContractsSnapshotUpdate,
         };
       }
-      return { mddDraft, ...meshUpdate, ...phaseUpdate, ...stackSnapshotUpdate, ...apiContractsSnapshotUpdate };
+      return {
+        mddDraft,
+        ...meshUpdate,
+        ...phaseUpdate,
+        ...stackSnapshotUpdate,
+        ...dataModelSnapshotUpdate,
+        ...apiContractsSnapshotUpdate,
+      };
     } catch (err) {
       LOG("error: %s", err instanceof Error ? err.message : String(err));
       throw err;

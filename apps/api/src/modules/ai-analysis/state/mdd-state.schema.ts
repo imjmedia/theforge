@@ -87,6 +87,8 @@ export const mddStateSchema = z.object({
   clarifierMddDraftSnapshot: z.string().optional(),
   /** Snapshot del borrador tras stack_architect (pipeline HIGH): ancla §2 frente a data_model/api_contracts. */
   stackArchitectMddDraftSnapshot: z.string().optional(),
+  /** Snapshot del borrador tras data_model (pipeline HIGH): ancla §3 frente a api_contracts/format/SSOT. */
+  dataModelArchitectMddDraftSnapshot: z.string().optional(),
   /** Snapshot del borrador tras api_contracts (pipeline HIGH): ancla §4 frente a format/SSOT. */
   apiContractsArchitectMddDraftSnapshot: z.string().optional(),
   /** Secuencia de nodos a ejecutar cuando delegateTarget="sections" (ej. ["software_architect", "security", "integration", ...]). */
@@ -202,6 +204,7 @@ export const defaultMDDState: MDDState = {
   previousMddDraftForMerge: undefined,
   clarifierMddDraftSnapshot: undefined,
   stackArchitectMddDraftSnapshot: undefined,
+  dataModelArchitectMddDraftSnapshot: undefined,
   apiContractsArchitectMddDraftSnapshot: undefined,
   sectionsToRun: undefined,
   acceptedProposalDirective: undefined,
