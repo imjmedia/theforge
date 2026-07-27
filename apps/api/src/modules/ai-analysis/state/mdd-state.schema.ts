@@ -83,6 +83,8 @@ export const mddStateSchema = z.object({
   delegateTarget: z.enum(["clarifier_only", "full_pipeline", "sections"]).optional(),
   /** Copia del mddDraft antes de delegar a Clarifier con delegateTarget=clarifier_only; se usa para fusionar solo sección 1. */
   previousMddDraftForMerge: z.string().optional(),
+  /** Snapshot del borrador tras Clarificador (pipeline HIGH): ancla §1 frente a merge/dedupe de stack/data_model/api. */
+  clarifierMddDraftSnapshot: z.string().optional(),
   /** Secuencia de nodos a ejecutar cuando delegateTarget="sections" (ej. ["software_architect", "security", "integration", ...]). */
   sectionsToRun: z.array(z.string()).optional(),
   /** Directiva concreta aceptada por el usuario (ej. "restricciones FK en todas las tablas"); el agente responsable debe aplicarla al MDD. */
@@ -194,6 +196,7 @@ export const defaultMDDState: MDDState = {
   askedInitialTopicQuestion: undefined,
   delegateTarget: undefined,
   previousMddDraftForMerge: undefined,
+  clarifierMddDraftSnapshot: undefined,
   sectionsToRun: undefined,
   acceptedProposalDirective: undefined,
   lastStepFailed: undefined,
