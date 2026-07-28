@@ -76,15 +76,32 @@ describe("api-conformance-repair", () => {
   it("inyecta filas para endpoints §4 faltantes", () => {
     const api = "# Contratos API\n\nSolo health parcial.\n\n| GET | `/health` | ok |\n";
     const out = injectMissingApiEndpoints(MDD, api);
-    assert.match(out, /completados automáticamente/i);
+    assert.match(out, /MDD §4/i);
     assert.match(out, /\/api\/auth\/login/i);
     const after = checkApiVsMdd(MDD, out);
     assert.equal(after.missingInApi.length, 0, after.missingInApi.join("; "));
+    assert.equal(after.extraInApi.length, 0);
   });
 
   it("repairApiProgrammaticGaps deja conformidad ok", () => {
     const api = "| GET | `/health` | h |\n";
     const out = repairApiProgrammaticGaps(MDD, api);
     assert.equal(checkApiVsMdd(MDD, out).ok, true);
+  });
+
+  it("elimina endpoints extra no declarados en MDD §4", () => {
+    const api = `# Contratos API
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | \`/health\` | ok |
+| GET | \`/api/v1/phantom\` | inventado |
+| POST | \`/api/auth/login\` | login |
+`;
+    const out = repairApiProgrammaticGaps(MDD, api);
+    const r = checkApiVsMdd(MDD, out);
+    assert.equal(r.ok, true, [...r.missingInApi, ...r.extraInApi].join("; "));
+    assert.equal(r.extraInApi.length, 0);
+    assert.ok(!out.includes("phantom"));
   });
 });

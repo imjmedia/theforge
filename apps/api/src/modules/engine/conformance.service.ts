@@ -281,7 +281,7 @@ export function normEp(ep: { method: string; path: string }): string {
   return `${method} ${path}`;
 }
 
-function apiEndpointsMatch(mddNorm: string, apiNorm: string): boolean {
+export function apiEndpointsMatch(mddNorm: string, apiNorm: string): boolean {
   if (mddNorm === apiNorm) return true;
   return mddNorm.toLowerCase() === apiNorm.toLowerCase();
 }
@@ -636,7 +636,7 @@ export function checkApiVsMdd(mddContent: string | null, apiContent: string | nu
       Array.from(mddEndpoints).some((m) => apiEndpointsMatch(m, ep));
     if (!match) extraInApi.push(ep);
   }
-  const ok = missingInApi.length === 0;
+  const ok = missingInApi.length === 0 && extraInApi.length === 0;
   return { ok, missingInApi, extraInApi };
 }
 

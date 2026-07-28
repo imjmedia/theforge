@@ -211,6 +211,44 @@ export type ConvergenceRetryPlan = {
   autoRepairMdd: boolean;
 };
 
+const CONVERGENCE_DELIVERABLE_ORDER = [
+  "api_contracts",
+  "blueprint",
+  "logic_flows",
+  "architecture",
+  "spec",
+  "use_cases",
+  "user_stories",
+  "ux_ui_guide",
+  "tasks",
+  "infra",
+  "agent_governance",
+] as const;
+
+/** Feedback acotado por artefacto para regeneración dirigida en cascada. */
+export function buildConvergenceFeedbackForDeliverable(
+  gaps: string[],
+  deliverable: string,
+  limit = 48,
+): string {
+  const classified = gaps.map(classifyGap);
+  const auto = classified.filter((g) => g.kind === "auto").map((g) => g.message);
+  const llm = classified
+    .filter((g) => g.kind === "llm" && g.targetDeliverable === deliverable)
+    .map((g) => g.message);
+  return [...auto.slice(0, 8), ...llm.slice(0, limit)].join("\n");
+}
+
+/** Orden estable de regeneración (API antes que Blueprint, etc.). */
+export function orderConvergenceDeliverables(deliverables: string[]): string[] {
+  const set = new Set(deliverables);
+  const ordered = CONVERGENCE_DELIVERABLE_ORDER.filter((d) => set.has(d));
+  for (const d of deliverables) {
+    if (!ordered.includes(d)) ordered.push(d);
+  }
+  return ordered;
+}
+
 /** Plan de reintentos dirigidos a partir de gaps clasificados (ciclo de convergencia post-cascada). */
 export function buildConvergenceRetryPlan(gaps: string[]): ConvergenceRetryPlan {
   const classified = gaps.map(classifyGap);
@@ -230,8 +268,8 @@ export function buildConvergenceRetryPlan(gaps: string[]): ConvergenceRetryPlan 
   const autoMessages = classified.filter((g) => g.kind === "auto").map((g) => g.message);
 
   const feedbackParts = [
-    ...autoMessages.slice(0, 8),
-    ...llmMessages.slice(0, 16),
+    ...autoMessages.slice(0, 12),
+    ...llmMessages.slice(0, 40),
   ];
 
   return {

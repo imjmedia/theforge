@@ -17,7 +17,6 @@ import { DeliverablesQueueService } from "./deliverables-queue.service.js";
 import { MddQueueService } from "../ai-analysis/mdd/mdd-queue.service.js";
 import { MddUpstreamSyncService } from "../ai-analysis/mdd/mdd-upstream-sync.service.js";
 import { MddCoherenceService } from "../engine/mdd-coherence/mdd-coherence.service.js";
-import { readSddGraphContext } from "../engine/mdd-coherence/sdd-graph-context.util.js";
 import { pickPrimaryStage } from "./stage-helpers.js";
 
 type TrackedBgJob = {
@@ -128,8 +127,7 @@ export class ProjectGenerationGuardService {
         | undefined;
       if (stage?.id) {
         const mdd = String(stage.mddContent ?? (project as { mddContent?: string }).mddContent ?? "");
-        const { context } = readSddGraphContext(stage.shortTermContext);
-        sddGraph = await this.mddCoherence.evaluateFromMdd(projectId, String(stage.id), mdd, context);
+        sddGraph = await this.mddCoherence.evaluateFromMdd(projectId, String(stage.id), mdd);
       }
     } catch {
       sddGraph = null;

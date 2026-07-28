@@ -35,6 +35,7 @@ import {
   repairApiProgrammaticGaps,
   runApiConformanceCheck,
 } from "../engine/api-conformance-repair.util.js";
+import { repairLogicFlowsProgrammaticGaps } from "../engine/logic-flows-conformance-repair.util.js";
 import {
   buildInfraConformanceGapFeedback,
   extractEntities,
@@ -1145,6 +1146,8 @@ export class ProjectDeliverableGeneratorsService {
     cleaned = cleanDocumentContent(await this.ai.generateLogicFlows(mdd, combinedFeedback, legacyOpts));
     lfCheck = this.conformance.checkLogicFlows(mdd, cleaned);
   }
+
+  cleaned = repairLogicFlowsProgrammaticGaps(mdd, cleaned);
 
   if ((project as { projectType?: string }).projectType === "LEGACY") {
     await this.persistLegacyLogicFlowsCoverageDebug(projectId, project, cleaned, legacyOpts);

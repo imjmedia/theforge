@@ -26,19 +26,7 @@ describe("resolveMddCoherenceState", () => {
     assert.equal(status.isCoherent, true);
   });
 
-  it("marca stale cuando el MDD cambió tras evaluación previa", () => {
-    const status = resolveMddCoherenceState({
-      expectedEntities: 4,
-      expectedEndpoints: 8,
-      entityCount: 4,
-      endpointCount: 8,
-      isCoherent: true,
-      mddChangedSinceSync: true,
-    });
-    assert.equal(status.state, "stale");
-  });
-
-  it("marca stale con huérfanos", () => {
+  it("marca stale con huérfanos aunque §3/§4 cuadren en conteo", () => {
     const status = resolveMddCoherenceState({
       expectedEntities: 2,
       expectedEndpoints: 3,
@@ -49,7 +37,7 @@ describe("resolveMddCoherenceState", () => {
       orphanEndpointCount: 1,
     });
     assert.equal(status.state, "stale");
-    assert.match(status.message, /huérfano/i);
+    assert.match(status.message, /CONSUMES inferido/i);
   });
 });
 

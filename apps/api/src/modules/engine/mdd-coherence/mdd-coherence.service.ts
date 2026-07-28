@@ -1,12 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
-import {
-  mddGraphFingerprint,
-  resolveMddCoherenceState,
-  type SddGraphSyncStatus,
-} from "@theforge/shared-types";
+import { resolveMddCoherenceState, type SddGraphSyncStatus } from "@theforge/shared-types";
 import { parseMddGraphExpectations } from "./mdd-graph-expectations.util.js";
 import { evaluateMddCoherenceFromMarkdown } from "./mdd-coherence.util.js";
-import type { StoredSddGraphContext } from "./sdd-graph-context.util.js";
 
 @Injectable()
 export class MddCoherenceService {
@@ -21,17 +16,14 @@ export class MddCoherenceService {
     return this.evaluateFromMdd(projectId, stageId, mddMarkdown);
   }
 
+  /** Evalúa coherencia §3/§4 en vivo desde el markdown actual (sin comparar huella persistida). */
   async evaluateFromMdd(
     _projectId: string,
     _stageId: string,
     mddMarkdown: string,
-    context?: StoredSddGraphContext | null,
   ): Promise<SddGraphSyncStatus> {
     const expectations = parseMddGraphExpectations(mddMarkdown);
     const health = evaluateMddCoherenceFromMarkdown(mddMarkdown);
-    const fingerprint = mddGraphFingerprint(mddMarkdown);
-    const mddChangedSinceSync =
-      Boolean(context?.mddFingerprint) && context!.mddFingerprint !== fingerprint;
 
     const status = resolveMddCoherenceState({
       expectedEntities: expectations.expectedEntities,
@@ -41,7 +33,6 @@ export class MddCoherenceService {
       isCoherent: health.isCoherent,
       orphanEntityCount: health.orphanEntityCount,
       orphanEndpointCount: health.orphanEndpointCount,
-      mddChangedSinceSync,
     });
 
     if (status.state === "stale") {
@@ -52,7 +43,7 @@ export class MddCoherenceService {
 
     return {
       ...status,
-      lastSyncedAt: status.state === "synced" ? Date.now() : context?.lastSyncedAt ?? null,
+      lastSyncedAt: status.state === "synced" ? Date.now() : null,
     };
   }
 }
