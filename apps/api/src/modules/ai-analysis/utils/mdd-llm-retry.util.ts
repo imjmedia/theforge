@@ -27,6 +27,7 @@ import type { BaseMessage } from "@langchain/core/messages";
 import { recordTokenUsageFromContext } from "../../ai/utils/token-usage-recorder.js";
 
 const DEFAULT_BACKOFF_MS = [0, 1500, 4000];
+const DEFAULT_INVOKE_TIMEOUT_MS = 120_000;
 
 export type LlmToolCallLike = {
   id?: string;
@@ -126,6 +127,8 @@ export type InvokeWithRetryOptions = {
   isResponseValid?: (text: string) => boolean;
   /** Si true, tool_calls sin texto cuentan como respuesta válida (loops de herramientas). */
   acceptToolCallsWithoutContent?: boolean;
+  /** Timeout por llamada LLM (ms). Si se excede, aborta y reintenta. Default 120_000 (2 min). */
+  timeoutMs?: number;
 };
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -157,7 +160,15 @@ export async function invokeLlmWithRetry(
     const wait = backoff[Math.min(attempt - 1, backoff.length - 1)] ?? 0;
     if (wait > 0) await sleep(wait);
     try {
-      const response = await (llm as { invoke: (m: BaseMessage[]) => Promise<unknown> }).invoke(messages);
+      const timeoutMs = options?.timeoutMs ?? DEFAULT_INVOKE_TIMEOUT_MS;
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => abortController.abort(), timeoutMs);
+      let response: unknown;
+      try {
+        response = await (llm as { invoke: (m: BaseMessage[], opts?: { signal?: AbortSignal }) => Promise<unknown> }).invoke(messages, { signal: abortController.signal });
+      } finally {
+        clearTimeout(timeoutId);
+      }
       recordLlmUsageFromMessage(llm, response, tag);
       const text = extractLlmText(response);
       const toolCalls = extractLlmToolCalls(response);
