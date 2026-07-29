@@ -295,7 +295,9 @@ export function DynamicIslandTOC({
         animate={{ y: 0, opacity: 1 }}
         transition={{ type: "spring", stiffness: 300, damping: 25 }}
         className={cn(
-          "fixed bottom-5 left-1/2 z-[var(--z-popover)] flex -translate-x-1/2 flex-col items-center",
+          "fixed bottom-5 left-1/2 flex -translate-x-1/2 flex-col items-center",
+          // Collapsed: stay below workshop semáforo flyout (z-35). Expanded: popover layer above backdrop.
+          isExpanded ? "z-[var(--z-popover)]" : "z-20",
           className,
         )}
       >
