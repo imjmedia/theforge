@@ -10,6 +10,12 @@ import {
   extractResearchMandatories,
 } from "./sdd-coverage-checklist.util.js";
 import type { CrossArtifactCheckResult } from "./sdd-cross-artifact.util.js";
+import {
+  mddRequiresEventBrokerContracts,
+  resolveMessagingBrokerFromMddSection2,
+} from "./messaging-broker.util.js";
+import { extractSectionByNumber } from "./mdd-markdown-parser.js";
+import { isChatLlmPlatformScope } from "./mdd-platform-table-strip.util.js";
 
 function substantial(s: string | null | undefined, min = 48): boolean {
   return typeof s === "string" && s.trim().length >= min;
@@ -188,38 +194,75 @@ export function checkResearchGapsInTasks(
   return { ok: gaps.length === 0, gaps: gaps.slice(0, 10) };
 }
 
-/** RabbitMQ en blueprint/plan debe tener eventos documentados. */
+/** RabbitMQ/Kafka en blueprint/plan debe tener eventos documentados (respeta broker primario §2). */
 export function checkEventContractsCoverage(
+  mdd: string | null | undefined,
   blueprint: string | null | undefined,
   logicFlows: string | null | undefined,
   tasks: string | null | undefined,
 ): CrossArtifactCheckResult {
   const bp = (blueprint ?? "").toLowerCase();
   if (!/rabbitmq|event-driven|outbox/i.test(bp)) return { ok: true, gaps: [] };
+
+  const broker = resolveMessagingBrokerFromMddSection2(mdd ?? "");
+  if (broker === "bull") return { ok: true, gaps: [] };
+  if (!mddRequiresEventBrokerContracts(mdd ?? "") && broker !== "unknown") {
+    return { ok: true, gaps: [] };
+  }
+
   const gaps: string[] = [];
   const lf = (logicFlows ?? "").toLowerCase();
   const tk = (tasks ?? "").toLowerCase();
-  if (!/rabbitmq|evento|event\.|publisher|consumer/i.test(lf)) {
+  if (!/rabbitmq|kafka|evento|event\.|publisher|consumer/i.test(lf)) {
     gaps.push("[Events] Blueprint menciona RabbitMQ/EDA pero logic-flows no documenta eventos");
   }
-  if (!/rabbitmq|publisher|consumer|event-bus/i.test(tk)) {
+  if (!/rabbitmq|kafka|publisher|consumer|event-bus/i.test(tk)) {
     gaps.push("[Events] Falta task publisher/consumer RabbitMQ en tasks.md");
   }
   return { ok: gaps.length === 0, gaps };
 }
 
-/** UC con JSON estructurado deben incluir schema Zod. */
+/** REST/export/metadata JSON — no exige anexo Zod de salida LLM. */
+const GENERIC_JSON_MENTION =
+  /\b(?:export(?:a(?:r|ción)?|ar)|descarg(?:a(?:r|ción)?|ar))\s+(?:a\s+|en\s+)?json\b|\brespuesta\s+json\b(?![^\n]{0,48}\b(?:llm|modelo|ia)\b)|\b(?:audit|auditor[ií]a|bit[aá]cora)[^\n]{0,48}\bjson\b|\bjson\b[^\n]{0,60}\b(?:metadata|documento|api|endpoint|servicio|auditor)\b|\bmetadata\s+json\b|\bapplication\/json\b|\bopenapi\b/i;
+
+/** UC exigen schema Zod cuando el flujo documenta salida JSON estructurada del LLM/modelo. */
+const LLM_STRUCTURED_JSON_SIGNAL =
+  /\b(?:salida|respuesta|output)\s+(?:json\s+)?(?:del\s+)?(?:llm|modelo|ia)\b|\b(?:llm|ia\s+generativa|modelo\s+(?:de\s+lenguaje|llm|ia)|agente\s+ia)\b[^\n]{0,160}\b(?:json\s+estructurad|schema\s+zod|json\s+schema|respuesta\s+estructurada|output\s+del\s+modelo)\b|\b(?:json\s+estructurad|schema\s+zod|json\s+schema|respuesta\s+estructurada|output\s+del\s+modelo)\b[^\n]{0,160}\b(?:llm|ia|modelo|few-shot|zod)\b|\boutput\s+del\s+modelo\b|\bsalida\s+json\s+del\s+llm\b|\bsustancia\s+econ[oó]mica\b|\bjustificaci[oó]n\s+t[eé]cnica\b|\brecomendaci[oó]n(?:es)?\s+(?:del\s+)?(?:llm|ia|modelo)\b/i;
+
+const MDD_LLM_STRUCTURED_OUTPUT_SCOPE =
+  /\b(llm|ia\s+generativa|modelo\s+(?:de\s+lenguaje|llm|ia)|\brag\b|retrieval[\s-]augmented|agente\s+ia|orquestador\s+llm|json\s+schema|salida\s+estructurada|structured\s+output|recomendaci[oó]n(?:es)?\s+(?:llm|ia|del\s+modelo))\b/i;
+
+function resolveLlmStructuredOutputScope(mdd: string | null | undefined): boolean | null {
+  if (mdd == null || !mdd.trim()) return null;
+  const s1 = extractSectionByNumber(mdd, 1);
+  const s2 = extractSectionByNumber(mdd, 2);
+  const corpus = `${s1}\n${s2}`.trim();
+  if (!corpus) return null;
+  if (isChatLlmPlatformScope(corpus)) return true;
+  return MDD_LLM_STRUCTURED_OUTPUT_SCOPE.test(corpus);
+}
+
+function useCasesRequireLlmJsonSchema(useCases: string): boolean {
+  if (!LLM_STRUCTURED_JSON_SIGNAL.test(useCases)) return false;
+  const withoutGenericJson = useCases.replace(GENERIC_JSON_MENTION, "");
+  return LLM_STRUCTURED_JSON_SIGNAL.test(withoutGenericJson);
+}
+
+/** UC con salida JSON estructurada del LLM deben incluir schema Zod. */
 export function checkLlmJsonSchemas(
   useCases: string | null | undefined,
   tasks: string | null | undefined,
+  mdd?: string | null,
 ): CrossArtifactCheckResult {
   if (!substantial(useCases)) return { ok: true, gaps: [] };
+  const scope = resolveLlmStructuredOutputScope(mdd);
+  if (scope === false) return { ok: true, gaps: [] };
   const uc = useCases!;
+  if (!useCasesRequireLlmJsonSchema(uc)) return { ok: true, gaps: [] };
   const gaps: string[] = [];
-  const jsonSections = uc.match(/json[\s\S]{0,800}?(?=##|$)/gi) ?? [];
-  if (jsonSections.length === 0) return { ok: true, gaps: [] };
   const hasZod = /zod|z\.object|schema zod/i.test(uc) || /zod|z\.object/i.test(tasks ?? "");
-  if (!hasZod && /json|sustancia econ[oó]mica|justificaci[oó]n t[eé]cnica/i.test(uc)) {
+  if (!hasZod) {
     gaps.push("[LLM JSON] Casos de uso mencionan JSON estructurado pero falta anexo Schema Zod");
   }
   return { ok: gaps.length === 0, gaps };
@@ -298,8 +341,8 @@ export function collectSddPrecisionGaps(input: SddPrecisionCheckInput): string[]
     checkSchedulerConsistency(input.mdd, input.logicFlows, input.userStories),
     checkResearchGapsInTasks(input.phase0Summary, input.tasks, input.mdd),
     checkResearchMandatoriesCoverage(input.phase0Summary, input.apiContracts, input.tasks),
-    checkEventContractsCoverage(input.blueprint, input.logicFlows, input.tasks),
-    checkLlmJsonSchemas(input.useCases, input.tasks),
+    checkEventContractsCoverage(input.mdd, input.blueprint, input.logicFlows, input.tasks),
+    checkLlmJsonSchemas(input.useCases, input.tasks, input.mdd),
     checkPantallasFlowCoverage(input.logicFlows, input.pantallas, input.userStories),
   ];
   return results.flatMap((r) => r.gaps);

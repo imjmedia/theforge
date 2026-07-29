@@ -41,6 +41,7 @@ export {
   buildNewFormatManifestFromIdentifiedTerms,
   extractAlreadyDocumentedTopics,
   extractIdentifiedInfraFromText,
+  hydrateEmptyManifestStackInDraft,
   replaceAwsProseWithGenericWhenInfraNotAws,
   sanitizeManifestToMatchIdentifiedInfra,
 } from "./mdd-sanitize/infra-manifest.js";

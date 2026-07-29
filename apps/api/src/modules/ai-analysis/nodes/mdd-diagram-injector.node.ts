@@ -14,7 +14,7 @@ import {
   injectErDiagramBlockIntoDraft,
 } from "../utils/mdd-diagram-suggestions.js";
 import { getMddDraftSummary, logMddNodeOutput } from "../utils/mdd-sanitize.js";
-import { guardTailSectionsForPersist } from "../utils/mdd-section-preserve.util.js";
+import { guardTailSectionsForPersist, preserveTailSectionsFromSnapshots } from "../utils/mdd-section-preserve.util.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:DiagramInjector] ${msg}`, ...args);
 
@@ -22,9 +22,13 @@ function finalizeDiagramInjection(
   originalDraft: string,
   workingDraft: string,
   logLabel: string,
+  snapshotSource?: Parameters<typeof preserveTailSectionsFromSnapshots>[0],
 ): Partial<MDDStateType> | null {
   const withComponentDiagram = injectProposedComponentDiagramIntoSection2(workingDraft);
-  const finalDraft = guardTailSectionsForPersist(originalDraft, withComponentDiagram, "DiagramInjector").markdown;
+  const guarded = guardTailSectionsForPersist(originalDraft, withComponentDiagram, "DiagramInjector").markdown;
+  const finalDraft = snapshotSource
+    ? preserveTailSectionsFromSnapshots(snapshotSource, guarded)
+    : guarded;
   if (finalDraft === originalDraft) return null;
   const sum = getMddDraftSummary(finalDraft);
   LOG("%s draftLen=%s section2=%s", logLabel, sum.length, sum.section2);
@@ -82,7 +86,7 @@ export function createMddDiagramInjectorNode(): (state: MDDStateType) => Promise
       }
     }
 
-    const out = finalizeDiagramInjection(draft, workingDraft, "diagramas ER/SQL + componentes propuestos");
+    const out = finalizeDiagramInjection(draft, workingDraft, "diagramas ER/SQL + componentes propuestos", state);
     if (out) {
       return mergedStructured !== state.mddStructured ? { ...out, mddStructured: mergedStructured } : out;
     }

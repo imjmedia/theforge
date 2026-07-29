@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { ComplexityLevel, Status } from "@theforge/database";
 import type { SddGraphSyncStatus } from "@theforge/shared-types";
 import { MddCoherenceService } from "./mdd-coherence/mdd-coherence.service.js";
+import { resolveDomainInventory } from "./domain-inventory-persist.util.js";
 import { SemaphoreService, type SemaphoreEvaluationInput } from "./semaphore.service.js";
 import { prepareMddForOutput } from "../ai-analysis/utils/mdd-prepare-output.js";
 import { validateMddForDelivery } from "../ai-analysis/utils/mdd-delivery-gate.util.js";
@@ -32,7 +33,13 @@ export class MddUpdatePipelineService {
   async process(
     rawMddContent: string,
     semaphoreBase: Omit<SemaphoreEvaluationInput, "mddJsonString" | "sddDomainGraphOk">,
-    graphScope?: { projectId: string; stageId: string },
+    graphScope?: {
+      projectId: string;
+      stageId: string;
+      brdMarkdown?: string | null;
+      dbgaMarkdown?: string | null;
+      domainInventory?: unknown;
+    },
   ): Promise<MddUpdatePipelineResult> {
     const gateRef: { current?: ReturnType<typeof validateMddForDelivery> } = {};
     const prepared = await prepareMddForOutput(rawMddContent, {
@@ -65,7 +72,15 @@ export class MddUpdatePipelineService {
     const sid = graphScope?.stageId?.trim();
     if (pid && sid && semaphoreBase.complexity === ComplexityLevel.HIGH) {
       try {
-        sddGraph = await this.mddCoherence.syncMddAndEvaluate(pid, sid, sanitizedMdd);
+        const inventory = resolveDomainInventory({
+          persisted: graphScope?.domainInventory,
+          brdMarkdown: graphScope?.brdMarkdown,
+          dbgaMarkdown: graphScope?.dbgaMarkdown,
+          mddMarkdown: sanitizedMdd,
+        });
+        sddGraph = await this.mddCoherence.evaluateFromMdd(pid, sid, sanitizedMdd, undefined, {
+          inventory,
+        });
         sddDomainGraphOk = sddGraph.isCoherent && sddGraph.state === "synced";
         if (!sddDomainGraphOk) {
           this.logger.debug(

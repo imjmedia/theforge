@@ -174,16 +174,19 @@ export class OpenAICompatibleAdapter implements LLMProvider {
           buildOpenAiUserMessage(prompt, options?.userMessageImages),
         );
 
-        const completion = await this.chatClient.chat.completions.create({
-          model: activeModel,
-          messages,
-          max_tokens:
-            options?.maxTokensOverride ??
-            resolveLlmMaxTokensForWorkshopTab(options?.activeTab, {
-              welcomeBrief: options?.welcomeBrief,
-            }),
-          ...(options?.jsonObjectMode ? { response_format: { type: "json_object" as const } } : {}),
-        });
+        const completion = await this.chatClient.chat.completions.create(
+          {
+            model: activeModel,
+            messages,
+            max_tokens:
+              options?.maxTokensOverride ??
+              resolveLlmMaxTokensForWorkshopTab(options?.activeTab, {
+                welcomeBrief: options?.welcomeBrief,
+              }),
+            ...(options?.jsonObjectMode ? { response_format: { type: "json_object" as const } } : {}),
+          },
+          options?.abortSignal ? { signal: options.abortSignal } : undefined,
+        );
 
         return completion;
       },
@@ -235,17 +238,20 @@ export class OpenAICompatibleAdapter implements LLMProvider {
           buildOpenAiUserMessage(prompt, options?.userMessageImages),
         );
 
-        return this.chatClient.chat.completions.create({
-          model: activeModel,
-          messages,
-          max_tokens:
-            options?.maxTokensOverride ??
-            resolveLlmMaxTokensForWorkshopTab(options?.activeTab, {
-              welcomeBrief: options?.welcomeBrief,
-            }),
-          stream: true,
-          stream_options: { include_usage: true },
-        });
+        return this.chatClient.chat.completions.create(
+          {
+            model: activeModel,
+            messages,
+            max_tokens:
+              options?.maxTokensOverride ??
+              resolveLlmMaxTokensForWorkshopTab(options?.activeTab, {
+                welcomeBrief: options?.welcomeBrief,
+              }),
+            stream: true,
+            stream_options: { include_usage: true },
+          },
+          options?.abortSignal ? { signal: options.abortSignal } : undefined,
+        );
       },
     });
 

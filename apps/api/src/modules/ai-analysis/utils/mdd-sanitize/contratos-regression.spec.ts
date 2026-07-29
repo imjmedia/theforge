@@ -14,10 +14,32 @@ describe("isContratosSectionRegression", () => {
     "\n```json\n{\"ok\":true}\n```\n";
 
   it("detecta regresión por longitud", () => {
-    const thin = "GET /api/v1/resource-alpha\nPOST /api/v1/resource-beta\n".repeat(8);
+    const thin =
+      "GET /api/v1/resource-alpha\nPOST /api/v1/resource-beta\n".repeat(8) +
+      "\n```json\n{\"ok\":true}\n```\n";
     assert.equal(isContratosSubstantial(richBaseline), true);
     assert.equal(isContratosSubstantial(thin), true);
     assert.equal(isContratosSectionRegression(richBaseline, thin), true);
+  });
+
+  it("detecta colapso catálogo endpoint (73→25) con longitud aún sustancial", () => {
+    const baseline =
+      "| GET | /api/v1/ep-01 |\n".repeat(73) +
+      "\n```json\n{\"ok\":true}\n```\n".repeat(20);
+    const candidate =
+      "| GET | /api/v1/ep-01 |\n".repeat(25) +
+      "\n```json\n{\"ok\":true}\n```\n".repeat(10);
+    assert.equal(isContratosSubstantial(baseline), true);
+    assert.equal(isContratosSubstantial(candidate), true);
+    assert.equal(countContratosEndpointRows(baseline), 73);
+    assert.equal(countContratosEndpointRows(candidate), 25);
+    assert.equal(isContratosSectionRegression(baseline, candidate), true);
+  });
+
+  it("rechaza shrink ~26% longitud cuando baseline sustancial", () => {
+    const baseline = "GET /api/v1/x\n".repeat(200) + "\n```json\n{}\n```\n";
+    const candidate = baseline.slice(0, Math.floor(baseline.length * 0.74));
+    assert.equal(isContratosSectionRegression(baseline, candidate), true);
   });
 
   it("no marca regresión cuando baseline es corto", () => {

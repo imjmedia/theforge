@@ -147,6 +147,7 @@ function buildStructuralAuditorResult(
     delegateTarget: undefined,
     sectionsToRun: undefined,
     acceptedProposalDirective: undefined,
+    auditorRan: true,
   };
 }
 
@@ -357,10 +358,11 @@ export function createMddAuditorNode(
         auditorFeedback: finalFeedback,
         auditorGaps,
         auditorDecision: decision,
-mddIteration: decision === "clarifier" ? iteration : (state.mddIteration ?? 0),
+        mddIteration: decision === "clarifier" ? iteration : (state.mddIteration ?? 0),
         delegateTarget: undefined,
         sectionsToRun: undefined,
         acceptedProposalDirective: undefined,
+        auditorRan: true,
       };
     } catch (err) {
       LOG("error: %s — fallback estructural", err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300));

@@ -4,6 +4,7 @@ import {
   resolveMddCoherenceState,
   type SddGraphSyncStatus,
 } from "@theforge/shared-types";
+import type { DomainInventory } from "@theforge/shared-types";
 import { parseMddGraphExpectations } from "./mdd-graph-expectations.util.js";
 import { evaluateMddCoherenceFromMarkdown } from "./mdd-coherence.util.js";
 import type { StoredSddGraphContext } from "./sdd-graph-context.util.js";
@@ -34,16 +35,17 @@ export class MddCoherenceService {
     _stageId: string,
     mddMarkdown: string,
     context?: StoredSddGraphContext | null,
+    options?: { inventory?: DomainInventory | null },
   ): Promise<SddGraphSyncStatus> {
     const memoKey = coherenceMemoKey(mddMarkdown, context?.mddFingerprint);
     const memoHit = getMemoizedCoherenceStatus(memoKey);
     if (memoHit) return memoHit;
 
     const expectations = parseMddGraphExpectations(mddMarkdown);
-    const health = evaluateMddCoherenceFromMarkdown(mddMarkdown);
+    const health = evaluateMddCoherenceFromMarkdown(mddMarkdown, {
+      inventory: options?.inventory,
+    });
     const fingerprint = mddGraphFingerprint(mddMarkdown);
-    const mddChangedSinceSync =
-      Boolean(context?.mddFingerprint) && context!.mddFingerprint !== fingerprint;
 
     const status = resolveMddCoherenceState({
       expectedEntities: expectations.expectedEntities,
@@ -53,7 +55,7 @@ export class MddCoherenceService {
       isCoherent: health.isCoherent,
       orphanEntityCount: health.orphanEntityCount,
       orphanEndpointCount: health.orphanEndpointCount,
-      mddChangedSinceSync,
+      mddChangedSinceSync: false,
     });
 
     if (status.state === "stale") {

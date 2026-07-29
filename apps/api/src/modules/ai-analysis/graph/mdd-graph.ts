@@ -54,6 +54,20 @@ import { isHighSplitArchitectPipeline } from "../utils/mdd-architect-pipeline.ut
 
 const MAX_MDD_ITERATIONS = 2;
 
+/** Auditor score-only: no re-enrutar tras primera pasada. */
+function shouldSkipAuditor(state: MDDStateType): boolean {
+  return state.auditorRan === true;
+}
+
+/** Gate loop: tras fix del nodo dueño, volver a prepare_output sin re-pipeline completo. */
+function shouldShortCircuitGateLoopFix(state: MDDStateType): boolean {
+  return state.deliveryGateLoopActive === true;
+}
+
+function routeAuditorOrPrepareOutput(state: MDDStateType): string {
+  return shouldSkipAuditor(state) ? "prepare_output" : "auditor";
+}
+
 /** Temperatura baja para nodos estructurales (architect/security/integration): reproducibilidad de diseño. */
 const STRUCTURAL_TEMPERATURE = 0.2;
 
@@ -388,6 +402,7 @@ export async function createMddGraph(
   }
 
   function routeAfterFormatArchitectGateLoop(state: MDDStateType): string {
+    if (shouldShortCircuitGateLoopFix(state)) return "prepare_output";
     if (state.postCriticParallelDone === true) {
       return "format_after_redactor";
     }
@@ -414,6 +429,7 @@ export async function createMddGraph(
 
   /** One-shot: critic when directive, SQL blockers, or BRD domain auth-skew. */
   function routeAfterSoftwareArchitectOneShot(state: MDDStateType): string {
+    if (shouldShortCircuitGateLoopFix(state)) return "prepare_output";
     const hasDirective = !!(state.acceptedProposalDirective?.trim());
     const draft = (state.mddDraft ?? "").trim();
     const hasSection3 = /##\s*3\.\s*Modelo\s+(?:de\s+)?datos/i.test(draft) && /\bCREATE\s+TABLE\b/i.test(draft);
@@ -424,6 +440,26 @@ export async function createMddGraph(
     if (mddStateHasDomainAuthSkew(state) && hasSection3 && attempts < 1) return "architect_critic";
     if (hasDirective && hasSection3 && hasSection4 && attempts < 1) return "architect_critic";
     return "format_after_architect";
+  }
+
+  function routeAfterStackArchitectOneShot(state: MDDStateType): string {
+    if (shouldShortCircuitGateLoopFix(state)) return "prepare_output";
+    return "data_model";
+  }
+
+  function routeAfterDataModelOneShot(state: MDDStateType): string {
+    if (shouldShortCircuitGateLoopFix(state)) return "prepare_output";
+    return "architect_critic";
+  }
+
+  function routeAfterApiContractsOneShot(state: MDDStateType): string {
+    if (shouldShortCircuitGateLoopFix(state)) return "prepare_output";
+    return "format_after_architect";
+  }
+
+  function routeAfterIntegrationOneShot(state: MDDStateType): string {
+    if (shouldShortCircuitGateLoopFix(state)) return "prepare_output";
+    return "format_sec_int";
   }
 
   /** One-shot: HIGH → pipeline dividido; LOW/MEDIUM → arquitecto monolítico. */
@@ -478,14 +514,24 @@ export async function createMddGraph(
       stack_architect: "stack_architect",
       software_architect: "software_architect",
     })
-    .addEdge("stack_architect", "data_model")
-    .addEdge("data_model", "architect_critic")
+    .addConditionalEdges("stack_architect", routeAfterStackArchitectOneShot, {
+      data_model: "data_model",
+      prepare_output: "prepare_output",
+    })
+    .addConditionalEdges("data_model", routeAfterDataModelOneShot, {
+      architect_critic: "architect_critic",
+      prepare_output: "prepare_output",
+    })
     .addEdge("data_model_patch", "architect_critic")
     .addEdge("post_critic_parallel", "section5")
-    .addEdge("api_contracts", "format_after_architect")
+    .addConditionalEdges("api_contracts", routeAfterApiContractsOneShot, {
+      format_after_architect: "format_after_architect",
+      prepare_output: "prepare_output",
+    })
     .addConditionalEdges("software_architect", routeAfterSoftwareArchitectOneShot, {
       architect_critic: "architect_critic",
       format_after_architect: "format_after_architect",
+      prepare_output: "prepare_output",
     })
     .addConditionalEdges("architect_critic", routeAfterArchitectCriticOneShot, {
       data_model: "data_model",
@@ -499,17 +545,27 @@ export async function createMddGraph(
       format_after_redactor: "format_after_redactor",
       security_integration: "security_integration",
       tail_parallel: "tail_parallel",
+      prepare_output: "prepare_output",
     })
     .addEdge("security_integration", "format_after_redactor")
     .addEdge("tail_parallel", "format_after_redactor")
-    .addEdge("integration", "format_sec_int")
+    .addConditionalEdges("integration", routeAfterIntegrationOneShot, {
+      format_sec_int: "format_sec_int",
+      prepare_output: "prepare_output",
+    })
     .addEdge("format_sec_int", "format_after_redactor")
     // format_after_redactor → cross_consistency_checker + diagram_injector en paralelo.
     // (Antes pasaba por llm_formatter destructivo; ver CHANGELOG [Unreleased].)
     .addEdge("format_after_redactor", "cross_consistency_checker")
     .addEdge("format_after_redactor", "diagram_injector")
-    .addEdge("cross_consistency_checker", "auditor")
-    .addEdge("diagram_injector", "auditor")
+    .addConditionalEdges("cross_consistency_checker", routeAuditorOrPrepareOutput, {
+      auditor: "auditor",
+      prepare_output: "prepare_output",
+    })
+    .addConditionalEdges("diagram_injector", routeAuditorOrPrepareOutput, {
+      auditor: "auditor",
+      prepare_output: "prepare_output",
+    })
     // section5: pipeline F3 → format; gate loop → prepare_output.
     .addConditionalEdges("section5", routeAfterSection5OneShot, {
       format_after_architect: "format_after_architect",
@@ -739,6 +795,7 @@ export async function createMddGraphWithManager(
   /** Si hay directiva/requisitos, SQL blockers, o BRD domain skew y §3 con contenido y attempts < 1 → critic. */
   function routeAfterSoftwareArchitect(state: MDDStateType): string {
     if (state.executorControlled === true) return "executor";
+    if (shouldShortCircuitGateLoopFix(state)) return "prepare_output";
     const next = nextInSections(state, "software_architect");
     if (next) return next;
     const hasDirective = !!(state.acceptedProposalDirective?.trim());
@@ -776,16 +833,19 @@ export async function createMddGraphWithManager(
 
   function routeAfterStackArchitect(state: MDDStateType): string {
     if (state.executorControlled === true) return "executor";
+    if (shouldShortCircuitGateLoopFix(state)) return "prepare_output";
     return nextInSections(state, "stack_architect") ?? "data_model";
   }
 
   function routeAfterDataModel(state: MDDStateType): string {
     if (state.executorControlled === true) return "executor";
+    if (shouldShortCircuitGateLoopFix(state)) return "prepare_output";
     return nextInSections(state, "data_model") ?? "architect_critic";
   }
 
   function routeAfterApiContracts(state: MDDStateType): string {
     if (state.executorControlled === true) return "executor";
+    if (shouldShortCircuitGateLoopFix(state)) return "prepare_output";
     return nextInSections(state, "api_contracts") ?? "format_after_architect";
   }
 
@@ -810,6 +870,7 @@ export async function createMddGraphWithManager(
     if (state.executorControlled === true) return "executor";
     const next = nextInSections(state, "format_after_architect");
     if (next) return next;
+    if (shouldShortCircuitGateLoopFix(state)) return "prepare_output";
     if (state.postCriticParallelDone === true) {
       return "format_after_redactor";
     }
@@ -839,21 +900,28 @@ export async function createMddGraphWithManager(
   }
   function routeAfterIntegration(state: MDDStateType): string {
     if (state.executorControlled === true) return "executor";
+    if (shouldShortCircuitGateLoopFix(state)) return "prepare_output";
     return nextInSections(state, "integration") ?? "format_after_redactor";
   }
   function routeAfterFormatRedactor(state: MDDStateType): string {
     if (state.executorControlled === true) return "executor";
+    if (shouldSkipAuditor(state) || shouldShortCircuitGateLoopFix(state)) return "prepare_output";
     // Antes: ?? "llm_formatter" (destructivo, eliminado). Ahora va directo a
     // los verificadores de consistencia + diagramas.
     return nextInSections(state, "format_after_redactor") ?? "cross_consistency_checker";
   }
   function routeAfterConsistency(state: MDDStateType): string {
     if (state.executorControlled === true) return "executor";
-    return nextInSections(state, "cross_consistency_checker") ?? "diagram_injector";
+    const next = nextInSections(state, "cross_consistency_checker");
+    if (next) return next;
+    if (shouldShortCircuitGateLoopFix(state)) return "prepare_output";
+    return "diagram_injector";
   }
   function routeAfterDiagram(state: MDDStateType): string {
     if (state.executorControlled === true) return "executor";
-    return nextInSections(state, "diagram_injector") ?? "auditor";
+    const next = nextInSections(state, "diagram_injector");
+    if (next) return next;
+    return routeAuditorOrPrepareOutput(state);
   }
   function routeAfterAuditor(state: MDDStateType): string {
     if (state.executorControlled === true) return "executor";
@@ -971,23 +1039,27 @@ export async function createMddGraphWithManager(
     })
     .addConditionalEdges("stack_architect", routeAfterStackArchitect, {
       data_model: "data_model",
+      prepare_output: "prepare_output",
       executor: "executor",
       manager: "manager",
     })
     .addConditionalEdges("data_model", routeAfterDataModel, {
       architect_critic: "architect_critic",
+      prepare_output: "prepare_output",
       executor: "executor",
       manager: "manager",
     })
     .addEdge("data_model_patch", "architect_critic")
     .addConditionalEdges("api_contracts", routeAfterApiContracts, {
       format_after_architect: "format_after_architect",
+      prepare_output: "prepare_output",
       executor: "executor",
       manager: "manager",
     })
     .addConditionalEdges("software_architect", routeAfterSoftwareArchitect, {
       architect_critic: "architect_critic",
       format_after_architect: "format_after_architect",
+      prepare_output: "prepare_output",
       security: "security",
       integration: "integration",
       cross_consistency_checker: "cross_consistency_checker",
@@ -1025,6 +1097,7 @@ export async function createMddGraphWithManager(
       cross_consistency_checker: "cross_consistency_checker",
       diagram_injector: "diagram_injector",
       auditor: "auditor",
+      prepare_output: "prepare_output",
       manager: "manager",
       executor: "executor",
     })
@@ -1050,6 +1123,7 @@ export async function createMddGraphWithManager(
       cross_consistency_checker: "cross_consistency_checker",
       diagram_injector: "diagram_injector",
       auditor: "auditor",
+      prepare_output: "prepare_output",
       manager: "manager",
       executor: "executor",
     })
@@ -1057,6 +1131,7 @@ export async function createMddGraphWithManager(
       cross_consistency_checker: "cross_consistency_checker",
       diagram_injector: "diagram_injector",
       auditor: "auditor",
+      prepare_output: "prepare_output",
       manager: "manager",
       executor: "executor",
     })
@@ -1064,11 +1139,13 @@ export async function createMddGraphWithManager(
     .addConditionalEdges("cross_consistency_checker", routeAfterConsistency, {
       diagram_injector: "diagram_injector",
       auditor: "auditor",
+      prepare_output: "prepare_output",
       manager: "manager",
       executor: "executor",
     })
     .addConditionalEdges("diagram_injector", routeAfterDiagram, {
       auditor: "auditor",
+      prepare_output: "prepare_output",
       manager: "manager",
       executor: "executor",
     })

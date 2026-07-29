@@ -735,6 +735,7 @@ export class TasksGenerationPipelineService {
         systemPrompt: TASKS_PLANNER_PROMPT,
         schema: tasksGenerationPlanSchema,
         maxTokensPurpose: "tasksPlanner",
+        abortSignal: input.taskOpts.abortSignal,
       });
       if (parsed) {
         let plan: TasksGenerationPlan = {
@@ -927,6 +928,7 @@ export class TasksGenerationPipelineService {
       systemPrompt: TASKS_AUDITOR_LLM_PROMPT,
       schema: tasksLlmAuditorOutputSchema,
       maxTokensPurpose: "auditor",
+      abortSignal: input.taskOpts.abortSignal,
     });
     const normalized: TasksLlmAuditorOutput = {
       score: parsed.score,
@@ -956,6 +958,7 @@ export class TasksGenerationPipelineService {
     systemPrompt: string;
     schema: z.ZodType<T>;
     maxTokensPurpose: "tasksPlanner" | "auditor";
+    abortSignal?: AbortSignal;
   }): Promise<T | null> {
     const maxTokens = resolveLlmMaxTokensForPurpose(params.maxTokensPurpose);
     const retrySuffix =
@@ -964,10 +967,12 @@ export class TasksGenerationPipelineService {
     const prompts = [params.prompt, params.prompt + retrySuffix];
 
     for (let attempt = 0; attempt < prompts.length; attempt++) {
+      if (params.abortSignal?.aborted) throw new Error("Cancelado por el usuario");
       const raw = await this.ai.generateAuditorResponse(prompts[attempt]!, [], {
         systemPrompt: params.systemPrompt,
         maxTokensOverride: maxTokens,
         jsonObjectMode: true,
+        abortSignal: params.abortSignal,
       });
       if (!raw.trim()) {
         this.logger.warn(
@@ -995,6 +1000,7 @@ export class TasksGenerationPipelineService {
     systemPrompt: string;
     schema: z.ZodType<T>;
     maxTokensPurpose: "tasksPlanner" | "auditor";
+    abortSignal?: AbortSignal;
   }): Promise<T> {
     const parsed = await this.tryCallAuditorJson(params);
     if (parsed) return parsed;
@@ -1111,6 +1117,7 @@ export class TasksGenerationPipelineService {
     const repaired = await this.ai.generateAuditorResponse(prompt, [], {
       systemPrompt: TASKS_REPAIR_PROMPT,
       maxTokensOverride: resolveLlmMaxTokensForPurpose("tasksDoc"),
+      abortSignal: input.taskOpts.abortSignal,
     });
     const trimmed = repaired.trim();
     if (trimmed.startsWith("#") || trimmed.includes("## Backend")) {

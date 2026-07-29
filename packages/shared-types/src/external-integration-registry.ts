@@ -48,7 +48,7 @@ export const BUILTIN_EXTERNAL_INTEGRATIONS: ExternalIntegrationSignal[] = [
   {
     id: "rabbitmq",
     label: "RabbitMQ / EDA",
-    scopePattern: "\\b(rabbitmq|event-driven|outbox|message\\s+broker)\\b",
+    scopePattern: "\\b(rabbitmq|event-driven|message\\s+broker)\\b",
     apiPattern: "\\b(rabbitmq|publisher|consumer|event-bus|\\/events)\\b",
     architecturePattern: "\\b(rabbitmq|outbox|event-driven)\\b",
     infraPattern: "\\b(rabbitmq|amqp|message\\s+queue)\\b",

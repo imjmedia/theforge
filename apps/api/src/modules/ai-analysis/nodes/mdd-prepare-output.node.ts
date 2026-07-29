@@ -10,9 +10,9 @@ import {
   formatDeliveryGateQualityWarningsFeedback,
   fingerprintPlaceholderBlockers,
   hasUnresolvedAutoRepairableGateWarnings,
-  MAX_MDD_DELIVERY_GATE_ATTEMPTS,
   resolveDeliveryGateFixTargetFromGate,
   shouldContinueDeliveryGateLoop,
+  shouldContinueDeliveryGateQualityLoop,
 } from "../utils/mdd-delivery-gate-loop.util.js";
 import { isHighSplitArchitectPipeline } from "../utils/mdd-architect-pipeline.util.js";
 import { resolveBrdFromMddState } from "../utils/mdd-domain-prompt.util.js";
@@ -39,6 +39,7 @@ export function createMddPrepareOutputNode(options?: { uiMcpLibraryLabel?: strin
         baselineDraft,
         mddComplexity: state.mddComplexity,
         formatForPersist: false,
+        tailSnapshotSource: state,
       },
     );
     const gate =
@@ -52,7 +53,7 @@ export function createMddPrepareOutputNode(options?: { uiMcpLibraryLabel?: strin
     const qualityPending = hasUnresolvedAutoRepairableGateWarnings(gate.warnings);
     const loop =
       shouldContinueDeliveryGateLoop(gate, attempt) ||
-      (qualityPending && attempt < MAX_MDD_DELIVERY_GATE_ATTEMPTS);
+      shouldContinueDeliveryGateQualityLoop(gate, attempt);
 
     LOG(
       "gate ok=%s score=%s blockers=%d warnings=%d attempt=%d loop=%s qualityPending=%s",

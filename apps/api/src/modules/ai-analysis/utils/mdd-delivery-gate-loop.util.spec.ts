@@ -4,10 +4,13 @@ import {
   fingerprintPlaceholderBlockers,
   guardFixTargetAgainstSection5Blockers,
   hasRepeatedPlaceholderBlockers,
+  hasUnresolvedAutoRepairableGateWarnings,
   mapAuditorGapsToFixTarget,
   needsFullArchitectPipelineRegeneration,
   resolveDeliveryGateFixTarget,
   resolveDeliveryGateFixTargetFromGate,
+  shouldContinueDeliveryGateLoop,
+  shouldContinueDeliveryGateQualityLoop,
 } from "./mdd-delivery-gate-loop.util.js";
 
 describe("resolveDeliveryGateFixTarget (CHANGELOG [Unreleased] → Added → \"Dedicated §5 pass\")", () => {
@@ -183,5 +186,85 @@ describe("resolveDeliveryGateFixTarget (CHANGELOG [Unreleased] → Added → \"D
       ),
       "integration",
     );
+  });
+
+  it("HIGH: empate §2+§3 placeholder → stack_architect (no data_model)", () => {
+    const blockers = [
+      'Sección 2. Arquitectura y Stack es un placeholder del pipeline (ej. "Pendiente: Arquitecto"). Regenera antes de persistir.',
+      'Sección 3. Modelo de Datos es un placeholder del pipeline (ej. "Pendiente: Arquitecto"). Regenera antes de persistir.',
+    ];
+    assert.equal(
+      resolveDeliveryGateFixTarget(blockers, { splitArchitectPipeline: true }),
+      "stack_architect",
+    );
+  });
+
+  it("faltantes §6+§7 → integration (nunca data_model)", () => {
+    const blockers = ["Secciones obligatorias faltantes: 6. Seguridad, 7. Infraestructura"];
+    assert.equal(resolveDeliveryGateFixTarget(blockers), "integration");
+    assert.equal(
+      resolveDeliveryGateFixTarget(blockers, { splitArchitectPipeline: true }),
+      "integration",
+    );
+  });
+
+  it("headings duplicados → integration (no data_model en HIGH)", () => {
+    const blockers = [
+      "MDD repite headings canónicos §1–§7 (secciones duplicadas por acumulación del pipeline).",
+    ];
+    assert.equal(
+      resolveDeliveryGateFixTarget(blockers, { splitArchitectPipeline: true }),
+      "integration",
+    );
+  });
+
+  it("§6 placeholder + faltantes §6/§7 → integration (no data_model)", () => {
+    const blockers = [
+      "Secciones obligatorias faltantes: 6. Seguridad, 7. Infraestructura",
+      'Sección 6. Seguridad es un placeholder del pipeline (ej. "Pendiente: Arquitecto"). Regenera antes de persistir.',
+    ];
+    assert.equal(
+      resolveDeliveryGateFixTarget(blockers, { splitArchitectPipeline: true }),
+      "integration",
+    );
+  });
+});
+
+describe("shouldContinueDeliveryGateLoop / shouldContinueDeliveryGateQualityLoop", () => {
+  it("gate con blockers → loop de blockers hasta MAX intentos", () => {
+    const gate = {
+      ok: false,
+      score: 40,
+      blockers: ["Sección 4. Contratos de API tiene contenido insuficiente."],
+      warnings: [],
+    };
+    assert.equal(shouldContinueDeliveryGateLoop(gate, 0), true);
+    assert.equal(shouldContinueDeliveryGateLoop(gate, 3), false);
+  });
+
+  it("gate ok + 0 blockers + warnings auto-reparables → no quality loop (KMS)", () => {
+    const gate = {
+      ok: true,
+      score: 100,
+      blockers: [] as string[],
+      warnings: [
+        'Manifest api_prefix "/api" no coincide con rutas dominantes (/api/v1).',
+      ],
+    };
+    assert.equal(hasUnresolvedAutoRepairableGateWarnings(gate.warnings), true);
+    assert.equal(shouldContinueDeliveryGateLoop(gate, 0), false);
+    assert.equal(shouldContinueDeliveryGateQualityLoop(gate, 0), false);
+    assert.equal(shouldContinueDeliveryGateQualityLoop(gate, 2), false);
+  });
+
+  it("gate fallido + warnings auto-reparables → quality loop permitido", () => {
+    const gate = {
+      ok: false,
+      score: 70,
+      blockers: [] as string[],
+      warnings: ["Tabla huérfana en §3: orphan_table sin referencia ER."],
+    };
+    assert.equal(shouldContinueDeliveryGateLoop(gate, 0), true);
+    assert.equal(shouldContinueDeliveryGateQualityLoop(gate, 0), true);
   });
 });

@@ -6,7 +6,12 @@
 import { stripGovernanceSection } from "@theforge/shared-types/mdd-governance-patterns";
 import { getMddTemplatePlaceholder } from "../state/mdd-structured.schema.js";
 import { buildDbgaHydrationSource } from "./mdd-clarifier-dbga-brief.util.js";
-import { extractContextSectionBody, replaceSection1BodyFromAnyHeading } from "./mdd-sanitize.js";
+import {
+  deduplicateMddDraftSections,
+  extractContextSectionBody,
+  mddHasDuplicateSectionHeadings,
+  replaceSection1BodyFromAnyHeading,
+} from "./mdd-sanitize.js";
 import {
   draftHasSubstantialSection1,
   draftHasSubstantialSection2,
@@ -44,6 +49,26 @@ export function assembleClarifierMddDraft(llmDraft: string, section1Fallback?: s
 
 /** DBGA grande: exigir §1 sustancial o preservar/hidratar baseline. */
 export const MIN_DBGA_LEN_FOR_STRICT_CLARIFIER_DRAFT = 5_000;
+
+/** Ratio máximo newDraft/baseline para merge §1-only tras retry (evita bloat 20× job 71). */
+export const CLARIFIER_MERGE_MAX_BASELINE_RATIO = 3;
+
+export const CLARIFIER_MERGE_MAX_DRAFT_LEN = 400_000;
+
+/**
+ * Baseline seguro para merge §1-only: sin headings duplicados ni hinchazón absurda.
+ */
+export function isSafeClarifierMergeBaseline(previousDraft: string, newDraft: string): boolean {
+  const raw = (previousDraft ?? "").trim();
+  if (raw.length <= 200) return false;
+  if (mddHasDuplicateSectionHeadings(raw)) return false;
+  const baseline = deduplicateMddDraftSections(raw);
+  if (mddHasDuplicateSectionHeadings(baseline)) return false;
+  const newLen = (newDraft ?? "").trim().length;
+  if (newLen > CLARIFIER_MERGE_MAX_DRAFT_LEN) return false;
+  if (baseline.length > 0 && newLen > baseline.length * CLARIFIER_MERGE_MAX_BASELINE_RATIO) return false;
+  return true;
+}
 
 export type FinalizeClarifierDraftParams = {
   llmDraft: string;

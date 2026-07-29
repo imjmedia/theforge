@@ -80,7 +80,7 @@ import {
   ensureSecurityLockoutInSection6,
   fixDeterministicMddCoherence,
 } from "./cross-consistency.js";
-import { replaceAwsProseWithGenericWhenInfraNotAws } from "./infra-manifest.js";
+import { replaceAwsProseWithGenericWhenInfraNotAws, hydrateEmptyManifestStackInDraft } from "./infra-manifest.js";
 import {
   ensureManifestInJsonBlock,
   ensureSection2SqlBlockClosed,
@@ -93,6 +93,7 @@ import {
   ensureTechnicalMetadataBlockInDraft,
   mddExcludesWebUiSurface,
 } from "./internal.js";
+import { restoreSections6And7IfRegressed } from "../mdd-section-preserve.util.js";
 
 function repairDisplacedJsonBracesInContratosSection(draft: string): string {
   const heading = "## 4. Contratos de API";
@@ -181,6 +182,7 @@ export function applyPreDeliveryGateFixes(draft: string): string {
     }
   }
   out = deduplicateUatSections(out);
+  out = hydrateEmptyManifestStackInDraft(out);
   return out;
 }
 
@@ -460,7 +462,9 @@ export function normalizeMddFormat(draft: string): string {
   }
 
   // Deduplicar y reordenar secciones (1, 2, 3, 4, Seguridad, Integración)
+  const beforeDedupe = out;
   out = deduplicateAndReorderMddSections(out);
+  out = restoreSections6And7IfRegressed(beforeDedupe, out);
 
   // Separación visual: --- antes de cada ## (excepto si ya hay --- justo antes)
   out = ensureHorizontalRuleBeforeH2(out);
@@ -473,6 +477,7 @@ export function normalizeMddFormat(draft: string): string {
 
   // Si la sección 7 tiene manifest como texto plano (stack/pending sin ```json), envolver en ```json
   out = ensureManifestInJsonBlock(out);
+  out = hydrateEmptyManifestStackInDraft(out);
 
   // En sección 7: quitar ### Integración redundante justo bajo ## 7. Infraestructura
   out = stripRedundantIntegracionHeadingInSection7(out);
@@ -489,7 +494,9 @@ export function normalizeMddFormat(draft: string): string {
   out = stripMeshDirectivesFromDraft(out);
 
   if (mddHasDuplicateSectionHeadings(out)) {
+    const beforeLateDedupe = out;
     out = deduplicateAndReorderMddSections(out);
+    out = restoreSections6And7IfRegressed(beforeLateDedupe, out);
   }
   if (mddHasDuplicateSectionHeadings(out)) {
     out = stripTrailingDuplicateMddSections(out);

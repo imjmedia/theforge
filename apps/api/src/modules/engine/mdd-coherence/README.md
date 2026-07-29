@@ -5,7 +5,9 @@ Reemplaza el grafo FalkorDB descontinuado. Inferencia de tablas SQL, endpoints A
 | Archivo | Rol |
 |---------|-----|
 | `mdd-coherence.util.ts` | `evaluateMddCoherenceFromMarkdown`, `buildSddStageSnapshotFromMdd` |
-| `mdd-graph-expectations.util.ts` | Parse §3/§4 indexables |
-| `sdd-consumes-link.util.ts` | FK + matching ruta→tabla |
+| `mdd-graph-expectations.util.ts` | Parse §3/§4 indexables (`extractMddSection4Endpoints`) |
+| `sdd-consumes-link.util.ts` | FK + matching ruta→tabla (hyphen/underscore, junction, reverse FK) |
+| `mdd-coherence-exemptions.util.ts` | Exenciones auth/plataforma/infra |
+| `mdd-coherence-repair.util.ts` | Auto-inyección §4 para huérfanos de negocio |
 | `mdd-coherence.service.ts` | `MddCoherenceService` — semáforo (`sddDomainGraphOk`) y `generation-status.sddGraph` |
 | `sdd-graph-context.util.ts` | Snapshot en `Stage.shortTermContext.sddGraph` |

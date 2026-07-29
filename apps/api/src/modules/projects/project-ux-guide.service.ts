@@ -55,7 +55,7 @@ export class ProjectUxGuideService {
   ) {}
 
   /** Guía UX/UI generada por LLM (mismo criterio que legacy, sin Relic). */
-  async generateUxUiGuide(projectId: string) {
+  async generateUxUiGuide(projectId: string, signal?: AbortSignal) {
     const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
     const mdd = buildConstitutionMarkdown(project);
     const bp = (project.blueprintContent ?? "").trim();
@@ -73,11 +73,12 @@ export class ProjectUxGuideService {
     const mddBrief = buildMddContextForUxGuide(mdd);
     const raw = await this.ai.generateUxUiGuide(
       uxPrompt,
-      this.buildHookGenerateOpts(project),
+      signal ? { ...this.buildHookGenerateOpts(project), abortSignal: signal } : this.buildHookGenerateOpts(project),
       {
         activeTab: "ux-ui-guide",
         currentMddContent: mddBrief || undefined,
         currentBlueprintContent: bp || undefined,
+        abortSignal: signal,
         ...uxGuideLlmOptions(project, mdd),
       },
     );

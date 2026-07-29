@@ -1355,7 +1355,7 @@ export function detectCrossConsistencyIssues(draft: string): string[] {
  */
 export function applyDeterministicCrossConsistencyFixes(draft: string): string {
   if (!draft) return draft;
-  let out = sanitizeAllSqlBlocksInDraft(draft);
+  let out = sanitizeAllSqlBlocksInDraft(draft.replace(/\/api\/v1\/v1/gi, "/api/v1"));
   out = ensureOutboxTableInDraft(out);
   out = deduplicateOutboxTablesInDraft(out);
   out = fixSection7OutboxNarrative(out);

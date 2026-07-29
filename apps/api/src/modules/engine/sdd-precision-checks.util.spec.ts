@@ -8,6 +8,8 @@ import {
   checkTasksBlueprintPhases,
   checkSchedulerConsistency,
   checkResearchGapsInTasks,
+  checkEventContractsCoverage,
+  checkLlmJsonSchemas,
   collectSddPrecisionGaps,
   precisionGapsForPostPassRetry,
 } from "./sdd-precision-checks.util.js";
@@ -67,5 +69,66 @@ describe("sdd-precision-checks.util", () => {
     assert.equal(flags.retryArchitecture, true);
     assert.equal(flags.retryLogicFlows, true);
     assert.ok(flags.retryTasks || flags.retryArchitecture);
+  });
+
+  it("checkEventContractsCoverage skips EDA gaps when MDD §2 is BullMQ", () => {
+    const mddBull = "## 2. Stack\nBullMQ + Redis.\n";
+    const blueprintEda = "## Blueprint\nEvent-driven outbox pattern.\n";
+    const result = checkEventContractsCoverage(mddBull, blueprintEda, "", "");
+    assert.equal(result.ok, true);
+  });
+
+  it("checkLlmJsonSchemas skips KMS-like REST JSON when MDD has no LLM scope", () => {
+    const mddKms = `## 1. Alcance
+Sistema de gestión de conocimiento (KMS). API REST para documentos y auditoría.
+## 2. Stack
+NestJS + PostgreSQL + Redis cache.
+`;
+    const ucKms = `## Caso de Uso 1: Exportar auditoría
+El administrador solicita exportación de audit logs en formato JSON.
+La API devuelve respuesta JSON con metadata del documento consultado.
+## Caso de Uso 2: Consultar documento
+GET /api/v1/documents/{id} responde application/json con el contenido indexado.
+`;
+    const result = checkLlmJsonSchemas(ucKms, "", mddKms);
+    assert.equal(result.ok, true);
+    assert.equal(result.gaps.length, 0);
+  });
+
+  it("checkLlmJsonSchemas flags explicit LLM structured output without Zod annex", () => {
+    const mddLlm = `## 1. Alcance
+Motor de recomendaciones con salida estructurada del modelo.
+## 2. Stack
+LLM Orchestrator + NestJS + PostgreSQL.
+`;
+    const ucLlm = `## Caso de Uso 1: Generar recomendación
+El LLM devuelve JSON estructurado con sustancia económica y justificación técnica del activo.
+El analista valida la respuesta estructurada antes de publicar la señal.
+`;
+    const result = checkLlmJsonSchemas(ucLlm, "", mddLlm);
+    assert.equal(result.ok, false);
+    assert.ok(result.gaps.some((g) => /\[LLM JSON\]/i.test(g)));
+  });
+
+  it("checkLlmJsonSchemas passes when UC includes Schema Zod annex", () => {
+    const mddLlm = `## 1. Alcance
+Recomendaciones IA con JSON schema validable.
+## 2. Stack
+LLM Orchestrator + NestJS.
+`;
+    const ucWithZod = `## Caso de Uso 1: Generar recomendación
+El output del modelo es JSON estructurado con sustancia económica.
+
+### Schema Zod
+\`\`\`typescript
+export const RecommendationSchema = z.object({
+  ticker: z.string(),
+  rationale: z.string(),
+});
+\`\`\`
+`;
+    const result = checkLlmJsonSchemas(ucWithZod, "", mddLlm);
+    assert.equal(result.ok, true);
+    assert.equal(result.gaps.length, 0);
   });
 });

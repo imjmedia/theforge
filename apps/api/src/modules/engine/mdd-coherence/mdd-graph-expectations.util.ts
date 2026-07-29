@@ -1,5 +1,6 @@
 import type { MddStructured } from "../../ai-analysis/state/mdd-structured.schema.js";
 import { markdownToMddStructured } from "../../ai-analysis/utils/mdd-markdown-to-structured.js";
+import { extractMddSection4Endpoints } from "../conformance.service.js";
 import { extractTableRefsFromSql } from "./sdd-consumes-link.util.js";
 
 export type MddGraphExpectations = {
@@ -12,7 +13,7 @@ export type MddGraphExpectations = {
 export function parseMddGraphExpectations(mddMarkdown: string): MddGraphExpectations {
   const structured = markdownToMddStructured(mddMarkdown ?? "");
   const tables = extractTableRefsFromSql(structured.modeloDatos?.sql ?? "");
-  const endpoints = structured.contratosApi?.endpoints ?? [];
+  const endpoints = extractMddSection4Endpoints(mddMarkdown ?? "");
   return {
     expectedEntities: tables.length,
     expectedEndpoints: endpoints.length,

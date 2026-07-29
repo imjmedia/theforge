@@ -1140,7 +1140,31 @@ export function createMddSoftwareArchitectNode(
       if (directive && affectsSection2) {
         mddDraft = applyDeploymentStackDirectiveToDraft(mddDraft, directive);
       }
+      const preDedupeStackSnapshot =
+        scope === "stack" && draftHasSubstantialSection2(mddDraft) ? mddDraft : undefined;
       mddDraft = deduplicateMddDraftSections(mddDraft);
+      if (scope === "stack") {
+        const snapshotForRestore =
+          preDedupeStackSnapshot ??
+          (state.stackArchitectMddDraftSnapshot &&
+          draftHasSubstantialSection2(state.stackArchitectMddDraftSnapshot)
+            ? state.stackArchitectMddDraftSnapshot
+            : undefined);
+        if (snapshotForRestore) {
+          mddDraft = preserveSection2FromStackSnapshot(snapshotForRestore, mddDraft);
+        }
+        if (!draftHasSubstantialSection2(mddDraft)) {
+          if (preDedupeStackSnapshot && draftHasSubstantialSection2(preDedupeStackSnapshot)) {
+            LOG(
+              "ERROR §2 placeholder tras dedupe con contenido sustancial pre-dedupe (len=%s) — restaurando",
+              preDedupeStackSnapshot.length,
+            );
+            mddDraft = preserveSection2FromStackSnapshot(preDedupeStackSnapshot, mddDraft);
+          } else {
+            LOG("ERROR §2 placeholder tras dedupe scope=stack — sin snapshot sustancial para restaurar");
+          }
+        }
+      }
       const sum = getMddDraftSummary(mddDraft);
       logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, text.length), {
         scope,
@@ -1197,7 +1221,12 @@ export function createMddSoftwareArchitectNode(
               : {};
       const stackSnapshotUpdate =
         scope === "stack" && draftHasSubstantialSection2(mddDraft)
-          ? { stackArchitectMddDraftSnapshot: mddDraft }
+          ? {
+              stackArchitectMddDraftSnapshot:
+                preDedupeStackSnapshot && draftHasSubstantialSection2(preDedupeStackSnapshot)
+                  ? preDedupeStackSnapshot
+                  : mddDraft,
+            }
           : {};
       const dataModelSnapshotUpdate =
         scope === "data_model" && draftHasSubstantialSection3(mddDraft)

@@ -14,8 +14,12 @@ const UNRECOVERABLE_MESSAGE_SNIPPETS = [
 ] as const;
 
 export function isUserCancellationError(err: unknown): boolean {
+  if (err instanceof Error && err.name === "AbortError") return true;
   const msg = err instanceof Error ? err.message : String(err);
-  return msg.includes("Cancelado por el usuario");
+  return (
+    msg.includes("Cancelado por el usuario") ||
+    /\b(aborted|abort)\b/i.test(msg)
+  );
 }
 
 function extractErrorMessage(err: unknown): string {

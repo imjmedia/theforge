@@ -70,6 +70,10 @@ export const MDDStateAnnotation = Annotation.Root({
   dataModelArchitectMddDraftSnapshot: Annotation<string | undefined>(),
   /** Borrador post-api_contracts (§4 anclada) para restaurar tras format/SSOT/tail. */
   apiContractsArchitectMddDraftSnapshot: Annotation<string | undefined>(),
+  /** Borrador post post_critic_parallel con §6 sustancial — ancla cola frente a format/dedupe/gate. */
+  securityArchitectMddDraftSnapshot: Annotation<string | undefined>(),
+  /** Borrador post post_critic_parallel con §7 sustancial — ancla cola frente a format/dedupe/gate. */
+  integrationArchitectMddDraftSnapshot: Annotation<string | undefined>(),
   sectionsToRun: Annotation<string[] | undefined>(),
   acceptedProposalDirective: Annotation<string | undefined>(),
   lastStepFailed: Annotation<{ node: string; error: string } | undefined>(),
@@ -124,6 +128,8 @@ export const MDDStateAnnotation = Annotation.Root({
   deliveryGatePlaceholderFingerprint: Annotation<string | undefined>(),
   /** F3: post_critic_parallel completó §4∥§6∥§7 (skip tail_parallel). */
   postCriticParallelDone: Annotation<boolean | undefined>(),
+  /** True tras primera pasada del Auditor — evita re-auditoría en gate loop. */
+  auditorRan: Annotation<boolean | undefined>(),
 });
 
 export type MDDStateType = typeof MDDStateAnnotation.State;

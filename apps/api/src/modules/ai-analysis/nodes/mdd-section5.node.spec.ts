@@ -80,6 +80,18 @@ describe("createMddSection5Node (CHANGELOG [Unreleased] → Added → \"Dedicate
     expect(result.mddDraft).toBeUndefined();
   });
 
+  it("preserva el draft si §5 sustancial regresaría >25% (job 74)", async () => {
+    const richS5 = `${"Regla BDD KMS con rotación y auditoría. ".repeat(350)}`;
+    const richDraft = VALID_FULL_DRAFT.replace(
+      /## 5\. Lógica y Edge Cases[\s\S]*?(?=## 6\.)/,
+      `## 5. Lógica y Edge Cases\n\n${richS5}\n\n`,
+    );
+    const llm = new FakeLlm(`## 5. Lógica y Edge Cases\n\n${"Resumen corto. ".repeat(20)}`);
+    const node = createMddSection5Node(llm as never);
+    const result = await node({ mddDraft: richDraft } as never);
+    expect(result.mddDraft).toBeUndefined();
+  });
+
   it("inserta §5 cuando el heading canónico no existía (salto §4→§6)", async () => {
     const draftWithout5 = `# MDD
 ## 1. Contexto

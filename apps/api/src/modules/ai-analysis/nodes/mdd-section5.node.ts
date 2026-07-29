@@ -37,6 +37,10 @@ import {
 import { isMddSectionPipelinePlaceholderBody } from "../utils/mdd-sanitize/section-merge.js";
 import { stripThinkingTags } from "../utils/mdd-security-parse.js";
 import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
+import {
+  isSection5SectionRegression,
+  MIN_SUBSTANTIAL_SECTION5_BODY_LEN,
+} from "../utils/mdd-section-preserve.util.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Section5] ${msg}`, ...args);
 
@@ -125,6 +129,20 @@ export function createMddSection5Node(llm: BaseChatModel) {
 
       if (cleaned.length < 100) {
         LOG("body regenerado demasiado corto (%d chars) — preservando draft actual", cleaned.length);
+        return {};
+      }
+
+      const baselineBody = section5Now?.trim() ?? "";
+      if (
+        baselineBody.length >= MIN_SUBSTANTIAL_SECTION5_BODY_LEN &&
+        !isMddSectionPipelinePlaceholderBody(baselineBody) &&
+        isSection5SectionRegression(baselineBody, cleaned)
+      ) {
+        LOG(
+          "body regenerado regresión §5 (%d→%d chars) — preservando draft actual",
+          baselineBody.length,
+          cleaned.length,
+        );
         return {};
       }
 

@@ -3,6 +3,7 @@
  */
 
 import { collectExternalIntegrationGapsFromRegistry } from "@theforge/shared-types";
+import { resolveMessagingBrokerFromMddSection2 } from "./messaging-broker.util.js";
 
 /** Gaps cuando BRD/DBGA declara integración pero falta en API/Architecture/Infra. */
 export function collectExternalIntegrationContractGaps(params: {
@@ -21,10 +22,17 @@ export function collectExternalIntegrationContractGaps(params: {
     .filter(Boolean)
     .join("\n");
 
-  return collectExternalIntegrationGapsFromRegistry({
+  const gaps = collectExternalIntegrationGapsFromRegistry({
     scopeCorpus,
     apiMarkdown: params.apiContractsMarkdown ?? "",
     architectureMarkdown: params.architectureMarkdown ?? "",
     infraMarkdown: params.infraMarkdown ?? "",
   });
+
+  const broker = resolveMessagingBrokerFromMddSection2(params.mddMarkdown ?? "");
+  if (broker === "bull") {
+    return gaps.filter((g) => !/\[Integración rabbitmq\]/i.test(g));
+  }
+
+  return gaps;
 }

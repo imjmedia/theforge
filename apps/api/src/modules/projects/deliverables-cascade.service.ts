@@ -156,6 +156,7 @@ export class DeliverablesCascadeService {
         projectId,
         stepGaps,
         options?.acknowledgeGaps === true,
+        options?.signal,
       ).catch((e) =>
         this.logger.warn(`[CascadeDelta] ${step}: ${e instanceof Error ? e.message : e}`),
       );
@@ -266,6 +267,7 @@ export class DeliverablesCascadeService {
               projectId,
               stepGaps ?? undefined,
               options?.acknowledgeGaps === true,
+              options?.signal,
             );
           } catch (e) {
             if (e instanceof Error && e.message.includes("Cancelado por el usuario")) return;
@@ -362,6 +364,7 @@ export class DeliverablesCascadeService {
     projectId: string,
     gapsFeedback?: string | null,
     acknowledgeGaps?: boolean,
+    signal?: AbortSignal,
   ): Promise<void> {
     if (step === "ui_screens_sync") {
       await this.syncUiScreens(projectId);
@@ -370,6 +373,7 @@ export class DeliverablesCascadeService {
     await this.projects.generateDocument(step as DeliverableKind, projectId, {
       gapsFeedback: gapsFeedback ?? undefined,
       acknowledgeGaps,
+      signal,
     });
   }
 
@@ -540,7 +544,7 @@ export class DeliverablesCascadeService {
 
     if (flags.retryLogicFlows) {
       await this.projects
-        .generateLogicFlows(projectId, feedback)
+        .generateLogicFlows(projectId, feedback, signal)
         .catch((e) =>
           this.logger.warn(`[Cascade] W4 logic-flows retry: ${e instanceof Error ? e.message : e}`),
         );
@@ -550,14 +554,14 @@ export class DeliverablesCascadeService {
     const upstreamRetries: Array<Promise<unknown>> = [];
     if (flags.retryArchitecture) {
       upstreamRetries.push(
-        this.projects.generateArchitecture(projectId, feedback).catch((e) =>
+        this.projects.generateArchitecture(projectId, feedback, signal).catch((e) =>
           this.logger.warn(`[Cascade] W4 architecture retry: ${e instanceof Error ? e.message : e}`),
         ),
       );
     }
     if (flags.retryApiContracts) {
       upstreamRetries.push(
-        this.projects.generateApiContracts(projectId, feedback).catch((e) =>
+        this.projects.generateApiContracts(projectId, feedback, signal).catch((e) =>
           this.logger.warn(`[Cascade] W4 api-contracts retry: ${e instanceof Error ? e.message : e}`),
         ),
       );
@@ -586,7 +590,7 @@ export class DeliverablesCascadeService {
       const relaxPreflight =
         docAcc.score < TASKS_PREFLIGHT_DOC_ACCURACY_BLOCK_THRESHOLD;
       await this.projects
-        .generateTasks(projectId, feedback, { acknowledgeGaps: relaxPreflight })
+        .generateTasks(projectId, feedback, { acknowledgeGaps: relaxPreflight, signal })
         .catch((e) =>
           this.logger.warn(`[Cascade] W4 tasks retry: ${e instanceof Error ? e.message : e}`),
         );
@@ -615,7 +619,7 @@ export class DeliverablesCascadeService {
       if (!apiCheck.ok && (project.apiContractsContent ?? "").trim().length > 80) {
         const feedback = buildApiRetryFeedback(apiCheck);
         retries.push(
-          this.projects.generateApiContracts(projectId, feedback).catch((e) =>
+          this.projects.generateApiContracts(projectId, feedback, signal).catch((e) =>
             this.logger.warn(`[Cascade] API conformance retry: ${e instanceof Error ? e.message : e}`),
           ),
         );
@@ -623,7 +627,7 @@ export class DeliverablesCascadeService {
       if (!infraCheck.ok && (project.infraContent ?? "").trim().length > 80) {
         const feedback = buildInfraConformanceGapFeedback(infraCheck.gaps);
         retries.push(
-          this.projects.generateInfra(projectId, feedback).catch((e) =>
+          this.projects.generateInfra(projectId, feedback, signal).catch((e) =>
             this.logger.warn(`[Cascade] Infra conformance retry: ${e instanceof Error ? e.message : e}`),
           ),
         );
@@ -723,6 +727,7 @@ export class DeliverablesCascadeService {
           return this.projects
             .generateDocument(step as DeliverableKind, projectId, {
               gapsFeedback: plan.feedback || undefined,
+              signal,
             })
             .catch((e) =>
               this.logger.warn(

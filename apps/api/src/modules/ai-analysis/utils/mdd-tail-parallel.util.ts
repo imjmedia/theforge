@@ -6,7 +6,12 @@ import type { MddStructured } from "../state/mdd-structured.schema.js";
 import type { MDDStateType } from "../state/index.js";
 import { mergeSection6AvoidingRegression } from "./mdd-credential-storage.util.js";
 import { mergeMddStructured } from "./mdd-merge-structured.js";
-import { isPlaceholderSeguridad } from "./mdd-security-parse.js";
+import { isPlaceholderSeguridad, recoverSeguridadItemsFromRawLlmText } from "./mdd-security-parse.js";
+import {
+  draftHasSubstantialSection6,
+  draftHasSubstantialSection7,
+  isSection5SectionRegression,
+} from "./mdd-section-preserve.util.js";
 import {
   extractArquitecturaSectionBody,
   extractContextSectionBody,
@@ -19,6 +24,8 @@ import {
   getSection6Or7Range,
   integracionToSection7Markdown,
   isMddSectionPipelinePlaceholderBody,
+  mddHasDuplicateSectionHeadings,
+  deduplicateAndReorderMddSections,
   replaceMddSection5Body,
   replaceSection6Or7InDraft,
   seguridadItemsToSection6Markdown,
@@ -98,10 +105,19 @@ export function isTailParallelFirstPassDraft(draft: string): boolean {
 export function ensureSection5TailParallelPlaceholder(draft: string): string {
   const trimmed = (draft ?? "").trim();
   if (!trimmed) return trimmed;
-  const existing = extractSection5Body(trimmed);
-  if (existing && !isMddSectionPipelinePlaceholderBody(existing) && existing.trim().length >= 100) {
-    return trimmed;
+
+  const hasSection5H2 = /(?:^|\n)##\s*5\.\s*Lógica\s+y\s*Edge\s+Cases\b/i.test(trimmed);
+  if (hasSection5H2) {
+    if (mddHasDuplicateSectionHeadings(trimmed)) {
+      return deduplicateAndReorderMddSections(trimmed);
+    }
+    const existing = extractSection5Body(trimmed);
+    if (existing && !isMddSectionPipelinePlaceholderBody(existing) && existing.trim().length >= 100) {
+      return trimmed;
+    }
+    return replaceMddSection5Body(trimmed, MDD_SECTION5_TAIL_PLACEHOLDER);
   }
+
   return replaceMddSection5Body(trimmed, MDD_SECTION5_TAIL_PLACEHOLDER);
 }
 
@@ -150,8 +166,15 @@ export function mergeTailParallelResults(
   }
 
   const section5Body = extractSection5BodyForMerge(s5Result, baseDraft);
+  const baselineS5 = extractSection5Body(baseDraft);
   if (section5Body) {
-    finalDraft = replaceMddSection5Body(finalDraft, section5Body);
+    if (baselineS5 && isSection5SectionRegression(baselineS5, section5Body)) {
+      console.warn(
+        `[MDD:TailParallel] §5 merge rechazado por regresión (${baselineS5.length}→${section5Body.length} chars)`,
+      );
+    } else {
+      finalDraft = replaceMddSection5Body(finalDraft, section5Body);
+    }
   }
 
   const secStructured = secResult.mddStructured ?? state.mddStructured ?? {};
@@ -193,6 +216,52 @@ export function mergeTailParallelResults(
   };
 }
 
+/** Post-merge: fuerza §6/§7 si los agentes devolvieron contenido pero el draft no lo refleja. */
+function assertPostCriticTailSectionsInDraft(
+  finalDraft: string,
+  secResult: TailParallelNodeResult,
+  intResult: TailParallelNodeResult,
+): string {
+  let out = finalDraft;
+  const s6Body = extractSection6Body(out);
+  const s6Missing = !s6Body || isMddSectionPipelinePlaceholderBody(s6Body);
+  const seguridad = secResult.mddStructured?.seguridad;
+  const secMd =
+    secResult.securitySectionMd?.trim() ||
+    (seguridad?.length && !isPlaceholderSeguridad(seguridad)
+      ? seguridadItemsToSection6Markdown(seguridad)
+      : "");
+
+  if (s6Missing && secMd.length >= 100) {
+    out = mergeSection6AvoidingRegression(out, secMd);
+    console.error(
+      "[MDD:PostCriticMerge] §6 faltante pese a Security OK — force inject (len=%s)",
+      secMd.length,
+    );
+  }
+
+  const s7Body = extractSection7Body(out);
+  const s7Missing = !s7Body || isMddSectionPipelinePlaceholderBody(s7Body);
+  const integracion = intResult.mddStructured?.integracion;
+  let intMd = intResult.integrationSectionMd?.trim() ?? "";
+  if (!intMd && integracion) {
+    const integracionForMd = Array.isArray(integracion) ? { subsections: integracion } : integracion;
+    intMd = integracionToSection7Markdown(integracionForMd);
+  }
+  const s7BodyFromMd = intMd.replace(/^##[^\n]+\n+/, "").trim();
+
+  if (s7Missing && s7BodyFromMd.length >= 100 && !isMddSectionPipelinePlaceholderBody(s7BodyFromMd)) {
+    const draftWithSection6 = ensureSection6WhenSection7Present(out);
+    out = replaceSection6Or7InDraft(draftWithSection6, 7, intMd.startsWith("##") ? intMd : `## 7. Infraestructura\n\n${intMd}`);
+    console.error(
+      "[MDD:PostCriticMerge] §7 faltante pese a Integration OK — force inject (len=%s)",
+      s7BodyFromMd.length,
+    );
+  }
+
+  return out;
+}
+
 /**
  * Combina §4 (api_contracts) con slices §6/§7 (security/integration sliceOnly).
  * No usa mddDraft de security/integration — evita colisión en el reducer LangGraph.
@@ -204,24 +273,73 @@ export function mergePostCriticParallelResults(
   intResult: TailParallelNodeResult,
 ): Partial<MDDStateType> {
   let finalDraft = (apiResult.mddDraft ?? state.mddDraft ?? "").trim();
+  finalDraft = ensureSection5TailParallelPlaceholder(finalDraft);
 
   const seguridad = secResult.mddStructured?.seguridad;
-  if (seguridad?.length && !isPlaceholderSeguridad(seguridad)) {
+  const seguridadStructuredOk = !!(seguridad?.length && !isPlaceholderSeguridad(seguridad));
+  const securitySectionMd = secResult.securitySectionMd?.trim();
+
+  if (seguridadStructuredOk) {
     finalDraft = mergeSection6AvoidingRegression(
       finalDraft,
+      seguridadItemsToSection6Markdown(seguridad!),
+    );
+  } else if (securitySectionMd && securitySectionMd.length >= 100) {
+    finalDraft = mergeSection6AvoidingRegression(finalDraft, securitySectionMd);
+  } else if (seguridad?.length) {
+    const recovered = recoverSeguridadItemsFromRawLlmText(
       seguridadItemsToSection6Markdown(seguridad),
     );
+    if (recovered?.length && !isPlaceholderSeguridad(recovered)) {
+      finalDraft = mergeSection6AvoidingRegression(
+        finalDraft,
+        seguridadItemsToSection6Markdown(recovered),
+      );
+    }
+  }
+
+  const s6AfterStructuredMerge = extractSection6Body(finalDraft);
+  if (
+    (seguridadStructuredOk || securitySectionMd) &&
+    (!s6AfterStructuredMerge || isMddSectionPipelinePlaceholderBody(s6AfterStructuredMerge))
+  ) {
+    const fallbackS6 =
+      securitySectionMd ||
+      (seguridad?.length ? seguridadItemsToSection6Markdown(seguridad) : "");
+    if (fallbackS6 && fallbackS6.length >= 100) {
+      finalDraft = mergeSection6AvoidingRegression(finalDraft, fallbackS6);
+      console.warn(
+        "[MDD:PostCriticMerge] §6 ausente/placeholder pese a seguridad OK — inyectado (len=%s)",
+        fallbackS6.length,
+      );
+    }
   }
 
   const integracion = intResult.mddStructured?.integracion;
-  if (integracion) {
+  const integrationSectionMd = intResult.integrationSectionMd?.trim();
+  const integracionStructuredOk = !!integracion;
+
+  if (integracionStructuredOk) {
     const integracionForMd = Array.isArray(integracion) ? { subsections: integracion } : integracion;
     const section7Md = integracionToSection7Markdown(integracionForMd);
-    const draftWithSection6 = ensureSection6WhenSection7Present(finalDraft);
-    finalDraft = replaceSection6Or7InDraft(draftWithSection6, 7, section7Md);
+    const s7Body = section7Md.replace(/^##[^\n]+\n+/, "").trim();
+    if (s7Body.length >= 100 && !isMddSectionPipelinePlaceholderBody(s7Body)) {
+      const draftWithSection6 = ensureSection6WhenSection7Present(finalDraft);
+      finalDraft = replaceSection6Or7InDraft(draftWithSection6, 7, section7Md);
+    }
+  } else if (integrationSectionMd && integrationSectionMd.length >= 100) {
+    const s7Body = integrationSectionMd.replace(/^##[^\n]+\n+/, "").trim();
+    if (!isMddSectionPipelinePlaceholderBody(s7Body)) {
+      const draftWithSection6 = ensureSection6WhenSection7Present(finalDraft);
+      finalDraft = replaceSection6Or7InDraft(
+        draftWithSection6,
+        7,
+        integrationSectionMd.startsWith("##") ? integrationSectionMd : `## 7. Infraestructura\n\n${integrationSectionMd}`,
+      );
+    }
   }
 
-  finalDraft = ensureSection5TailParallelPlaceholder(finalDraft);
+  finalDraft = assertPostCriticTailSectionsInDraft(finalDraft, secResult, intResult);
 
   let mergedStructured = mergeMddStructured(
     state.mddStructured ?? undefined,
@@ -234,6 +352,19 @@ export function mergePostCriticParallelResults(
   if (integracion) {
     mergedStructured = mergeMddStructured(mergedStructured, { integracion }, finalDraft);
   }
+
+  const resolvedSecuritySectionMd =
+    secResult.securitySectionMd?.trim() ||
+    (draftHasSubstantialSection6(finalDraft)
+      ? seguridadItemsToSection6Markdown(mergedStructured.seguridad ?? seguridad ?? [])
+      : undefined);
+  const resolvedIntegrationSectionMd =
+    intResult.integrationSectionMd?.trim() ||
+    (draftHasSubstantialSection7(finalDraft) && integracion
+      ? integracionToSection7Markdown(
+          Array.isArray(integracion) ? { subsections: integracion } : integracion,
+        )
+      : undefined);
 
   const directives = [
     ...(Array.isArray((apiResult as Record<string, unknown>).internalDirectives)
@@ -263,8 +394,14 @@ export function mergePostCriticParallelResults(
     mddDraft: finalDraft,
     mddStructured: mergedStructured as MddStructured,
     postCriticParallelDone: true,
-    ...(secResult.securitySectionMd ? { securitySectionMd: secResult.securitySectionMd } : {}),
-    ...(intResult.integrationSectionMd ? { integrationSectionMd: intResult.integrationSectionMd } : {}),
+    ...(draftHasSubstantialSection6(finalDraft)
+      ? { securityArchitectMddDraftSnapshot: finalDraft }
+      : {}),
+    ...(draftHasSubstantialSection7(finalDraft)
+      ? { integrationArchitectMddDraftSnapshot: finalDraft }
+      : {}),
+    ...(resolvedSecuritySectionMd ? { securitySectionMd: resolvedSecuritySectionMd } : {}),
+    ...(resolvedIntegrationSectionMd ? { integrationSectionMd: resolvedIntegrationSectionMd } : {}),
     ...(directives.length > 0 ? { internalDirectives: directives } : {}),
   };
 }

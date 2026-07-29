@@ -191,6 +191,42 @@ export function sanitizeManifestToMatchIdentifiedInfra(sectionBody: string, iden
 }
 
 /**
+ * Si manifest §7 tiene `stack` vacío pero §2/§7 citan infra (Docker, Dokploy…), rellena stack
+ * desde términos identificados (evita gate «Manifest sin stack» tras Integration snapshot).
+ */
+export function hydrateEmptyManifestStackInDraft(draft: string): string {
+  const trimmed = (draft ?? "").trim();
+  if (!trimmed) return draft;
+  const infrMatch = trimmed.match(/\n##\s+(?:7\.\s+)?(?:Infraestructura|Integración)\b[\s\S]*/i);
+  if (!infrMatch?.[0]) return draft;
+  const section7 = infrMatch[0];
+  const jsonMatch = section7.match(/```json\s*\n([\s\S]*?)```/i);
+  if (!jsonMatch?.[1]) return draft;
+  let obj: Record<string, unknown>;
+  try {
+    obj = JSON.parse(jsonMatch[1]) as Record<string, unknown>;
+  } catch {
+    return draft;
+  }
+  const stack = obj.stack;
+  const stackEmpty =
+    stack == null ||
+    (Array.isArray(stack) && stack.length === 0) ||
+    (typeof stack === "object" && !Array.isArray(stack) && Object.keys(stack as object).length === 0);
+  if (!stackEmpty) return draft;
+
+  const s2Match = trimmed.match(/\n##\s+2\.\s*Arquitectura[\s\S]*?(?=\n##\s+\d+\.|\n##\s+Seguridad|\n##\s+UI\/UX|$)/i);
+  const corpus = `${s2Match?.[0] ?? ""}\n${section7}`;
+  const terms = extractIdentifiedInfraFromText(corpus);
+  if (terms.length === 0) return draft;
+
+  const hydrated = buildNewFormatManifestFromIdentifiedTerms(terms);
+  const newBlock = "```json\n" + JSON.stringify(hydrated, null, 2) + "\n```";
+  const replaced = section7.replace(/```json\s*\n[\s\S]*?```/i, newBlock);
+  return trimmed.replace(section7, replaced);
+}
+
+/**
  * Si la infra identificada en el documento NO es AWS (ej. solo Docker/Dokploy), reemplaza en las secciones
  * Seguridad e Integración las menciones a AWS Cognito, AWS RDS, etc. por equivalentes genéricos para evitar
  * contradicción con un alcance self-hosted.

@@ -31,6 +31,8 @@ import {
   replaceSection1BodyFromAnyHeading,
   restoreContextSectionFromBaselineIfMissing,
   restoreMddSectionsFromBaselineStrict,
+  mddHasDuplicateSectionHeadings,
+  deduplicateMddDraftSections,
 } from "./utils/mdd-sanitize.js";
 import { guardTailSectionsForPersist } from "./utils/mdd-section-preserve.util.js";
 import { ProjectsService } from "../projects/projects.service.js";
@@ -304,7 +306,25 @@ export class AiAnalysisService {
     prePrepareDraft: string,
     markdown: string,
   ): { markdown: string; errorMessage?: string } {
-    const guard = guardTailSectionsForPersist(prePrepareDraft, markdown, "PersistCheck");
+    let working = markdown;
+    if (mddHasDuplicateSectionHeadings(working)) {
+      const deduped = deduplicateMddDraftSections(working);
+      if (!mddHasDuplicateSectionHeadings(deduped)) {
+        this.logger.warn(
+          `[MDD:PersistCheck] auto-dedupe headings duplicados (len ${working.length}→${deduped.length})`,
+        );
+        working = deduped;
+      } else {
+        return {
+          markdown: working,
+          errorMessage:
+            "El borrador final repite headings canónicos §1–§7 (secciones duplicadas). " +
+            "No se persistió; reintenta la generación del MDD.",
+        };
+      }
+    }
+
+    const guard = guardTailSectionsForPersist(prePrepareDraft, working, "PersistCheck");
     if (guard.restored) {
       this.logger.warn(
         `[MDD:PersistCheck] §2–§7 restaurada(s) tras prepare (draftLen=${prePrepareDraft.length})`,
@@ -758,7 +778,13 @@ export class AiAnalysisService {
           mddStructured: lastState.mddStructured,
           mddDraft: raw || lastState.mddDraft,
         },
-        { ...prepareOpts, baselineDraft: mddDraftRaw || undefined },
+        {
+          ...prepareOpts,
+          baselineDraft: mddDraftRaw || undefined,
+          // Sin esto la pasada de persist corre sin ningún snapshot §1–§7: normalize/dedupe/SSOT
+          // pueden vaciar secciones ya validadas y nada las restaura antes del gate.
+          tailSnapshotSource: lastState,
+        },
       );
       const tailPersistGuard = this.guardMarkdownTailForPersist(mddDraftRaw, markdown);
       markdown = tailPersistGuard.markdown;
@@ -1070,7 +1096,11 @@ export class AiAnalysisService {
           mddStructured: lastState?.mddStructured,
           mddDraft: rawMarkdown,
         },
-        { ...managerPrepareOpts, baselineDraft: finalDraft || undefined },
+        {
+          ...managerPrepareOpts,
+          baselineDraft: finalDraft || undefined,
+          tailSnapshotSource: lastState ?? undefined,
+        },
       );
       const managerTailGuard = this.guardMarkdownTailForPersist(finalDraft, markdown);
       markdown = managerTailGuard.markdown;
@@ -1482,7 +1512,11 @@ export class AiAnalysisService {
             mddStructured: lastState?.mddStructured,
             mddDraft: raw,
           },
-          { ...resumePrepareOpts, baselineDraft: finalDraft || undefined },
+          {
+            ...resumePrepareOpts,
+            baselineDraft: finalDraft || undefined,
+            tailSnapshotSource: lastState ?? undefined,
+          },
         );
         const resumeTailGuard = this.guardMarkdownTailForPersist(finalDraft, markdown);
         markdown = resumeTailGuard.markdown;

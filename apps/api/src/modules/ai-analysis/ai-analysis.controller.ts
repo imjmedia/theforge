@@ -111,16 +111,23 @@ export class AiAnalysisController {
   }
 
   /**
-   * Borra el checkpoint LangGraph del hilo DBGA (mddStageId vacío) para el proyecto.
-   * Usar al limpiar el benchmark en el taller para no reanudar un grafo antiguo.
+   * Borra checkpoint LangGraph: siempre el hilo DBGA (`mddStageId` vacío).
+   * Con `stageId`, también el hilo MDD Manager de esa etapa.
    */
   @Delete("dbga/checkpoint")
-  async clearDbgaCheckpoint(@Query("projectId") projectId: string) {
+  async clearDbgaCheckpoint(
+    @Query("projectId") projectId: string,
+    @Query("stageId") stageId?: string,
+  ) {
     const id = typeof projectId === "string" ? projectId.trim() : "";
     if (!id) {
       throw new BadRequestException("projectId is required");
     }
     await this.aiAnalysis.clearMddCheckpoint(id, "");
+    const sid = typeof stageId === "string" ? stageId.trim() : "";
+    if (sid) {
+      await this.aiAnalysis.clearMddCheckpoint(id, sid);
+    }
     return { ok: true };
   }
 

@@ -234,8 +234,8 @@ export class ProjectsService implements IOrchestratorProjectsPort {
     return this.projectComplexity.tryConfirmComplexityFromChatMessage(projectId, message);
   }
 
-  async generateUxUiGuide(projectId: string) {
-    return this.uxGuide.generateUxUiGuide(projectId);
+  async generateUxUiGuide(projectId: string, signal?: AbortSignal) {
+    return this.uxGuide.generateUxUiGuide(projectId, signal);
   }
 
   async composeUxGuideFromDesignRef(projectId: string) {
@@ -286,7 +286,7 @@ export class ProjectsService implements IOrchestratorProjectsPort {
   async generateDocument(
     kind: DeliverableKind,
     projectId: string,
-    options?: { gapsFeedback?: string | null; acknowledgeGaps?: boolean },
+    options?: { gapsFeedback?: string | null; acknowledgeGaps?: boolean; signal?: AbortSignal },
   ): Promise<void> {
     return this.deliverableGenerators.generateDocument(kind, projectId, options);
   }
@@ -295,8 +295,8 @@ export class ProjectsService implements IOrchestratorProjectsPort {
     return this.deliverableGenerators.generateAem(projectId, body);
   }
 
-  async generateSpec(projectId: string) {
-    return this.deliverableGenerators.generateSpec(projectId);
+  async generateSpec(projectId: string, signal?: AbortSignal) {
+    return this.deliverableGenerators.generateSpec(projectId, signal);
   }
 
   async clearAgentGovernanceContent(projectId: string) {
@@ -307,8 +307,9 @@ export class ProjectsService implements IOrchestratorProjectsPort {
     projectId: string,
     target?: string,
     options?: { forceRegenerate?: boolean; skipSddAutoReconcile?: boolean },
+    signal?: AbortSignal,
   ) {
-    return this.deliverableGenerators.generateAgentGovernance(projectId, target, options);
+    return this.deliverableGenerators.generateAgentGovernance(projectId, target, options, signal);
   }
 
   async generateAgentGovernancePreview(
@@ -326,7 +327,11 @@ export class ProjectsService implements IOrchestratorProjectsPort {
   async generateTasks(
     projectId: string,
     gapsFeedback?: string | null,
-    options?: { acknowledgeGaps?: boolean; onProgress?: (progress: TasksPipelineProgress) => void },
+    options?: {
+      acknowledgeGaps?: boolean;
+      onProgress?: (progress: TasksPipelineProgress) => void;
+      signal?: AbortSignal;
+    },
   ) {
     return this.deliverableGenerators.generateTasks(projectId, gapsFeedback, options);
   }
@@ -335,32 +340,32 @@ export class ProjectsService implements IOrchestratorProjectsPort {
     return this.deliverableGenerators.generateArchitecturePreview(projectId);
   }
 
-  async generateArchitecture(projectId: string, gapsFeedback?: string | null) {
-    return this.deliverableGenerators.generateArchitecture(projectId, gapsFeedback);
+  async generateArchitecture(projectId: string, gapsFeedback?: string | null, signal?: AbortSignal) {
+    return this.deliverableGenerators.generateArchitecture(projectId, gapsFeedback, signal);
   }
 
   async generateUseCasesPreview(projectId: string): Promise<{ content: string }> {
     return this.deliverableGenerators.generateUseCasesPreview(projectId);
   }
 
-  async generateUseCases(projectId: string) {
-    return this.deliverableGenerators.generateUseCases(projectId);
+  async generateUseCases(projectId: string, signal?: AbortSignal) {
+    return this.deliverableGenerators.generateUseCases(projectId, signal);
   }
 
   async generateUserStoriesPreview(projectId: string): Promise<{ content: string }> {
     return this.deliverableGenerators.generateUserStoriesPreview(projectId);
   }
 
-  async generateUserStories(projectId: string) {
-    return this.deliverableGenerators.generateUserStories(projectId);
+  async generateUserStories(projectId: string, signal?: AbortSignal) {
+    return this.deliverableGenerators.generateUserStories(projectId, signal);
   }
 
   async generateBlueprintPreview(projectId: string, gapsFeedback?: string | null): Promise<{ content: string }> {
     return this.deliverableGenerators.generateBlueprintPreview(projectId, gapsFeedback);
   }
 
-  async generateBlueprint(projectId: string, gapsFeedback?: string | null) {
-    return this.deliverableGenerators.generateBlueprint(projectId, gapsFeedback);
+  async generateBlueprint(projectId: string, gapsFeedback?: string | null, signal?: AbortSignal) {
+    return this.deliverableGenerators.generateBlueprint(projectId, gapsFeedback, signal);
   }
 
   async generateApiContractsPreview(projectId: string, gapsFeedback?: string | null): Promise<{ content: string }> {
@@ -371,12 +376,12 @@ export class ProjectsService implements IOrchestratorProjectsPort {
     return this.deliverableGenerators.generateInfraPreview(projectId, gapsFeedback);
   }
 
-  async generateApiContracts(projectId: string, gapsFeedback?: string | null) {
-    return this.deliverableGenerators.generateApiContracts(projectId, gapsFeedback);
+  async generateApiContracts(projectId: string, gapsFeedback?: string | null, signal?: AbortSignal) {
+    return this.deliverableGenerators.generateApiContracts(projectId, gapsFeedback, signal);
   }
 
-  async generateLogicFlows(projectId: string, gapsFeedback?: string | null) {
-    return this.deliverableGenerators.generateLogicFlows(projectId, gapsFeedback);
+  async generateLogicFlows(projectId: string, gapsFeedback?: string | null, signal?: AbortSignal) {
+    return this.deliverableGenerators.generateLogicFlows(projectId, gapsFeedback, signal);
   }
 
   async patchMddFromGapFeedback(
@@ -387,8 +392,8 @@ export class ProjectsService implements IOrchestratorProjectsPort {
     return this.deliverableGenerators.patchMddFromGapFeedback(projectId, stageId, gapsFeedback);
   }
 
-  async generateInfra(projectId: string, gapsFeedback?: string | null) {
-    return this.deliverableGenerators.generateInfra(projectId, gapsFeedback);
+  async generateInfra(projectId: string, gapsFeedback?: string | null, signal?: AbortSignal) {
+    return this.deliverableGenerators.generateInfra(projectId, gapsFeedback, signal);
   }
 
   async generateDeliverablesCascade(

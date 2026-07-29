@@ -33,6 +33,11 @@ import { getInternalDirectivesContext, extractInternalDirectives } from "../util
 import { stripThinkingTags } from "../utils/mdd-security-parse.js";
 import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
 import { buildTrimmedTailAgentContext } from "../utils/mdd-tail-parallel.util.js";
+import {
+  draftHasSubstantialSection7,
+  reinjectTailSectionsFromSnapshotsForGateLoop,
+  stateHasSubstantialTailSnapshots,
+} from "../utils/mdd-section-preserve.util.js";
 import { z } from "zod";
 
 export type MddIntegrationNodeOptions = {
@@ -194,6 +199,25 @@ export function createMddIntegrationNode(llm: BaseChatModel, opts?: MddIntegrati
     const sliceOnly = opts?.sliceOnly === true;
     LOG("entry mddDraftLen=%s sliceOnly=%s", (state.mddDraft ?? "").length, sliceOnly);
     try {
+      if (
+        state.deliveryGateLoopActive === true &&
+        state.deliveryGateFixTarget === "integration" &&
+        stateHasSubstantialTailSnapshots(state)
+      ) {
+        const reinjected = reinjectTailSectionsFromSnapshotsForGateLoop(state);
+        if (reinjected) {
+          LOG("gate loop integration — re-inyectado §6/§7 desde snapshots (skip LLM)");
+          if (sliceOnly) {
+            return {
+              mddStructured: state.mddStructured,
+              ...(reinjected.securitySectionMd ? { securitySectionMd: reinjected.securitySectionMd } : {}),
+              ...(reinjected.integrationSectionMd ? { integrationSectionMd: reinjected.integrationSectionMd } : {}),
+            };
+          }
+          return reinjected;
+        }
+      }
+
       const brief = getUserBrief(state);
       const briefBlock = brief
         ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Elaborar la sección 7. Infraestructura/Integración para una aplicación que cumple este objetivo.\n\n---\n\n`
@@ -267,6 +291,18 @@ export function createMddIntegrationNode(llm: BaseChatModel, opts?: MddIntegrati
       const text = stripThinkingTags(typeof response.content === "string" ? response.content : "");
       logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, text.length));
       if (!text.trim()) {
+        const reinjected = reinjectTailSectionsFromSnapshotsForGateLoop(state);
+        if (reinjected) {
+          LOG("LLM vacío — restaurado §6/§7 desde snapshots");
+          if (sliceOnly) {
+            return {
+              mddStructured: state.mddStructured,
+              ...(reinjected.securitySectionMd ? { securitySectionMd: reinjected.securitySectionMd } : {}),
+              ...(reinjected.integrationSectionMd ? { integrationSectionMd: reinjected.integrationSectionMd } : {}),
+            };
+          }
+          return { ...reinjected, mddStructured: state.mddStructured ?? {} };
+        }
         LOG("LLM vacío, usando fallback");
         const slice = {
           integracion: mddIntegracionWithManifestSchema.parse({
@@ -357,7 +393,21 @@ export function createMddIntegrationNode(llm: BaseChatModel, opts?: MddIntegrati
       const integracionForMd = Array.isArray(merged.integracion)
         ? { subsections: merged.integracion }
         : (merged.integracion ?? slice.integracion);
-      const section7Md = integracionToSection7Markdown(integracionForMd);
+      let section7Md = integracionToSection7Markdown(integracionForMd);
+      const s7BodyFromLlm = section7Md.replace(/^##[^\n]+\n+/, "").trim();
+      if (!draftHasSubstantialSection7(`# MDD\n${section7Md}`)) {
+        const reinjected = reinjectTailSectionsFromSnapshotsForGateLoop(state);
+        if (reinjected?.integrationSectionMd) {
+          section7Md = reinjected.integrationSectionMd;
+          LOG("§7 LLM insustancial — restaurado desde snapshot");
+        }
+      } else if (s7BodyFromLlm.length < 200) {
+        const reinjected = reinjectTailSectionsFromSnapshotsForGateLoop(state);
+        if (reinjected?.integrationSectionMd) {
+          section7Md = reinjected.integrationSectionMd;
+          LOG("§7 LLM corto — restaurado desde snapshot");
+        }
+      }
 
       if (sliceOnly) {
         LOG("ok sliceOnly integracion subs=%s", integracionForMd.subsections?.length ?? 0);

@@ -344,6 +344,22 @@ export const createMddSlice: StateCreator<WorkshopState, [], [], MddSliceActions
     if (!pid) return false;
     const stageId = get().activeStageId;
     try {
+      const status =
+        get().generationStatus ??
+        (await get().fetchGenerationStatus(pid, stageId, { light: true }));
+      const cancellableMddJobs = (status?.mddJobs ?? []).filter(
+        (j) => j.status === "active" || j.status === "queued" || j.status === "retrying",
+      );
+      if (cancellableMddJobs.length > 0) {
+        await Promise.all(
+          cancellableMddJobs.map((job) =>
+            apiFetch(`${API_BASE}/projects/${pid}/mdd-jobs/${encodeURIComponent(job.jobId)}`, {
+              method: "DELETE",
+            }).catch(() => undefined),
+          ),
+        );
+      }
+
       const r = await apiFetch(`${API_BASE}/projects/${pid}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -361,6 +377,23 @@ export const createMddSlice: StateCreator<WorkshopState, [], [], MddSliceActions
         return false;
       }
       const data = (await r.json()) as Project;
+
+      const checkpointQs = new URLSearchParams({ projectId: pid });
+      if (stageId?.trim()) checkpointQs.set("stageId", stageId.trim());
+      await Promise.all([
+        apiFetch(`${API_BASE}/ai-analysis/estimation/clear-draft`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            projectId: pid,
+            ...(stageId ? { stageId } : {}),
+          }),
+        }).catch(() => undefined),
+        apiFetch(`${API_BASE}/ai-analysis/dbga/checkpoint?${checkpointQs}`, {
+          method: "DELETE",
+        }).catch(() => undefined),
+      ]);
+
       const packed = projectWithUxAfterStream(data, data.uxUiGuideContent, get().activeStageId);
       const nextProject = packed?.project ?? data;
       set({
@@ -371,8 +404,14 @@ export const createMddSlice: StateCreator<WorkshopState, [], [], MddSliceActions
         managerThreadId: null,
         synced: true,
         error: null,
+        notice: null,
+        loading: false,
+        loadingReason: null,
+        agentProgress: [],
         mddJustGeneratedFromBenchmark: false,
       });
+      void get().fetchEstimation(pid);
+      void get().fetchGenerationStatus(pid, stageId, { light: true });
       return true;
     } catch (e) {
       set({ error: e instanceof Error ? e.message : "Error al limpiar el MDD" });

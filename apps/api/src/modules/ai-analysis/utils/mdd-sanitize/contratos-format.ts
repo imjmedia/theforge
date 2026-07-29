@@ -240,7 +240,10 @@ export function countContratosEndpointRows(body: string | null | undefined): num
 export const MIN_CONTRATOS_BASELINE_FOR_REGRESSION_GUARD = 1_200;
 
 /** Ratio mínimo (nuevo/baseline) para aceptar un merge quirúrgico de §4. */
-export const CONTRATOS_REGRESSION_LENGTH_RATIO = 0.4;
+export const CONTRATOS_REGRESSION_LENGTH_RATIO = 0.75;
+
+/** Ratio mínimo de filas endpoint (candidato/baseline) cuando baseline ≥ 6. */
+export const CONTRATOS_REGRESSION_ENDPOINT_RATIO = 0.8;
 
 /**
  * True si el candidato es sustancial pero claramente peor que el baseline
@@ -260,7 +263,10 @@ export function isContratosSectionRegression(
   if (ratio < CONTRATOS_REGRESSION_LENGTH_RATIO) return true;
   const baselineEndpoints = countContratosEndpointRows(baseline);
   const candidateEndpoints = countContratosEndpointRows(candidate);
-  if (baselineEndpoints >= 6 && candidateEndpoints < Math.ceil(baselineEndpoints * 0.5)) {
+  if (
+    baselineEndpoints >= 6 &&
+    candidateEndpoints < Math.ceil(baselineEndpoints * CONTRATOS_REGRESSION_ENDPOINT_RATIO)
+  ) {
     return true;
   }
   return false;

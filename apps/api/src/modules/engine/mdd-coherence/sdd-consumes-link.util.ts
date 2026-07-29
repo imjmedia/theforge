@@ -57,6 +57,24 @@ export function extractForeignKeyTargetsByTable(sql: string): Map<string, Set<st
   return map;
 }
 
+/** Mapa inverso: tabla referenciada → tablas que la referencian (FK hijas). */
+export function extractForeignKeyReferrersByTable(
+  fkByTable: Map<string, Set<string>>,
+): Map<string, Set<string>> {
+  const reverse = new Map<string, Set<string>>();
+  for (const [owner, targets] of fkByTable) {
+    for (const target of targets) {
+      if (!reverse.has(target)) reverse.set(target, new Set());
+      reverse.get(target)!.add(owner);
+    }
+  }
+  return reverse;
+}
+
+function normalizeToken(token: string): string {
+  return (token ?? "").toLowerCase().replace(/-/g, "_");
+}
+
 function pathSegments(path: string): string[] {
   return (path ?? "")
     .split("/")
@@ -73,14 +91,35 @@ function singularize(token: string): string {
   return token;
 }
 
+function tokensEquivalent(a: string, b: string): boolean {
+  const na = normalizeToken(a);
+  const nb = normalizeToken(b);
+  if (na === nb) return true;
+  if (singularize(na) === nb || na === singularize(nb)) return true;
+  if (singularize(na) === singularize(nb)) return true;
+  if (na.replace(/_/g, "-") === nb.replace(/_/g, "-")) return true;
+  return false;
+}
+
 function segmentMatchesTable(segment: string, bareName: string): boolean {
-  const seg = segment.toLowerCase();
-  const bare = bareName.toLowerCase();
-  if (seg === bare) return true;
-  if (singularize(seg) === bare) return true;
-  if (seg === singularize(bare)) return true;
+  const seg = normalizeToken(segment);
+  const bare = normalizeToken(bareName);
+  if (tokensEquivalent(seg, bare)) return true;
   if (bare.endsWith(seg) && seg.length >= 4) return true;
   return false;
+}
+
+/** Tablas junction (`user_roles`) cuando la ruta incluye sus partes (`/users/{id}/roles`). */
+function junctionTableMatchesPath(bareName: string, segments: string[]): boolean {
+  const bare = normalizeToken(bareName);
+  if (!bare.includes("_")) return false;
+  const parts = bare.split("_").filter(Boolean);
+  if (parts.length < 2) return false;
+  const normalizedSegs = segments.map((s) => singularize(normalizeToken(s)));
+  return parts.every((part) => {
+    const p = singularize(normalizeToken(part));
+    return normalizedSegs.some((seg) => tokensEquivalent(seg, p));
+  });
 }
 
 /**
@@ -101,13 +140,23 @@ export function inferConsumedTableStorageNames(
         matched.add(table.storageName);
       }
     }
-    const direct = bareToStorage.get(seg) ?? bareToStorage.get(singularize(seg));
+    const direct =
+      bareToStorage.get(normalizeToken(seg)) ??
+      bareToStorage.get(singularize(normalizeToken(seg)));
     if (direct) matched.add(direct);
   }
 
+  for (const table of tables) {
+    if (junctionTableMatchesPath(table.bareName, segments)) {
+      matched.add(table.storageName);
+    }
+  }
+
   if (fkByTable) {
+    const fkReferrers = extractForeignKeyReferrersByTable(fkByTable);
     for (const owner of [...matched]) {
       for (const target of fkByTable.get(owner) ?? []) matched.add(target);
+      for (const referrer of fkReferrers.get(owner) ?? []) matched.add(referrer);
     }
   }
 

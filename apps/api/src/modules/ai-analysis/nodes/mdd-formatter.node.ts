@@ -17,9 +17,11 @@ import {
   replaceContextWhenOnlyMetadata,
   sanitizeContextKeyValueAndObject,
   sanitizeContextSection,
+  deduplicateMddDraftSections,
+  mddHasDuplicateSectionHeadings,
 } from "../utils/mdd-sanitize.js";
 import { reconcileUiUxDesignIntent } from "../utils/mdd-enrich-uiux-intent.js";
-import { preserveTailSectionsIfSubstantial, preserveSection2FromStackSnapshot, preserveSection3FromDataModelSnapshot, preserveSection4FromApiContractsSnapshot, draftHasPersistableSection4 } from "../utils/mdd-section-preserve.util.js";
+import { preserveTailSectionsIfSubstantial, preserveSection2FromStackSnapshot, preserveSection3FromDataModelSnapshot, preserveSection4FromApiContractsSnapshot, draftHasPersistableSection4, preserveTailSectionsFromSnapshots } from "../utils/mdd-section-preserve.util.js";
 import { shouldPreferDraftOverStructured } from "../utils/mdd-prepare-output.js";
 import { mddStructuredToMarkdown } from "../render/mdd-structured-to-markdown.js";
 import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
@@ -132,12 +134,17 @@ export function createMddFormatterNode(): (state: MDDStateType) => Promise<Parti
         return {};
       }
       formatted = preserveTailSectionsIfSubstantial(draft, formatted);
+      formatted = preserveTailSectionsFromSnapshots(state, formatted);
       formatted = preserveSection2FromStackSnapshot(state.stackArchitectMddDraftSnapshot, formatted);
       formatted = preserveSection3FromDataModelSnapshot(state.dataModelArchitectMddDraftSnapshot, formatted);
       formatted = preserveSection4FromApiContractsSnapshot(
         state.apiContractsArchitectMddDraftSnapshot,
         formatted,
       );
+      if (mddHasDuplicateSectionHeadings(formatted)) {
+        formatted = deduplicateMddDraftSections(formatted);
+        LOG("dedupe post-format eliminó headings duplicados len=%s", formatted.length);
+      }
       const sum = getMddDraftSummary(formatted);
       logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, 0, formatted.length));
       LOG("formateado len=%s -> %s section2=%s", draft.length, sum.length, sum.section2);

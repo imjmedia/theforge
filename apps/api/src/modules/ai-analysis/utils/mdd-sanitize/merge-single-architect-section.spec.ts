@@ -1,6 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { mergeSingleArchitectSectionIntoDraft, tryMergeSingleArchitectSectionIntoDraft } from "./section-merge.js";
+import {
+  deduplicateAndReorderMddSections,
+  mergeSingleArchitectSectionIntoDraft,
+  tryMergeSingleArchitectSectionIntoDraft,
+} from "./section-merge.js";
 
 const BASELINE = `# Master Design Document
 
@@ -142,5 +146,58 @@ describe("mergeSingleArchitectSectionIntoDraft", () => {
     const result = tryMergeSingleArchitectSectionIntoDraft(BASELINE, ARCHITECT, 3);
     assert.equal(result.merged, true);
     assert.ok(result.draft.includes("CREATE TABLE architect_orders"));
+  });
+});
+
+describe("sanitizeArquitecturaStackBody via deduplicateAndReorderMddSections", () => {
+  const substantialS2 = `${"NestJS monolito modular con Fastify. ".repeat(15)}
+### 2.1 Backend
+API REST con Prisma ORM.
+### 4.1 Frontend (subsección interna §2)
+React 18 con Vite — no es §4 canónica del MDD.
+`;
+
+  it("§2 con ### 4.1 interno NO queda Pendiente", () => {
+    const draft = `# MDD
+## 1. Contexto
+${"Alcance KMS. ".repeat(30)}
+## 2. Arquitectura y Stack
+${substantialS2}
+## 3. Modelo de Datos
+CREATE TABLE users (id UUID PRIMARY KEY);
+`;
+    const out = deduplicateAndReorderMddSections(draft);
+    assert.ok(!out.includes("(Pendiente: Arquitecto de Software)"));
+    assert.ok(out.includes("NestJS monolito modular"));
+    assert.ok(out.includes("### 4.1 Frontend"));
+  });
+});
+
+describe("getSection6Or7Range / replaceSection6Or7InDraft", () => {
+  it("no convierte ## 6 en ### 6 al reemplazar §6 en borrador largo", async () => {
+    const { getSection6Or7Range, replaceSection6Or7InDraft, extractSection6Body } = await import(
+      "./section-merge.js"
+    );
+    const { MDD_SECTION5_TAIL_PLACEHOLDER } = await import("../mdd-tail-parallel.config.js");
+    const draft = `# MDD
+## 1. Contexto
+${"Alcance. ".repeat(40)}
+## 2. Arquitectura y Stack
+${"Stack. ".repeat(40)}
+## 3. Modelo de Datos
+${"CREATE TABLE t (id UUID PRIMARY KEY); ".repeat(8)}
+## 4. Contratos de API
+${"| GET | /health |\n".repeat(12)}
+## 5. Lógica y Edge Cases
+${MDD_SECTION5_TAIL_PLACEHOLDER}
+## 6. Seguridad
+(Pendiente: Arquitecto de Seguridad)
+## 7. Infraestructura
+(Pendiente: Ingeniero de Integración)`;
+    const s6Body = `${"JWT RS256 y Argon2id. ".repeat(25)}`;
+    const out = replaceSection6Or7InDraft(draft, 6, `## 6. Seguridad\n\n${s6Body}`);
+    assert.ok(getSection6Or7Range(out, 6), "debe localizar ## 6. Seguridad canónico");
+    assert.ok(!/\n###\s*6\.\s*Seguridad/i.test(out), "no debe dejar ### 6 pegado a §5");
+    assert.ok(extractSection6Body(out)?.includes("Argon2id"));
   });
 });

@@ -3,9 +3,23 @@
  */
 
 import type { DomainInventory } from "@theforge/shared-types";
+import { AUTH_ENTITY_FAMILY } from "@theforge/shared-types";
 import { extractHttpEndpointsFromMarkdown } from "../ui-mcp/api-contract-endpoints.util.js";
 import { extractEntities } from "./conformance.service.js";
 import { extractSectionByNumber } from "./mdd-markdown-parser.js";
+import { markdownToMddStructured } from "../ai-analysis/utils/mdd-markdown-to-structured.js";
+import {
+  buildInfraOnlyEntitySet,
+  isExemptEntityTable,
+  isExemptPlatformEndpoint,
+  isFkChildCoveredByConsumedParent,
+} from "./mdd-coherence/mdd-coherence-exemptions.util.js";
+import {
+  extractForeignKeyTargetsByTable,
+  extractTableRefsFromSql,
+  inferConsumedTableStorageNames,
+  type SddTableRef,
+} from "./mdd-coherence/sdd-consumes-link.util.js";
 
 export type EntityApiTraceRow = {
   entity: string;
@@ -22,22 +36,56 @@ export type EntityApiTraceReport = {
   coverageRatio: number;
 };
 
-function entitySlugInPath(entity: string, path: string): boolean {
-  const slug = entity.replace(/_/g, "-");
-  const underscored = entity.replace(/-/g, "_");
-  const lower = path.toLowerCase();
-  return lower.includes(slug) || lower.includes(underscored) || lower.includes(entity);
+function parseSection3Sql(mddMarkdown: string): string {
+  const structured = markdownToMddStructured(mddMarkdown ?? "");
+  return structured.modeloDatos?.sql ?? "";
 }
 
-function endpointsForEntity(
+function storageToBareName(storageName: string, tables: SddTableRef[]): string {
+  const hit = tables.find((t) => t.storageName === storageName);
+  return hit?.bareName ?? storageName.split(".").pop()?.toLowerCase() ?? storageName.toLowerCase();
+}
+
+function buildConsumedBareNames(
+  endpoints: Array<{ method: string; path: string }>,
+  tables: SddTableRef[],
+  fkByTable: Map<string, Set<string>>,
+): Set<string> {
+  const consumed = new Set<string>();
+  for (const ep of endpoints) {
+    const path = (ep.path ?? "").trim();
+    if (isExemptPlatformEndpoint(path)) continue;
+    for (const storage of inferConsumedTableStorageNames(path, tables, fkByTable)) {
+      consumed.add(storageToBareName(storage, tables));
+    }
+  }
+  return consumed;
+}
+
+function endpointsConsumingEntity(
   entity: string,
+  tables: SddTableRef[],
+  fkByTable: Map<string, Set<string>>,
   endpoints: Array<{ method: string; path: string }>,
   endpointHint?: string,
 ): string[] {
+  const entityBare = entity.toLowerCase();
+  const entityStorage =
+    tables.find((t) => t.bareName === entityBare)?.storageName ?? entityBare;
+
   const matched = endpoints
-    .filter((ep) => entitySlugInPath(entity, ep.path))
+    .filter((ep) => {
+      const path = (ep.path ?? "").trim();
+      if (isExemptPlatformEndpoint(path)) return false;
+      const consumed = inferConsumedTableStorageNames(path, tables, fkByTable);
+      return consumed.some(
+        (storage) => storageToBareName(storage, tables) === entityBare || storage === entityStorage,
+      );
+    })
     .map((ep) => `${ep.method} ${ep.path}`);
+
   if (matched.length > 0) return matched;
+
   if (endpointHint?.trim()) {
     const hintNorm = endpointHint.replace(/\s+/g, " ").trim();
     const hintMatch = endpoints.find(
@@ -45,7 +93,23 @@ function endpointsForEntity(
     );
     if (hintMatch) return [`${hintMatch.method} ${hintMatch.path}`];
   }
+
   return [];
+}
+
+function entityHasApiCoverage(
+  entity: string,
+  tables: SddTableRef[],
+  fkByTable: Map<string, Set<string>>,
+  endpoints: Array<{ method: string; path: string }>,
+  consumedBareNames: Set<string>,
+  endpointHint?: string,
+  infraOnly?: boolean,
+): boolean {
+  if (infraOnly) return true;
+  if (isExemptEntityTable(entity)) return true;
+  if (isFkChildCoveredByConsumedParent(entity, consumedBareNames)) return true;
+  return endpointsConsumingEntity(entity, tables, fkByTable, endpoints, endpointHint).length > 0;
 }
 
 /** Matriz entidad → §3 → API para audit_documents y W4. */
@@ -65,6 +129,12 @@ export function buildEntityApiTraceReport(params: {
   const crudByEntity = new Map(
     (params.inventory?.crudMatrix ?? []).map((r) => [r.entity.toLowerCase(), r]),
   );
+  const infraOnly = buildInfraOnlyEntitySet(params.inventory);
+
+  const sql = parseSection3Sql(params.mddMarkdown ?? "");
+  const tables = extractTableRefsFromSql(sql);
+  const fkByTable = extractForeignKeyTargetsByTable(sql);
+  const consumedBareNames = buildConsumedBareNames(endpoints, tables, fkByTable);
 
   const rows: EntityApiTraceRow[] = [];
   const gaps: string[] = [];
@@ -73,12 +143,29 @@ export function buildEntityApiTraceReport(params: {
     const inMdd = mddEntities.has(entity);
     const inInventory = inventoryEntities.has(entity);
     const crud = crudByEntity.get(entity.toLowerCase());
-    const matchedEndpoints = endpointsForEntity(entity, endpoints, crud?.endpointHint);
+    const matchedEndpoints = endpointsConsumingEntity(
+      entity,
+      tables,
+      fkByTable,
+      endpoints,
+      crud?.endpointHint,
+    );
     let gap: string | undefined;
 
-    if (inInventory && !inMdd) {
+    if (inInventory && !inMdd && !AUTH_ENTITY_FAMILY.has(entity.toLowerCase())) {
       gap = "entidad inventario/DBGA ausente en MDD §3";
-    } else if (inMdd && matchedEndpoints.length === 0 && !crud?.infraOnly) {
+    } else if (
+      inMdd &&
+      !entityHasApiCoverage(
+        entity,
+        tables,
+        fkByTable,
+        endpoints,
+        consumedBareNames,
+        crud?.endpointHint,
+        crud?.infraOnly || infraOnly.has(entity.toLowerCase()),
+      )
+    ) {
       gap = "tabla §3 sin endpoint API trazable";
     }
 
@@ -95,7 +182,14 @@ export function buildEntityApiTraceReport(params: {
   }
 
   const domainRows = rows.filter((r) => !r.gap || r.inMdd);
-  const withApi = domainRows.filter((r) => r.inMdd && (r.matchedEndpoints.length > 0 || crudByEntity.get(r.entity.toLowerCase())?.infraOnly));
+  const withApi = domainRows.filter(
+    (r) =>
+      r.inMdd &&
+      (r.matchedEndpoints.length > 0 ||
+        crudByEntity.get(r.entity.toLowerCase())?.infraOnly ||
+        isExemptEntityTable(r.entity, infraOnly) ||
+        isFkChildCoveredByConsumedParent(r.entity, consumedBareNames)),
+  );
   const coverageRatio =
     domainRows.filter((r) => r.inMdd).length === 0
       ? 1

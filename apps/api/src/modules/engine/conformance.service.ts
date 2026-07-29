@@ -217,6 +217,59 @@ function isBareApiPrefix(path: string): boolean {
   return /^\/api\/v\d+$/i.test(path.replace(/\/$/, ""));
 }
 
+function parseEndpointLine(
+  line: string,
+  add: (method: string, path: string) => void,
+  options?: { tablesOnly?: boolean },
+): void {
+  const tableMethodFirst = line.match(
+    new RegExp(`\\|\\s*(${HTTP_METHODS})\\s*\\|\\s*${API_PATH_CAPTURE}`, "i"),
+  );
+  if (tableMethodFirst) {
+    add(tableMethodFirst[1]!, tableMethodFirst[2]!);
+    return;
+  }
+  const tablePathFirst = line.match(
+    new RegExp(`\\|\\s*${API_PATH_CAPTURE}\\s*\\|\\s*(${HTTP_METHODS})`, "i"),
+  );
+  if (tablePathFirst) {
+    add(tablePathFirst[2]!, tablePathFirst[1]!);
+    return;
+  }
+  if (options?.tablesOnly) return;
+
+  const methodPath = line.match(
+    new RegExp(`\\b(${HTTP_METHODS})\\s+${API_PATH_CAPTURE}`, "i"),
+  );
+  if (methodPath) {
+    add(methodPath[1]!, methodPath[2]!);
+    return;
+  }
+  if (/\/api\/|\/auth\/|\/health/.test(line)) {
+    const path = line.match(new RegExp(API_PATH_CAPTURE))?.[1];
+    if (path) add(defaultMethodForPath(path.replace(/`/g, "")), path);
+  }
+}
+
+/** Solo filas de tabla markdown (SSOT §4); ignora H3/prosa que duplican rutas con prefijo distinto. */
+export function extractTableEndpoints(text: string): Array<{ method: string; path: string }> {
+  const endpoints: Array<{ method: string; path: string }> = [];
+  const seen = new Set<string>();
+  const add = (method: string, path: string) => {
+    const pathClean = path.replace(/`/g, "").trim();
+    if (!pathClean.startsWith("/")) return;
+    if (isBareApiPrefix(pathClean)) return;
+    const normalized = normEp({ method, path: pathClean });
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    endpoints.push({ method: method.toUpperCase(), path: pathClean });
+  };
+  for (const line of text.split(/\r?\n/)) {
+    parseEndpointLine(line, add, { tablesOnly: true });
+  }
+  return endpoints;
+}
+
 /** Extrae métodos + rutas (GET /api/..., POST /auth/...) de un bloque. Acepta líneas sueltas y filas de tabla Markdown. */
 export function extractEndpoints(text: string): Array<{ method: string; path: string }> {
   const endpoints: Array<{ method: string; path: string }> = [];
@@ -229,35 +282,9 @@ export function extractEndpoints(text: string): Array<{ method: string; path: st
     if (seen.has(normalized)) return;
     seen.add(normalized);
     endpoints.push({ method: method.toUpperCase(), path: pathClean });
-
   };
-  const lines = text.split(/\r?\n/);
-  for (const line of lines) {
-    const methodPath = line.match(
-      new RegExp(`\\b(${HTTP_METHODS})\\s+${API_PATH_CAPTURE}`, "i"),
-    );
-    if (methodPath) {
-      add(methodPath[1]!, methodPath[2]!);
-      continue;
-    }
-    const tableMethodFirst = line.match(
-      new RegExp(`\\|\\s*(${HTTP_METHODS})\\s*\\|\\s*${API_PATH_CAPTURE}`, "i"),
-    );
-    if (tableMethodFirst) {
-      add(tableMethodFirst[1]!, tableMethodFirst[2]!);
-      continue;
-    }
-    const tablePathFirst = line.match(
-      new RegExp(`\\|\\s*${API_PATH_CAPTURE}\\s*\\|\\s*(${HTTP_METHODS})`, "i"),
-    );
-    if (tablePathFirst) {
-      add(tablePathFirst[2]!, tablePathFirst[1]!);
-      continue;
-    }
-    if (/\/api\/|\/auth\/|\/health/.test(line)) {
-      const path = line.match(new RegExp(API_PATH_CAPTURE))?.[1];
-      if (path) add(defaultMethodForPath(path.replace(/`/g, "")), path);
-    }
+  for (const line of text.split(/\r?\n/)) {
+    parseEndpointLine(line, add);
   }
   return endpoints;
 }
@@ -281,9 +308,54 @@ export function normEp(ep: { method: string; path: string }): string {
   return `${method} ${path}`;
 }
 
-function apiEndpointsMatch(mddNorm: string, apiNorm: string): boolean {
+/** Prefijo API declarado en §7 o dominante en §4 (p. ej. KMS con api_prefix /api/v1). */
+export function resolveMddApiPrefixForCompare(mddContent: string): "/api/v1" | "/api" | null {
+  if (/api_prefix["']?\s*:\s*["']\/api\/v1["']/i.test(mddContent)) return "/api/v1";
+  if (/api_prefix["']?\s*:\s*["']\/api["']/i.test(mddContent)) return "/api";
+  const section4 = extractSection(
+    mddContent,
+    /^#+\s*(?:4\.\s*)?(?:contratos\s+de\s+api|api\s+contracts|endpoints)/im,
+  );
+  const paths = extractTableEndpoints(section4).map((e) => e.path);
+  if (paths.some((p) => /^\/api\/v1\b/i.test(p))) return "/api/v1";
+  if (paths.some((p) => /^\/api\b/i.test(p) && !/^\/api\/v1\b/i.test(p))) return "/api";
+  if (/\/api\/v1\//i.test(mddContent)) return "/api/v1";
+  return null;
+}
+
+function endpointCompareVariants(norm: string, prefix: "/api/v1" | "/api" | null): string[] {
+  const m = norm.match(/^(GET|POST|PUT|PATCH|DELETE)\s+(.+)$/i);
+  if (!m) return [norm];
+  const method = m[1]!.toUpperCase();
+  const path = m[2]!;
+  const variants = new Set<string>([norm, `${method} ${path}`]);
+  if (prefix === "/api/v1") {
+    if (!path.startsWith("/api/v1")) {
+      variants.add(`${method} /api/v1${path.startsWith("/") ? path : `/${path}`}`);
+    } else {
+      variants.add(`${method} ${path.slice("/api/v1".length) || "/"}`);
+    }
+    if (/^\/api\/(?!v1)/i.test(path)) {
+      variants.add(`${method} ${path.replace(/^\/api/, "/api/v1")}`);
+    }
+  } else if (prefix === "/api" && !path.startsWith("/api")) {
+    variants.add(`${method} /api${path.startsWith("/") ? path : `/${path}`}`);
+  }
+  return [...variants];
+}
+
+function apiEndpointsMatch(mddNorm: string, apiNorm: string, prefix: "/api/v1" | "/api" | null): boolean {
   if (mddNorm === apiNorm) return true;
-  return mddNorm.toLowerCase() === apiNorm.toLowerCase();
+  if (mddNorm.toLowerCase() === apiNorm.toLowerCase()) return true;
+  const mddVars = endpointCompareVariants(mddNorm, prefix);
+  const apiVars = endpointCompareVariants(apiNorm, prefix);
+  return mddVars.some((v) => apiVars.includes(v));
+}
+
+/** Endpoints §4 para conformidad: tabla primero; H3/prosa solo si no hay tabla. */
+function extractMddSection4ForConformance(section4: string): Array<{ method: string; path: string }> {
+  const table = extractTableEndpoints(section4);
+  return table.length > 0 ? table : extractEndpoints(section4);
 }
 
 /** Longitud mínima para considerar un documento como "con contenido" (evitar falsos Cumple cuando está vacío). */
@@ -354,6 +426,28 @@ const MDD_REFERENCE_PATTERNS: { pattern: RegExp; example: string }[] = [
   { pattern: /\b(?:consultar\s+(?:el\s+)?MDD|v[ée]r\s+(?:el\s+)?MDD)\b/gi, example: "consultar el MDD" },
 ];
 
+/** Checklist / cumplimiento al final del Blueprint: metadatos, no delegación de contenido. */
+const BLUEPRINT_COMPLIANCE_TAIL = /\n#{2,3}\s+(?:Checklist|Verificaci[oó]n(?:\s+de\s+calidad)?|Cumplimiento con el MDD)\b/i;
+
+function stripBlueprintComplianceTail(blueprintContent: string): string {
+  const cut = blueprintContent.search(BLUEPRINT_COMPLIANCE_TAIL);
+  return cut >= 0 ? blueprintContent.slice(0, cut) : blueprintContent;
+}
+
+function isAllowedBlueprintMddReference(context: string): boolean {
+  const allowedSql = /ver\s+[§]3\s+del\s+MDD\s+para\s+(?:columnas|tipos|índices|esquema)/i;
+  const allowedSso = /ver\s+[§]6\s+(?:del\s+MDD\s+)?para\s+(?:el\s+)?flujo\s+SSO/i;
+  if (allowedSql.test(context) || allowedSso.test(context)) return true;
+
+  // Atribución en títulos/metadatos (no sustituye contenido): alineado con blueprint-prompt.md
+  if (/\(\s*explícito\s+del\s+MDD\s+[§][\d.]+\s*\)/i.test(context)) return true;
+  if (/\(\s*trazabilidad\s+[§][\d.]+\s*\)/i.test(context)) return true;
+  if (/\bstack\s+t[eé]cnico\s*\(\s*explícito\s+del\s+MDD/i.test(context)) return true;
+  if (/\bcomo\s+en\s+el\s+MDD\s+[§][\d.]+/i.test(context)) return true;
+
+  return false;
+}
+
 /**
  * Verifica que el Blueprint no delegue contenido al MDD (autocontenido).
  * Permite excepciones: "(ver §3 del MDD para columnas)" y "(ver §6 para flujo SSO completo)".
@@ -362,16 +456,16 @@ export function checkBlueprintSelfContained(blueprintContent: string | null): Co
   const gaps: string[] = [];
   if (!blueprintContent?.trim()) return { ok: true, gaps: [] };
 
+  const scannable = stripBlueprintComplianceTail(blueprintContent);
+
   for (const { pattern, example } of MDD_REFERENCE_PATTERNS) {
-    const matches = blueprintContent.matchAll(pattern);
+    const re = new RegExp(pattern.source, pattern.flags);
+    const matches = scannable.matchAll(re);
     for (const match of matches) {
       const fullMatch = match[0];
-      const context = blueprintContent.slice(Math.max(0, (match.index ?? 0) - 40), (match.index ?? 0) + 80);
+      const context = scannable.slice(Math.max(0, (match.index ?? 0) - 40), (match.index ?? 0) + 80);
 
-      // Excepciones permitidas: ver §3 para columnas, ver §6 para SSO
-      const allowedSql = /ver\s+[§]3\s+del\s+MDD\s+para\s+(?:columnas|tipos|índices|esquema)/i;
-      const allowedSso = /ver\s+[§]6\s+(?:del\s+MDD\s+)?para\s+(?:el\s+)?flujo\s+SSO/i;
-      if (allowedSql.test(context) || allowedSso.test(context)) continue;
+      if (isAllowedBlueprintMddReference(context)) continue;
 
       gaps.push(
         `El Blueprint delega contenido al MDD ("${fullMatch}" en contexto: "...${context.trim()}..."). ` +
@@ -614,7 +708,8 @@ export function checkApiVsMdd(mddContent: string | null, apiContent: string | nu
     mddContent,
     /^#+\s*(?:4\.\s*)?(?:contratos\s+de\s+api|api\s+contracts|endpoints)/im,
   );
-  const mddEndpoints = new Set(extractEndpoints(section4).map(normEp));
+  const apiPrefix = resolveMddApiPrefixForCompare(mddContent);
+  const mddEndpoints = new Set(extractMddSection4ForConformance(section4).map(normEp));
   if (!apiContent?.trim() || apiContent.trim().length < MIN_DOC_LENGTH) {
     const missing = mddEndpoints.size > 0 ? Array.from(mddEndpoints) : ["Falta contenido del documento API"];
     return {
@@ -627,13 +722,13 @@ export function checkApiVsMdd(mddContent: string | null, apiContent: string | nu
   for (const ep of mddEndpoints) {
     const match =
       apiEndpoints.has(ep) ||
-      Array.from(apiEndpoints).some((a) => apiEndpointsMatch(ep, a));
+      Array.from(apiEndpoints).some((a) => apiEndpointsMatch(ep, a, apiPrefix));
     if (!match) missingInApi.push(ep);
   }
   for (const ep of apiEndpoints) {
     const match =
       mddEndpoints.has(ep) ||
-      Array.from(mddEndpoints).some((m) => apiEndpointsMatch(m, ep));
+      Array.from(mddEndpoints).some((m) => apiEndpointsMatch(m, ep, apiPrefix));
     if (!match) extraInApi.push(ep);
   }
   const ok = missingInApi.length === 0;

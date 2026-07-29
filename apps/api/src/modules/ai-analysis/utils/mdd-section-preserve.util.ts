@@ -24,7 +24,14 @@ import {
   replaceMddSection5Body,
   replaceSection1BodyFromAnyHeading,
   replaceSection6Or7InDraft,
+  mddHasDuplicateSectionHeadings,
 } from "./mdd-sanitize/section-merge.js";
+import { MDD_SECTION5_TAIL_PLACEHOLDER } from "./mdd-tail-parallel.config.js";
+import { isPlaceholderSeguridad } from "./mdd-security-parse.js";
+import {
+  integracionToSection7Markdown,
+  seguridadItemsToSection6Markdown,
+} from "./mdd-sanitize.js";
 
 /** Mínimo de chars para considerar §1–§7 sustanciales (alineado con delivery gate). */
 export const MIN_SUBSTANTIAL_SECTION1_BODY_LEN = 200;
@@ -39,6 +46,266 @@ export const MIN_SUBSTANTIAL_SECTION7_BODY_LEN = 200;
 export const MIN_SCOPED_REPAIR_DRAFT_LEN = 15_000;
 
 const DEFAULT_VALIDATED_SECTIONS = [1, 2, 3, 4, 5, 6, 7] as const;
+
+/** True si §5 es baseline válido (no tail placeholder del pipeline). */
+function section5BodyIsPreserveBaseline(body: string | null | undefined): boolean {
+  const trimmed = (body ?? "").trim();
+  if (!trimmed) return false;
+  if (trimmed === MDD_SECTION5_TAIL_PLACEHOLDER) return false;
+  if (/Pendiente:\s*paso dedicado Lógica/i.test(trimmed)) return false;
+  return sectionBodyIsSubstantial(trimmed, MIN_SUBSTANTIAL_SECTION5_BODY_LEN);
+}
+
+/** Ratio mínimo (nuevo/baseline) para aceptar merge de §5. */
+export const SECTION5_REGRESSION_LENGTH_RATIO = 0.75;
+
+/** Baseline sustancial cuya longitud activa protección anti-regresión §5. */
+export const MIN_SECTION5_BASELINE_FOR_REGRESSION_GUARD = 1_200;
+
+/** True si candidato §5 es claramente peor que baseline sustancial. */
+export function isSection5SectionRegression(
+  baselineBody: string | null | undefined,
+  candidateBody: string | null | undefined,
+): boolean {
+  const baseline = (baselineBody ?? "").trim();
+  const candidate = (candidateBody ?? "").trim();
+  if (!baseline || !candidate) return false;
+  if (!section5BodyIsPreserveBaseline(baseline)) return false;
+  if (!sectionBodyIsSubstantial(candidate, MIN_SUBSTANTIAL_SECTION5_BODY_LEN)) return true;
+  if (baseline.length < MIN_SECTION5_BASELINE_FOR_REGRESSION_GUARD) return false;
+  return candidate.length / baseline.length < SECTION5_REGRESSION_LENGTH_RATIO;
+}
+
+export type TailSectionSnapshotSource = {
+  securitySectionMd?: string | null;
+  integrationSectionMd?: string | null;
+  securityArchitectMddDraftSnapshot?: string | null;
+  integrationArchitectMddDraftSnapshot?: string | null;
+  mddStructured?: { seguridad?: unknown; integracion?: unknown } | null;
+  /** Snapshots §1–§4 del pipeline HIGH scoped (clarifier/stack/data_model/api_contracts). */
+  clarifierMddDraftSnapshot?: string | null;
+  stackArchitectMddDraftSnapshot?: string | null;
+  dataModelArchitectMddDraftSnapshot?: string | null;
+  apiContractsArchitectMddDraftSnapshot?: string | null;
+};
+
+function sectionMdToBaselineDraft(sectionMd: string, sectionNum: 6 | 7): string {
+  const trimmed = sectionMd.trim();
+  if (trimmed.startsWith("##")) return trimmed;
+  const heading = sectionNum === 6 ? "## 6. Seguridad" : "## 7. Infraestructura";
+  return `${heading}\n\n${trimmed}`;
+}
+
+function resolveSection6BaselineFromSnapshots(source: TailSectionSnapshotSource): string | null {
+  const snap = (source.securityArchitectMddDraftSnapshot ?? "").trim();
+  if (snap && draftHasSubstantialSection6(snap)) return snap;
+
+  const md = (source.securitySectionMd ?? "").trim();
+  if (md.length >= MIN_SUBSTANTIAL_SECTION6_BODY_LEN) {
+    const body = extractSection6Body(sectionMdToBaselineDraft(md, 6)) ?? md.replace(/^##[^\n]+\n+/, "").trim();
+    if (sectionBodyIsSubstantial(body, MIN_SUBSTANTIAL_SECTION6_BODY_LEN)) {
+      return sectionMdToBaselineDraft(md, 6);
+    }
+  }
+
+  const seguridad = source.mddStructured?.seguridad;
+  if (Array.isArray(seguridad) && seguridad.length && !isPlaceholderSeguridad(seguridad)) {
+    return seguridadItemsToSection6Markdown(seguridad);
+  }
+  return null;
+}
+
+function resolveSection7BaselineFromSnapshots(source: TailSectionSnapshotSource): string | null {
+  const snap = (source.integrationArchitectMddDraftSnapshot ?? "").trim();
+  if (snap && draftHasSubstantialSection7(snap)) return snap;
+
+  const md = (source.integrationSectionMd ?? "").trim();
+  if (md.length >= MIN_SUBSTANTIAL_SECTION7_BODY_LEN) {
+    const body = extractSection7Body(sectionMdToBaselineDraft(md, 7)) ?? md.replace(/^##[^\n]+\n+/, "").trim();
+    if (sectionBodyIsSubstantial(body, MIN_SUBSTANTIAL_SECTION7_BODY_LEN)) {
+      return sectionMdToBaselineDraft(md, 7);
+    }
+  }
+
+  const integracion = source.mddStructured?.integracion;
+  if (integracion) {
+    const integracionForMd = Array.isArray(integracion) ? { subsections: integracion } : integracion;
+    const section7Md = integracionToSection7Markdown(integracionForMd as Parameters<typeof integracionToSection7Markdown>[0]);
+    const body = section7Md.replace(/^##[^\n]+\n+/, "").trim();
+    if (sectionBodyIsSubstantial(body, MIN_SUBSTANTIAL_SECTION7_BODY_LEN)) {
+      return section7Md.startsWith("##") ? section7Md : sectionMdToBaselineDraft(section7Md, 7);
+    }
+  }
+  return null;
+}
+
+/** Baseline de preserve: draft actual enriquecido con snapshots §6/§7 sustanciales. */
+export function resolveTailPreserveBaseline(
+  currentDraft: string,
+  source?: TailSectionSnapshotSource | null,
+): string {
+  const draft = (currentDraft ?? "").trim();
+  const secBaseline = source ? resolveSection6BaselineFromSnapshots(source) : null;
+  const intBaseline = source ? resolveSection7BaselineFromSnapshots(source) : null;
+  if (!secBaseline && !intBaseline) return draft;
+
+  let out = draft;
+  if (secBaseline) {
+    const secBody = extractSection6Body(secBaseline) ?? secBaseline.replace(/^##[^\n]+\n+/, "").trim();
+    if (sectionBodyIsSubstantial(secBody, MIN_SUBSTANTIAL_SECTION6_BODY_LEN)) {
+      out = replaceSection6Or7InDraft(
+        out,
+        6,
+        secBaseline.startsWith("##") ? secBaseline : sectionMdToBaselineDraft(secBaseline, 6),
+      );
+    }
+  }
+  if (intBaseline) {
+    const intBody = extractSection7Body(intBaseline) ?? intBaseline.replace(/^##[^\n]+\n+/, "").trim();
+    if (sectionBodyIsSubstantial(intBody, MIN_SUBSTANTIAL_SECTION7_BODY_LEN)) {
+      out = replaceSection6Or7InDraft(
+        out,
+        7,
+        intBaseline.startsWith("##") ? intBaseline : sectionMdToBaselineDraft(intBaseline, 7),
+      );
+    }
+  }
+  return out;
+}
+
+/** Restaura §6 desde snapshot del Security/post_critic si format/dedupe la vació. */
+export function preserveSection6FromSecuritySnapshot(
+  securitySectionMd: string | null | undefined,
+  securityDraftSnapshot: string | null | undefined,
+  currentDraft: string,
+  structured?: TailSectionSnapshotSource["mddStructured"],
+): string {
+  const baseline =
+    resolveSection6BaselineFromSnapshots({
+      securitySectionMd,
+      securityArchitectMddDraftSnapshot: securityDraftSnapshot,
+      mddStructured: structured,
+    }) ?? "";
+  if (!baseline) return currentDraft;
+  const pseudoDraft = baseline.startsWith("#")
+    ? baseline
+    : replaceSection6Or7InDraft(currentDraft, 6, sectionMdToBaselineDraft(baseline, 6));
+  return preserveSection6IfSubstantial(pseudoDraft, currentDraft);
+}
+
+/** Restaura §7 desde snapshot del Integration/post_critic si format/dedupe la vació. */
+export function preserveSection7FromIntegrationSnapshot(
+  integrationSectionMd: string | null | undefined,
+  integrationDraftSnapshot: string | null | undefined,
+  currentDraft: string,
+  structured?: TailSectionSnapshotSource["mddStructured"],
+): string {
+  const baseline =
+    resolveSection7BaselineFromSnapshots({
+      integrationSectionMd,
+      integrationArchitectMddDraftSnapshot: integrationDraftSnapshot,
+      mddStructured: structured,
+    }) ?? "";
+  if (!baseline) return currentDraft;
+  const pseudoDraft = baseline.startsWith("#")
+    ? baseline
+    : replaceSection6Or7InDraft(currentDraft, 7, sectionMdToBaselineDraft(baseline, 7));
+  return preserveSection7IfSubstantial(pseudoDraft, currentDraft);
+}
+
+/** Restaura §6/§7 desde snapshots staged en state. */
+export function preserveTailSectionsFromSnapshots(
+  source: TailSectionSnapshotSource,
+  currentDraft: string,
+): string {
+  let out = currentDraft;
+  out = preserveSection6FromSecuritySnapshot(
+    source.securitySectionMd,
+    source.securityArchitectMddDraftSnapshot,
+    out,
+    source.mddStructured,
+  );
+  out = preserveSection7FromIntegrationSnapshot(
+    source.integrationSectionMd,
+    source.integrationArchitectMddDraftSnapshot,
+    out,
+    source.mddStructured,
+  );
+  return out;
+}
+
+/**
+ * Restaura §1–§7 desde los snapshots por-nodo del pipeline HIGH scoped.
+ *
+ * Los snapshots §1–§4 (clarifier/stack/data_model/api_contracts) solo se aplicaban dentro de
+ * `mdd-software-architect.node` y `mdd-formatter.node`; el ensamblado final (`prepareMddForOutput`)
+ * únicamente restauraba §6/§7. Resultado: normalize/dedupe/SSOT del paso final podía vaciar §1–§4
+ * ya validadas sin que nada las recuperase, y el gate loop las regeneraba con LLM (caro y
+ * destructivo). Cada preserver conserva el borrador actual si ya es bueno, así que esto no
+ * pisa contenido nuevo mejor que el snapshot.
+ */
+export function preserveValidatedSectionsFromSnapshots(
+  source: TailSectionSnapshotSource,
+  currentDraft: string,
+): string {
+  let out = currentDraft;
+  out = preserveSection1FromClarifierSnapshot(source.clarifierMddDraftSnapshot, out);
+  out = preserveSection2FromStackSnapshot(source.stackArchitectMddDraftSnapshot, out);
+  out = preserveSection3FromDataModelSnapshot(source.dataModelArchitectMddDraftSnapshot, out);
+  out = preserveSection4FromApiContractsSnapshot(source.apiContractsArchitectMddDraftSnapshot, out);
+  return preserveTailSectionsFromSnapshots(source, out);
+}
+
+/** True si hay §6 y §7 sustanciales en snapshots. */
+export function stateHasSubstantialTailSnapshots(source: TailSectionSnapshotSource): boolean {
+  return !!resolveSection6BaselineFromSnapshots(source) && !!resolveSection7BaselineFromSnapshots(source);
+}
+
+function forceReplaceSection6FromSnapshot(source: TailSectionSnapshotSource, draft: string): string {
+  const baseline = resolveSection6BaselineFromSnapshots(source);
+  if (!baseline) return draft;
+  const sectionMd = baseline.startsWith("##") ? baseline : sectionMdToBaselineDraft(baseline, 6);
+  const body = sectionMd.replace(/^##[^\n]+\n+/, "").trim();
+  if (!sectionBodyIsSubstantial(body, MIN_SUBSTANTIAL_SECTION6_BODY_LEN)) return draft;
+  return replaceSection6Or7InDraft(draft, 6, sectionMd);
+}
+
+function forceReplaceSection7FromSnapshot(source: TailSectionSnapshotSource, draft: string): string {
+  const baseline = resolveSection7BaselineFromSnapshots(source);
+  if (!baseline) return draft;
+  const sectionMd = baseline.startsWith("##") ? baseline : sectionMdToBaselineDraft(baseline, 7);
+  const body = sectionMd.replace(/^##[^\n]+\n+/, "").trim();
+  if (!sectionBodyIsSubstantial(body, MIN_SUBSTANTIAL_SECTION7_BODY_LEN)) return draft;
+  return replaceSection6Or7InDraft(draft, 7, sectionMd);
+}
+
+/** Gate loop integration: re-inyecta §6/§7 desde snapshots sin LLM. */
+export function reinjectTailSectionsFromSnapshotsForGateLoop(
+  source: TailSectionSnapshotSource & { mddDraft?: string | null },
+): { mddDraft: string; securitySectionMd?: string; integrationSectionMd?: string } | null {
+  const has6 = !!resolveSection6BaselineFromSnapshots(source);
+  const has7 = !!resolveSection7BaselineFromSnapshots(source);
+  if (!has6 && !has7) return null;
+
+  let draft = (source.mddDraft ?? "").trim();
+  if (has6) draft = forceReplaceSection6FromSnapshot(source, draft);
+  if (has7) draft = forceReplaceSection7FromSnapshot(source, draft);
+
+  const out: { mddDraft: string; securitySectionMd?: string; integrationSectionMd?: string } = { mddDraft: draft };
+  const secMd = source.securitySectionMd?.trim() || resolveSection6BaselineFromSnapshots(source);
+  const intMd = source.integrationSectionMd?.trim() || resolveSection7BaselineFromSnapshots(source);
+  if (secMd?.startsWith("##")) out.securitySectionMd = secMd;
+  if (intMd?.startsWith("##")) out.integrationSectionMd = intMd;
+  return out;
+}
+
+/** Restaura §6/§7 si dedupe/normalize las regresó (placeholder, ausente o <50%). */
+export function restoreSections6And7IfRegressed(source: string, normalized: string): string {
+  let out = normalized;
+  out = preserveSection6IfSubstantial(source, out);
+  out = preserveSection7IfSubstantial(source, out);
+  return out;
+}
 
 function sectionBodyIsSubstantial(
   body: string | null | undefined,
@@ -151,6 +418,10 @@ function preserveSectionBodyIfSubstantial(
   const current = (currentDraft ?? "").trim();
   if (!baseline || !current) return current || baseline;
 
+  if (mddHasDuplicateSectionHeadings(baseline)) {
+    return current;
+  }
+
   const prevBody = extractBody(baseline);
   if (!sectionBodyIsSubstantial(prevBody, minLen)) return current;
 
@@ -159,10 +430,23 @@ function preserveSectionBodyIfSubstantial(
   const curShorter = (curBody?.length ?? 0) < (prevBody?.length ?? 0) * 0.5;
   if (curSubstantial && !curShorter) return current;
 
+  const baselineLen = prevBody?.length ?? 0;
+  const curLen = curBody?.length ?? 0;
+  if (curSubstantial && baselineLen > curLen * 3) {
+    return current;
+  }
+  if (
+    mddHasDuplicateSectionHeadings(current) &&
+    baselineLen > 0 &&
+    baselineLen >= curLen * 2.5
+  ) {
+    return current;
+  }
+
   const restored = replaceBody(current, prevBody!);
   if (restored !== current) {
     console.warn(
-      `[MDD:SectionPreserve] ${sectionLabel} restaurada (${curBody?.length ?? 0}→${prevBody!.length} chars)`,
+      `[MDD:SectionPreserve] ${sectionLabel} restaurada (${curLen}→${baselineLen} chars)`,
     );
   }
   return restored;
@@ -317,6 +601,27 @@ export function preserveSection4IfSubstantial(baselineDraft: string, currentDraf
  * cuerpo <50% del baseline). Usar tras Formatter, CrossConsistency y normalize.
  */
 export function preserveSection5IfSubstantial(baselineDraft: string, currentDraft: string): string {
+  const baseline = (baselineDraft ?? "").trim();
+  const prevBody = extractSection5Body(baseline) ?? baseline.match(/##\s*5\.[\s\S]*?\n([\s\S]*?)(?=\n##\s|$)/i)?.[1]?.trim();
+  if (!section5BodyIsPreserveBaseline(prevBody)) return currentDraft;
+
+  const curBody = extractSection5Body(currentDraft);
+  if (
+    prevBody &&
+    curBody &&
+    !mddHasDuplicateSectionHeadings(baseline) &&
+    isSection5SectionRegression(prevBody, curBody) &&
+    sectionBodyIsSubstantial(prevBody, MIN_SUBSTANTIAL_SECTION5_BODY_LEN)
+  ) {
+    const restored = replaceMddSection5Body(currentDraft, prevBody);
+    if (restored !== currentDraft) {
+      console.warn(
+        `[MDD:SectionPreserve] §5 restaurada por regresión (${curBody.length}→${prevBody.length} chars)`,
+      );
+    }
+    return restored;
+  }
+
   return preserveSectionBodyIfSubstantial(
     baselineDraft,
     currentDraft,
@@ -395,14 +700,19 @@ export function preserveValidatedSectionsIfSubstantial(
   currentDraft: string,
   options?: PreserveValidatedSectionsOptions,
 ): string {
+  const baseline = (baselineDraft ?? "").trim();
+  const current = (currentDraft ?? "").trim();
+  if (baseline && mddHasDuplicateSectionHeadings(baseline) && !mddHasDuplicateSectionHeadings(current)) {
+    return current;
+  }
+
   let out = currentDraft;
   if (!draftHasSubstantialSection1(out) && draftHasSubstantialSection1(baselineDraft)) {
     out = preserveSectionByNumber(baselineDraft, out, 1);
     if (!draftHasSubstantialSection1(out)) {
       console.warn(
-        `[MDD:SectionPreserve] Preserve: §1 no pudo restaurarse → saltando; draft corrupto`,
+        `[MDD:SectionPreserve] Preserve: §1 no pudo restaurarse → draft corrupto; preservando §2–§7`,
       );
-      return currentDraft;
     }
   } else if (!draftHasSubstantialSection1(out)) {
     console.warn(

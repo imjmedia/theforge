@@ -91,6 +91,14 @@ export const mddStateSchema = z.object({
   dataModelArchitectMddDraftSnapshot: z.string().optional(),
   /** Snapshot del borrador tras api_contracts (pipeline HIGH): ancla §4 frente a format/SSOT. */
   apiContractsArchitectMddDraftSnapshot: z.string().optional(),
+  /** Snapshot tras post_critic_parallel con §6 sustancial. */
+  securityArchitectMddDraftSnapshot: z.string().optional(),
+  /** Snapshot tras post_critic_parallel con §7 sustancial. */
+  integrationArchitectMddDraftSnapshot: z.string().optional(),
+  /** Markdown §6 staged por Security (post_critic / gate reinject). */
+  securitySectionMd: z.string().optional(),
+  /** Markdown §7 staged por Integration (post_critic / gate reinject). */
+  integrationSectionMd: z.string().optional(),
   /** Secuencia de nodos a ejecutar cuando delegateTarget="sections" (ej. ["software_architect", "security", "integration", ...]). */
   sectionsToRun: z.array(z.string()).optional(),
   /** Directiva concreta aceptada por el usuario (ej. "restricciones FK en todas las tablas"); el agente responsable debe aplicarla al MDD. */
@@ -180,6 +188,8 @@ export const mddStateSchema = z.object({
   deliveryGatePlaceholderFingerprint: z.string().optional(),
   /** F3: §4∥§6∥§7 ya ejecutados tras critic (omitir tail_parallel en primera pasada). */
   postCriticParallelDone: z.boolean().optional(),
+  /** True tras primera pasada del Auditor (score/gaps only — no re-enrutar a auditor). */
+  auditorRan: z.boolean().optional(),
 });
 
 export type MDDState = z.infer<typeof mddStateSchema>;
@@ -208,6 +218,10 @@ export const defaultMDDState: MDDState = {
   stackArchitectMddDraftSnapshot: undefined,
   dataModelArchitectMddDraftSnapshot: undefined,
   apiContractsArchitectMddDraftSnapshot: undefined,
+  securityArchitectMddDraftSnapshot: undefined,
+  integrationArchitectMddDraftSnapshot: undefined,
+  securitySectionMd: undefined,
+  integrationSectionMd: undefined,
   sectionsToRun: undefined,
   acceptedProposalDirective: undefined,
   lastStepFailed: undefined,
@@ -235,4 +249,5 @@ export const defaultMDDState: MDDState = {
   deliveryGateFixTarget: undefined,
   deliveryGatePlaceholderFingerprint: undefined,
   postCriticParallelDone: undefined,
+  auditorRan: undefined,
 };

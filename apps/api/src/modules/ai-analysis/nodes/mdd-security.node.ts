@@ -15,6 +15,7 @@ import {
   isPlaceholderSeguridad,
   draftHasPreservableSection6,
   parseSecurityLlmResponse,
+  recoverSeguridadItemsFromRawLlmText,
   seguridadItemsFromDraftSection6,
   stripThinkingTags,
 } from "../utils/mdd-security-parse.js";
@@ -26,6 +27,10 @@ import {
 } from "../utils/mdd-sanitize.js";
 import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
 import { buildTrimmedTailAgentContext } from "../utils/mdd-tail-parallel.util.js";
+import {
+  draftHasSubstantialSection6,
+  reinjectTailSectionsFromSnapshotsForGateLoop,
+} from "../utils/mdd-section-preserve.util.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Security] ${msg}`, ...args);
 
@@ -129,7 +134,11 @@ export function createMddSecurityNode(llm: BaseChatModel, opts?: MddSecurityNode
       logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, text.length));
 
       LOG("[DIAG §6] LLM text len=%s rawPrefix=%s", text.length, text.slice(0, 200).replace(/\n/g, " "));
-      const llmItems = text.trim() ? parseSecurityLlmResponse(text) : null;
+      let llmItems = text.trim() ? parseSecurityLlmResponse(text) : null;
+      if (!llmItems && text.trim()) {
+        llmItems = recoverSeguridadItemsFromRawLlmText(text);
+        if (llmItems) LOG("[DIAG §6] recoverSeguridadItemsFromRawLlmText OK items=%s", llmItems.length);
+      }
       if (!text.trim()) LOG("[DIAG §6] LLM vacío, usando fallback");
       LOG("[DIAG §6] llmItems=%s isCorrupted=%s isPlaceholder=%s",
         llmItems?.length ?? "null",
@@ -145,7 +154,11 @@ export function createMddSecurityNode(llm: BaseChatModel, opts?: MddSecurityNode
         draftHasPreservableSection6(state.mddDraft ?? "");
       if (isPlaceholderSeguridad(seguridad) && !hasPrevSection6) {
         LOG("[DIAG §6] placeholder sin §6 previa → retry 1x");
-        const retry = await llm.invoke([new HumanMessage(prompt)]);
+        const retryPrompt =
+          `${prompt}\n\n---\n**IMPORTANTE (reintento):** Devuelve ÚNICAMENTE el JSON solicitado, ` +
+          "sin razonamiento ni explicación previa, sin bloques <think>. Sé conciso: máximo 6 items " +
+          'en "seguridad", cada "content" con no más de 4 líneas. El JSON debe cerrar correctamente.';
+        const retry = await llm.invoke([new HumanMessage(retryPrompt)]);
         const retryText = stripThinkingTags(typeof retry.content === "string" ? retry.content : "");
         const retryItems = retryText.trim() ? parseSecurityLlmResponse(retryText) : null;
         LOG("[DIAG §6] retry llmItems=%s isCorrupted=%s isPlaceholder=%s",
@@ -161,7 +174,18 @@ export function createMddSecurityNode(llm: BaseChatModel, opts?: MddSecurityNode
       }
       const slice = { seguridad };
       const merged = mergeMddStructured(state.mddStructured, slice, state.mddDraft ?? "");
-      const securitySectionMd = seguridadItemsToSection6Markdown(merged.seguridad ?? seguridad);
+      let securitySectionMd = seguridadItemsToSection6Markdown(merged.seguridad ?? seguridad);
+      const s6Body = securitySectionMd.replace(/^##[^\n]+\n+/, "").trim();
+      if (
+        (isPlaceholderSeguridad(seguridad) || !draftHasSubstantialSection6(`# MDD\n${securitySectionMd}`)) &&
+        (state.securitySectionMd?.trim() || state.securityArchitectMddDraftSnapshot?.trim())
+      ) {
+        const reinjected = reinjectTailSectionsFromSnapshotsForGateLoop(state);
+        if (reinjected?.securitySectionMd) {
+          securitySectionMd = reinjected.securitySectionMd;
+          LOG("[DIAG §6] placeholder/corto — restaurado desde snapshot (len=%s)", s6Body.length);
+        }
+      }
       if (sliceOnly) {
         LOG("ok sliceOnly seguridad items=%s", seguridad.length);
         return { mddStructured: { seguridad: merged.seguridad ?? seguridad }, securitySectionMd };

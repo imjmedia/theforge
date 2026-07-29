@@ -26,7 +26,7 @@ import { cleanDocumentContent } from "../sessions/document-content.util.js";
 import { enrichBlueprintWithUiDesignSystem } from "../engine/blueprint-enrich-ui-system.js";
 import {
   buildBlueprintQualityRetryFeedback,
-  collectBlueprintQualityGaps,
+  collectBlueprintHardQualityGaps,
   repairBlueprintProgrammaticGaps,
   runBlueprintQualityChecks,
 } from "../engine/blueprint-conformance-repair.util.js";
@@ -223,49 +223,50 @@ export class ProjectDeliverableGeneratorsService {
   async generateDocument(
   kind: DeliverableKind,
   projectId: string,
-  options?: { gapsFeedback?: string | null; acknowledgeGaps?: boolean },
+  options?: { gapsFeedback?: string | null; acknowledgeGaps?: boolean; signal?: AbortSignal },
   ): Promise<void> {
   await this.projects.assertDeliverablesAllowed(projectId, {
     acknowledgeGaps: options?.acknowledgeGaps === true,
   });
   const gaps = options?.gapsFeedback ?? undefined;
   const ack = options?.acknowledgeGaps === true;
+  const signal = options?.signal;
   switch (kind) {
     case "mdd_canonical":
       return;
     case "spec":
-      await this.generateSpec(projectId);
+      await this.generateSpec(projectId, signal);
       return;
     case "architecture":
-      await this.generateArchitecture(projectId, gaps);
+      await this.generateArchitecture(projectId, gaps, signal);
       return;
     case "use_cases":
-      await this.generateUseCases(projectId);
+      await this.generateUseCases(projectId, signal);
       return;
     case "blueprint":
-      await this.generateBlueprint(projectId, gaps);
+      await this.generateBlueprint(projectId, gaps, signal);
       return;
     case "api_contracts":
       await this.ensureBlueprintForApi(projectId);
-      await this.generateApiContracts(projectId, gaps);
+      await this.generateApiContracts(projectId, gaps, signal);
       return;
     case "logic_flows":
-      await this.generateLogicFlows(projectId, gaps);
+      await this.generateLogicFlows(projectId, gaps, signal);
       return;
     case "ux_ui_guide":
-      await this.uxGuide.generateUxUiGuide(projectId);
+      await this.uxGuide.generateUxUiGuide(projectId, signal);
       return;
     case "user_stories":
-      await this.generateUserStories(projectId);
+      await this.generateUserStories(projectId, signal);
       return;
     case "agent_governance":
-      await this.generateAgentGovernance(projectId);
+      await this.generateAgentGovernance(projectId, undefined, undefined, signal);
       return;
     case "tasks":
-      await this.generateTasks(projectId, gaps, { acknowledgeGaps: ack });
+      await this.generateTasks(projectId, gaps, { acknowledgeGaps: ack, signal });
       return;
     case "infra":
-      await this.generateInfra(projectId, gaps);
+      await this.generateInfra(projectId, gaps, signal);
       return;
     default: {
       // Exhaustiveness check intentionally disabled after EVD extraction
@@ -341,7 +342,8 @@ export class ProjectDeliverableGeneratorsService {
   return updated;
   }
 
-  async generateSpec(projectId: string) {
+  async generateSpec(projectId: string, signal?: AbortSignal) {
+  this.throwIfAborted(signal);
   const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
   if ((project as { projectType?: string }).projectType === "LEGACY") {
     throw new BadRequestException(
@@ -355,9 +357,7 @@ export class ProjectDeliverableGeneratorsService {
     inputContent,
     project.phase0SummaryContent,
     dbga.length === 0 && rawMdd.length > 0 ? "mdd" : "dbga",
-    {
-      ...this.buildHookGenerateOpts(project),
-    },
+    this.withHookGenerateOpts(project, undefined, signal),
   );
   const cleaned = cleanSpecDocumentContent(specContent);
   const updated = await this.projects.update(projectId, { specContent: cleaned });
@@ -374,7 +374,9 @@ export class ProjectDeliverableGeneratorsService {
   projectId: string,
   target?: string,
   options?: { forceRegenerate?: boolean; skipSddAutoReconcile?: boolean },
+  signal?: AbortSignal,
   ) {
+  this.throwIfAborted(signal);
   const forceRegenerate = options?.forceRegenerate !== false;
   const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
   const beforeLen = (project.agentGovernanceContent ?? "").length;
@@ -406,7 +408,7 @@ export class ProjectDeliverableGeneratorsService {
     infraContent: project.infraContent,
     userStoriesContent: project.userStoriesContent,
     useCasesContent: project.useCasesContent,
-    ...this.buildHookGenerateOpts(project),
+    ...this.withHookGenerateOpts(project, undefined, signal),
   });
   const forceFreshOverlay = forceRegenerate;
   const scaffold = parseAgentGovernanceResponse(raw, complexity, {
@@ -505,8 +507,9 @@ export class ProjectDeliverableGeneratorsService {
   async generateTasks(
   projectId: string,
   gapsFeedback?: string | null,
-  options?: { acknowledgeGaps?: boolean; onProgress?: (progress: TasksPipelineProgress) => void },
+  options?: { acknowledgeGaps?: boolean; onProgress?: (progress: TasksPipelineProgress) => void; signal?: AbortSignal },
   ) {
+  this.throwIfAborted(options?.signal);
   let project = await loadAccessibleProjectWithStages(this.prisma, projectId);
 
   project = await this.ensureTasksUpstreamArtifacts(project);
@@ -541,8 +544,7 @@ export class ProjectDeliverableGeneratorsService {
     gapsFeedback,
     fileCoordinatesContext: coordinates.block,
     coordinatesMode: coordinates.coordinatesMode,
-    ...this.buildHookGenerateOpts(project),
-    ...gfOpts,
+    ...this.withHookGenerateOpts(project, gfOpts, options?.signal),
   };
 
   const inventory = resolveDomainInventory({
@@ -776,7 +778,8 @@ export class ProjectDeliverableGeneratorsService {
   return { content: cleanDocumentContent(content) };
   }
 
-  async generateArchitecture(projectId: string, gapsFeedback?: string | null) {
+  async generateArchitecture(projectId: string, gapsFeedback?: string | null, signal?: AbortSignal) {
+  this.throwIfAborted(signal);
   const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
   const mdd = buildConstitutionMarkdown(project);
   const gfOpts = this.greenfieldGenerateOptions(project);
@@ -784,7 +787,7 @@ export class ProjectDeliverableGeneratorsService {
     await this.ai.generateArchitecture(mdd, project.blueprintContent, {
       ...gfOpts,
       gapsFeedback,
-      ...this.buildHookGenerateOpts(project),
+      ...this.withHookGenerateOpts(project, undefined, signal),
     }),
   );
 
@@ -810,12 +813,14 @@ export class ProjectDeliverableGeneratorsService {
   return { content: cleanDocumentContent(content) };
   }
 
-  async generateUseCases(projectId: string) {
+  async generateUseCases(projectId: string, signal?: AbortSignal) {
+  this.throwIfAborted(signal);
   const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
   const opts = this.withHookGenerateOpts(
     project,
     (await this.resolveLegacyGenerateOptions(project)) ??
       this.buildDomainCascadeGenerateOptions(project),
+    signal,
   );
   const content = await this.ai.generateUseCases(
     buildConstitutionMarkdown(project),
@@ -842,15 +847,17 @@ export class ProjectDeliverableGeneratorsService {
   return { content: cleanDocumentContent(content + appendix) };
   }
 
-  async generateUserStories(projectId: string) {
+  async generateUserStories(projectId: string, signal?: AbortSignal) {
+  this.throwIfAborted(signal);
   const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
   const intOpts = await this.buildIntegrationGenerateOptions(projectId);
   const domainOpts = this.buildDomainCascadeGenerateOptions(project);
+  const hookOpts = this.withHookGenerateOpts(project, { ...domainOpts, ...intOpts }, signal);
   const content = await this.ai.generateUserStories(
     buildConstitutionMarkdown(project),
     project.specContent,
     project.useCasesContent,
-    this.withHookGenerateOpts(project, { ...domainOpts, ...intOpts }),
+    hookOpts,
   );
   const appendix = buildHandoffUserStoriesAppendix(intOpts?.integrationHandoffItems ?? []);
   const cleaned = cleanDocumentContent(content + appendix);
@@ -923,19 +930,22 @@ export class ProjectDeliverableGeneratorsService {
   return { content: cleanDocumentContent(content) };
   }
 
-  async generateBlueprint(projectId: string, gapsFeedback?: string | null) {
+  async generateBlueprint(projectId: string, gapsFeedback?: string | null, signal?: AbortSignal) {
+  this.throwIfAborted(signal);
   const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
   const mddContent = buildConstitutionMarkdown(project);
   const enrichedMdd = this.enrichMddWithEntities(mddContent);
   const legacyOpts = this.withHookGenerateOpts(
     project,
     (await this.resolveLegacyGenerateOptions(project)) ?? {},
+    signal,
   );
   let blueprintContent = await this.ai.generateBlueprint(enrichedMdd, gapsFeedback, legacyOpts);
   blueprintContent = cleanDocumentContent(blueprintContent);
 
   // GUARD: Si gapsFeedback provocó un resultado vacío/corto, reintentar SIN gaps
   if (gapsFeedback && blueprintContent.length < 80) {
+    this.throwIfAborted(signal);
     this.logger.warn(`[Blueprint] Resultado vacío/corto (${blueprintContent.length} chars) con gapsFeedback — reintentando sin gaps`);
     blueprintContent = await this.ai.generateBlueprint(enrichedMdd, null, legacyOpts);
     blueprintContent = cleanDocumentContent(blueprintContent);
@@ -947,24 +957,31 @@ export class ProjectDeliverableGeneratorsService {
     throw new BadRequestException("No se pudo generar el Blueprint. Intenta de nuevo.");
   }
 
-  // Verificación multi-capa + un reintento LLM (siempre, aunque venga gapsFeedback del Workshop).
+  // Verificación multi-capa + un reintento LLM solo ante gaps "duros" (entidades, secciones, tablas…).
+  // Autocontenido es soft: evita ~80s de retry cuando el blueprint ya es sustancial.
   let qualityRetried = false;
   let checks = runBlueprintQualityChecks(mddContent, blueprintContent);
-  let allGaps = collectBlueprintQualityGaps(checks);
+  let hardGaps = collectBlueprintHardQualityGaps(checks);
 
-  if (allGaps.length > 0 && !qualityRetried) {
+  if (hardGaps.length > 0 && !qualityRetried) {
+    this.throwIfAborted(signal);
     qualityRetried = true;
     const internalFeedback = buildBlueprintQualityRetryFeedback(checks);
     const combinedFeedback = [gapsFeedback?.trim(), internalFeedback].filter(Boolean).join("\n\n");
     this.logger.warn(
       `[Blueprint] Calidad insuficiente (${checks.entity.gaps.length} entidades, ${checks.section.gaps.length} secciones, ` +
         `${checks.generalTable.gaps.length} tablaGral, ${checks.spanish.gaps.length} español, ` +
-        `${checks.selfContained.gaps.length} autocontenido) — reintentando con feedback`,
+        `${checks.selfContained.gaps.length} autocontenido) — reintentando: ${hardGaps[0]?.slice(0, 140)}`,
     );
     blueprintContent = await this.ai.generateBlueprint(enrichedMdd, combinedFeedback, legacyOpts);
     blueprintContent = cleanDocumentContent(blueprintContent);
     checks = runBlueprintQualityChecks(mddContent, blueprintContent);
-    allGaps = collectBlueprintQualityGaps(checks);
+    hardGaps = collectBlueprintHardQualityGaps(checks);
+  } else if (checks.selfContained.gaps.length > 0) {
+    this.logger.warn(
+      `[Blueprint] Referencias al MDD (${checks.selfContained.gaps.length} autocontenido) — sin retry LLM: ` +
+        `${checks.selfContained.gaps[0]?.slice(0, 140)}`,
+    );
   }
 
   blueprintContent = repairBlueprintProgrammaticGaps(mddContent, blueprintContent);
@@ -1029,7 +1046,8 @@ export class ProjectDeliverableGeneratorsService {
   return { content: cleanDocumentContent(content) };
   }
 
-  async generateApiContracts(projectId: string, gapsFeedback?: string | null) {
+  async generateApiContracts(projectId: string, gapsFeedback?: string | null, signal?: AbortSignal) {
+  this.throwIfAborted(signal);
   const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
   this.assertBlueprintCoversMddDataModel(project);
 
@@ -1037,10 +1055,14 @@ export class ProjectDeliverableGeneratorsService {
   const brdContent = mainStage?.brdContent ?? undefined;
   const mddContent = buildConstitutionMarkdown(project);
   const enrichedMdd = this.enrichMddWithApiEndpoints(mddContent);
-  const legacyOpts = this.withHookGenerateOpts(project, {
-    ...(await this.resolveLegacyGenerateOptions(project)),
-    ...this.greenfieldGenerateOptions(project),
-  });
+  const legacyOpts = this.withHookGenerateOpts(
+    project,
+    {
+      ...(await this.resolveLegacyGenerateOptions(project)),
+      ...this.greenfieldGenerateOptions(project),
+    },
+    signal,
+  );
 
   let apiContent = await this.ai.generateApiContracts(
     enrichedMdd,
@@ -1052,6 +1074,7 @@ export class ProjectDeliverableGeneratorsService {
   apiContent = cleanDocumentContent(apiContent);
 
   if (gapsFeedback && apiContent.length < 80) {
+    this.throwIfAborted(signal);
     this.logger.warn(
       `[API] Resultado vacío/corto (${apiContent.length} chars) con gapsFeedback — reintentando sin gaps`,
     );
@@ -1073,6 +1096,7 @@ export class ProjectDeliverableGeneratorsService {
   let qualityRetried = false;
   let apiCheck = runApiConformanceCheck(mddContent, apiContent);
   if (!apiCheck.ok && !qualityRetried) {
+    this.throwIfAborted(signal);
     qualityRetried = true;
     const internalFeedback = buildApiRetryFeedback(apiCheck);
     const combinedFeedback = [gapsFeedback?.trim(), internalFeedback].filter(Boolean).join("\n\n");
@@ -1125,11 +1149,13 @@ export class ProjectDeliverableGeneratorsService {
   return updated;
   }
 
-  async generateLogicFlows(projectId: string, gapsFeedback?: string | null) {
+  async generateLogicFlows(projectId: string, gapsFeedback?: string | null, signal?: AbortSignal) {
+  this.throwIfAborted(signal);
   const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
   const legacyOpts = this.withHookGenerateOpts(
     project,
     (await this.resolveLegacyGenerateOptions(project)) ?? {},
+    signal,
   );
   const mdd = buildConstitutionMarkdown(project);
   let content = await this.ai.generateLogicFlows(mdd, gapsFeedback, legacyOpts);
@@ -1138,6 +1164,7 @@ export class ProjectDeliverableGeneratorsService {
   let qualityRetried = false;
   let lfCheck = this.conformance.checkLogicFlows(mdd, cleaned);
   if (!lfCheck.ok && !qualityRetried) {
+    this.throwIfAborted(signal);
     qualityRetried = true;
     const internalFeedback = lfCheck.gaps.join("; ");
     const combinedFeedback = [gapsFeedback?.trim(), internalFeedback].filter(Boolean).join("\n\n");
@@ -1207,11 +1234,13 @@ export class ProjectDeliverableGeneratorsService {
   });
   }
 
-  async generateInfra(projectId: string, gapsFeedback?: string | null) {
+  async generateInfra(projectId: string, gapsFeedback?: string | null, signal?: AbortSignal) {
+  this.throwIfAborted(signal);
   const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
   const legacyOpts = this.withHookGenerateOpts(
     project,
     (await this.resolveLegacyGenerateOptions(project)) ?? {},
+    signal,
   );
   const mdd = buildConstitutionMarkdown(project);
   let content = await this.ai.generateInfra(
@@ -1225,6 +1254,7 @@ export class ProjectDeliverableGeneratorsService {
   let qualityRetried = false;
   let infraCheck = this.conformance.checkInfra(mdd, cleaned);
   if (!infraCheck.ok && !qualityRetried) {
+    this.throwIfAborted(signal);
     qualityRetried = true;
     const internalFeedback = buildInfraConformanceGapFeedback(infraCheck.gaps);
     const combinedFeedback = [gapsFeedback?.trim(), internalFeedback].filter(Boolean).join("\n\n");
@@ -1277,11 +1307,17 @@ export class ProjectDeliverableGeneratorsService {
     };
   }
 
+  private throwIfAborted(signal?: AbortSignal): void {
+    if (signal?.aborted) throw new Error("Cancelado por el usuario");
+  }
+
   private withHookGenerateOpts(
     project: Project & { stages: StageWithEst[] },
     opts?: LegacyGenerateOptions,
+    signal?: AbortSignal,
   ): LegacyGenerateOptions {
-    return { ...(opts ?? {}), ...this.buildHookGenerateOpts(project) };
+    const merged = { ...(opts ?? {}), ...this.buildHookGenerateOpts(project) };
+    return signal ? { ...merged, abortSignal: signal } : merged;
   }
 
   private notifyPluginAfterDocumentPersist(

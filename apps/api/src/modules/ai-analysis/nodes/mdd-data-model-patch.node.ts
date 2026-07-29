@@ -9,6 +9,7 @@ import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.
 import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
 import {
   applyDataModelPatchToDraft,
+  isUsableDataModelPatchSql,
   parseMissingTablesFromCriticFeedback,
 } from "../utils/mdd-data-model-patch.util.js";
 import { extractSection3Body, getMddDraftSummary, logMddNodeOutput } from "../utils/mdd-sanitize.js";
@@ -46,7 +47,7 @@ export function createMddDataModelPatchNode(llm: BaseChatModel) {
     });
 
     const appendedSql = raw.replace(/^```sql\s*|\s*```$/gi, "").trim();
-    if (!appendedSql || !/CREATE\s+TABLE/i.test(appendedSql)) {
+    if (!appendedSql || !/CREATE\s+TABLE/i.test(appendedSql) || !isUsableDataModelPatchSql(appendedSql, missing)) {
       LOG("LLM sin DDL usable, noop");
       return {};
     }

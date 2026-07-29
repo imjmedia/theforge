@@ -274,6 +274,8 @@ export interface LegacyGenerateOptions {
   stageId?: string;
   /** Contexto de entregables para hooks de plugins */
   hookContext?: Record<string, string | null | undefined>;
+  /** Cancelación cooperativa (jobs BullMQ / cascada). */
+  abortSignal?: AbortSignal;
 }
 
 export interface AgentGovernanceGenerateOptions extends LegacyGenerateOptions {
@@ -398,6 +400,13 @@ export class AiService {
    * Cierra generación LLM con hooks opcionales. Sin `projectId` o sin plugins registrados
    * → mismo camino que `generateResponse` (core intacto).
    */
+  private resolveAbortSignal(
+    options?: LegacyGenerateOptions,
+    generateOptions?: GenerateResponseOptions,
+  ): AbortSignal | undefined {
+    return options?.abortSignal ?? generateOptions?.abortSignal;
+  }
+
   private async finishDocumentGeneration(
     documentType: string,
     options: LegacyGenerateOptions | undefined,
@@ -405,6 +414,7 @@ export class AiService {
     systemPrompt: string,
     generateOptions?: GenerateResponseOptions,
   ): Promise<string> {
+    const abortSignal = this.resolveAbortSignal(options, generateOptions);
     if (options?.projectId) {
       return this.generateWithDocumentHooks({
         documentType,
@@ -414,6 +424,7 @@ export class AiService {
         systemPrompt,
         generateOptions: {
           ...generateOptions,
+          abortSignal,
           telemetryContext: {
             projectId: options.projectId,
             stageId: options.stageId ?? null,
@@ -425,7 +436,7 @@ export class AiService {
         },
       });
     }
-    return this.generateResponse(prompt, [], { systemPrompt, ...generateOptions });
+    return this.generateResponse(prompt, [], { systemPrompt, ...generateOptions, abortSignal });
   }
 
   private async auditorProvider() {
@@ -522,6 +533,7 @@ export class AiService {
         const out = await (await this.provider()).generateResponse(prompt, history, {
           systemPrompt,
           userMessageImages: options?.userMessageImages,
+          abortSignal: options?.abortSignal,
         });
         console.log(`[AiService] ${ts()} ← Respuesta del LLM recibida:`, {
           length: out?.length ?? 0,
@@ -543,7 +555,12 @@ export class AiService {
   async generateAuditorResponse(
     prompt: string,
     history: LlmChatMessage[] = [],
-    options?: { systemPrompt?: string; maxTokensOverride?: number; jsonObjectMode?: boolean },
+    options?: {
+      systemPrompt?: string;
+      maxTokensOverride?: number;
+      jsonObjectMode?: boolean;
+      abortSignal?: AbortSignal;
+    },
   ): Promise<string> {
     try {
       const systemPrompt = options?.systemPrompt ?? "";
@@ -558,6 +575,7 @@ export class AiService {
         systemPrompt: systemPrompt + jsonSuffix,
         maxTokensOverride: options?.maxTokensOverride,
         jsonObjectMode: options?.jsonObjectMode,
+        abortSignal: options?.abortSignal,
       });
       return out;
     } catch (err) {

@@ -8,12 +8,12 @@ import { CLARIFIER_MDD_PROMPT, CLARIFIER_QUESTIONS_ONLY_MDD_PROMPT } from "../pr
 import type { MDDStateType } from "../state/index.js";
 import { getMddTemplatePlaceholder } from "../state/mdd-structured.schema.js";
 import { mergeMddStructured } from "../utils/mdd-merge-structured.js";
-import { getMddDraftSummary, extractAlreadyDocumentedTopics, extractIdentifiedInfraFromText, logMddNodeOutput, deduplicateMddDraftSections, mergeSection1IntoDraft } from "../utils/mdd-sanitize.js";
+import { getMddDraftSummary, extractAlreadyDocumentedTopics, extractIdentifiedInfraFromText, logMddNodeOutput, deduplicateMddDraftSections, mergeSection1IntoDraft, mddHasDuplicateSectionHeadings } from "../utils/mdd-sanitize.js";
 import {
   draftHasSubstantialSection1,
   draftIsSubstantialForScopedRepair,
 } from "../utils/mdd-section-preserve.util.js";
-import { finalizeClarifierDraft, assembleClarifierMddDraft, stripClarifierGovernanceFromDraft } from "../utils/mdd-clarifier-draft.util.js";
+import { finalizeClarifierDraft, assembleClarifierMddDraft, stripClarifierGovernanceFromDraft, isSafeClarifierMergeBaseline } from "../utils/mdd-clarifier-draft.util.js";
 import { buildClarifierDbgaBrief } from "../utils/mdd-clarifier-dbga-brief.util.js";
 import { enrichClarifiedScopeFromInventory } from "../utils/enrich-clarified-scope.util.js";
 import { getUserBrief } from "../utils/mdd-user-brief.js";
@@ -209,10 +209,37 @@ export function createMddClarifierNode(llm: BaseChatModel) {
         };
       }
       const jsonStr = extractFirstJsonObject(text) ?? text.trim();
-      let parsed: ClarifierParsed;
+      let parsed: ClarifierParsed | undefined;
       try {
         parsed = parseJsonOrThrow(jsonStr, clarifierOutputSchema) as ClarifierParsed;
       } catch (parseErr) {
+        // Reintento antes del fallback: si el Clarificador falla, §1/§2 quedan como placeholders
+        // y el borrador nace sin headings canónicos, así que el resto del pipeline trabaja en
+        // vano (job 81: §2/§3/§4 generadas y descartadas). El fallo típico es escapado inválido
+        // al meter el MDD markdown dentro de un campo string del JSON.
+        LOG("JSON inválido en respuesta del Clarificador — reintentando 1x con formato reforzado");
+        const retryPrompt =
+          `${prompt}\n\n---\n**FORMATO OBLIGATORIO (reintento):** Responde EXCLUSIVAMENTE con un ` +
+          "objeto JSON válido con las claves `clarifiedScope` y `mddDraft`, ambas string. " +
+          "Escapa correctamente saltos de línea (`\\n`), comillas (`\\\"`) y barras invertidas " +
+          "dentro de los valores. No envuelvas la respuesta en ```json ni añadas texto fuera del objeto.";
+        const retryResponse = await invokeLlmWithRetry(llm, [new HumanMessage(retryPrompt)], {
+          tag: "Clarifier:draft:retry",
+        });
+        const retryText = retryResponse ? extractLlmText(retryResponse) : "";
+        if (retryText.trim()) {
+          try {
+            parsed = parseJsonOrThrow(
+              extractFirstJsonObject(retryText) ?? retryText.trim(),
+              clarifierOutputSchema,
+            ) as ClarifierParsed;
+            LOG("retry del Clarificador OK — JSON válido");
+          } catch {
+            LOG("retry del Clarificador también falló");
+          }
+        }
+      }
+      if (!parsed) {
         LOG("JSON inválido en respuesta del Clarificador, usando borrador anterior y scope de fallback");
         const fallbackScope =
           (state.clarifiedScope ?? "").trim() ||
@@ -304,12 +331,28 @@ export function createMddClarifierNode(llm: BaseChatModel) {
         dbgaContent: state.dbgaContent ?? "",
         log: LOG,
       });
-      const mergedDraft =
-        hasSubstantialDraft && draftTrimmed.length > 200 && finalizedDraft !== draftTrimmed
-          ? mergeSection1IntoDraft(draftTrimmed, finalizedDraft)
-          : finalizedDraft;
-      if (hasSubstantialDraft && mergedDraft !== finalizedDraft) {
+      const safeBaseline = deduplicateMddDraftSections(draftTrimmed);
+      const canMergeSection1 =
+        hasSubstantialDraft &&
+        isSafeClarifierMergeBaseline(safeBaseline, finalizedDraft) &&
+        finalizedDraft !== safeBaseline;
+      const mergedDraft = canMergeSection1
+        ? mergeSection1IntoDraft(safeBaseline, finalizedDraft)
+        : finalizedDraft;
+      if (canMergeSection1 && mergedDraft !== finalizedDraft) {
         LOG("draft sustancial: merge §1 only, preservadas §2–§7 (len %s→%s)", finalizedDraft.length, mergedDraft.length);
+      } else if (
+        hasSubstantialDraft &&
+        draftTrimmed.length > 200 &&
+        finalizedDraft !== draftTrimmed &&
+        !canMergeSection1
+      ) {
+        LOG(
+          "merge §1 omitido (baseline dupes o bloat: baselineLen=%s finalizedLen=%s dupes=%s)",
+          safeBaseline.length,
+          finalizedDraft.length,
+          mddHasDuplicateSectionHeadings(safeBaseline),
+        );
       }
       const mddDraft = deduplicateMddDraftSections(mergedDraft);
       const outStructured = merged ?? (slice ? mergeMddStructured(undefined, slice) : undefined);

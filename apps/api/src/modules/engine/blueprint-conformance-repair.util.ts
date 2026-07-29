@@ -48,6 +48,18 @@ export function collectBlueprintQualityGaps(checks: BlueprintQualityChecks): str
   ];
 }
 
+/** Gaps que justifican reintento LLM (autocontenido es soft — repair programático basta). */
+export function collectBlueprintHardQualityGaps(checks: BlueprintQualityChecks): string[] {
+  return [
+    ...checks.entity.gaps,
+    ...checks.section.gaps,
+    ...checks.apiTable.gaps,
+    ...checks.spanish.gaps,
+    ...checks.generalTable.gaps,
+    ...checks.vsMdd.gaps,
+  ];
+}
+
 /** Feedback conciso para un reintento LLM tras verificación automática. */
 export function buildBlueprintQualityRetryFeedback(checks: BlueprintQualityChecks): string {
   const entityNames = checks.entity.gaps

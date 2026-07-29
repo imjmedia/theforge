@@ -76,7 +76,7 @@ export const MDD_ARCHITECT_SCOPE_MAX_TOKENS: Record<MddArchitectScopeToken, numb
   data_model: 8_192,
   api_contracts: 12_288,
   section5: 3_072,
-  security: 4_096,
+  security: 12_288,
   integration: 4_096,
   full: 65_536,
 };

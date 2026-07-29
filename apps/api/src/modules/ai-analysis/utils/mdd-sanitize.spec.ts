@@ -1007,6 +1007,47 @@ Duplicado.
     assert.ok((deduped.match(/^##\s+6\./gm) ?? []).length <= 1);
     assert.ok((deduped.match(/^##\s+7\./gm) ?? []).length <= 1);
   });
+
+  it("colapsa 3× §5 stub a una sola (prefiere cuerpo sustancial)", () => {
+    const stub = `### Reglas de negocio (BDD/AAA)
+# ---
+`;
+    const substantial = `### Reglas de negocio (BDD/AAA)
+
+- **Escenario login:** Dado usuario válido, Cuando credenciales OK, Entonces JWT.
+${"- Edge case timeout. ".repeat(20)}`;
+    const draft = `# Master Design Document
+
+## 1. Contexto
+
+Alcance.
+
+## 5. Lógica y Edge Cases
+
+${stub}
+
+## 5. Lógica y Edge Cases
+
+${stub}
+
+## 5. Lógica y Edge Cases
+
+${substantial}
+
+## 6. Seguridad
+
+Auth.
+
+## 7. Infraestructura
+
+Cloud.
+`;
+    assert.ok(mddHasDuplicateSectionHeadings(draft));
+    const out = deduplicateAndReorderMddSections(draft);
+    assert.strictEqual(mddHasDuplicateSectionHeadings(out), false);
+    assert.strictEqual((out.match(/^##\s+5\./gm) ?? []).length, 1);
+    assert.ok(out.includes("Escenario login"));
+  });
 });
 
 describe("fixDualApprovalSchemaInDraft", () => {

@@ -14,9 +14,17 @@ import {
   validateMddStructure,
 } from "../utils/mdd-sanitize.js";
 import { mddDeliveryGateHasBlockers } from "../utils/mdd-delivery-gate.util.js";
-import { preserveTailSectionsIfSubstantial } from "../utils/mdd-section-preserve.util.js";
+import { preserveTailSectionsIfSubstantial, preserveTailSectionsFromSnapshots } from "../utils/mdd-section-preserve.util.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:CrossConsistency] ${msg}`, ...args);
+
+function preserveTailAfterCrossConsistency(
+  state: MDDStateType,
+  baselineDraft: string,
+  currentDraft: string,
+): string {
+  return preserveTailSectionsFromSnapshots(state, preserveTailSectionsIfSubstantial(baselineDraft, currentDraft));
+}
 
 function shouldSkipLlmPass(draft: string, issues: string[]): boolean {
   if (issues.length > 0) return false;
@@ -55,7 +63,7 @@ export function createMddCrossConsistencyNode(llm: BaseChatModel) {
         "determinista OK (%d chars, 0 issues) → skip LLM",
         deterministicDraft.length,
       );
-      const preserved = preserveTailSectionsIfSubstantial(baselineDraft, deterministicDraft);
+      const preserved = preserveTailAfterCrossConsistency(state, baselineDraft, deterministicDraft);
       return preserved !== draft ? { mddDraft: preserved } : {};
     }
 
@@ -72,14 +80,14 @@ export function createMddCrossConsistencyNode(llm: BaseChatModel) {
 
       if (text.includes("OK_CONSISTENT")) {
         LOG("LLM: OK_CONSISTENT");
-        current = preserveTailSectionsIfSubstantial(baselineDraft, current);
+        current = preserveTailAfterCrossConsistency(state, baselineDraft, current);
         return current !== draft ? { mddDraft: current } : {};
       }
 
       const patches = parseCrossConsistencyPatches(text);
       if (patches.length === 0) {
         LOG("LLM sin parches parseables, conservando paso determinista");
-        current = preserveTailSectionsIfSubstantial(baselineDraft, current);
+        current = preserveTailAfterCrossConsistency(state, baselineDraft, current);
         return current !== draft ? { mddDraft: current } : {};
       }
 
@@ -88,11 +96,11 @@ export function createMddCrossConsistencyNode(llm: BaseChatModel) {
       const remaining = detectCrossConsistencyIssues(current);
       LOG("aplicados %d parches LLM; issues restantes=%d", patches.length, remaining.length);
 
-      current = preserveTailSectionsIfSubstantial(baselineDraft, current);
+      current = preserveTailAfterCrossConsistency(state, baselineDraft, current);
       return current !== draft ? { mddDraft: current } : {};
     } catch (err) {
       LOG("error LLM: %s — conservando paso determinista", err instanceof Error ? err.message : String(err));
-      current = preserveTailSectionsIfSubstantial(baselineDraft, current);
+      current = preserveTailAfterCrossConsistency(state, baselineDraft, current);
       return current !== draft ? { mddDraft: current } : {};
     }
   };

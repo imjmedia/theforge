@@ -102,3 +102,17 @@ Versionado y aprobación.
     assert.match(out, /CREATE TABLE foo/);
   });
 });
+
+describe("isSafeClarifierMergeBaseline", () => {
+  it("rechaza baseline con headings duplicados", async () => {
+    const { isSafeClarifierMergeBaseline } = await import("./mdd-clarifier-draft.util.js");
+    const duped = `# MDD\n## 1. Contexto y alcance\n${"x".repeat(300)}\n## 3. Modelo de Datos\nA\n## 3. Modelo de Datos\nB\n`;
+    assert.equal(isSafeClarifierMergeBaseline(duped, "y".repeat(500)), false);
+  });
+
+  it("rechaza merge cuando newDraft > 3× baseline", async () => {
+    const { isSafeClarifierMergeBaseline } = await import("./mdd-clarifier-draft.util.js");
+    const baseline = `# MDD\n## 1. Contexto y alcance\n${"x".repeat(300)}\n## 3. Modelo de Datos\n${"CREATE TABLE t (id INT); ".repeat(20)}\n`;
+    assert.equal(isSafeClarifierMergeBaseline(baseline, "z".repeat(baseline.length * 4)), false);
+  });
+});

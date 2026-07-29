@@ -1,12 +1,8 @@
 /**
- * @fileoverview Nodo tail-parallel — ejecuta procesamiento paralelo final.
+ * Feature flag: post-critic §4∥§6∥§7 en paralelo (F0–F6 perf).
  */
-
-/** Activa §5 ∥ §6 ∥ §7 tras Software Architect (§2–§4). Desactivar: `MDD_TAIL_PARALLEL=0`. */
 export function isMddTailParallelEnabled(): boolean {
-  const raw = process.env.MDD_TAIL_PARALLEL;
-  if (raw === "0" || raw === "false") return false;
-  return true;
+  return process.env.MDD_TAIL_PARALLEL !== "0";
 }
 
 export const MDD_SECTION5_TAIL_PLACEHOLDER =
