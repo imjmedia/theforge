@@ -43,11 +43,18 @@ Solo términos **ya usados** en alcance o mensajes del usuario (tabla o lista `t
 
 - **Solo** entidades/atributos que **§1 o el glosario** exijan como fuente de verdad persistida.
 - Bloque `sql` (PostgreSQL) coherente; si hay geo **solo si §1 lo pide**, extensiones `postgis` en el diseño y tipos `GEOMETRY`/`GEOGRAPHY` explícitos.
-- `mermaid` `erDiagram` en paridad con el SQL.
+- `mermaid` `erDiagram` en paridad con el SQL (el pipeline lo genera desde el SQL; no redactar ER manual salvo excepción documentada).
 - Grafo (FalkorDB, etc.) **solo si §2** ya lo fija **y** §1 describe relaciones que justifiquen nodos/aristas; si no, omitir o una línea «no aplica en alcance actual».
-- ```TechnicalMetadata
-  [high_security]
-  ```
+
+Bloques de código **a nivel de párrafo** (no dentro de viñetas):
+
+```sql
+-- DDL PostgreSQL (CREATE TABLE, REFERENCES, índices)
+```
+
+```TechnicalMetadata
+[high_security]
+```
 
 ---
 
