@@ -100,8 +100,7 @@ function buildLangChainChat(
         apiKey: runtime.apiKey,
         temperature,
         maxOutputTokens: outputCap,
-        // AbortSignal en invokeLlmWithRetry; timeout SDK como red de seguridad adicional.
-        timeout: LLM_TIMEOUT_MS,
+        // Timeout: invokeLlmWithRetry (AbortSignal) — GoogleGenerativeAIChatInput no expone timeout SDK.
       });
     case "openrouter":
     case "openai":
