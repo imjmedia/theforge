@@ -25,9 +25,10 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import type { Runnable } from "@langchain/core/runnables";
 import type { BaseMessage } from "@langchain/core/messages";
 import { recordTokenUsageFromContext } from "../../ai/utils/token-usage-recorder.js";
+import { resolveLlmTimeoutMs } from "./mdd-llm-timeout.util.js";
 
 const DEFAULT_BACKOFF_MS = [0, 1500, 4000];
-const DEFAULT_INVOKE_TIMEOUT_MS = 120_000;
+const DEFAULT_INVOKE_TIMEOUT_MS = resolveLlmTimeoutMs();
 
 export type LlmToolCallLike = {
   id?: string;
@@ -155,6 +156,14 @@ export async function invokeLlmWithRetry(
   const isValid = options.isResponseValid ?? ((t) => t.trim().length > 0);
   const acceptTools = options.acceptToolCallsWithoutContent === true;
   const tag = options.tag || "LLM";
+  const promptChars = messages.reduce((acc, m) => {
+    const c = (m as { content?: unknown }).content;
+    if (typeof c === "string") return acc + c.length;
+    if (Array.isArray(c)) {
+      return acc + c.reduce((a, b) => a + (typeof b === "string" ? b.length : JSON.stringify(b).length), 0);
+    }
+    return acc;
+  }, 0);
 
   for (let attempt = 1; attempt <= max; attempt += 1) {
     const wait = backoff[Math.min(attempt - 1, backoff.length - 1)] ?? 0;
@@ -176,13 +185,17 @@ export async function invokeLlmWithRetry(
       if (toolsOk || isValid(text)) {
         if (attempt > 1) {
           console.log(
-            `[${tag}] retry recuperó respuesta válida (attempt ${attempt}/${max}, len=${text.length}, tools=${toolCalls.length})`,
+            `[${tag}] retry recuperó respuesta válida (attempt ${attempt}/${max}, promptChars=${promptChars}, outLen=${text.length}, tools=${toolCalls.length})`,
+          );
+        } else {
+          console.log(
+            `[${tag}] ok promptChars=${promptChars} outLen=${text.length} tools=${toolCalls.length}`,
           );
         }
         return response;
       }
       console.warn(
-        `[${tag}] respuesta vacía/inválida del LLM (attempt ${attempt}/${max}, len=${text.length}, tools=${toolCalls.length}), reintentando...`,
+        `[${tag}] respuesta vacía/inválida (attempt ${attempt}/${max}, promptChars=${promptChars}, outLen=${text.length}, tools=${toolCalls.length}), reintentando...`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

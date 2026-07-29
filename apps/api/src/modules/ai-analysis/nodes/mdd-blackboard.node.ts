@@ -6,6 +6,7 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { HumanMessage } from "@langchain/core/messages";
 import type { MDDStateType } from "../state/index.js";
 import { extractFirstJsonObject, parseJsonOrThrow } from "../utils/parse-json.js";
+import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
 import { z } from "zod";
 
 const blackboardOutputSchema = z.object({
@@ -56,9 +57,21 @@ Responde únicamente con un JSON válido:
 `;
 
         try {
-            const response = await llm.invoke([new HumanMessage(prompt)]);
-            const text = typeof response.content === "string" ? response.content : "";
-            const jsonStr = extractFirstJsonObject(text);
+            const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], {
+                tag: "Blackboard",
+                maxAttempts: 2,
+                isResponseValid: (text) => {
+                    const jsonStr = extractFirstJsonObject(text);
+                    if (!jsonStr) return false;
+                    try {
+                        return blackboardOutputSchema.safeParse(JSON.parse(jsonStr)).success;
+                    } catch {
+                        return false;
+                    }
+                },
+            });
+            const text = response ? extractLlmText(response) : "";
+            const jsonStr = text.trim() ? extractFirstJsonObject(text) : null;
             if (!jsonStr) throw new Error("No se pudo extraer JSON de resolución.");
 
             const parsed = parseJsonOrThrow(jsonStr, blackboardOutputSchema);
@@ -75,7 +88,7 @@ Responde únicamente con un JSON válido:
                 sectionsToRun: parsed.impacted_nodes
             };
         } catch (err) {
-            LOG("Error en el debate del Blackboard: %s", err instanceof Error ? err.message : String(err));
+            LOG("Error en el debate del Blackboard (sin resolución tras retries): %s", err instanceof Error ? err.message : String(err));
             return {
                 auditorFeedback: "El Juez no pudo emitir una resolución. Revisión manual requerida."
             };

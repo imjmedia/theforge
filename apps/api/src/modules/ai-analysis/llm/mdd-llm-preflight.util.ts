@@ -8,7 +8,7 @@ import {
   type ModelsUnavailableDetails,
 } from "../../ai/config/llm-model-fallback.js";
 import type { UserLLMRuntime } from "../../ai/providers/llm-runtime.types.js";
-import { extractLlmText, extractLlmToolCalls } from "../utils/mdd-llm-retry.util.js";
+import { extractLlmText, extractLlmToolCalls, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
 import { createDbgaLLMFromRuntime } from "./create-dbga-llm.js";
 
 const probeSchema = z.object({
@@ -56,7 +56,24 @@ export async function probeMddLlmModel(
     'Responde SOLO con JSON válido (sin markdown): {"ok":true,"probe":"mdd"}. ' +
     "No uses herramientas; una sola línea JSON.";
   try {
-    const response = await llm.invoke([new HumanMessage(prompt)]);
+    const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], {
+      tag,
+      maxAttempts: 2,
+      acceptToolCallsWithoutContent: true,
+      isResponseValid: (text) => {
+        if (!text.trim()) return false;
+        try {
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) return false;
+          return probeSchema.safeParse(JSON.parse(jsonMatch[0])).success;
+        } catch {
+          return false;
+        }
+      },
+    });
+    if (!response) {
+      return { ok: false, mode: "none", model, reason: "sin respuesta tras reintentos" };
+    }
     const toolCalls = extractLlmToolCalls(response);
     if (toolCalls.length > 0) {
       return { ok: true, mode: "tool_calls", model };

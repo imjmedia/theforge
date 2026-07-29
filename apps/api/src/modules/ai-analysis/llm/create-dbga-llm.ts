@@ -10,6 +10,7 @@ import {
 import type { AIFactory } from "../../ai/ai.factory.js";
 import type { UserLLMRuntime } from "../../ai/providers/llm-runtime.types.js";
 import type { ProviderId } from "../../ai/providers/provider-catalog.js";
+import { resolveLlmTimeoutMs } from "../utils/mdd-llm-timeout.util.js";
 import { ChainedFallbackChatModel } from "./chained-fallback-chat-model.js";
 import { OpenRouterFallbackChatModel } from "./openrouter-fallback-chat-model.js";
 
@@ -36,10 +37,7 @@ import { OpenRouterFallbackChatModel } from "./openrouter-fallback-chat-model.js
  *   clase devolvía `providerId: "openai"` y el coste caía a 0 USD.
  */
 
-/** @internal */ const LLM_TIMEOUT_MS = parseInt(
-  process.env.LANGGRAPH_LLM_TIMEOUT_MS?.trim() || "120000",
-  10,
-);
+/** @internal */ const LLM_TIMEOUT_MS = resolveLlmTimeoutMs();
 
 function chatModelChain(runtime: UserLLMRuntime): string[] {
   const chain = [runtime.chatModel, ...(runtime.chatModelFallbacks ?? [])];
@@ -102,6 +100,8 @@ function buildLangChainChat(
         apiKey: runtime.apiKey,
         temperature,
         maxOutputTokens: outputCap,
+        // AbortSignal en invokeLlmWithRetry; timeout SDK como red de seguridad adicional.
+        timeout: LLM_TIMEOUT_MS,
       });
     case "openrouter":
     case "openai":

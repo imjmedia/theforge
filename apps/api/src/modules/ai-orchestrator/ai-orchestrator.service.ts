@@ -40,6 +40,7 @@ import {
   detectUpstreamPropagateConfirmation,
   upstreamPropagateQueuedAssistantMessage,
 } from "../sessions/upstream-propagate-chat.util.js";
+import { mergeMddForOrchestratorPersist } from "./orchestrator-mdd-persist.util.js";
 
 export type OrchestratorClientDeliverables = {
   architectureContent?: string;
@@ -139,8 +140,25 @@ export class AiOrchestratorService {
     hint?: string;
   }> {
     try {
-      const project = await this.projects.update(projectId, {
+      const existingProject = await this.projects.findOne(projectId);
+      const stageRow = existingProject.stages?.find((s) => s.id === stageId);
+      const existingMdd = String(stageRow?.mddContent ?? existingProject.mddContent ?? "").trim();
+      const { content: mergedMdd, stats, defensiveMerge } = mergeMddForOrchestratorPersist(
+        existingMdd,
         mddContent,
+      );
+      if (defensiveMerge || mergedMdd.length !== mddContent.length) {
+        console.log("[Orchestrator] mergeMddBySection persist", {
+          existingLen: existingMdd.length,
+          incomingLen: mddContent.length,
+          mergedLen: mergedMdd.length,
+          truncatedIncoming: stats.truncatedIncoming,
+          replaced: stats.sectionsReplaced,
+          kept: stats.sectionsKept,
+        });
+      }
+      const project = await this.projects.update(projectId, {
+        mddContent: mergedMdd,
         stageId,
         ...(extras?.documentAst !== undefined
           ? { documentAst: extras.documentAst ?? undefined }
