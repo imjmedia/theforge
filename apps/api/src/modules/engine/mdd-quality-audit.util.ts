@@ -5,6 +5,7 @@
 
 import { extractSection } from "./conformance.service.js";
 import { extractSectionByNumber } from "./mdd-markdown-parser.js";
+import { detectTruncatedMddTail } from "@theforge/shared-types";
 
 const PLACEHOLDER_NOISE_RE = /(?:^|\n)#+\s*[^\n]*(?:---\s*){3,}/m;
 
@@ -511,6 +512,8 @@ export function collectMddQualityIssues(draft: string): string[] {
   if (manifestIssue) issues.push(manifestIssue);
   const placeholderIssue = detectPlaceholderNoise(draft);
   if (placeholderIssue) issues.push(placeholderIssue);
+  const truncatedIssue = detectTruncatedMddTail(draft);
+  if (truncatedIssue) issues.push(truncatedIssue);
   return issues;
 }
 

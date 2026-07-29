@@ -2033,6 +2033,45 @@ Fin.
     assert.doesNotMatch(out, /\n-\n\n## 3\./);
   });
 
+  it("prepareMddMarkdownForPersist deduplica §4 triplicada antes de persistir", () => {
+    const section4 =
+      "## 4. Contratos de API\n\n| POST | /api/test | test | JWT |\n\n#### POST /api/test\n\n```json\n{\"ok\": true}\n```\n\n";
+    const raw = `# Master Design Document
+
+## 1. Contexto
+
+Alcance con suficiente texto para validar estructura canónica del MDD de prueba.
+
+## 2. Arquitectura y Stack
+
+NestJS.
+
+## 3. Modelo de Datos
+
+\`\`\`sql
+CREATE TABLE items (id UUID PRIMARY KEY);
+\`\`\`
+
+${section4.repeat(3)}
+
+## 5. Lógica y Edge Cases
+
+Reglas.
+
+## 6. Seguridad
+
+JWT.
+
+## 7. Infraestructura
+
+Docker.
+`;
+    assert.ok(mddHasDuplicateSectionHeadings(raw));
+    const out = prepareMddMarkdownForPersist(raw);
+    assert.strictEqual(mddHasDuplicateSectionHeadings(out), false);
+    assert.strictEqual((out.match(/^##\s+4\.\s*Contratos\s+de\s+API/im) ?? []).length, 1);
+  });
+
   it("prepareMddMarkdownForPersist: despega §1 y colapsa HR rotas (NEW + LEGACY)", () => {
     const raw = `## 1. Contexto ### Problema
 Texto. ### Objetivos

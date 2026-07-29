@@ -19,6 +19,7 @@ import {
   repairTableBoundaries,
   repairUnclosedJsonBeforeApiEndpoint,
 } from "./repair-pasted-markdown.js";
+import { repairMddFormatIssues } from "./repair-mdd-format.js";
 import { repairDirectoryTreeBlocks } from "./repair-directory-tree.js";
 import {
   homogenizeMarkdownBulletMarkers,
@@ -79,6 +80,7 @@ export function formatDocumentMarkdown(text: string): string {
   cleaned = repairMarkdownFences(cleaned.trim());
   cleaned = repairOrphanFenceBeforeContractLabels(cleaned);
   cleaned = repairUnclosedJsonBeforeApiEndpoint(cleaned);
+  cleaned = repairMddFormatIssues(cleaned);
   cleaned = repairApiContractJsonFences(cleaned);
   cleaned = repairOrphanContratosApiFences(cleaned);
   cleaned = repairApiResponse204NoContent(cleaned);

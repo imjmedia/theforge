@@ -34,6 +34,7 @@ export * from "./theforge-doc-stamp.js";
 export * from "./tasks-pipeline.js";
 export * from "./tasks-context-contracts.js";
 export * from "./repair-pasted-markdown.js";
+export * from "./repair-mdd-format.js";
 export * from "./repair-glued-headings.js";
 export * from "./repair-phase0-flow-format.js";
 export {

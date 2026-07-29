@@ -397,3 +397,18 @@ export function sqlBlockContainsProseArtifact(sqlContent: string): boolean {
   }
   return false;
 }
+
+/** Cierra ```sql en §3 cuando un ```json de §4 quedó absorbido por un fence sin cerrar. */
+export function repairSection3SqlFenceBeforeJsonBlock(draft: string): string {
+  const heading = "## 3. Modelo de Datos";
+  const idx = draft.indexOf(heading);
+  if (idx === -1) return draft;
+  const sectionStart = idx + heading.length;
+  const rest = draft.slice(sectionStart);
+  const nextH2 = rest.search(/\n##\s+/);
+  const body = nextH2 !== -1 ? rest.slice(0, nextH2) : rest;
+  if (!/```sql[\s\S]*```json/i.test(body)) return draft;
+  const fixedBody = body.replace(/(```sql[\s\S]*?)(\n```json)/i, "$1\n```$2");
+  if (fixedBody === body) return draft;
+  return draft.slice(0, sectionStart) + fixedBody + (nextH2 !== -1 ? rest.slice(nextH2) : "");
+}
