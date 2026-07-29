@@ -16,6 +16,7 @@ import {
   workshopStateFromProjectStage,
 } from "./helpers/stage-focus";
 import { shouldApplyWorkshopUpdate, workshopScopeProjectId } from "./helpers/workshop-scope";
+import { resetWorkshopSemaphoreSnapshot } from "./helpers/semaphore-snapshot";
 import { selectPersistedMddBaseline } from "./selectors";
 import type { WorkshopChatScope } from "@theforge/shared-types";
 import type { Project, Session, WorkshopStage } from "./types";
@@ -365,8 +366,7 @@ export const createProjectSlice: StateCreator<WorkshopState, [], [], ProjectSlic
         error: null,
         legacyMcpDebugTrace: null,
         synced: true,
-        liveMetrics: null,
-        deliveryGate: null,
+        ...resetWorkshopSemaphoreSnapshot(),
         pluginData: (data.pluginData as Record<string, unknown> | null | undefined) ?? {},
       });
       void (async () => {

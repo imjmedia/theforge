@@ -15,6 +15,7 @@ import {
   mddStateHasDomainAuthSkew,
 } from "../utils/mdd-domain-prompt.util.js";
 import { extractFirstJsonObject } from "../utils/parse-json.js";
+import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
 import { z } from "zod";
 import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
 
@@ -123,8 +124,11 @@ export function createMddArchitectCriticNode(llm: BaseChatModel) {
       ? "No se pudo verificar §3 automáticamente. Revisa SQL, diagrama ER y cobertura del inventario de dominio antes de generar contratos API."
       : "No se pudo verificar §3 y §4 automáticamente. Revisa que la directiva del usuario y las entidades/procesos del inventario de dominio estén aplicados en el SQL, diagrama ER y sección 4.";
     try {
-      const response = await llm.invoke([new HumanMessage(prompt)]);
-      const text = typeof response.content === "string" ? response.content : "";
+      const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], {
+        tag: "ArchitectCritic",
+        isResponseValid: (t) => t.trim().length > 0,
+      });
+      const text = response ? extractLlmText(response) : "";
       logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, text.length), {
         phase: afterSection3Only ? "after_section3" : "after_full",
       });

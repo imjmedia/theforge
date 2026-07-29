@@ -37,6 +37,10 @@ import {
 } from "./helpers/mdd-editor";
 import { projectWithUxAfterStream } from "./helpers/stage-focus";
 import { errorStateFromCaught, friendlyFetchError } from "./helpers/store-errors";
+import {
+  generationStatusWithoutSddGraph,
+  resetWorkshopSemaphoreSnapshot,
+} from "./helpers/semaphore-snapshot";
 import { selectPersistedMddBaseline } from "./selectors";
 import type { Project } from "./types";
 import type { WorkshopState } from "./workshop-state.types";
@@ -95,6 +99,7 @@ export const createMddSlice: StateCreator<WorkshopState, [], [], MddSliceActions
       applyMddFromFetchedProject(get, set, data ?? get().project);
       await get().fetchEstimation(pid);
       await get().fetchGenerationStatus(pid);
+      await get().fetchConformance(pid).catch(() => {});
       set({ loading: false, loadingReason: null, agentProgress: [] });
       return data ?? get().project;
     } catch (e) {
@@ -409,9 +414,12 @@ export const createMddSlice: StateCreator<WorkshopState, [], [], MddSliceActions
         loadingReason: null,
         agentProgress: [],
         mddJustGeneratedFromBenchmark: false,
+        ...resetWorkshopSemaphoreSnapshot(),
+        generationStatus: generationStatusWithoutSddGraph(get().generationStatus),
       });
       void get().fetchEstimation(pid);
-      void get().fetchGenerationStatus(pid, stageId, { light: true });
+      void get().fetchConformance(pid).catch(() => {});
+      void get().fetchGenerationStatus(pid, stageId, { light: true }).catch(() => {});
       return true;
     } catch (e) {
       set({ error: e instanceof Error ? e.message : "Error al limpiar el MDD" });

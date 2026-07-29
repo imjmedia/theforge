@@ -71,6 +71,11 @@ describe("mdd-quality-audit.util", () => {
     assert.ok(issues.length >= 2);
   });
 
+  it("collectMddQualityIssues detecta cola truncada", () => {
+    const issues = collectMddQualityIssues("## 4. Contratos\n\n```json\n{ \"a\": 1");
+    assert.ok(issues.some((i) => /json abierto|truncado/i.test(i)));
+  });
+
   it("detectPlaceholderNoise catches dash placeholders", () => {
     const msg = detectPlaceholderNoise("## 1. Contexto\n\nObjetivos --- --- ---\n");
     assert.ok(msg);

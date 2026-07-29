@@ -32,7 +32,62 @@ import {
 } from "./mdd-sanitize.js";
 import { MDD_SECTION5_TAIL_PLACEHOLDER } from "./mdd-tail-parallel.config.js";
 
-export type TailParallelNodeResult = Partial<MDDStateType>;
+export type TailParallelNodeResult = Partial<MDDStateType> & {
+  integrationSectionMd?: string;
+};
+
+export function resolveSection7BodyForMerge(
+  intResult: TailParallelNodeResult,
+  intDraft: string,
+): string | null {
+  const explicit = (intResult.integrationSectionMd ?? "").trim();
+  if (
+    explicit.length > 80 &&
+    !isMddSectionPipelinePlaceholderBody(explicit) &&
+    !/^\(Pendiente/i.test(explicit)
+  ) {
+    return explicit;
+  }
+
+  const fromDraft = extractSection7Body(intDraft);
+  if (
+    fromDraft &&
+    fromDraft.length > 80 &&
+    !isMddSectionPipelinePlaceholderBody(fromDraft) &&
+    !/^\(Pendiente/i.test(fromDraft)
+  ) {
+    return fromDraft;
+  }
+
+  const range7 = getSection6Or7Range(intDraft, 7);
+  if (range7) {
+    const slice = intDraft.slice(range7.start, range7.end).trim();
+    const body = extractSection7Body(slice) ?? slice.replace(/^##[^\n]+\n+/i, "").trim();
+    if (
+      body.length > 80 &&
+      !isMddSectionPipelinePlaceholderBody(body) &&
+      !/^\(Pendiente/i.test(body)
+    ) {
+      return body;
+    }
+  }
+
+  const integracion = intResult.mddStructured?.integracion;
+  if (integracion) {
+    const fromStructured = integracionToSection7Markdown(
+      Array.isArray(integracion) ? { subsections: integracion } : integracion,
+    ).trim();
+    if (
+      fromStructured.length > 80 &&
+      !isMddSectionPipelinePlaceholderBody(fromStructured) &&
+      !/^\(Pendiente/i.test(fromStructured)
+    ) {
+      return fromStructured;
+    }
+  }
+
+  return null;
+}
 
 /** §4 sin bloques ```json``` — solo tabla de rutas y headings de endpoint. */
 export function extractContratosRoutesTableOnly(section4Body: string | null | undefined): string {
@@ -160,9 +215,9 @@ export function mergeTailParallelResults(
   const intDraft = (intResult.mddDraft ?? baseDraft).trim();
 
   let finalDraft = secDraft;
-  const range7 = getSection6Or7Range(intDraft, 7);
-  if (range7) {
-    finalDraft = replaceSection6Or7InDraft(secDraft, 7, intDraft.slice(range7.start, range7.end));
+  const section7Body = resolveSection7BodyForMerge(intResult, intDraft);
+  if (section7Body) {
+    finalDraft = replaceSection6Or7InDraft(secDraft, 7, section7Body);
   }
 
   const section5Body = extractSection5BodyForMerge(s5Result, baseDraft);

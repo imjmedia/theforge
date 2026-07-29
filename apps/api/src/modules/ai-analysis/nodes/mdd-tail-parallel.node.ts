@@ -4,7 +4,7 @@
 
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { MDDStateType } from "../state/index.js";
-import { getMddDraftSummary } from "../utils/mdd-sanitize.js";
+import { getMddDraftSummary, deduplicateMddDraftSections } from "../utils/mdd-sanitize.js";
 import { mergeTailParallelResults } from "../utils/mdd-tail-parallel.util.js";
 import { createMddIntegrationNode } from "./mdd-integration.node.js";
 import { createMddSection5Node } from "./mdd-section5.node.js";
@@ -42,7 +42,7 @@ export function createMddTailParallelNode(section5Llm: BaseChatModel, structural
     ]);
 
     const merged = mergeTailParallelResults(state, s5Result, secResult, intResult);
-    const finalDraft = merged.mddDraft ?? state.mddDraft ?? "";
+    const finalDraft = deduplicateMddDraftSections(merged.mddDraft ?? state.mddDraft ?? "");
     const sum = getMddDraftSummary(finalDraft);
     logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, 0, finalDraft.length), { parallel: true });
     LOG(
@@ -52,6 +52,6 @@ export function createMddTailParallelNode(section5Llm: BaseChatModel, structural
       /##\s+(?:6\.\s*)?Seguridad\b/i.test(finalDraft) ? "✓" : "✗",
       /##\s+(?:7\.\s*)?(?:Infraestructura|Integración)\b/i.test(finalDraft) ? "✓" : "✗",
     );
-    return merged;
+    return { ...merged, mddDraft: finalDraft };
   };
 }

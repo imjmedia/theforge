@@ -21,6 +21,7 @@ import { domainDeliveryGateFindings } from "../../engine/cascade-accuracy.util.j
 import { checkBrdDecisionLogClosure } from "../../engine/brd-decision-log.util.js";
 import { evaluateBrdToMddTraceability } from "../estimation/brd-mdd-traceability.util.js";
 import { prepareMddForDeliveryGateValidation } from "../../projects/mdd-deterministic-repair.util.js";
+import { evaluateSection1BodyQuality } from "./mdd-section1-quality.util.js";
 
 export type { MddDeliveryGateResult };
 
@@ -186,6 +187,29 @@ export function validateMddForDelivery(
     const minLength = entry.num === 3 ? minSection3BodyLength : minSectionBodyLength;
     if (body == null) {
       // Ya cubierto por `missingSections` arriba (heading ausente).
+      continue;
+    }
+    if (entry.num === 1) {
+      if (options?.mddComplexity) {
+        const quality = evaluateSection1BodyQuality(body, options.mddComplexity);
+        if (!quality.ok) {
+          blockers.push(...quality.blockers);
+        }
+      } else if (hasCrossReference(body)) {
+        // sin complejidad: legacy longitud mínima
+      } else {
+        const bodyLen = body.length;
+        if (bodyLen < minSectionBodyLength) {
+          blockers.push(
+            `Sección ${entry.title} tiene contenido insuficiente (${bodyLen} chars; mínimo ${minSectionBodyLength}).`,
+          );
+        }
+        if (isMddSectionPipelinePlaceholderBody(body)) {
+          blockers.push(
+            `Sección ${entry.title} es un placeholder del pipeline (ej. "Pendiente: Arquitecto"). Regenera antes de persistir.`,
+          );
+        }
+      }
       continue;
     }
     if (hasCrossReference(body)) continue;

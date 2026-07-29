@@ -14,6 +14,8 @@ import {
   validateMddStructure,
 } from "../utils/mdd-sanitize.js";
 import { mddDeliveryGateHasBlockers } from "../utils/mdd-delivery-gate.util.js";
+import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
+import { logMddNodeOutput } from "../utils/mdd-sanitize.js";
 import { preserveTailSectionsIfSubstantial, preserveTailSectionsFromSnapshots } from "../utils/mdd-section-preserve.util.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:CrossConsistency] ${msg}`, ...args);
@@ -75,8 +77,18 @@ export function createMddCrossConsistencyNode(llm: BaseChatModel) {
 
     try {
       const prompt = `${CROSS_CONSISTENCY_MDD_PROMPT}\n\n---\n${buildCrossConsistencyUserMessage(deterministicDraft, issues)}`;
-      const response = await llm.invoke([new HumanMessage(prompt)]);
-      const text = typeof response.content === "string" ? response.content : "";
+      const inputLen = deterministicDraft.length;
+      const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], {
+        tag: "CrossConsistency",
+        isResponseValid: (text) => text.trim().length > 0,
+      });
+      const text = response ? extractLlmText(response) : "";
+
+      if (!text.trim()) {
+        LOG("LLM sin respuesta tras reintentos — conservando paso determinista (inputLen=%s)", inputLen);
+        current = preserveTailSectionsIfSubstantial(baselineDraft, current);
+        return current !== draft ? { mddDraft: current } : {};
+      }
 
       if (text.includes("OK_CONSISTENT")) {
         LOG("LLM: OK_CONSISTENT");
@@ -97,11 +109,19 @@ export function createMddCrossConsistencyNode(llm: BaseChatModel) {
       LOG("aplicados %d parches LLM; issues restantes=%d", patches.length, remaining.length);
 
       current = preserveTailAfterCrossConsistency(state, baselineDraft, current);
-      return current !== draft ? { mddDraft: current } : {};
+      if (current !== draft) {
+        logMddNodeOutput("CrossConsistency", current, { inputLen });
+        return { mddDraft: current };
+      }
+      return {};
     } catch (err) {
       LOG("error LLM: %s — conservando paso determinista", err instanceof Error ? err.message : String(err));
       current = preserveTailAfterCrossConsistency(state, baselineDraft, current);
-      return current !== draft ? { mddDraft: current } : {};
+      if (current !== draft) {
+        logMddNodeOutput("CrossConsistency", current, { inputLen: deterministicDraft.length });
+        return { mddDraft: current };
+      }
+      return {};
     }
   };
 }

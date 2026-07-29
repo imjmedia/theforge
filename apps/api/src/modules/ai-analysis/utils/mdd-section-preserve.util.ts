@@ -316,12 +316,27 @@ function sectionBodyIsSubstantial(
   return !isMddSectionPipelinePlaceholderBody(trimmed);
 }
 
+/** §1 reducida a fallback Clarifier, stamp BRD/DBGA o metadatos sin alcance real. */
+export function isContextSectionBoilerplateOnly(body: string | null | undefined): boolean {
+  const b = (body ?? "").trim();
+  if (!b) return true;
+  if (/^\(Basado en:/i.test(b)) return true;
+  if (/theforge-doc:created=/i.test(b) && b.length < 600) return true;
+  const withoutStamp = b
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/^>\s*📅[^\n]*\n?/gm, "")
+    .trim();
+  if (withoutStamp.length < MIN_SUBSTANTIAL_SECTION1_BODY_LEN && /📅\s*Creado:/i.test(b)) {
+    return true;
+  }
+  return false;
+}
+
 /** True si §1 tiene contexto real (no placeholder ni vacío). */
 export function draftHasSubstantialSection1(draft: string): boolean {
-  return sectionBodyIsSubstantial(
-    extractContextSectionBody((draft ?? "").trim()),
-    MIN_SUBSTANTIAL_SECTION1_BODY_LEN,
-  );
+  const body = extractContextSectionBody((draft ?? "").trim());
+  if (isContextSectionBoilerplateOnly(body)) return false;
+  return sectionBodyIsSubstantial(body, MIN_SUBSTANTIAL_SECTION1_BODY_LEN);
 }
 
 /** True si §2 tiene cuerpo real (no placeholder del pipeline). */
@@ -693,7 +708,8 @@ function preserveSectionByNumber(
 }
 
 /**
- * Restaura §2–§7 sustanciales cuando un paso mecánico las regresó (placeholder o <50% del baseline).
+ * Restaura §1–§7 sustanciales cuando un paso mecánico las regresó (placeholder o <50% del baseline).
+ * §2–§7 se restauran aunque §1 siga fina (p. ej. MDD desde benchmark con BRD corto).
  */
 export function preserveValidatedSectionsIfSubstantial(
   baselineDraft: string,
@@ -701,27 +717,38 @@ export function preserveValidatedSectionsIfSubstantial(
   options?: PreserveValidatedSectionsOptions,
 ): string {
   const baseline = (baselineDraft ?? "").trim();
+  if (!baseline) return currentDraft;
   const current = (currentDraft ?? "").trim();
-  if (baseline && mddHasDuplicateSectionHeadings(baseline) && !mddHasDuplicateSectionHeadings(current)) {
+  if (mddHasDuplicateSectionHeadings(baseline) && !mddHasDuplicateSectionHeadings(current)) {
     return current;
   }
 
   let out = currentDraft;
-  if (!draftHasSubstantialSection1(out) && draftHasSubstantialSection1(baselineDraft)) {
-    out = preserveSectionByNumber(baselineDraft, out, 1);
+  const sections = resolveValidatedSectionsToPreserve(options);
+
+  if (
+    sections.includes(1) &&
+    !draftHasSubstantialSection1(out) &&
+    draftHasSubstantialSection1(baseline)
+  ) {
+    out = preserveSectionByNumber(baseline, out, 1);
     if (!draftHasSubstantialSection1(out)) {
       console.warn(
         `[MDD:SectionPreserve] Preserve: §1 no pudo restaurarse → draft corrupto; preservando §2–§7`,
       );
     }
-  } else if (!draftHasSubstantialSection1(out)) {
+  } else if (
+    !draftHasSubstantialSection1(out) &&
+    isContextSectionBoilerplateOnly(extractContextSectionBody(out))
+  ) {
     console.warn(
-      `[MDD:SectionPreserve] Preserve: §1 insustancial sin baseline → saltando; draft corrupto`,
+      `[MDD:SectionPreserve] Preserve: §1 es boilerplate/stamp — restaurando §2–§7 desde baseline`,
     );
-    return currentDraft;
   }
-  for (const n of resolveValidatedSectionsToPreserve(options)) {
-    out = preserveSectionByNumber(baselineDraft, out, n);
+
+  for (const n of sections) {
+    if (n === 1) continue;
+    out = preserveSectionByNumber(baseline, out, n);
   }
   return out;
 }
@@ -778,15 +805,22 @@ export function guardValidatedSectionsForPersist(
   const before = (postPrepareMarkdown ?? "").trim();
   if (!baseline) return { markdown: before, restored: false, failedSections: [] };
 
-  if (!draftHasSubstantialSection1(before)) {
+  if (
+    !draftHasSubstantialSection1(before) &&
+    (draftHasSubstantialSection1(baseline) ||
+      isContextSectionBoilerplateOnly(extractContextSectionBody(before)))
+  ) {
     console.warn(
-      `[MDD:SectionPreserve] §1 insustancial (${extractContextSectionBody(before)?.length ?? 0} chars) → saltando restauración; draft corrupto necesita regeneración completa`,
+      `[MDD:SectionPreserve] §1 insustancial (${extractContextSectionBody(before)?.length ?? 0} chars) — evaluando §2–§7`,
     );
-    return { markdown: before, restored: false, failedSections: [] };
   }
 
   const sectionsToCheck = resolveValidatedSectionsToPreserve(options);
-  const checks = GUARD_SECTION_CHECKS.filter((c) => sectionsToCheck.includes(c.num));
+  const checks = GUARD_SECTION_CHECKS.filter((c) => {
+    if (!sectionsToCheck.includes(c.num)) return false;
+    if (c.num === 1 && !draftHasSubstantialSection1(baseline)) return false;
+    return true;
+  });
   const regressedBefore = checks.filter((c) => c.has(baseline) && !c.has(before)).map((c) => c.num);
   if (regressedBefore.length === 0) {
     return { markdown: before, restored: false, failedSections: [] };

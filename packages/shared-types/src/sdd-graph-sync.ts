@@ -34,7 +34,6 @@ export type ResolveMddCoherenceInput = {
   isCoherent: boolean;
   orphanEntityCount?: number;
   orphanEndpointCount?: number;
-  mddChangedSinceSync?: boolean;
 };
 
 /** @deprecated Usar ResolveMddCoherenceInput. Alias legacy para tests. */
@@ -54,7 +53,6 @@ export function resolveMddCoherenceState(input: ResolveMddCoherenceInput): SddGr
     isCoherent,
     orphanEntityCount = 0,
     orphanEndpointCount = 0,
-    mddChangedSinceSync = false,
   } = input;
 
   const indexable = expectedEntities > 0 || expectedEndpoints > 0;
@@ -71,21 +69,6 @@ export function resolveMddCoherenceState(input: ResolveMddCoherenceInput): SddGr
       lastSyncedAt: null,
       message:
         "El MDD no expone tablas SQL ni contratos API indexables (p. ej. legacy Strapi).",
-    };
-  }
-
-  if (mddChangedSinceSync) {
-    return {
-      state: "stale",
-      entityCount,
-      endpointCount,
-      expectedEntities,
-      expectedEndpoints,
-      isCoherent,
-      orphanEntityCount,
-      orphanEndpointCount,
-      lastSyncedAt: null,
-      message: "El MDD cambió desde la última evaluación de coherencia.",
     };
   }
 
@@ -135,7 +118,6 @@ export function resolveSddGraphSyncState(input: ResolveSddGraphSyncInput): SddGr
     isCoherent: input.isCoherent === true,
     orphanEntityCount: input.orphanEntityCount,
     orphanEndpointCount: input.orphanEndpointCount,
-    mddChangedSinceSync: input.mddChangedSinceSync,
   });
 }
 

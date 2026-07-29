@@ -31,6 +31,7 @@ import {
 import { extractFirstJsonObject, parseJsonOrThrow } from "../utils/parse-json.js";
 import { getInternalDirectivesContext, extractInternalDirectives } from "../utils/mdd-mesh-topology.js";
 import { stripThinkingTags } from "../utils/mdd-security-parse.js";
+import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
 import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
 import { buildTrimmedTailAgentContext } from "../utils/mdd-tail-parallel.util.js";
 import {
@@ -286,10 +287,12 @@ export function createMddIntegrationNode(llm: BaseChatModel, opts?: MddIntegrati
       }
       const context = contextParts.join("\n");
       const prompt = `${INTEGRATION_ENGINEER_MDD_PROMPT}\n\n---\n${context}`;
+      const inputDraftLen = (state.mddDraft ?? "").trim().length;
       const startedAt = Date.now();
-      const response = await llm.invoke([new HumanMessage(prompt)]);
-      const text = stripThinkingTags(typeof response.content === "string" ? response.content : "");
-      logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, text.length));
+      const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], { tag: "Integration" });
+      const rawText = response ? extractLlmText(response) : "";
+      const text = stripThinkingTags(rawText);
+      logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, rawText.length));
       if (!text.trim()) {
         const reinjected = reinjectTailSectionsFromSnapshotsForGateLoop(state);
         if (reinjected) {
@@ -302,6 +305,11 @@ export function createMddIntegrationNode(llm: BaseChatModel, opts?: MddIntegrati
             };
           }
           return { ...reinjected, mddStructured: state.mddStructured ?? {} };
+        }
+        if (draftHasSubstantialSection7(state.mddDraft ?? "")) {
+          LOG("LLM sin respuesta — preservando §7 existente (inputLen=%s)", inputDraftLen);
+          logMddNodeOutput("Integration", state.mddDraft ?? "", { inputLen: inputDraftLen });
+          return {};
         }
         LOG("LLM vacío, usando fallback");
         const slice = {
@@ -338,7 +346,7 @@ export function createMddIntegrationNode(llm: BaseChatModel, opts?: MddIntegrati
             );
           }
         }
-        logMddNodeOutput("Integration", fallbackDraft);
+        logMddNodeOutput("Integration", fallbackDraft, { inputLen: inputDraftLen });
         return { mddStructured: merged, mddDraft: fallbackDraft };
       }
       const jsonStr = extractFirstJsonObject(text) ?? text.trim();
@@ -433,7 +441,7 @@ export function createMddIntegrationNode(llm: BaseChatModel, opts?: MddIntegrati
       }
       const sum = getMddDraftSummary(mddDraft);
       LOG("ok integracion §7 en mddDraft len=%s section2=%s", sum.length, sum.section2);
-      logMddNodeOutput("Integration", mddDraft);
+      logMddNodeOutput("Integration", mddDraft, { inputLen: inputDraftLen });
       return { mddStructured: merged, mddDraft, integrationSectionMd: section7Md, ...meshUpdate };
     } catch (err) {
       LOG("error: %s", err instanceof Error ? err.message : String(err));

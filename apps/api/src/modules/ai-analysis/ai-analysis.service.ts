@@ -25,7 +25,6 @@ import {
 } from "./utils/mdd-stream-progress.util.js";
 import {
   extractContextSectionBody,
-  extractSection5Body,
   logSection3Debug,
   mergeSingleArchitectSectionIntoDraft,
   replaceSection1BodyFromAnyHeading,
@@ -34,7 +33,7 @@ import {
   mddHasDuplicateSectionHeadings,
   deduplicateMddDraftSections,
 } from "./utils/mdd-sanitize.js";
-import { guardTailSectionsForPersist } from "./utils/mdd-section-preserve.util.js";
+import { evaluateMddPersistTailGuard } from "./utils/mdd-persist-tail-guard.util.js";
 import { ProjectsService } from "../projects/projects.service.js";
 import { pickPrimaryStage } from "../projects/stage-helpers.js";
 import { TheForgeService } from "../theforge/theforge.service.js";
@@ -62,6 +61,7 @@ import { getMddArchitectTools } from "./tools/tool-registry.js";
 import { contextSynthesizerComplexityAppendix } from "./utils/mdd-complexity-rigor.js";
 import { formatDbgaStreamError } from "./utils/dbga-stream-error.util.js";
 import { awaitWithNdjsonHeartbeat } from "./utils/ndjson-heartbeat.util.js";
+import { extractLlmText, invokeLlmWithRetry } from "./utils/mdd-llm-retry.util.js";
 import { MddRegenTracer } from "./utils/mdd-regen-tracer.js";
 import {
   demoteCanonicalSectionHeadingsInSection1Body,
@@ -324,26 +324,16 @@ export class AiAnalysisService {
       }
     }
 
-    const guard = guardTailSectionsForPersist(prePrepareDraft, working, "PersistCheck");
+    const guard = evaluateMddPersistTailGuard(prePrepareDraft, working, "PersistCheck");
     if (guard.restored) {
       this.logger.warn(
         `[MDD:PersistCheck] §2–§7 restaurada(s) tras prepare (draftLen=${prePrepareDraft.length})`,
       );
     }
-    if (guard.failedSections.length > 0) {
-      const preS5Len = extractSection5Body(prePrepareDraft)?.length ?? 0;
-      const postS5Len = extractSection5Body(guard.markdown)?.length ?? 0;
-      this.logger.error(
-        `[MDD:PersistCheck] §${guard.failedSections.join("/§")} wipe post-prepare (§5 pre=${preS5Len} post=${postS5Len})`,
-      );
-      return {
-        markdown: guard.markdown,
-        errorMessage:
-          `El borrador final perdió contenido sustancial en §${guard.failedSections.join(", §")} tras prepare-output. ` +
-          "No se persistió la versión dañada; reintenta la generación del MDD.",
-      };
+    if (guard.errorMessage) {
+      this.logger.error(`[MDD:PersistCheck] ${guard.errorMessage}`);
     }
-    return { markdown: guard.markdown };
+    return { markdown: guard.markdown, errorMessage: guard.errorMessage };
   }
 
   private async resolveUserId(projectId?: string): Promise<string> {
@@ -1726,12 +1716,12 @@ export class AiAnalysisService {
       if (section === 1) {
         const prompt = `${CONTEXT_SYNTHESIZER_PROMPT}${contextSynthesizerComplexityAppendix(regenCx)}\n\n---\n\n**Documento MDD (usa las secciones 2–7 para sintetizar la sección 1):**\n\n${mddContent}`;
         const response = yield* runRegenWithHeartbeat(
-          llm.invoke([new HumanMessage(prompt)]),
+          invokeLlmWithRetry(llm, [new HumanMessage(prompt)], { tag: "Regen:§1" }),
           "Contexto",
           "Regenerando §1…",
           tracer,
         );
-        const text = (typeof response.content === "string" ? response.content : "").trim();
+        const text = (response ? extractLlmText(response) : "").trim();
         const synthesized = normalizeContextSynthesizerBody(text);
         this.logger.log(
           `[MDD regenerate-section] §1 llm rawLen=${synthesized.rawLen} bodyLen=${synthesized.cleanedLen} ` +
@@ -2348,11 +2338,10 @@ export class AiAnalysisService {
 
     switch (mode) {
       case "pipeline": {
-        // PR #505: el cache upstream se eliminó del flujo de regeneración.
-        // El cache asumía "upstream sin cambios = MDD OK" pero la realidad
-        // es que un MDD de baja calidad (placeholder con excepciones, modelo
-        // débil) puede pasar el gate y quedar cacheado para siempre. La
-        // regeneración ahora siempre ejecuta el pipeline LLM completo.
+        if (data.forceFullPipeline) {
+          this.nodeCacheService.invalidateAll();
+          this.logger.log(`MDD pipeline forceFullPipeline: node cache invalidated projectId=${projectId}`);
+        }
         const jobResult = await consume(
           this.streamMddAnalysis(
             data.dbgaContent ?? "",

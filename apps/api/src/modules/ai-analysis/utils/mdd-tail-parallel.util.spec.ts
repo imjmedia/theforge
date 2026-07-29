@@ -176,7 +176,7 @@ describe("mergeTailParallelResults", () => {
       {
         mddDraft: BASE_DRAFT.replace(
           /\(Pendiente: Ingeniero de Integración\)/,
-          "CI/CD GitHub Actions.",
+          `${"CI/CD GitHub Actions con Docker Compose y PostgreSQL. ".repeat(4)}`,
         ),
       },
     );
@@ -198,6 +198,23 @@ describe("mergeTailParallelResults", () => {
       { mddDraft: BASE_DRAFT },
     );
     assert.ok(merged.mddDraft?.includes("Lockout 5 intentos"));
+  });
+
+  it("inyecta §7 desde integrationSectionMd aunque intDraft no tenga heading detectable", () => {
+    const s7Body = `${"Docker Compose + PostgreSQL + manifest JSON. ".repeat(12)}`;
+    const merged = mergeTailParallelResults(
+      { mddDraft: BASE_DRAFT } as never,
+      {},
+      {
+        mddDraft: BASE_DRAFT,
+      },
+      {
+        mddDraft: BASE_DRAFT,
+        integrationSectionMd: `## 7. Infraestructura\n\n${s7Body}`,
+      },
+    );
+    expect(merged.mddDraft).toContain("Docker Compose");
+    expect(merged.mddDraft).not.toMatch(/\(Pendiente: Ingeniero de Integración\)/);
   });
 });
 

@@ -1227,9 +1227,12 @@ export function repairApiResponse204NoContent(text: string): string {
   );
 }
 
+import { repairMddFormatIssues } from "./repair-mdd-format.js";
+
 export function repairPastedMarkdown(text: string): string {
   if (!text?.trim()) return text ?? "";
   let out = text.replace(/\r\n/g, "\n");
+  out = repairMddFormatIssues(out);
   out = repairMetadataCoverTable(out);
   out = repairGluedBoldFlowTitles(out);
   out = repairGluedHrSuffixInProse(out);

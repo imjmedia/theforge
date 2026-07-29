@@ -6,6 +6,10 @@ import {
 } from "./sql-repair.js";
 import {
   extractContextSectionBody,
+  extractSection3Body,
+  extractSection5Body,
+  extractSection6Body,
+  extractSection7Body,
   getMddDraftSummary,
 } from "./section-merge.js";
 import { findBalancedBrace, findBalancedBraceRespectingStrings } from "./brace.util.js";
@@ -613,13 +617,38 @@ export function replaceSections2To5InDraft(
 
 const OUTPUT_PREFIX_LEN = 200;
 
-/** Log resumido de la salida de un nodo (len, §3 status, prefijo) para depurar pipeline MDD. */
-export function logMddNodeOutput(nodeName: string, draft: string): void {
+function mddSectionBodyLengths(draft: string): string {
+  const parts: string[] = [];
+  const s1 = extractContextSectionBody(draft)?.length ?? 0;
+  const s3 = extractSection3Body(draft)?.length ?? 0;
+  const s5 = extractSection5Body(draft)?.length ?? 0;
+  const s6 = extractSection6Body(draft)?.length ?? 0;
+  const s7 = extractSection7Body(draft)?.length ?? 0;
+  parts.push(`§1=${s1}`, `§3=${s3}`, `§5=${s5}`, `§6=${s6}`, `§7=${s7}`);
+  return parts.join(" ");
+}
+
+export type LogMddNodeOutputOptions = {
+  /** Longitud del draft de entrada al nodo (chars). */
+  inputLen?: number;
+};
+
+/** Log resumido de entrada/salida de un nodo (len total, §N, prefijo) para depurar pipeline MDD. */
+export function logMddNodeOutput(
+  nodeName: string,
+  draft: string,
+  options?: LogMddNodeOutputOptions,
+): void {
   const trimmed = (draft ?? "").trim();
   const sum = getMddDraftSummary(trimmed);
   const prefix = trimmed.slice(0, OUTPUT_PREFIX_LEN).replace(/\s+/g, " ").trim();
   const suffix = trimmed.length > OUTPUT_PREFIX_LEN ? "…" : "";
+  const inputPart = options?.inputLen != null ? ` inputLen=${options.inputLen}` : "";
+  const deltaPart =
+    options?.inputLen != null && options.inputLen > 0
+      ? ` delta=${trimmed.length - options.inputLen}`
+      : "";
   console.log(
-    `[MDD:${nodeName}] output len=${sum.length} section3=${sum.section3} prefix=${JSON.stringify(prefix + suffix)}`
+    `[MDD:${nodeName}] output len=${sum.length}${inputPart}${deltaPart} ${mddSectionBodyLengths(trimmed)} section3=${sum.section3} prefix=${JSON.stringify(prefix + suffix)}`,
   );
 }

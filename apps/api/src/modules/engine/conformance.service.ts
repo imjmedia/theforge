@@ -344,7 +344,7 @@ function endpointCompareVariants(norm: string, prefix: "/api/v1" | "/api" | null
   return [...variants];
 }
 
-function apiEndpointsMatch(mddNorm: string, apiNorm: string, prefix: "/api/v1" | "/api" | null): boolean {
+export function apiEndpointsMatch(mddNorm: string, apiNorm: string, prefix: "/api/v1" | "/api" | null = null): boolean {
   if (mddNorm === apiNorm) return true;
   if (mddNorm.toLowerCase() === apiNorm.toLowerCase()) return true;
   const mddVars = endpointCompareVariants(mddNorm, prefix);
@@ -731,7 +731,7 @@ export function checkApiVsMdd(mddContent: string | null, apiContent: string | nu
       Array.from(mddEndpoints).some((m) => apiEndpointsMatch(m, ep, apiPrefix));
     if (!match) extraInApi.push(ep);
   }
-  const ok = missingInApi.length === 0;
+  const ok = missingInApi.length === 0 && extraInApi.length === 0;
   return { ok, missingInApi, extraInApi };
 }
 

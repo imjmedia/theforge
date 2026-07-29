@@ -26,6 +26,7 @@ export {
   ensureContratosSection,
   extractContratosSectionBody,
   formatContratosBody,
+  formatAllContratosSectionsInDraft,
   isContratosPlaceholder,
   isContratosSectionRegression,
   isContratosSubstantial,

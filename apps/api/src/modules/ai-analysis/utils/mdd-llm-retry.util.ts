@@ -25,8 +25,10 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import type { Runnable } from "@langchain/core/runnables";
 import type { BaseMessage } from "@langchain/core/messages";
 import { recordTokenUsageFromContext } from "../../ai/utils/token-usage-recorder.js";
+import { resolveLlmTimeoutMs } from "./mdd-llm-timeout.util.js";
 
 const DEFAULT_BACKOFF_MS = [0, 1500, 4000];
+const DEFAULT_INVOKE_TIMEOUT_MS = resolveLlmTimeoutMs();
 
 export type LlmToolCallLike = {
   id?: string;
@@ -126,6 +128,8 @@ export type InvokeWithRetryOptions = {
   isResponseValid?: (text: string) => boolean;
   /** Si true, tool_calls sin texto cuentan como respuesta válida (loops de herramientas). */
   acceptToolCallsWithoutContent?: boolean;
+  /** Timeout por llamada LLM (ms). Si se excede, aborta y reintenta. Default 120_000 (2 min). */
+  timeoutMs?: number;
 };
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -152,12 +156,28 @@ export async function invokeLlmWithRetry(
   const isValid = options.isResponseValid ?? ((t) => t.trim().length > 0);
   const acceptTools = options.acceptToolCallsWithoutContent === true;
   const tag = options.tag || "LLM";
+  const promptChars = messages.reduce((acc, m) => {
+    const c = (m as { content?: unknown }).content;
+    if (typeof c === "string") return acc + c.length;
+    if (Array.isArray(c)) {
+      return acc + c.reduce((a, b) => a + (typeof b === "string" ? b.length : JSON.stringify(b).length), 0);
+    }
+    return acc;
+  }, 0);
 
   for (let attempt = 1; attempt <= max; attempt += 1) {
     const wait = backoff[Math.min(attempt - 1, backoff.length - 1)] ?? 0;
     if (wait > 0) await sleep(wait);
     try {
-      const response = await (llm as { invoke: (m: BaseMessage[]) => Promise<unknown> }).invoke(messages);
+      const timeoutMs = options?.timeoutMs ?? DEFAULT_INVOKE_TIMEOUT_MS;
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => abortController.abort(), timeoutMs);
+      let response: unknown;
+      try {
+        response = await (llm as { invoke: (m: BaseMessage[], opts?: { signal?: AbortSignal }) => Promise<unknown> }).invoke(messages, { signal: abortController.signal });
+      } finally {
+        clearTimeout(timeoutId);
+      }
       recordLlmUsageFromMessage(llm, response, tag);
       const text = extractLlmText(response);
       const toolCalls = extractLlmToolCalls(response);
@@ -165,13 +185,17 @@ export async function invokeLlmWithRetry(
       if (toolsOk || isValid(text)) {
         if (attempt > 1) {
           console.log(
-            `[${tag}] retry recuperó respuesta válida (attempt ${attempt}/${max}, len=${text.length}, tools=${toolCalls.length})`,
+            `[${tag}] retry recuperó respuesta válida (attempt ${attempt}/${max}, promptChars=${promptChars}, outLen=${text.length}, tools=${toolCalls.length})`,
+          );
+        } else {
+          console.log(
+            `[${tag}] ok promptChars=${promptChars} outLen=${text.length} tools=${toolCalls.length}`,
           );
         }
         return response;
       }
       console.warn(
-        `[${tag}] respuesta vacía/inválida del LLM (attempt ${attempt}/${max}, len=${text.length}, tools=${toolCalls.length}), reintentando...`,
+        `[${tag}] respuesta vacía/inválida (attempt ${attempt}/${max}, promptChars=${promptChars}, outLen=${text.length}, tools=${toolCalls.length}), reintentando...`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

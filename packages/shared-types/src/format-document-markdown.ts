@@ -19,6 +19,7 @@ import {
   repairTableBoundaries,
   repairUnclosedJsonBeforeApiEndpoint,
 } from "./repair-pasted-markdown.js";
+import { repairMddFormatIssues } from "./repair-mdd-format.js";
 import { repairDirectoryTreeBlocks } from "./repair-directory-tree.js";
 import {
   homogenizeMarkdownBulletMarkers,
@@ -26,6 +27,7 @@ import {
 } from "./repair-glued-headings.js";
 import { repairPhase0FlowFormat } from "./repair-phase0-flow-format.js";
 import { repairSplitOrderedListItems } from "./repair-split-ordered-list-items.js";
+import { promoteListItemFences } from "./promote-list-item-fences.js";
 import { repairDbgaMarkdown } from "./repair-dbga-markdown.js";
 import {
   deduplicateDbgaDocument,
@@ -79,11 +81,13 @@ export function formatDocumentMarkdown(text: string): string {
   cleaned = repairMarkdownFences(cleaned.trim());
   cleaned = repairOrphanFenceBeforeContractLabels(cleaned);
   cleaned = repairUnclosedJsonBeforeApiEndpoint(cleaned);
+  cleaned = repairMddFormatIssues(cleaned);
   cleaned = repairApiContractJsonFences(cleaned);
   cleaned = repairOrphanContratosApiFences(cleaned);
   cleaned = repairApiResponse204NoContent(cleaned);
   cleaned = repairDbgaMarkdown(cleaned);
   cleaned = repairSplitOrderedListItems(cleaned);
+  cleaned = promoteListItemFences(cleaned);
   cleaned = repairGluedMarkdownHeadings(cleaned);
   cleaned = repairPhase0FlowFormat(cleaned);
   cleaned = homogenizeMarkdownBulletMarkers(cleaned);

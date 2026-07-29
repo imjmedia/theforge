@@ -5,6 +5,7 @@ import {
   repairApiResponse204NoContent,
   repairCollapsedPipeTables,
   repairGluedMarkdownHeadings,
+  repairMddFormatIssues,
   repairOrphanFenceBeforeContractLabels,
   repairUnclosedJsonBeforeApiEndpoint,
 } from "@theforge/shared-types";
@@ -20,6 +21,7 @@ import { sanitizeMermaidInDraft } from "../../../engine/mdd-pre-render.js";
 import { extractMddSectionBody } from "./section-body.util.js";
 import {
   deduplicateAndReorderMddSections,
+  deduplicateMddDraftSections,
   ensureMissingCanonicalSections,
   extractContextSectionBody,
   replaceContextSectionBody,
@@ -38,7 +40,7 @@ import {
   repairMermaidBlocksInSectionBody,
   unescapeMermaidLiteralNewlines,
 } from "./mermaid-fences.js";
-import { sanitizeAllSqlBlocksInDraft } from "./sql-repair.js";
+import { sanitizeAllSqlBlocksInDraft, repairSection3SqlFenceBeforeJsonBlock } from "./sql-repair.js";
 import {
   closeUnclosedCodeFencesInDraft,
   collapseConsecutiveHorizontalRules,
@@ -56,7 +58,7 @@ import {
   ensureHorizontalRuleBeforeH2,
 } from "./persist-format.util.js";
 import {
-  formatContratosBody,
+  formatAllContratosSectionsInDraft,
   repairDisplacedJsonBracesInContratos,
   repairNestedJsonFencesInDraft,
 } from "./contratos-format.js";
@@ -307,6 +309,12 @@ export function prepareMddMarkdownForPersist(mddMarkdown: string): string {
   formatted = repairApiContractJsonFences(formatted);
   formatted = repairApiResponse204NoContent(formatted);
   formatted = normalizeCanonicalMddSectionHeadings(formatted);
+  formatted = repairSection3SqlFenceBeforeJsonBlock(formatted);
+  formatted = deduplicateMddDraftSections(formatted);
+  if (mddHasDuplicateSectionHeadings(formatted)) {
+    formatted = deduplicateAndReorderMddSections(formatted);
+  }
+  formatted = repairMddFormatIssues(formatted);
   formatted = finalizeMddPersistFormatting(formatted);
   return formatted;
 }
@@ -320,7 +328,9 @@ export function sanitizeMddForExport(mddMarkdown: string): string {
 }
 
 export function normalizeMddFormat(draft: string): string {
-  let out = repairGarbageHeadings(normalizeCanonicalMddSectionHeadings(stripTrailingDuplicateMddSections((draft || "").trim())));
+  let out = repairGarbageHeadings(
+    normalizeCanonicalMddSectionHeadings(deduplicateMddDraftSections((draft || "").trim())),
+  );
   out = fixGluedSection6Heading(out);
   if (!out) return draft;
   // Muy al inicio: §6 pegada a ### (evita que deduplicateAndReorderMddSections tome heading+subheading como una línea)
@@ -415,20 +425,9 @@ export function normalizeMddFormat(draft: string): string {
     out = ensureSection2SqlFormattedInSection(out);
   }
 
-  // Formatear sección Contratos de API: JSON en bloques ```json con indentación
-  const contratosHeading = "## 4. Contratos de API";
-  const contratosIdx = out.indexOf(contratosHeading);
-  if (contratosIdx !== -1) {
-    const sectionStart = contratosIdx + contratosHeading.length;
-    const rest = out.slice(sectionStart);
-    const nextH2 = rest.search(/\n##\s+/);
-    const body = nextH2 !== -1 ? rest.slice(0, nextH2) : rest;
-    let formatted = formatContratosBody(body);
-    formatted = repairDisplacedJsonBracesInContratos(formatted);
-    if (formatted !== body) {
-      out = out.slice(0, sectionStart) + formatted + (nextH2 !== -1 ? rest.slice(nextH2) : "");
-    }
-  }
+  // Formatear cada ocurrencia de Contratos de API (JSON en bloques ```json con indentación)
+  out = formatAllContratosSectionsInDraft(out);
+  out = repairMddFormatIssues(out);
 
   out = fixGluedSection6Heading(out);
 

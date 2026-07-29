@@ -22,17 +22,17 @@ Submódulos extraídos de `../mdd-sanitize.ts` durante el refactor GOD-REFACTOR 
 
 El entrypoint estable para consumidores sigue siendo `../mdd-sanitize.ts` (re-exports).
 
-**Exports públicos de `sql-repair.ts`:** `sanitizeSqlBrokenCommentsAndProse`, `stripIndexesOnCommentedSqlColumns`, `repairSqlProseInTableBodies`, `repairSqlDetachedCheckConstraints`, `sanitizeAllSqlBlocksInDraft`, `formatSqlBlockWithNewlines`, `detectUnclosedSqlFences`, `repairSqlSpacedColumnIdentifiers`, `stripMonthlyPartitionStubTables`.
+**Exports públicos de `sql-repair.ts`:** `sanitizeSqlBrokenCommentsAndProse`, `stripIndexesOnCommentedSqlColumns`, `repairSqlProseInTableBodies`, `repairSqlDetachedCheckConstraints`, `sanitizeAllSqlBlocksInDraft`, `formatSqlBlockWithNewlines`, `detectUnclosedSqlFences`, `repairSqlSpacedColumnIdentifiers`, `stripMonthlyPartitionStubTables`, `repairSection3SqlFenceBeforeJsonBlock`.
 
-**Exports principales de `section-merge.ts`:** `mergeSection1IntoDraft`, `preserveUntouchedMddSectionsFromBaseline`, `restoreMddSectionsFromBaselineStrict`, `deduplicateAndReorderMddSections`, `deduplicateMddDraftSections`, `validateMddStructure`, `getSection6Or7Range`, `replaceSection6Or7InDraft`, `mergeSingleArchitectSectionIntoDraft` (regen §2/§3/§4 quirúrgica; §4 anti-regresión).
+**Exports principales de `section-merge.ts`:** `mergeSection1IntoDraft`, `preserveUntouchedMddSectionsFromBaseline`, `restoreMddSectionsFromBaselineStrict`, `deduplicateAndReorderMddSections`, `deduplicateMddDraftSections`, `stripTrailingDuplicateMddSections` (trunca cola §4–§7 duplicada con o sin §7 completa), `validateMddStructure`, `getSection6Or7Range`, `replaceSection6Or7InDraft`, `mergeSingleArchitectSectionIntoDraft` (regen §2/§3/§4 quirúrgica; §4 anti-regresión).
 
 **Exports de `mermaid-fences.ts`:** `stripMermaidFences`, `fixDoubleMermaidFences`, `unescapeMermaidLiteralNewlines`, `fixSection2UnclosedSqlAndGluedMermaid`.
 
-**Exports de `persist-pipeline.ts`:** `sanitizeMddAtPersist`, `prepareMddMarkdownForPersist`, `storeMddMarkdownForPersist`, `sanitizeMddForExport`, `normalizeMddFormat`, `finalizeMddDeliverable`, `applyPreDeliveryGateFixes`, `repairGarbageHeadings`, `repairManifestJsonClosing`, `demoteProseHeadingsInSections`, `stripUiUxSectionForApiOnlyMvp`.
+**Exports de `persist-pipeline.ts`:** `sanitizeMddAtPersist`, `prepareMddMarkdownForPersist`, `storeMddMarkdownForPersist`, `sanitizeMddForExport`, `normalizeMddFormat`, `finalizeMddDeliverable`, `applyPreDeliveryGateFixes`, `repairGarbageHeadings`, `repairManifestJsonClosing`, `demoteProseHeadingsInSections`, `stripUiUxSectionForApiOnlyMvp`. `prepareMddMarkdownForPersist` deduplica §1–§7 vía `deduplicateMddDraftSections` y aplica `repairMddFormatIssues` (`@theforge/shared-types/repair-mdd-format`) antes del cierre. `normalizeMddFormat` deduplica al inicio con `deduplicateMddDraftSections` y formatea **todas** las ocurrencias de §4 con `formatAllContratosSectionsInDraft`.
 
 **Exports principales de `cross-consistency.ts`:** `applyDeterministicCrossConsistencyFixes`, `detectCrossConsistencyIssues`, `applyCrossConsistencyPatches`, `fixDeterministicMddCoherence`, `ensureSecurityLockoutInSection6`, `fixDualApprovalSchemaInDraft`, `detectDuplicateOutboxTables`, `draftUsesRs256Jwt`.
 
-**Exports de `contratos-format.ts`:** `repairNestedJsonFencesInDraft`, `repairDisplacedJsonBracesInContratos`, `formatContratosBody`, `normalizeContratosTableSummary`, `ensureContratosSection`, `isContratosSubstantial`, `isContratosPlaceholder`, `isContratosSectionRegression`, `countContratosEndpointRows`, `extractContratosSectionBody`, `MIN_CONTRATOS_LENGTH`.
+**Exports de `contratos-format.ts`:** `repairNestedJsonFencesInDraft`, `repairDisplacedJsonBracesInContratos`, `formatContratosBody`, `formatAllContratosSectionsInDraft`, `normalizeContratosTableSummary`, `ensureContratosSection`, `isContratosSubstantial`, `isContratosPlaceholder`, `isContratosSectionRegression`, `countContratosEndpointRows`, `extractContratosSectionBody`, `MIN_CONTRATOS_LENGTH`.
 
 **Exports de `draft-normalize.ts`:** `sanitizeContextSection`, `sanitizeSeguridadIntegracionRawJson`, `normalizeMddEnglishSubheadings`, `CANONICAL_HEADINGS`, `stripMeshDirectivesFromDraft`, `forceStripBrokenPrefix`, `unescapeLiteralNewlines`.
 

@@ -710,3 +710,32 @@ export function formatContratosBody(body: string): string {
   }
   return result.join("\n");
 }
+
+const CONTRATOS_SECTION_HEADINGS = [
+  "## 4. Contratos de API",
+  "## 3. Contratos de API",
+  "## Contratos de API",
+] as const;
+
+/** Aplica `formatContratosBody` a cada ocurrencia de §4 (pre-dedup o multi-bloque). */
+export function formatAllContratosSectionsInDraft(draft: string): string {
+  let out = draft ?? "";
+  for (const heading of CONTRATOS_SECTION_HEADINGS) {
+    let searchFrom = 0;
+    while (searchFrom < out.length) {
+      const contratosIdx = out.indexOf(heading, searchFrom);
+      if (contratosIdx === -1) break;
+      const sectionStart = contratosIdx + heading.length;
+      const rest = out.slice(sectionStart);
+      const nextH2 = rest.search(/\n##\s+/);
+      const body = nextH2 !== -1 ? rest.slice(0, nextH2) : rest;
+      let formatted = formatContratosBody(body);
+      formatted = repairDisplacedJsonBracesInContratos(formatted);
+      if (formatted !== body) {
+        out = out.slice(0, sectionStart) + formatted + (nextH2 !== -1 ? rest.slice(nextH2) : "");
+      }
+      searchFrom = sectionStart + formatted.length;
+    }
+  }
+  return out;
+}

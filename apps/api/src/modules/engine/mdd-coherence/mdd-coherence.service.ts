@@ -30,6 +30,7 @@ export class MddCoherenceService {
     return this.evaluateFromMdd(projectId, stageId, mddMarkdown);
   }
 
+  /** Evalúa coherencia §3/§4 en vivo desde el markdown actual (sin comparar huella persistida). */
   async evaluateFromMdd(
     _projectId: string,
     _stageId: string,
@@ -55,7 +56,6 @@ export class MddCoherenceService {
       isCoherent: health.isCoherent,
       orphanEntityCount: health.orphanEntityCount,
       orphanEndpointCount: health.orphanEndpointCount,
-      mddChangedSinceSync: false,
     });
 
     if (status.state === "stale") {
@@ -71,7 +71,7 @@ export class MddCoherenceService {
 
     const result = {
       ...status,
-      lastSyncedAt: status.state === "synced" ? Date.now() : context?.lastSyncedAt ?? null,
+      lastSyncedAt: status.state === "synced" ? Date.now() : null,
     };
     setMemoizedCoherenceStatus(memoKey, result);
     return result;

@@ -30,7 +30,7 @@ import { TraceabilityGapList } from "@/components/TraceabilityGapList";
 import { AnalyzeDashboard } from "@/components/AnalyzeDashboard";
 import { TokenUsageCard } from "@/components/TokenUsageCard";
 import type { SddAnalyzeReport, MddDeliveryGateResult } from "@theforge/shared-types";
-import { agentGovernanceScaffoldHasContent, SDD_GRAPH_SYNC_STATE_LABELS } from "@theforge/shared-types";
+import { agentGovernanceScaffoldHasContent } from "@theforge/shared-types";
 import { useWorkshopStore, type Status } from "../store/workshopStore";
 import { calculateCostFromMdd } from "../utils/costCalculator";
 import { apiFetch, API_BASE } from "@/utils/apiClient";
@@ -209,7 +209,12 @@ export function WorkshopMetricsColumnInner({
   const sddAuditSummary = useMemo(() => {
     const gapTotal = readinessAudit?.gapSummary.total ?? 0;
     const crossDoc = crossDocumentGaps?.length ?? 0;
+    const derivativesPending =
+      readinessAudit?.gapSummary.items?.some((item) =>
+        /derivatives-pending/i.test(item.message),
+      ) ?? false;
     const derivadosIssue =
+      !derivativesPending &&
       !!conformance &&
       (!conformance.blueprint.ok ||
         conformance.blueprintDataModel?.ok === false ||
@@ -219,8 +224,11 @@ export function WorkshopMetricsColumnInner({
     return {
       gapTotal,
       crossDoc,
+      derivativesPending,
       derivadosIssue,
-      hasIssues: gapTotal > 0 || crossDoc > 0 || derivadosIssue,
+      hasIssues: derivativesPending
+        ? false
+        : gapTotal > 0 || crossDoc > 0 || derivadosIssue,
     };
   }, [readinessAudit, crossDocumentGaps, conformance]);
   const apiBlueprintDmBlocked = conformance?.blueprintDataModel?.ok === false;
@@ -235,8 +243,6 @@ export function WorkshopMetricsColumnInner({
 
   const loading = useWorkshopStore((s) => s.loading);
   const loadingReason = useWorkshopStore((s) => s.loadingReason);
-  const generationStatus = useWorkshopStore((s) => s.generationStatus);
-  const sddGraph = generationStatus?.sddGraph ?? null;
   const mddReviewing = useWorkshopStore((s) => s.mddReviewing);
   const cascadeRunning = loading && (loadingReason === "deliverables-cascade" || loadingReason === "legacy-deliverables");
   const repairSddRunning = loading && loadingReason === "repair-sdd-gaps";
@@ -360,13 +366,16 @@ export function WorkshopMetricsColumnInner({
       ? deliveryGate.blockers.length > 0
         ? "red"
         : "yellow"
-      : liveMetrics?.status ?? resolveWorkshopSemaphoreStatus(null, projectStatus);
+      : sddAuditSummary.derivativesPending && deliveryGateOk
+        ? "yellow"
+        : liveMetrics?.status ?? resolveWorkshopSemaphoreStatus(null, projectStatus);
   const statusDiffersByDeliveryGate =
     deliveryGate != null &&
     !deliveryGate.ok &&
     liveMetrics?.status != null &&
     effectiveStatus !== liveMetrics.status;
   const precisionFormulaBreakdown = useMemo(() => {
+    if (mddEmpty) return null;
     const docsScore = liveMetrics?.completeness?.overall ?? documentCompleteness?.overall;
     const traceScore = liveMetrics?.consistencyScore ?? consistencyScore;
     const mddScore = liveMetrics?.mddQualityScore;
@@ -376,7 +385,7 @@ export function WorkshopMetricsColumnInner({
       trace: traceScore,
       mdd: mddScore,
     };
-  }, [liveMetrics, documentCompleteness, consistencyScore]);
+  }, [mddEmpty, liveMetrics, documentCompleteness, consistencyScore]);
   const semaphoreConfig =
     effectiveStatus === "red"
       ? {
@@ -403,13 +412,6 @@ export function WorkshopMetricsColumnInner({
           };
 
   const SemaphoreIcon = semaphoreConfig.icon;
-
-  const sddGraphBadgeClass =
-    sddGraph?.state === "synced"
-      ? WORKSHOP_METRICS_BADGE_OK
-      : sddGraph?.state === "empty" || sddGraph?.state === "unavailable"
-        ? "inline-flex shrink-0 items-center rounded-full bg-[color-mix(in_oklch,var(--muted)_28%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold leading-none text-[color-mix(in_oklch,var(--muted-foreground)_92%,var(--foreground))]"
-        : WORKSHOP_METRICS_BADGE_WARN;
 
   const handleGenerateDeliverables = useCallback(async () => {
     if (!projectId || !canGenerateDeliverables || cascadeRunning) return;
@@ -506,7 +508,7 @@ export function WorkshopMetricsColumnInner({
                 </p>
                 <p className="text-[11px] text-[color-mix(in_oklch,var(--muted-foreground)_96%,var(--foreground))]">
                   Precisión {precisionScore}%
-                  {deliveryGate ? ` · Gate ${deliveryGate.score}/100` : ""}
+                  {!mddEmpty && deliveryGate ? ` · Gate ${deliveryGate.score}/100` : ""}
                 </p>
                 {precisionFormulaBreakdown ? (
                   <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--muted-foreground)_92%,var(--foreground))]">
@@ -529,6 +531,14 @@ export function WorkshopMetricsColumnInner({
                   <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--destructive)_82%,var(--foreground))]">
                     Bloqueado por gate de entrega
                   </p>
+                ) : !mddEmpty && sddAuditSummary.derivativesPending && deliveryGateOk ? (
+                  <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--warning)_82%,var(--foreground))]">
+                    MDD OK; genera entregables SDD (Docs bajo porque derivados vacíos)
+                  </p>
+                ) : mddEmpty ? (
+                  <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--muted-foreground)_92%,var(--foreground))]">
+                    Sin MDD — genera el documento para desbloquear la cascada de entregables.
+                  </p>
                 ) : effectiveStatus === "red" && precisionScore < SEMAPHORE_PRECISION_RED_MAX ? (
                   <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--destructive)_82%,var(--foreground))]">
                     Precisión &lt; {SEMAPHORE_PRECISION_RED_MAX}%
@@ -536,41 +546,7 @@ export function WorkshopMetricsColumnInner({
                 ) : null}
               </div>
             </div>
-            {sddGraph ? (
-              <div
-                role="status"
-                className={cn(
-                  WORKSHOP_METRICS_CARD,
-                  sddGraph.state === "synced"
-                    ? "border-l-4 border-l-[color-mix(in_oklch,var(--success)_50%,var(--border))] bg-[color-mix(in_oklch,var(--success)_6%,var(--card))]"
-                    : sddGraph.state === "stale"
-                      ? "border-l-4 border-l-[color-mix(in_oklch,var(--warning)_55%,var(--border))] bg-[color-mix(in_oklch,var(--warning)_8%,var(--card))]"
-                      : "p-2.5",
-                  "space-y-1 p-2.5",
-                )}
-                title={sddGraph.message}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-[11px] font-semibold text-[var(--foreground)]">Coherencia §3/§4</p>
-                  <span className={sddGraphBadgeClass}>
-                    {SDD_GRAPH_SYNC_STATE_LABELS[sddGraph.state]}
-                  </span>
-                </div>
-                <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--muted-foreground)_96%,var(--foreground))]">
-                  {sddGraph.message}
-                </p>
-                {sddGraph.expectedEntities > 0 || sddGraph.expectedEndpoints > 0 ? (
-                  <p className="text-[10px] tabular-nums text-[color-mix(in_oklch,var(--muted-foreground)_92%,var(--foreground))]">
-                    §3: {sddGraph.entityCount}/{sddGraph.expectedEntities} tablas · §4:{" "}
-                    {sddGraph.endpointCount}/{sddGraph.expectedEndpoints} endpoints
-                    {sddGraph.orphanEntityCount + sddGraph.orphanEndpointCount > 0
-                      ? ` · ${sddGraph.orphanEntityCount + sddGraph.orphanEndpointCount} huérfano(s)`
-                      : ""}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-            {deliveryGate && !deliveryGate.ok ? (
+            {deliveryGate && !mddEmpty && !deliveryGate.ok ? (
               <div
                 role="status"
                 className={cn(
@@ -623,15 +599,17 @@ export function WorkshopMetricsColumnInner({
                   <span className="min-w-0 truncate">Auditoría SDD</span>
                 </h3>
                 <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--muted-foreground)_96%,var(--foreground))]">
-                  {[
-                    readinessAudit
-                      ? `${readinessAudit.gapSummary.total} brecha(s) · ${readinessAudit.gapSummary.auto} auto · ${readinessAudit.gapSummary.llm} LLM · ${readinessAudit.gapSummary.human} humano`
-                      : null,
-                    consistencyScore != null ? `Trazabilidad ${consistencyScore}%` : null,
-                    sddAuditSummary.hasIssues ? "Revisar derivados y MDD" : "Sin brechas críticas detectadas",
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
+                  {sddAuditSummary.derivativesPending
+                    ? "MDD listo; genera entregables SDD (cascada) para alinear Blueprint, API, Flujos e Infra."
+                    : [
+                        readinessAudit
+                          ? `${readinessAudit.gapSummary.total} brecha(s) · ${readinessAudit.gapSummary.auto} auto · ${readinessAudit.gapSummary.llm} LLM · ${readinessAudit.gapSummary.human} humano`
+                          : null,
+                        consistencyScore != null ? `Trazabilidad ${consistencyScore}%` : null,
+                        sddAuditSummary.hasIssues ? "Revisar derivados y MDD" : "Sin brechas críticas detectadas",
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
                 </p>
                 {readinessAudit?.compositeReadiness?.reasons?.length ? (
                   <ul className="list-disc space-y-0.5 pl-4 text-[10px] text-[color-mix(in_oklch,var(--muted-foreground)_96%,var(--foreground))]">

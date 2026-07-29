@@ -10,10 +10,16 @@ import { getMddTemplatePlaceholder } from "../state/mdd-structured.schema.js";
 import { mergeMddStructured } from "../utils/mdd-merge-structured.js";
 import { getMddDraftSummary, extractAlreadyDocumentedTopics, extractIdentifiedInfraFromText, logMddNodeOutput, deduplicateMddDraftSections, mergeSection1IntoDraft, mddHasDuplicateSectionHeadings } from "../utils/mdd-sanitize.js";
 import {
-  draftHasSubstantialSection1,
   draftIsSubstantialForScopedRepair,
+  preserveValidatedSectionsIfSubstantial,
 } from "../utils/mdd-section-preserve.util.js";
-import { finalizeClarifierDraft, assembleClarifierMddDraft, stripClarifierGovernanceFromDraft, isSafeClarifierMergeBaseline } from "../utils/mdd-clarifier-draft.util.js";
+import { draftMeetsSection1Quality } from "../utils/mdd-section1-quality.util.js";
+import {
+  finalizeClarifierDraft,
+  assembleClarifierMddDraft,
+  stripClarifierGovernanceFromDraft,
+  isSafeClarifierMergeBaseline,
+} from "../utils/mdd-clarifier-draft.util.js";
 import { buildClarifierDbgaBrief } from "../utils/mdd-clarifier-dbga-brief.util.js";
 import { enrichClarifiedScopeFromInventory } from "../utils/enrich-clarified-scope.util.js";
 import { getUserBrief } from "../utils/mdd-user-brief.js";
@@ -22,6 +28,10 @@ import { extractFirstJsonObject, parseJsonOrThrow } from "../utils/parse-json.js
 import { clarifierComplexityAppendix } from "../utils/mdd-complexity-rigor.js";
 import { buildInventoryFromMddState, domainInventoryPromptBlock } from "../utils/mdd-domain-prompt.util.js";
 import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
+import {
+  dbgaSnippetForClarifierFallback,
+  shouldPreserveClarifierDraftOnLlmFailure,
+} from "../utils/mdd-clarifier-llm-fallback.util.js";
 import { z } from "zod";
 
 /** Acepta string o objeto (el LLM a veces devuelve objeto); normaliza a string. */
@@ -54,6 +64,21 @@ const questionsOnlySchema = z.object({
 });
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Clarifier] ${msg}`, ...args);
+
+/** Si el LLM falla pero ya hay borrador sustancial, no resetear a template placeholder. */
+function clarifierFallbackOnLlmFailure(
+  draftTrimmed: string,
+  state: MDDStateType,
+  reason: string,
+): Partial<MDDStateType> | null {
+  if (!shouldPreserveClarifierDraftOnLlmFailure(draftTrimmed)) return null;
+  LOG("%s — preservando borrador existente (len=%s)", reason, draftTrimmed.trim().length);
+  return {
+    clarifiedScope: (state.clarifiedScope ?? state.dbgaContent ?? "").slice(0, 2000),
+    mddDraft: draftTrimmed.trim(),
+    clarifierJustGeneratedQuestions: false,
+  };
+}
 
 /** Creates the MDD Clarifier node. */
 export function createMddClarifierNode(llm: BaseChatModel) {
@@ -184,26 +209,34 @@ export function createMddClarifierNode(llm: BaseChatModel) {
       }
       const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], { tag: "Clarifier:draft" });
       if (!response) {
+        const preserved = clarifierFallbackOnLlmFailure(draftTrimmed, state, "LLM sin respuesta tras reintentos");
+        if (preserved) return preserved;
         LOG("LLM sin respuesta tras reintentos — usando fallback (template placeholder)");
         const noBench = /sin benchmark|no hay benchmark/i.test(state.dbgaContent);
         const base = noBench
           ? getMddTemplatePlaceholder("(Genera un MDD base; el usuario refinará después.)")
-          : getMddTemplatePlaceholder(`(Basado en: ${state.dbgaContent.slice(0, 1500)}.)`);
+          : getMddTemplatePlaceholder(
+              `(Basado en: ${dbgaSnippetForClarifierFallback(state.dbgaContent ?? "")}.)`,
+            );
         return {
-          clarifiedScope: state.dbgaContent.slice(0, 2000),
+          clarifiedScope: dbgaSnippetForClarifierFallback(state.dbgaContent ?? "", 2000),
           mddDraft: base,
           clarifierJustGeneratedQuestions: false,
         };
       }
       const text = extractLlmText(response);
       if (!text.trim()) {
+        const preserved = clarifierFallbackOnLlmFailure(draftTrimmed, state, "LLM vacío tras reintentos");
+        if (preserved) return preserved;
         LOG("LLM vacío, usando fallback");
         const noBench = /sin benchmark|no hay benchmark/i.test(state.dbgaContent);
         const base = noBench
           ? getMddTemplatePlaceholder("(Genera un MDD base; el usuario refinará después.)")
-          : getMddTemplatePlaceholder(`(Basado en: ${state.dbgaContent.slice(0, 1500)}.)`);
+          : getMddTemplatePlaceholder(
+              `(Basado en: ${dbgaSnippetForClarifierFallback(state.dbgaContent ?? "")}.)`,
+            );
         return {
-          clarifiedScope: state.dbgaContent.slice(0, 2000),
+          clarifiedScope: dbgaSnippetForClarifierFallback(state.dbgaContent ?? "", 2000),
           mddDraft: base,
           clarifierJustGeneratedQuestions: false,
         };
@@ -329,30 +362,34 @@ export function createMddClarifierNode(llm: BaseChatModel) {
         previousDraft: draftTrimmed,
         clarifiedScope: scope,
         dbgaContent: state.dbgaContent ?? "",
+        mddComplexity: state.mddComplexity,
         log: LOG,
       });
-      const safeBaseline = deduplicateMddDraftSections(draftTrimmed);
-      const canMergeSection1 =
-        hasSubstantialDraft &&
-        isSafeClarifierMergeBaseline(safeBaseline, finalizedDraft) &&
-        finalizedDraft !== safeBaseline;
-      const mergedDraft = canMergeSection1
-        ? mergeSection1IntoDraft(safeBaseline, finalizedDraft)
-        : finalizedDraft;
-      if (canMergeSection1 && mergedDraft !== finalizedDraft) {
-        LOG("draft sustancial: merge §1 only, preservadas §2–§7 (len %s→%s)", finalizedDraft.length, mergedDraft.length);
-      } else if (
-        hasSubstantialDraft &&
-        draftTrimmed.length > 200 &&
-        finalizedDraft !== draftTrimmed &&
-        !canMergeSection1
-      ) {
-        LOG(
-          "merge §1 omitido (baseline dupes o bloat: baselineLen=%s finalizedLen=%s dupes=%s)",
-          safeBaseline.length,
-          finalizedDraft.length,
-          mddHasDuplicateSectionHeadings(safeBaseline),
-        );
+      let mergedDraft = finalizedDraft;
+      if (hasSubstantialDraft && draftTrimmed.length > 200) {
+        mergedDraft = preserveValidatedSectionsIfSubstantial(draftTrimmed, finalizedDraft);
+        const safeBaseline = deduplicateMddDraftSections(draftTrimmed);
+        const canMergeSection1 =
+          isSafeClarifierMergeBaseline(safeBaseline, finalizedDraft) &&
+          finalizedDraft !== safeBaseline &&
+          draftMeetsSection1Quality(finalizedDraft, state.mddComplexity);
+        if (canMergeSection1) {
+          mergedDraft = mergeSection1IntoDraft(mergedDraft, finalizedDraft);
+          LOG("draft sustancial: merge §1 only, preservadas §2–§7 (len %s→%s)", finalizedDraft.length, mergedDraft.length);
+        } else if (mergedDraft !== finalizedDraft) {
+          LOG(
+            "draft sustancial: preservadas secciones desde baseline (len %s→%s)",
+            finalizedDraft.length,
+            mergedDraft.length,
+          );
+        } else if (finalizedDraft !== draftTrimmed && !canMergeSection1) {
+          LOG(
+            "merge §1 omitido (baseline dupes o bloat: baselineLen=%s finalizedLen=%s dupes=%s)",
+            safeBaseline.length,
+            finalizedDraft.length,
+            mddHasDuplicateSectionHeadings(safeBaseline),
+          );
+        }
       }
       const mddDraft = deduplicateMddDraftSections(mergedDraft);
       const outStructured = merged ?? (slice ? mergeMddStructured(undefined, slice) : undefined);
@@ -368,12 +405,12 @@ export function createMddClarifierNode(llm: BaseChatModel) {
         sum.length,
         sum.section3,
       );
-      logMddNodeOutput("Clarifier", mddDraft);
+      logMddNodeOutput("Clarifier", mddDraft, { inputLen: draftTrimmed.length });
       const out: Partial<MDDStateType> = {
         clarifiedScope: scope,
         mddDraft,
         clarifierJustGeneratedQuestions: false,
-        ...(draftHasSubstantialSection1(mddDraft)
+        ...(draftMeetsSection1Quality(mddDraft, state.mddComplexity)
           ? { clarifierMddDraftSnapshot: mddDraft }
           : {}),
       };

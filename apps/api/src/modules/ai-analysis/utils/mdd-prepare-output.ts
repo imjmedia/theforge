@@ -27,6 +27,7 @@ import {
   sanitizeContextKeyValueAndObject,
   sanitizeContextSection,
   applyPreDeliveryGateFixes,
+  deduplicateMddDraftSections,
   detectCrossConsistencyIssues,
   prepareMddMarkdownForPersist,
   deduplicateAndReorderMddSections,
@@ -264,6 +265,7 @@ export async function prepareMddForOutput(
       raw = draft;
     }
   }
+  raw = deduplicateMddDraftSections(raw.trim());
   const preserved =
     options?.preservedGovernance?.trim() ||
     extractGovernanceSection(raw) ||

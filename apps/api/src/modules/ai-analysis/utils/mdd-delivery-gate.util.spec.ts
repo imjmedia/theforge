@@ -450,6 +450,14 @@ describe("validateMddForDelivery — substance check (CHANGELOG [Unreleased])", 
     assert.ok(s3, "debería bloquear §3 con SQL < 100 chars");
   });
 
+  it("bloquea §1 mínima (solo propósito) cuando mddComplexity es HIGH", () => {
+    const thinS1 = `### Propósito del sistema\n\n${"Copiloto multiempresa vía WhatsApp. ".repeat(30)}`;
+    const draft = `# MDD\n\n## 1. Contexto\n\n${thinS1}\n\n## 2. Arquitectura y Stack\n\n${"NestJS ".repeat(40)}\n\n## 3. Modelo de Datos\n\n${"CREATE TABLE x (id UUID PRIMARY KEY); ".repeat(15)}\n\n\`\`\`TechnicalMetadata\n[high_security]\n\`\`\`\n\n## 4. Contratos de API\n\n${"POST /api/v1/x JSON. ".repeat(30)}\n\n## 5. Lógica y Edge Cases\n\n${"Reglas. ".repeat(40)}\n\n## 6. Seguridad\n\n${"Argon2id. ".repeat(40)}\n\n## 7. Infraestructura\n\n${"Docker. ".repeat(40)}`;
+    const result = validateMddForDelivery(draft, { mddComplexity: "HIGH" });
+    assert.equal(result.ok, false);
+    assert.ok(result.blockers.some((b) => /estructura constitución incompleta/i.test(b)));
+  });
+
   it("acepta MDD con todas las secciones sustanciales (200+ chars)", () => {
     const result = validateMddForDelivery(VALID_MDD);
     assert.equal(result.blockers.length, 0, result.blockers.join("; "));

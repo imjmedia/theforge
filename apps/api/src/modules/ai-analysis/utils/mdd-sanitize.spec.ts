@@ -1048,6 +1048,46 @@ Cloud.
     assert.strictEqual((out.match(/^##\s+5\./gm) ?? []).length, 1);
     assert.ok(out.includes("Escenario login"));
   });
+  it("trunca §4–§6 repetidas sin §7 (bucle crítico durante streaming)", () => {
+    const block = `## 4. Contratos de API(Pendiente)
+## 5. Lógica y Edge Cases
+
+(Pendiente: paso dedicado Lógica y Edge Cases)
+## 6. Seguridad(Pendiente)
+
+### Gestión de Secretos
+
+Las credenciales de servicio y secretos de aplicación se almacenan en un almacén de credenciales (secrets manager).`;
+    const corrupted = `# Master Design Document
+
+## 1. Contexto
+
+Alcance.
+
+## 2. Arquitectura y Stack
+
+Stack ok.
+
+## 3. Modelo de Datos
+
+\`\`\`sql
+CREATE TABLE users (id UUID PRIMARY KEY);
+\`\`\`
+
+${block}
+
+${block}
+
+${block}`;
+    assert.ok(mddHasDuplicateSectionHeadings(corrupted));
+    const stripped = stripTrailingDuplicateMddSections(corrupted);
+    assert.strictEqual((stripped.match(/^##\s+4\./gm) ?? []).length, 1);
+    assert.strictEqual((stripped.match(/^##\s+5\./gm) ?? []).length, 1);
+    assert.strictEqual((stripped.match(/^##\s+6\./gm) ?? []).length, 1);
+    assert.ok(stripped.includes("Gestión de Secretos"));
+    assert.strictEqual(mddHasDuplicateSectionHeadings(stripped), false);
+  });
+
 });
 
 describe("fixDualApprovalSchemaInDraft", () => {

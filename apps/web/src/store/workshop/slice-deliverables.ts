@@ -28,6 +28,10 @@ import { hasDeliveryGateBlockers } from "./helpers/delivery-gate";
 import { persistField } from "./helpers/persist-field";
 import { errorStateFromCaught, friendlyFetchError, throwStreamHttpError } from "./helpers/store-errors";
 import { workshopStateFromProjectStage } from "./helpers/stage-focus";
+import {
+  generationStatusWithoutSddGraph,
+  resetWorkshopSemaphoreSnapshot,
+} from "./helpers/semaphore-snapshot";
 import type {
   ApiConformanceResult,
   ComplexityPending,
@@ -1269,7 +1273,15 @@ export const createDeliverablesSlice: StateCreator<
         return false;
       }
       await get().fetchProject(pid);
-      set({ error: null });
+      const sid = get().activeStageId?.trim();
+      set({
+        ...resetWorkshopSemaphoreSnapshot(),
+        generationStatus: generationStatusWithoutSddGraph(get().generationStatus),
+        error: null,
+      });
+      await get().fetchEstimation(pid).catch(() => null);
+      await get().fetchConformance(pid).catch(() => {});
+      void get().fetchGenerationStatus(pid, sid).catch(() => {});
       return true;
     } catch (e) {
       set({

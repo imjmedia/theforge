@@ -18,8 +18,11 @@ import {
   buildInfraConformanceGapFeedback,
   checkApiVsMdd,
   checkInfraVsMdd,
+  checkLogicFlowsVsMdd,
+  checkBlueprintVsMdd,
 } from "../engine/conformance.service.js";
 import { buildApiRetryFeedback } from "../engine/api-conformance-repair.util.js";
+import { buildDeterministicDeliverableConformancePatches } from "../engine/deliverable-conformance-enforce.util.js";
 import { computeCascadeAccuracy } from "../engine/cascade-accuracy.util.js";
 import {
   buildCrossArtifactTraceReport,
@@ -58,7 +61,11 @@ import {
 } from "./conformance-gaps.util.js";
 import { collectLowMediumReadinessGaps } from "../engine/low-medium-readiness.util.js";
 import { applyDeterministicMddRepairs } from "./mdd-deterministic-repair.util.js";
-import { buildConvergenceRetryPlan } from "@theforge/shared-types";
+import {
+  buildConvergenceFeedbackForDeliverable,
+  buildConvergenceRetryPlan,
+  orderConvergenceDeliverables,
+} from "@theforge/shared-types";
 import { storeMddMarkdownForPersist } from "../ai-analysis/utils/mdd-sanitize.js";
 import { syncDomainInventoryForStage } from "./sync-domain-inventory-stage.util.js";
 import { persistStageDeliverableSnapshotFromProject } from "./stage-deliverable-snapshot.util.js";
@@ -169,6 +176,7 @@ export class DeliverablesCascadeService {
       if (err instanceof Error && err.message.includes("Cancelado por el usuario")) throw err;
     });
     throwIfAbortedDelta();
+    await this.runCascadeDeterministicConformancePass(projectId);
     await this.runCascadeConformanceRetry(projectId, options?.signal).catch((err) => {
       if (err instanceof Error && err.message.includes("Cancelado por el usuario")) throw err;
     });
@@ -177,6 +185,7 @@ export class DeliverablesCascadeService {
       if (err instanceof Error && err.message.includes("Cancelado por el usuario")) throw err;
     });
     throwIfAbortedDelta();
+    await this.runCascadeDeterministicConformancePass(projectId);
     await this.projects.refreshStageSemaphoreFromProject(projectId).catch(() => undefined);
 
     if (stage?.id) {
@@ -312,6 +321,7 @@ export class DeliverablesCascadeService {
     });
 
     throwIfAborted();
+    await this.runCascadeDeterministicConformancePass(projectId);
     await this.runCascadeConformanceRetry(projectId, options?.signal).catch((err) => {
       if (err instanceof Error && err.message.includes("Cancelado por el usuario")) throw err;
       this.logger.warn(
@@ -326,6 +336,9 @@ export class DeliverablesCascadeService {
         `[Cascade] convergence loop: ${err instanceof Error ? err.message : String(err)}`,
       );
     });
+
+    throwIfAborted();
+    await this.runCascadeDeterministicConformancePass(projectId);
 
     throwIfAborted();
     await this.projects.refreshStageSemaphoreFromProject(projectId).catch((err) =>
@@ -599,28 +612,66 @@ export class DeliverablesCascadeService {
     return true;
   }
 
-  /** Reintenta API e Infra cuando conformance heurístico falla tras la cascada (máx. 2 iteraciones). */
+  /** Alineación determinista API/Blueprint/Flujos al MDD (sin LLM). */
+  private async runCascadeDeterministicConformancePass(projectId: string): Promise<void> {
+    const project = await this.projects.findOne(projectId);
+    const mdd = buildConstitutionMarkdown(project);
+    if (!mdd.trim()) return;
+
+    const patches = buildDeterministicDeliverableConformancePatches(mdd, project);
+    if (Object.keys(patches).length === 0) return;
+
+    this.logger.log(
+      `[Cascade] Conformance determinista: ${Object.keys(patches).join(", ")}`,
+    );
+    await this.projects.update(projectId, patches);
+  }
+
+  /** Reintenta derivados cuando conformance heurístico falla tras la cascada (máx. 2 iteraciones). */
   private async runCascadeConformanceRetry(projectId: string, signal?: AbortSignal): Promise<void> {
     for (let attempt = 0; attempt < 2; attempt++) {
       if (signal?.aborted) throw new Error("Cancelado por el usuario");
+      await this.runCascadeDeterministicConformancePass(projectId);
+
       const project = await this.projects.findOne(projectId);
       const mdd = buildConstitutionMarkdown(project);
       if (!mdd.trim()) return;
 
       const apiCheck = checkApiVsMdd(mdd, project.apiContractsContent ?? null);
       const infraCheck = checkInfraVsMdd(mdd, project.infraContent ?? null);
-      if (apiCheck.ok && infraCheck.ok) return;
+      const bpCheck = checkBlueprintVsMdd(mdd, project.blueprintContent ?? null);
+      const lfCheck = checkLogicFlowsVsMdd(mdd, project.logicFlowsContent ?? null);
+      if (apiCheck.ok && infraCheck.ok && bpCheck.ok && lfCheck.ok) return;
 
       this.logger.warn(
-        `[Cascade] Conformance retry ${attempt + 1}/2 — API ok=${apiCheck.ok} Infra ok=${infraCheck.ok}`,
+        `[Cascade] Conformance retry ${attempt + 1}/2 — API=${apiCheck.ok} BP=${bpCheck.ok} LF=${lfCheck.ok} Infra=${infraCheck.ok}`,
       );
 
       const retries: Promise<unknown>[] = [];
-      if (!apiCheck.ok && (project.apiContractsContent ?? "").trim().length > 80) {
-        const feedback = buildApiRetryFeedback(apiCheck);
+      if (!apiCheck.ok && (project.apiContractsContent ?? "").trim().length >= 80) {
         retries.push(
-          this.projects.generateApiContracts(projectId, feedback, signal).catch((e) =>
+          this.projects.generateApiContracts(projectId, buildApiRetryFeedback(apiCheck), signal).catch((e) =>
             this.logger.warn(`[Cascade] API conformance retry: ${e instanceof Error ? e.message : e}`),
+          ),
+        );
+      } else if (!apiCheck.ok) {
+        retries.push(
+          this.projects.generateApiContracts(projectId).catch((e) =>
+            this.logger.warn(`[Cascade] API regen: ${e instanceof Error ? e.message : e}`),
+          ),
+        );
+      }
+      if (!bpCheck.ok && (project.blueprintContent ?? "").trim().length >= 80) {
+        retries.push(
+          this.projects.generateBlueprint(projectId, bpCheck.gaps.slice(0, 12).join("; ")).catch((e) =>
+            this.logger.warn(`[Cascade] Blueprint conformance retry: ${e instanceof Error ? e.message : e}`),
+          ),
+        );
+      }
+      if (!lfCheck.ok && (project.logicFlowsContent ?? "").trim().length >= 80) {
+        retries.push(
+          this.projects.generateLogicFlows(projectId, lfCheck.gaps.slice(0, 12).join("; ")).catch((e) =>
+            this.logger.warn(`[Cascade] Flujos conformance retry: ${e instanceof Error ? e.message : e}`),
           ),
         );
       }
@@ -649,7 +700,7 @@ export class DeliverablesCascadeService {
   }
 
   private async runCascadeConvergenceLoop(projectId: string, signal?: AbortSignal): Promise<void> {
-    const MAX_ITERATIONS = 1;
+    const MAX_ITERATIONS = 3;
     const GAP_TOLERANCE = 5;
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
@@ -715,27 +766,28 @@ export class DeliverablesCascadeService {
         }
       }
 
-      const regenSteps = [...new Set(plan.deliverables)].filter(
-        (s) => s !== "mdd_canonical" && s !== "ui_screens_sync",
+      const regenSteps = orderConvergenceDeliverables(
+        [...new Set(plan.deliverables)].filter(
+          (s) => s !== "mdd_canonical" && s !== "ui_screens_sync",
+        ),
       );
 
-      await Promise.allSettled(
-        regenSteps.map((step) => {
-          if (signal?.aborted) {
-            return Promise.reject(new Error("Cancelado por el usuario"));
-          }
-          return this.projects
-            .generateDocument(step as DeliverableKind, projectId, {
-              gapsFeedback: plan.feedback || undefined,
-              signal,
-            })
-            .catch((e) =>
-              this.logger.warn(
-                `[Cascade] Convergence regen ${step}: ${e instanceof Error ? e.message : e}`,
-              ),
-            );
-        }),
-      );
+      for (const step of regenSteps) {
+        if (signal?.aborted) throw new Error("Cancelado por el usuario");
+        const feedback =
+          buildConvergenceFeedbackForDeliverable(gaps, step) || plan.feedback || undefined;
+        await this.projects
+          .generateDocument(step as DeliverableKind, projectId, {
+            gapsFeedback: feedback,
+            signal,
+          })
+          .catch((e) =>
+            this.logger.warn(
+              `[Cascade] Convergence regen ${step}: ${e instanceof Error ? e.message : e}`,
+            ),
+          );
+        await this.runCascadeDeterministicConformancePass(projectId);
+      }
       if (signal?.aborted) throw new Error("Cancelado por el usuario");
     }
   }
