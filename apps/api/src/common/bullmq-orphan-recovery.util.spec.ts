@@ -6,6 +6,7 @@ import {
   BULLMQ_WORKER_RESTARTED_REASON,
   forceFailBullMqActiveJob,
   isBullMqJobLockHeld,
+  isBullMqLockRenewalError,
   reconcileOrphanBullMqActiveJob,
   recoverBullMqJobsAfterWorkerRestart,
 } from "./bullmq-orphan-recovery.util.js";
@@ -46,6 +47,14 @@ function mockQueue(jobsByState: Record<string, Job[]>, lockHeld = false): Queue 
     _deletedLocks: deletedLocks,
   } as unknown as Queue & { _deletedLocks: string[] };
 }
+
+describe("isBullMqLockRenewalError", () => {
+  it("detects lock renewal failures", () => {
+    assert.equal(isBullMqLockRenewalError(new Error("could not renew lock for job 172")), true);
+    assert.equal(isBullMqLockRenewalError("Error: Could not renew lock"), true);
+    assert.equal(isBullMqLockRenewalError(new Error("connection refused")), false);
+  });
+});
 
 describe("forceFailBullMqActiveJob", () => {
   it("skips non-active jobs", async () => {
