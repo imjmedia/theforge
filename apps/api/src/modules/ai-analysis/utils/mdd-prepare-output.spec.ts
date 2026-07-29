@@ -105,6 +105,32 @@ Cola duplicada.
     assert.ok(persistOut.includes("CREATE TABLE users"));
     assert.ok(gateOut.length <= persistOut.length + 500, "gate no debe inflar más que persist");
   });
+
+  it("deduplica §4–§6 repetidas del bucle crítico antes del preview streaming", async () => {
+    const block = `## 4. Contratos de API(Pendiente)
+## 5. Lógica y Edge Cases
+
+(Pendiente: paso dedicado Lógica y Edge Cases)
+## 6. Seguridad(Pendiente)
+
+### Gestión de Secretos
+
+Las credenciales de servicio y secretos de aplicación se almacenan en un almacén de credenciales (secrets manager).`;
+    const corrupted =
+      FULL_MDD_PREFIX +
+      block +
+      "\n\n" +
+      block +
+      "\n\n" +
+      block;
+    const out = await prepareMddForOutput(
+      { mddDraft: corrupted },
+      { formatForPersist: false, baselineDraft: corrupted },
+    );
+    assert.strictEqual(mddHasDuplicateSectionHeadings(out), false);
+    assert.strictEqual((out.match(/^##\s+4\./gm) ?? []).length, 1);
+    assert.ok(out.includes("Gestión de Secretos"));
+  });
 });
 
 describe("getSection6Or7Range", () => {

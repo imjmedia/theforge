@@ -326,7 +326,9 @@ export function sanitizeMddForExport(mddMarkdown: string): string {
 }
 
 export function normalizeMddFormat(draft: string): string {
-  let out = repairGarbageHeadings(normalizeCanonicalMddSectionHeadings(stripTrailingDuplicateMddSections((draft || "").trim())));
+  let out = repairGarbageHeadings(
+    normalizeCanonicalMddSectionHeadings(deduplicateMddDraftSections((draft || "").trim())),
+  );
   out = fixGluedSection6Heading(out);
   if (!out) return draft;
   // Muy al inicio: §6 pegada a ### (evita que deduplicateAndReorderMddSections tome heading+subheading como una línea)
