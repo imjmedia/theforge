@@ -102,7 +102,6 @@ function buildLangChainChat(
         apiKey: runtime.apiKey,
         temperature,
         maxOutputTokens: outputCap,
-        requestOptions: { timeout: LLM_TIMEOUT_MS },
       });
     case "openrouter":
     case "openai":
