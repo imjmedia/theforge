@@ -23,6 +23,7 @@ import { domainInventoryPromptBlock } from "../utils/mdd-domain-prompt.util.js";
 import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
 import {
   dbgaSnippetForClarifierFallback,
+  resolveClarifierWorkingDraft,
   shouldPreserveClarifierDraftOnLlmFailure,
 } from "../utils/mdd-clarifier-llm-fallback.util.js";
 import { z } from "zod";
@@ -151,7 +152,13 @@ export function createMddClarifierNode(llm: BaseChatModel) {
 
     try {
       const brief = getUserBrief(state);
-      const draftTrimmed = (state.mddDraft ?? "").trim();
+      const draftTrimmed = resolveClarifierWorkingDraft(state);
+      const preserveBaseline =
+        state.deliveryGateLoopActive === true &&
+        state.deliveryGateFixTarget === "clarifier" &&
+        (state.previousMddDraftForMerge ?? "").trim().length > 200
+          ? (state.previousMddDraftForMerge ?? "").trim()
+          : draftTrimmed;
       const hasSubstantialDraft =
         draftIsSubstantialForScopedRepair(draftTrimmed) ||
         (draftTrimmed.length > 500 && /##\s*2\.\s*Arquitectura/i.test(draftTrimmed));
@@ -314,8 +321,8 @@ export function createMddClarifierNode(llm: BaseChatModel) {
         log: LOG,
       });
       let mergedDraft = finalizedDraft;
-      if (hasSubstantialDraft && draftTrimmed.length > 200) {
-        mergedDraft = preserveValidatedSectionsIfSubstantial(draftTrimmed, finalizedDraft);
+      if ((hasSubstantialDraft || preserveBaseline !== draftTrimmed) && preserveBaseline.length > 200) {
+        mergedDraft = preserveValidatedSectionsIfSubstantial(preserveBaseline, finalizedDraft);
         if (draftMeetsSection1Quality(finalizedDraft, state.mddComplexity) && finalizedDraft !== draftTrimmed) {
           mergedDraft = mergeSection1IntoDraft(mergedDraft, finalizedDraft);
         }

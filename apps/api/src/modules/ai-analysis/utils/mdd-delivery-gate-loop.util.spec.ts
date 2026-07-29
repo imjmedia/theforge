@@ -8,6 +8,7 @@ import {
   needsFullArchitectPipelineRegeneration,
   resolveDeliveryGateFixTarget,
   resolveDeliveryGateFixTargetFromGate,
+  shouldClarifierRevisionSkipArchitectPipeline,
 } from "./mdd-delivery-gate-loop.util.js";
 
 describe("resolveDeliveryGateFixTarget (CHANGELOG [Unreleased] → Added → \"Dedicated §5 pass\")", () => {
@@ -189,6 +190,37 @@ describe("resolveDeliveryGateFixTarget (CHANGELOG [Unreleased] → Added → \"D
         { splitArchitectPipeline: true },
       ),
       "integration",
+    );
+  });
+});
+
+describe("shouldClarifierRevisionSkipArchitectPipeline", () => {
+  const goodTail =
+    "## 2. Arquitectura y Stack\n\n" +
+    `${"NestJS PostgreSQL Docker despliegue. ".repeat(20)}\n\n` +
+    "## 3. Modelo de Datos\n\n" +
+    `${"CREATE TABLE users (id uuid primary key); ".repeat(12)}`;
+
+  it("true en revisión gate con §2–§3 sustanciales", () => {
+    assert.equal(
+      shouldClarifierRevisionSkipArchitectPipeline({
+        deliveryGateLoopActive: true,
+        deliveryGateFixTarget: "clarifier",
+        mddDraft: `## 1. Contexto\n\n(Pendiente)\n\n${goodTail}`,
+        previousMddDraftForMerge: undefined,
+      } as never),
+      true,
+    );
+  });
+
+  it("false en primera pasada (sin delivery gate)", () => {
+    assert.equal(
+      shouldClarifierRevisionSkipArchitectPipeline({
+        deliveryGateLoopActive: false,
+        deliveryGateFixTarget: undefined,
+        mddDraft: goodTail,
+      } as never),
+      false,
     );
   });
 });

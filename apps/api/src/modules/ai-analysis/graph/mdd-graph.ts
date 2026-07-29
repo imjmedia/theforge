@@ -28,7 +28,10 @@ import { createMddCrossConsistencyNode } from "../nodes/mdd-cross-consistency.no
 import { createMddFormatSecIntNode } from "../nodes/mdd-format-sec-int.node.js";
 import { createMddPrepareOutputNode } from "../nodes/mdd-prepare-output.node.js";
 import { createMddBlackboardNode } from "../nodes/mdd-blackboard.node.js";
-import { draftHasSubstantialSections6And7 } from "../utils/mdd-delivery-gate-loop.util.js";
+import {
+  draftHasSubstantialSections6And7,
+  shouldClarifierRevisionSkipArchitectPipeline,
+} from "../utils/mdd-delivery-gate-loop.util.js";
 import { draftIsSubstantialForScopedRepair } from "../utils/mdd-section-preserve.util.js";
 import { mddStateHasDomainAuthSkew } from "../utils/mdd-domain-prompt.util.js";
 import { detectSection3CompositionBlockers } from "../utils/schema-owner.util.js";
@@ -344,6 +347,9 @@ export async function createMddGraph(
 
   /** One-shot: HIGH → pipeline dividido; LOW/MEDIUM → arquitecto monolítico. */
   function routeAfterClarifierOneShot(state: MDDStateType): string {
+    if (shouldClarifierRevisionSkipArchitectPipeline(state)) {
+      return "prepare_output";
+    }
     return isHighSplitArchitectPipeline(state) ? "stack_architect" : "software_architect";
   }
 
@@ -387,6 +393,7 @@ export async function createMddGraph(
     .addConditionalEdges("clarifier", routeAfterClarifierOneShot, {
       stack_architect: "stack_architect",
       software_architect: "software_architect",
+      prepare_output: "prepare_output",
     })
     .addEdge("stack_architect", "data_model")
     .addEdge("data_model", "architect_critic")
