@@ -67,16 +67,26 @@ export async function recoverBullMqJobsAfterWorkerRestart(
     reason?: string;
     removeQueued?: boolean;
     logger?: RecoverLogger;
+    /** Si true (default), no toca jobs `active` cuyo lock Redis sigue vivo (otro worker). */
+    skipJobsWithLock?: boolean;
   } = {},
-): Promise<{ failedActive: number; removedQueued: number }> {
+): Promise<{ failedActive: number; removedQueued: number; skippedLocked: number }> {
   const reason = options.reason ?? BULLMQ_WORKER_RESTARTED_REASON;
   const removeQueued = options.removeQueued ?? true;
+  const skipJobsWithLock = options.skipJobsWithLock ?? true;
   const logger = options.logger;
   let failedActive = 0;
   let removedQueued = 0;
+  let skippedLocked = 0;
 
   const activeJobs = await queue.getJobs(["active"], 0, 500);
   for (const job of activeJobs) {
+    const jobId = String(job.id);
+    if (skipJobsWithLock && (await isBullMqJobLockHeld(queue, jobId))) {
+      skippedLocked += 1;
+      logger?.log(`BullMQ job ${job.id} active con lock — omitido en recuperación`);
+      continue;
+    }
     const ok = await forceFailBullMqActiveJob(queue, job, reason);
     if (ok) {
       failedActive += 1;
@@ -101,7 +111,7 @@ export async function recoverBullMqJobsAfterWorkerRestart(
     }
   }
 
-  return { failedActive, removedQueued };
+  return { failedActive, removedQueued, skippedLocked };
 }
 
 /** True si Redis aún tiene el lock de un worker BullMQ sobre el job. */

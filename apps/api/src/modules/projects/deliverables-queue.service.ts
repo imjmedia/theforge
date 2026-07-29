@@ -195,13 +195,15 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
         },
       },
     });
-    const recovered = await recoverBullMqJobsAfterWorkerRestart(this.queue, {
-      reason: BULLMQ_DELIVERABLES_ORPHAN_REASON,
-      logger: this.logger,
-    });
+    const recovered = shouldStartBullmqWorkers()
+      ? await recoverBullMqJobsAfterWorkerRestart(this.queue, {
+          reason: BULLMQ_DELIVERABLES_ORPHAN_REASON,
+          logger: this.logger,
+        })
+      : { failedActive: 0, removedQueued: 0, skippedLocked: 0 };
     if (recovered.failedActive > 0 || recovered.removedQueued > 0) {
       this.logger.warn(
-        `BullMQ deliverables: recuperados tras reinicio — active→failed=${recovered.failedActive}, cola eliminada=${recovered.removedQueued}`,
+        `BullMQ deliverables: recuperados tras reinicio — active→failed=${recovered.failedActive}, cola eliminada=${recovered.removedQueued}, omitidos con lock=${recovered.skippedLocked}`,
       );
     }
     const concurrency = resolveDeliverablesWorkerConcurrency();

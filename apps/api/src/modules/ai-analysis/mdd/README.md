@@ -86,14 +86,16 @@ Progreso del job: `phase: "cache"`. Requiere haber completado al menos una gener
 
 ## Reinicio del API / jobs huérfanos
 
-BullMQ persiste jobs en Redis. Si el proceso API/worker muere con un job `active`, el lock puede vivir hasta `lockDuration` (15 min) y la UI sigue mostrando «en ejecución».
+BullMQ persiste jobs en Redis. Si el proceso **worker** muere con un job `active`, el lock puede vivir hasta `lockDuration` (15 min) y la UI sigue mostrando «en ejecución».
 
-En `onModuleInit`, `recoverBullMqJobsAfterWorkerRestart` marca `active` como **failed** (`Proceso API reiniciado; vuelve a generar el MDD`) y elimina `waiting`/`delayed` obsoletos. El worker MDD usa `maxStalledCount=0` y en `stalled` no reencola el pipeline.
+En `onModuleInit` del **worker** (`THEFORGE_RUNTIME_ROLE=worker|all`), `recoverBullMqJobsAfterWorkerRestart` marca **failed** solo jobs `active` **sin lock Redis** (huérfanos reales) y elimina `waiting`/`delayed` obsoletos. El contenedor **HTTP** no ejecuta recuperación (no mata jobs que el worker sigue procesando). El worker MDD usa `maxStalledCount=0` y en `stalled` no reencola el pipeline.
 
-**Shutdown graceful (redeploy):** en `onModuleDestroy` (SIGTERM) se abortan jobs locales, se fuerza `failed` en Redis (`Worker detenido (redeploy o reinicio)…`) y se cierra el worker con `close(true)` antes de soltar la cola.
+**Cancelación desde HTTP:** jobs `active` en el worker reciben flag Redis + abort cooperativo (igual que entregables), no `forceFail` mientras el worker mantiene el lock.
 
-**Polling:** `GET …/mdd-jobs/:jobId` reconcilia jobs `active` huérfanos (sin lock Redis ni worker local) vía `reconcileOrphanBullMqActiveJob`, igual que la cola de entregables.
+**Shutdown graceful (redeploy worker):** en `onModuleDestroy` (SIGTERM) se abortan jobs locales, se fuerza `failed` en Redis (`Worker detenido…`) y se cierra el worker con `close(true)`.
 
-**Lock renewal:** si el worker pierde el lock (redeploy solapado, preempt), BullMQ emite `could not renew lock for job N`; el worker lo registra como `warn` (no `error`) y el job queda failed en Redis.
+**Polling:** `GET …/mdd-jobs/:jobId` reconcilia jobs `active` huérfanos (sin lock Redis ni worker local) vía `reconcileOrphanBullMqActiveJob`.
 
-**Ahora mismo (estado atascado):** reinicia el API con este fix o pulsa **Cancelar generación** en el banner (jobs huérfanos `active` sin worker local se fallan al instante). No hace falta `redis-cli FLUSHDB`.
+**Lock renewal:** si el worker pierde el lock (redeploy solapado, preempt), BullMQ emite `could not renew lock for job N`; el worker lo registra como `warn` (no `error`).
+
+**Estado atascado:** reinicia el worker o pulsa **Cancelar generación**; jobs huérfanos `active` sin lock se fallan al instante en poll/cancel.
