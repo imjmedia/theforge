@@ -23,6 +23,7 @@ import {
   BULLMQ_WORKER_RESTARTED_REASON,
   BULLMQ_WORKER_SHUTDOWN_REASON,
   forceFailBullMqActiveJob,
+  isBullMqJobLockHeld,
   isBullMqLockRenewalError,
   reconcileOrphanBullMqActiveJob,
   recoverBullMqJobsAfterWorkerRestart,
@@ -425,31 +426,27 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
       return { cancelled: true, status: "cancelled" };
     }
     if (state === "active") {
-      const localAbort = this.jobAbortControllers.get(jobId);
-      if (localAbort) {
-        await this.markCancelRequested(jobId);
-        localAbort.abort();
-        this.generationGuard.unregisterMddStream(projectId);
-        this.logger.log(
-          `BullMQ MDD job ${jobId} cancelación solicitada (active) projectId=${projectId}`,
-        );
-        return { cancelled: true, status: "cancelling" };
-      }
-      const failed = await forceFailBullMqActiveJob(
-        this.queue,
-        job,
-        "Cancelado por el usuario (worker no activo)",
-      );
-      if (failed) {
-        await this.clearCancelRequested(jobId);
-        this.generationGuard.unregisterMddStream(projectId);
-        this.logger.log(
-          `BullMQ MDD job ${jobId} fallido (huérfano activo) projectId=${projectId}`,
-        );
-        return { cancelled: true, status: "cancelled" };
-      }
       await this.markCancelRequested(jobId);
+      this.jobAbortControllers.get(jobId)?.abort();
+      if (this.queue && !(await isBullMqJobLockHeld(this.queue, jobId))) {
+        const failed = await forceFailBullMqActiveJob(
+          this.queue,
+          job,
+          "Cancelado por el usuario (worker no activo)",
+        );
+        if (failed) {
+          await this.clearCancelRequested(jobId);
+          this.generationGuard.unregisterMddStream(projectId);
+          this.logger.log(
+            `BullMQ MDD job ${jobId} fallido (huérfano activo) projectId=${projectId}`,
+          );
+          return { cancelled: true, status: "cancelled" };
+        }
+      }
       this.generationGuard.unregisterMddStream(projectId);
+      this.logger.log(
+        `BullMQ MDD job ${jobId} cancelación solicitada (active) projectId=${projectId}`,
+      );
       return { cancelled: true, status: "cancelling" };
     }
     return { cancelled: false, status: state };
@@ -470,13 +467,15 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
         backoff: { type: "exponential", delay: 5_000 },
       },
     });
-    const recovered = await recoverBullMqJobsAfterWorkerRestart(this.queue, {
-      reason: BULLMQ_WORKER_RESTARTED_REASON,
-      logger: this.logger,
-    });
+    const recovered = shouldStartBullmqWorkers()
+      ? await recoverBullMqJobsAfterWorkerRestart(this.queue, {
+          reason: BULLMQ_WORKER_RESTARTED_REASON,
+          logger: this.logger,
+        })
+      : { failedActive: 0, removedQueued: 0, skippedLocked: 0 };
     if (recovered.failedActive > 0 || recovered.removedQueued > 0) {
       this.logger.warn(
-        `BullMQ MDD: recuperados tras reinicio — active→failed=${recovered.failedActive}, cola eliminada=${recovered.removedQueued}`,
+        `BullMQ MDD: recuperados tras reinicio — active→failed=${recovered.failedActive}, cola eliminada=${recovered.removedQueued}, omitidos con lock=${recovered.skippedLocked}`,
       );
     }
     const concurrency = resolveMddWorkerConcurrency();
