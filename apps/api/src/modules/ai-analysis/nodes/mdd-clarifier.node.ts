@@ -21,6 +21,7 @@ import { extractFirstJsonObject, parseJsonOrThrow } from "../utils/parse-json.js
 import { clarifierComplexityAppendix } from "../utils/mdd-complexity-rigor.js";
 import { domainInventoryPromptBlock } from "../utils/mdd-domain-prompt.util.js";
 import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
+import { shouldPreserveClarifierDraftOnLlmFailure } from "../utils/mdd-clarifier-llm-fallback.util.js";
 import { z } from "zod";
 
 /** Acepta string o objeto (el LLM a veces devuelve objeto); normaliza a string. */
@@ -53,6 +54,21 @@ const questionsOnlySchema = z.object({
 });
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Clarifier] ${msg}`, ...args);
+
+/** Si el LLM falla pero ya hay borrador sustancial, no resetear a template placeholder. */
+function clarifierFallbackOnLlmFailure(
+  draftTrimmed: string,
+  state: MDDStateType,
+  reason: string,
+): Partial<MDDStateType> | null {
+  if (!shouldPreserveClarifierDraftOnLlmFailure(draftTrimmed)) return null;
+  LOG("%s — preservando borrador existente (len=%s)", reason, draftTrimmed.trim().length);
+  return {
+    clarifiedScope: (state.clarifiedScope ?? state.dbgaContent ?? "").slice(0, 2000),
+    mddDraft: draftTrimmed.trim(),
+    clarifierJustGeneratedQuestions: false,
+  };
+}
 
 /** Creates the MDD Clarifier node. */
 export function createMddClarifierNode(llm: BaseChatModel) {
@@ -177,6 +193,8 @@ export function createMddClarifierNode(llm: BaseChatModel) {
       }
       const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], { tag: "Clarifier:draft" });
       if (!response) {
+        const preserved = clarifierFallbackOnLlmFailure(draftTrimmed, state, "LLM sin respuesta tras reintentos");
+        if (preserved) return preserved;
         LOG("LLM sin respuesta tras reintentos — usando fallback (template placeholder)");
         const noBench = /sin benchmark|no hay benchmark/i.test(state.dbgaContent);
         const base = noBench
@@ -190,6 +208,8 @@ export function createMddClarifierNode(llm: BaseChatModel) {
       }
       const text = extractLlmText(response);
       if (!text.trim()) {
+        const preserved = clarifierFallbackOnLlmFailure(draftTrimmed, state, "LLM vacío tras reintentos");
+        if (preserved) return preserved;
         LOG("LLM vacío, usando fallback");
         const noBench = /sin benchmark|no hay benchmark/i.test(state.dbgaContent);
         const base = noBench
@@ -304,7 +324,7 @@ export function createMddClarifierNode(llm: BaseChatModel) {
       const outStructured = merged ?? (slice ? mergeMddStructured(undefined, slice) : undefined);
       const sum = getMddDraftSummary(mddDraft);
       LOG("ok clarifiedScopeLen=%s mddDraftLen=%s section3=%s", scope.length, sum.length, sum.section3);
-      logMddNodeOutput("Clarifier", mddDraft);
+      logMddNodeOutput("Clarifier", mddDraft, { inputLen: draftTrimmed.length });
       const out: Partial<MDDStateType> = {
         clarifiedScope: scope,
         mddDraft,

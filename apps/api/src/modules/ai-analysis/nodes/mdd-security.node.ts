@@ -24,6 +24,7 @@ import {
   logMddNodeOutput,
   seguridadItemsToSection6Markdown,
 } from "../utils/mdd-sanitize.js";
+import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Security] ${msg}`, ...args);
 
@@ -108,12 +109,13 @@ export function createMddSecurityNode(llm: BaseChatModel) {
       }
       const context = contextParts.filter(Boolean).join("\n");
       const prompt = `${SECURITY_ARCHITECT_MDD_PROMPT}\n\n---\n${context}`;
-      const response = await llm.invoke([new HumanMessage(prompt)]);
-      const text = stripThinkingTags(typeof response.content === "string" ? response.content : "");
+      const inputDraftLen = (state.mddDraft ?? "").trim().length;
+      const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], { tag: "Security" });
+      const text = response ? stripThinkingTags(extractLlmText(response)) : "";
 
       LOG("[DIAG §6] LLM text len=%s rawPrefix=%s", text.length, text.slice(0, 200).replace(/\n/g, " "));
       const llmItems = text.trim() ? parseSecurityLlmResponse(text) : null;
-      if (!text.trim()) LOG("[DIAG §6] LLM vacío, usando fallback");
+      if (!text.trim()) LOG("[DIAG §6] LLM vacío tras reintentos, usando fallback/preserve");
       LOG("[DIAG §6] llmItems=%s isCorrupted=%s isPlaceholder=%s",
         llmItems?.length ?? "null",
         llmItems ? isCorruptedSeguridadSlice(llmItems) : "n/a",
@@ -121,26 +123,12 @@ export function createMddSecurityNode(llm: BaseChatModel) {
       );
 
       let seguridad = resolveSeguridadSlice(state, llmItems);
-      // Retry 1x si cayó a placeholder (LLM devolvió JSON corrupto y no hay §6 previa).
-      // Evita §6 = "(Pendiente: Arquitecto de Seguridad)" en el documento entregado.
+      // Retry adicional si cayó a placeholder sin §6 previa (invokeLlmWithRetry ya reintentó vacíos).
       const hasPrevSection6 =
         (state.mddStructured?.seguridad?.length && !isPlaceholderSeguridad(state.mddStructured.seguridad)) ||
         draftHasPreservableSection6(state.mddDraft ?? "");
       if (isPlaceholderSeguridad(seguridad) && !hasPrevSection6) {
-        LOG("[DIAG §6] placeholder sin §6 previa → retry 1x");
-        const retry = await llm.invoke([new HumanMessage(prompt)]);
-        const retryText = stripThinkingTags(typeof retry.content === "string" ? retry.content : "");
-        const retryItems = retryText.trim() ? parseSecurityLlmResponse(retryText) : null;
-        LOG("[DIAG §6] retry llmItems=%s isCorrupted=%s isPlaceholder=%s",
-          retryItems?.length ?? "null",
-          retryItems ? isCorruptedSeguridadSlice(retryItems) : "n/a",
-          retryItems ? isPlaceholderSeguridad(retryItems) : "n/a",
-        );
-        const retrySeguridad = resolveSeguridadSlice(state, retryItems);
-        if (!isPlaceholderSeguridad(retrySeguridad)) {
-          seguridad = retrySeguridad;
-          LOG("[DIAG §6] retry recuperó §6 (items=%s)", retrySeguridad.length);
-        }
+        LOG("[DIAG §6] placeholder sin §6 previa tras retries — conservando placeholder mínimo");
       }
       const slice = { seguridad };
       const merged = mergeMddStructured(state.mddStructured, slice, state.mddDraft ?? "");
@@ -148,7 +136,7 @@ export function createMddSecurityNode(llm: BaseChatModel) {
       const mddDraft = buildMddDraftWithSection6(state, merged.seguridad ?? seguridad);
       const sum = getMddDraftSummary(mddDraft);
       LOG("ok seguridad §6 actualizada mddDraftLen=%s section2=%s", sum.length, sum.section2);
-      logMddNodeOutput("Security", mddDraft);
+      logMddNodeOutput("Security", mddDraft, { inputLen: inputDraftLen });
       return { mddStructured: merged, mddDraft, securitySectionMd };
     } catch (err) {
       LOG("error: %s", err instanceof Error ? err.message : String(err));

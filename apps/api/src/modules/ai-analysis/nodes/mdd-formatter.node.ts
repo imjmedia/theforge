@@ -19,7 +19,7 @@ import {
   sanitizeContextSection,
 } from "../utils/mdd-sanitize.js";
 import { reconcileUiUxDesignIntent } from "../utils/mdd-enrich-uiux-intent.js";
-import { preserveTailSectionsIfSubstantial, preserveSection2FromStackSnapshot, preserveSection3FromDataModelSnapshot, preserveSection4FromApiContractsSnapshot, draftHasPersistableSection4 } from "../utils/mdd-section-preserve.util.js";
+import { preserveTailSectionsIfSubstantial, preserveSection2FromStackSnapshot, preserveSection3FromDataModelSnapshot, preserveSection4FromApiContractsSnapshot, draftHasPersistableSection4, preserveValidatedSectionsIfSubstantial } from "../utils/mdd-section-preserve.util.js";
 import { shouldPreferDraftOverStructured } from "../utils/mdd-prepare-output.js";
 import { mddStructuredToMarkdown } from "../render/mdd-structured-to-markdown.js";
 
@@ -77,15 +77,16 @@ export function createMddFormatterNode(): (state: MDDStateType) => Promise<Parti
         const hydrated = hydrateStructuredFromDraft(state.mddStructured, state.mddDraft ?? "");
         const rendered = mddStructuredToMarkdown(hydrated);
         if (rendered.trim().length > 0) {
-          const markdown = await reconcileUiUxDesignIntent(
+          let markdown = await reconcileUiUxDesignIntent(
             finalizeMddDeliverable(normalizeMddFormat(rendered)),
           );
+          markdown = preserveValidatedSectionsIfSubstantial(currentDraft, markdown);
           if (currentDraftLen > markdown.length * 1.35 || draftHasSubstantialSection3) {
             if (draftHasSubstantialSection3) LOG("draft tiene §3 sustancial; no reemplazar por mddStructured, se normaliza draft");
             else LOG("draft entrante (%s) mucho más largo que mddStructured (%s); se preserva draft y solo se normaliza", currentDraftLen, markdown.length);
           } else {
             LOG("derivado desde mddStructured len=%s (normalizado)", markdown.length);
-            logMddNodeOutput("Formatter", markdown);
+            logMddNodeOutput("Formatter", markdown, { inputLen: currentDraftLen });
             return { mddDraft: markdown };
           }
         }
@@ -137,7 +138,7 @@ export function createMddFormatterNode(): (state: MDDStateType) => Promise<Parti
       );
       const sum = getMddDraftSummary(formatted);
       LOG("formateado len=%s -> %s section2=%s", draft.length, sum.length, sum.section2);
-      logMddNodeOutput("Formatter", formatted);
+      logMddNodeOutput("Formatter", formatted, { inputLen: currentDraftLen });
       return { mddDraft: formatted };
     } catch (err) {
       LOG("error: %s", err instanceof Error ? err.message : String(err));
