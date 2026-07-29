@@ -86,18 +86,40 @@ export function fixGluedSection6Heading(draft: string): string {
   return out.replace(/\n{3,}/g, "\n\n");
 }
 
+const MDD_SECTION_H2_PATTERNS: Record<1 | 2 | 3 | 4 | 5 | 6 | 7, RegExp> = {
+  1: /^##\s+1\.\s*Contexto/im,
+  2: /^##\s+2\.\s*Arquitectura\s+y\s*Stack/im,
+  3: /^##\s+3\.\s*Modelo\s+(?:de\s+)?datos/im,
+  4: /^##\s+4\.\s*Contratos\s+de\s+API/im,
+  5: /^##\s+5\.\s*Lógica\s+y\s*Edge\s+Cases/im,
+  6: /^##\s+(?:6\.\s+)?Seguridad/im,
+  7: /^##\s+(?:7\.\s+)?(?:Infraestructura|Integraci[oó]n)/im,
+};
+
 /** Cuenta ocurrencias de un heading H2 de sección canónica (§1–§7). */
 function countMddSectionH2Occurrences(draft: string, section: 1 | 2 | 3 | 4 | 5 | 6 | 7): number {
-  const patterns: Record<1 | 2 | 3 | 4 | 5 | 6 | 7, RegExp> = {
-    1: /^##\s+1\.\s*Contexto/im,
-    2: /^##\s+2\.\s*Arquitectura\s+y\s*Stack/im,
-    3: /^##\s+3\.\s*Modelo\s+(?:de\s+)?datos/im,
-    4: /^##\s+4\.\s*Contratos\s+de\s+API/im,
-    5: /^##\s+5\.\s*Lógica\s+y\s*Edge\s+Cases/im,
-    6: /^##\s+(?:6\.\s+)?Seguridad/im,
-    7: /^##\s+(?:7\.\s+)?(?:Infraestructura|Integraci[oó]n)/im,
-  };
-  return (draft.match(new RegExp(patterns[section].source, "gm")) ?? []).length;
+  return (draft.match(new RegExp(MDD_SECTION_H2_PATTERNS[section].source, "gm")) ?? []).length;
+}
+
+/** Índice de la enésima ocurrencia de un heading H2 canónico (1-based), o -1 si no existe. */
+function findNthMddSectionHeadingIndex(
+  draft: string,
+  section: 1 | 2 | 3 | 4 | 5 | 6 | 7,
+  occurrence: number,
+): number {
+  if (occurrence < 1) return -1;
+  const re = new RegExp(MDD_SECTION_H2_PATTERNS[section].source, "gm");
+  let match: RegExpExecArray | null = null;
+  let seen = 0;
+  while ((match = re.exec(draft)) !== null) {
+    seen += 1;
+    if (seen === occurrence && match.index != null) {
+      let idx = match.index;
+      if (draft[idx] === "\n") idx += 1;
+      return idx;
+    }
+  }
+  return -1;
 }
 
 /** True si el borrador repite algún heading canónico §1–§7 (corrupción por acumulación del pipeline). */
@@ -111,22 +133,42 @@ export function mddHasDuplicateSectionHeadings(draft: string): boolean {
 }
 
 /**
- * Trunca cola duplicada tras la primera §7 completa (p. ej. §5/§6/§7 repetidas en bucle).
- * Red de seguridad cuando deduplicate no pudo reconstruir por el guard del 50%.
+ * Trunca cola duplicada de §1–§7 (p. ej. §4–§6 repetidas en bucle del crítico de arquitectura).
+ * Con §7 completa: corta tras la primera §7 si la cola repite núcleo.
+ * Sin §7 (streaming): corta antes de la 2.ª ocurrencia más temprana de cualquier § duplicada.
  */
 export function stripTrailingDuplicateMddSections(draft: string): string {
   const trimmed = (draft ?? "").trim();
   if (!trimmed || !mddHasDuplicateSectionHeadings(trimmed)) return draft;
+
   const range7 = getSection6Or7Range(trimmed, 7);
-  if (!range7) return draft;
-  const tail = trimmed.slice(range7.end).trim();
-  if (!tail) return draft;
-  const tailHasRepeatedCore =
-    /^##\s+5\.\s*Lógica/im.test(tail) ||
-    (tail.match(/^##\s+(?:6\.\s+)?Seguridad/im) ?? []).length >= 1 ||
-    (tail.match(/^##\s+(?:7\.\s+)?(?:Infraestructura|Integraci[oó]n)/im) ?? []).length >= 1;
-  if (!tailHasRepeatedCore) return draft;
-  return trimmed.slice(0, range7.end).trim();
+  if (range7) {
+    const tail = trimmed.slice(range7.end).trim();
+    if (tail) {
+      const tailHasRepeatedCore =
+        /^##\s+4\.\s*Contratos/im.test(tail) ||
+        /^##\s+5\.\s*Lógica/im.test(tail) ||
+        (tail.match(/^##\s+(?:6\.\s+)?Seguridad/im) ?? []).length >= 1 ||
+        (tail.match(/^##\s+(?:7\.\s+)?(?:Infraestructura|Integraci[oó]n)/im) ?? []).length >= 1;
+      if (tailHasRepeatedCore) {
+        return trimmed.slice(0, range7.end).trim();
+      }
+    }
+  }
+
+  let truncateAt = -1;
+  for (const section of [1, 2, 3, 4, 5, 6, 7] as const) {
+    if (countMddSectionH2Occurrences(trimmed, section) <= 1) continue;
+    const secondIdx = findNthMddSectionHeadingIndex(trimmed, section, 2);
+    if (secondIdx >= 0) {
+      truncateAt = truncateAt < 0 ? secondIdx : Math.min(truncateAt, secondIdx);
+    }
+  }
+  if (truncateAt >= 0) {
+    return trimmed.slice(0, truncateAt).trim();
+  }
+
+  return draft;
 }
 
 /** Dedup §1–§7 tras merge del Architect o reintentos del Clarifier (idempotente). */
