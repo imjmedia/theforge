@@ -21,7 +21,10 @@ import { extractFirstJsonObject, parseJsonOrThrow } from "../utils/parse-json.js
 import { clarifierComplexityAppendix } from "../utils/mdd-complexity-rigor.js";
 import { domainInventoryPromptBlock } from "../utils/mdd-domain-prompt.util.js";
 import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
-import { shouldPreserveClarifierDraftOnLlmFailure } from "../utils/mdd-clarifier-llm-fallback.util.js";
+import {
+  dbgaSnippetForClarifierFallback,
+  shouldPreserveClarifierDraftOnLlmFailure,
+} from "../utils/mdd-clarifier-llm-fallback.util.js";
 import { z } from "zod";
 
 /** Acepta string o objeto (el LLM a veces devuelve objeto); normaliza a string. */
@@ -199,9 +202,11 @@ export function createMddClarifierNode(llm: BaseChatModel) {
         const noBench = /sin benchmark|no hay benchmark/i.test(state.dbgaContent);
         const base = noBench
           ? getMddTemplatePlaceholder("(Genera un MDD base; el usuario refinará después.)")
-          : getMddTemplatePlaceholder(`(Basado en: ${state.dbgaContent.slice(0, 1500)}.)`);
+          : getMddTemplatePlaceholder(
+              `(Basado en: ${dbgaSnippetForClarifierFallback(state.dbgaContent ?? "")}.)`,
+            );
         return {
-          clarifiedScope: state.dbgaContent.slice(0, 2000),
+          clarifiedScope: dbgaSnippetForClarifierFallback(state.dbgaContent ?? "", 2000),
           mddDraft: base,
           clarifierJustGeneratedQuestions: false,
         };
@@ -214,9 +219,11 @@ export function createMddClarifierNode(llm: BaseChatModel) {
         const noBench = /sin benchmark|no hay benchmark/i.test(state.dbgaContent);
         const base = noBench
           ? getMddTemplatePlaceholder("(Genera un MDD base; el usuario refinará después.)")
-          : getMddTemplatePlaceholder(`(Basado en: ${state.dbgaContent.slice(0, 1500)}.)`);
+          : getMddTemplatePlaceholder(
+              `(Basado en: ${dbgaSnippetForClarifierFallback(state.dbgaContent ?? "")}.)`,
+            );
         return {
-          clarifiedScope: state.dbgaContent.slice(0, 2000),
+          clarifiedScope: dbgaSnippetForClarifierFallback(state.dbgaContent ?? "", 2000),
           mddDraft: base,
           clarifierJustGeneratedQuestions: false,
         };
