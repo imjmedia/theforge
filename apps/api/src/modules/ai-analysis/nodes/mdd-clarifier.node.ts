@@ -11,6 +11,7 @@ import { mergeMddStructured } from "../utils/mdd-merge-structured.js";
 import { getMddDraftSummary, extractAlreadyDocumentedTopics, extractIdentifiedInfraFromText, logMddNodeOutput, deduplicateMddDraftSections, mergeSection1IntoDraft } from "../utils/mdd-sanitize.js";
 import {
   draftIsSubstantialForScopedRepair,
+  preserveValidatedSectionsIfSubstantial,
 } from "../utils/mdd-section-preserve.util.js";
 import { draftMeetsSection1Quality } from "../utils/mdd-section1-quality.util.js";
 import { finalizeClarifierDraft } from "../utils/mdd-clarifier-draft.util.js";
@@ -285,12 +286,19 @@ export function createMddClarifierNode(llm: BaseChatModel) {
         mddComplexity: state.mddComplexity,
         log: LOG,
       });
-      const mergedDraft =
-        hasSubstantialDraft && draftTrimmed.length > 200 && finalizedDraft !== draftTrimmed
-          ? mergeSection1IntoDraft(draftTrimmed, finalizedDraft)
-          : finalizedDraft;
-      if (hasSubstantialDraft && mergedDraft !== finalizedDraft) {
-        LOG("draft sustancial: merge §1 only, preservadas §2–§7 (len %s→%s)", finalizedDraft.length, mergedDraft.length);
+      let mergedDraft = finalizedDraft;
+      if (hasSubstantialDraft && draftTrimmed.length > 200) {
+        mergedDraft = preserveValidatedSectionsIfSubstantial(draftTrimmed, finalizedDraft);
+        if (draftMeetsSection1Quality(finalizedDraft, state.mddComplexity) && finalizedDraft !== draftTrimmed) {
+          mergedDraft = mergeSection1IntoDraft(mergedDraft, finalizedDraft);
+        }
+        if (mergedDraft !== finalizedDraft) {
+          LOG(
+            "draft sustancial: preservadas secciones desde baseline (len %s→%s)",
+            finalizedDraft.length,
+            mergedDraft.length,
+          );
+        }
       }
       const mddDraft = deduplicateMddDraftSections(mergedDraft);
       const outStructured = merged ?? (slice ? mergeMddStructured(undefined, slice) : undefined);

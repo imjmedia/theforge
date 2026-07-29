@@ -290,7 +290,13 @@ export function restoreContextSectionFromBaselineIfMissing(
   draft: string,
 ): string {
   const currentBody = extractContextSectionBody(draft);
-  if (currentBody?.trim() && currentBody.length >= 20) return draft;
+  if (
+    currentBody?.trim() &&
+    currentBody.length >= 20 &&
+    !isMddSectionPipelinePlaceholderBody(currentBody)
+  ) {
+    return draft;
+  }
   const baselineBody = extractContextSectionBody(baseline);
   const body = baselineBody?.trim() || SECTION1_RESTORE_PLACEHOLDER;
   if (hasContextSectionHeading(draft)) {
@@ -305,7 +311,13 @@ export function restoreArquitecturaSectionFromBaselineIfMissing(
   draft: string,
 ): string {
   const currentBody = extractArquitecturaSectionBody(draft);
-  if (currentBody?.trim() && currentBody.length >= 20) return draft;
+  if (
+    currentBody?.trim() &&
+    currentBody.length >= 20 &&
+    !isMddSectionPipelinePlaceholderBody(currentBody)
+  ) {
+    return draft;
+  }
   const baselineBody = extractArquitecturaSectionBody(baseline);
   const body = baselineBody?.trim() || SECTION2_RESTORE_PLACEHOLDER;
   if (hasArquitecturaSectionHeading(draft)) {
@@ -551,8 +563,7 @@ export function isMddSectionPipelinePlaceholderBody(body: string | null | undefi
   const b = (body ?? "").trim();
   if (!b) return true;
   if (/^\s*\(?\s*(Pendiente|TBD|\[Placeholder|\/\/ TODO)/i.test(b)) return true;
-  if (/Pendiente:\s*Arquitecto/i.test(b)) return true;
-  if (/Pendiente:\s*Ingeniero/i.test(b)) return true;
+  if (/Pendiente:\s*(?:Arquitecto|Clarificador|Ingeniero|Integraci)/i.test(b)) return true;
   return false;
 }
 

@@ -4,6 +4,7 @@ import {
   finalizeClarifierDraft,
   MIN_DBGA_LEN_FOR_STRICT_CLARIFIER_DRAFT,
 } from "./mdd-clarifier-draft.util.js";
+import { preserveValidatedSectionsIfSubstantial } from "./mdd-section-preserve.util.js";
 import { getMddTemplatePlaceholder } from "../state/mdd-structured.schema.js";
 import { evaluateSection1BodyQuality } from "./mdd-section1-quality.util.js";
 
@@ -98,5 +99,15 @@ describe("finalizeClarifierDraft", () => {
       mddComplexity: "HIGH",
     });
     assert.equal(out.trim(), substantial.trim());
+  });
+
+  it("preserva §2 del baseline cuando el LLM devuelve placeholder de pipeline", () => {
+    const s2Body = `${"NestJS + PostgreSQL + Redis. ".repeat(30)}`;
+    const baseline = `# MDD\n\n## 1. Contexto\n\n${constitutionSection1(3)}\n\n## 2. Arquitectura y Stack\n\n${s2Body}\n\n## 6. Seguridad\n\n${"OAuth2 ".repeat(40)}\n`;
+    const llmWiped = `# MDD\n\n## 1. Contexto\n\n(Pendiente: Clarificador — contexto y alcance del sistema.)\n\n## 2. Arquitectura y Stack\n\n(Pendiente: Arquitecto de Software — stack y arquitectura.)\n\n## 6. Seguridad\n\n${"OAuth2 ".repeat(40)}\n`;
+    const out = preserveValidatedSectionsIfSubstantial(baseline, llmWiped);
+    assert.match(out, /NestJS \+ PostgreSQL/);
+    assert.match(out, /Mapa de contextos/);
+    assert.doesNotMatch(out, /Pendiente: Arquitecto de Software/);
   });
 });
