@@ -37,7 +37,7 @@ import { OpenRouterFallbackChatModel } from "./openrouter-fallback-chat-model.js
  */
 
 /** @internal */ const LLM_TIMEOUT_MS = parseInt(
-  process.env.LANGGRAPH_LLM_TIMEOUT_MS?.trim() || "300000",
+  process.env.LANGGRAPH_LLM_TIMEOUT_MS?.trim() || "120000",
   10,
 );
 
@@ -101,6 +101,8 @@ function buildLangChainChat(
         model,
         apiKey: runtime.apiKey,
         temperature,
+        maxOutputTokens: outputCap,
+        requestOptions: { timeout: LLM_TIMEOUT_MS },
       });
     case "openrouter":
     case "openai":
