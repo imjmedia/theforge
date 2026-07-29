@@ -138,6 +138,36 @@ describe("preserveSection2/3/4IfSubstantial", () => {
     assert.equal(draftHasSubstantialSection4(out), true);
   });
 
+  it("restaura §2–§7 aunque §1 sea boilerplate Basado en/stamp (benchmark+BRD)", () => {
+    const thinS1 = `# MDD
+## 1. Contexto
+
+(Basado en: ## Contexto — BRD (negocio, KPIs, alcance)
+
+<!-- theforge-doc:created=2026-07-17T00:29:17.585Z|updated=2026-07-17T00:29:17.585Z -->
+> 📅 Creado: 17 de julio de 2026, 24:29:17 UTC · Última modificación: 17 de julio de 2026, 24:29:17 UTC
+`;
+    const wiped = `${thinS1}
+## 2. Arquitectura y Stack
+(Pendiente: Arquitecto de Software — stack y arquitectura.)
+## 3. Modelo de Datos
+(Pendiente)
+## 4. Contratos de API
+(Pendiente)
+## 5. Lógica y Edge Cases
+(Pendiente: paso dedicado Lógica y Edge Cases)
+## 6. Seguridad
+(Pendiente)
+## 7. Infraestructura
+(Pendiente)
+`;
+    const out = preserveValidatedSectionsIfSubstantial(BASE, wiped);
+    assert.ok(out.includes("NestJS"));
+    assert.ok(out.includes("CREATE TABLE users"));
+    assert.ok(out.includes("/api/v1/auth/login"));
+    assert.ok(out.includes("JWT tras credenciales"));
+  });
+
   it("no inventa §3 si baseline era placeholder", () => {
     const baseline = BASE.replace(S3_BODY, "(Pendiente: Arquitecto)");
     const wiped = baseline.replace(S2_BODY, "(Pendiente)");
