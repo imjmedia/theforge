@@ -584,7 +584,12 @@ export function DashboardSidebar({
   }, [closeMobileNav, onBeforeNavigateToProjects, onExitWorkshop]);
 
   return (
-    <div className="relative flex w-full shrink-0 flex-col lg:z-40 lg:h-full lg:min-h-0 lg:w-auto lg:shrink-0">
+    <div
+      className={cn(
+        "relative flex w-full shrink-0 flex-col lg:z-40 lg:w-auto lg:shrink-0",
+        inWorkshop ? "lg:h-full lg:min-h-0" : "lg:h-[100dvh] lg:min-h-[100dvh]",
+      )}
+    >
       <header
         className="sticky top-0 z-40 flex w-full items-center justify-between gap-2 border-b border-[color-mix(in_oklch,var(--sidebar-border)_90%,var(--sidebar))] bg-[var(--sidebar)] px-3 py-2.5 text-[var(--sidebar-foreground)] lg:hidden"
         style={{ paddingTop: "max(0.625rem, env(safe-area-inset-top))" }}
@@ -640,13 +645,14 @@ export function DashboardSidebar({
       <TooltipProvider delayDuration={280}>
     <aside
       className={cn(
-        "flex w-full shrink-0 flex-col border-[var(--sidebar-border)] bg-[var(--sidebar)] text-[var(--sidebar-foreground)] lg:border-b-0 lg:border-r lg:min-h-0 lg:self-stretch lg:sticky lg:top-0 lg:transition-[width] lg:duration-200 lg:ease-out",
+        "flex w-full shrink-0 flex-col border-[var(--sidebar-border)] bg-[var(--sidebar)] text-[var(--sidebar-foreground)] lg:border-b-0 lg:border-r lg:min-h-0 lg:self-stretch lg:transition-[width] lg:duration-200 lg:ease-out",
+        inWorkshop && "lg:sticky lg:top-0",
         // Mobile: slide-over drawer; desktop: unchanged width and sticky column.
         "max-lg:absolute max-lg:left-0 max-lg:top-0 max-lg:z-50 max-lg:flex max-lg:h-[100dvh] max-lg:max-h-[100dvh] max-lg:w-[min(19rem,92vw)] max-lg:flex-col max-lg:overflow-y-auto max-lg:overscroll-y-contain max-lg:border-r max-lg:pb-[env(safe-area-inset-bottom)] max-lg:shadow-2xl max-lg:transition-transform max-lg:duration-200 max-lg:ease-out max-lg:[-webkit-overflow-scrolling:touch]",
         mobileNavOpen
           ? "max-lg:translate-x-0 max-lg:pointer-events-auto"
           : "max-lg:-translate-x-full max-lg:pointer-events-none",
-        !inWorkshop && "lg:h-full lg:max-h-[100dvh] lg:min-h-0",
+        !inWorkshop && "lg:h-[100dvh] lg:max-h-[100dvh] lg:min-h-[100dvh]",
         inWorkshop &&
           cn(
             "min-h-0 lg:h-full lg:max-h-[min(100dvh,100svh)] lg:min-h-0",
