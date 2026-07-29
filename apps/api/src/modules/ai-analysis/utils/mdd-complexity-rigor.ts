@@ -19,7 +19,7 @@ export function contextSynthesizerComplexityAppendix(cx: MddComplexityLevel | un
   if (L === "MEDIUM") {
     return `
 
-**Complejidad MEDIUM:** Mapa de contextos y glosario en §1 pueden ser **resumidos**; prioriza coherencia con §2–§7 sobre exhaustividad.`;
+**Complejidad MEDIUM:** §1 debe incluir **todas** las subsecciones ### del esqueleto constitución (Propósito, Alcance y fronteras, Mapa de contextos DDD, Actores, Glosario). Pueden ser **concisas**, pero **no omitir** headings ni dejar solo un párrafo de propósito.`;
   }
   return "";
 }
@@ -35,7 +35,7 @@ export function clarifierComplexityAppendix(cx: MddComplexityLevel | undefined):
   if (L === "MEDIUM") {
     return `
 
-**Complejidad del proyecto: MEDIUM.** Incluye mapa de contextos **resumido** (tres listas cortas o tabla) y glosario **mínimo** (términos críticos que afecten §3–§4). Actores del documento en una línea si es posible. Bloqueantes solo si el riesgo es relevante.`;
+**Complejidad del proyecto: MEDIUM.** §1 debe tener **Propósito**, **Alcance y fronteras**, **Mapa de contextos DDD** (tres listas), **Actores del documento** y **Glosario mínimo** (términos que afecten §3–§4). Cada bloque puede ser breve, pero **prohibido** entregar §1 con un solo ### Propósito. Bloqueantes solo si el riesgo es relevante para el dominio.`;
   }
   return "";
 }
@@ -75,7 +75,7 @@ export function auditorConstitutionRigorAppendix(cx: MddComplexityLevel | undefi
 ---
 **Anexo: rigor según complejidad MEDIUM**
 
-- **§1:** Debe haber indicios de **mapa de contextos** y **glosario** (aunque breves); si faltan por completo y el alcance no es trivial, penaliza levemente (no bloqueo automático a < 85 salvo incoherencia fuerte).
+- **§1:** Debe incluir subsecciones ### de constitución (Propósito, Fronteras, Mapa DDD, Actores, Glosario). Si falta más de una subsección obligatoria, penaliza fuerte (score < 85) y pide regenerar §1.
 - **§2:** Al menos **una** estructura modular por dominio y **al menos un** «¿Por qué?» en stack; no exijas ADR exhaustivo.
 - **§5:** Al menos **un** bloque Gherkin **o** criterios numerados equivalentes para el flujo principal.
 - No bloquees **≥ 85** por omisiones propias de HIGH si el documento es sólido para MEDIUM.`;

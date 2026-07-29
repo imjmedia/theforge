@@ -48,6 +48,10 @@ import {
   applyDeliveryGateToSemaphoreStatus,
   validateMddForDelivery,
 } from "../utils/mdd-delivery-gate.util.js";
+import {
+  draftMeetsSection1Quality,
+  minSection1BodyLength,
+} from "../utils/mdd-section1-quality.util.js";
 import { rebuildDomainInventoryPreferringBrd } from "../../engine/domain-inventory-persist.util.js";
 import {
   checkApiVsMdd,
@@ -272,7 +276,16 @@ function computePrecisionBreakdown(md: string, complexity: EstimationComplexity 
   }
 
   let contexto = Math.round(
-    Math.max(0, Math.min(100, 100 - (gaps.contradictionGap ? 40 : 0) - (contextBlock.length < 80 ? 30 : 0))),
+    Math.max(
+      0,
+      Math.min(
+        100,
+        100 -
+          (gaps.contradictionGap ? 40 : 0) -
+          (contextBlock.length < minSection1BodyLength(complexity) ? 30 : 0) -
+          (!draftMeetsSection1Quality(md, complexity) ? 25 : 0),
+      ),
+    ),
   );
   if (inconsistentSet.has("contexto")) contexto = Math.min(contexto, PRECISION_CAP_INCONSISTENTE);
 
@@ -316,7 +329,9 @@ function computePrecisionBreakdown(md: string, complexity: EstimationComplexity 
   const sectionReasons: PrecisionBreakdown["sectionReasons"] = {};
   const trazaMsg =
     "Trazabilidad: concepto en Contexto sin ningún soporte en Modelo, API ni Seguridad (añade al menos uno o quítalo del contexto).";
-  if (contextBlock.length < 80) sectionReasons.contexto = "Sección §1 Contexto muy breve.";
+  if (contextBlock.length < minSection1BodyLength(complexity)) {
+    sectionReasons.contexto = "Sección §1 Contexto muy breve o sin subsecciones constitución.";
+  }
   if (gaps.contradictionGap) sectionReasons.contexto = (sectionReasons.contexto ? sectionReasons.contexto + " " : "") + "Contradicción entre contexto e integración.";
   if (inconsistentSet.has("contexto")) sectionReasons.contexto = (sectionReasons.contexto ? sectionReasons.contexto + " " : "") + trazaMsg;
 

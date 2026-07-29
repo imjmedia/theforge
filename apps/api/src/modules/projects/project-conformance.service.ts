@@ -19,6 +19,7 @@ import { pickPrimaryStage } from "./stage-helpers.js";
 import { buildUnifiedAuditReport, type UnifiedAuditReport } from "./unified-audit.util.js";
 import {
   buildProjectDeliverableSource,
+  areSddDerivativesPending,
   collectFullCrossArtifactGaps,
   computeConsistencyScoreForProject,
   evaluateCompositeSemaphore,
@@ -93,17 +94,23 @@ export class ProjectConformanceService {
     const mdd = buildConstitutionMarkdown(project);
     const complexity = project.complexity ?? ComplexityLevel.HIGH;
     const deliverableSource = buildProjectDeliverableSource(project, stage);
-    const { conformance, llmVerification } = await this.resolveConformanceHeuristicOrLlm(
-      projectId,
-      mdd,
-      project,
-      options,
-    );
+    const derivativesPending = areSddDerivativesPending(deliverableSource);
+    const { conformance, llmVerification } = derivativesPending
+      ? { conformance: this.pendingDerivativesConformance(), llmVerification: undefined }
+      : await this.resolveConformanceHeuristicOrLlm(projectId, mdd, project, options);
     const useLowMediumPath =
       complexity === ComplexityLevel.LOW || complexity === ComplexityLevel.MEDIUM;
-    const conformanceSummary = useLowMediumPath
-      ? lowMediumConformanceSummaryAsUnified(complexity, deliverableSource)
-      : buildConformanceSummary(this.conformance, mdd, deliverableSource);
+    const conformanceSummary = derivativesPending
+      ? ({
+          ok: true,
+          api: { ok: true, missingCount: 0, extraCount: 0, aliasWarnings: [] },
+          infra: { ok: true, gapCount: 0, gaps: [] },
+          blueprint: { ok: true },
+          logicFlows: { ok: true },
+        } satisfies ConformanceSummary)
+      : useLowMediumPath
+        ? lowMediumConformanceSummaryAsUnified(complexity, deliverableSource)
+        : buildConformanceSummary(this.conformance, mdd, deliverableSource);
     const crossArtifactGaps = collectFullCrossArtifactGaps(
       this.conformance,
       mdd,
@@ -129,6 +136,19 @@ export class ProjectConformanceService {
       consistencyScore,
       gapLimit: UNIFIED_AUDIT_GAP_LIMIT,
     });
+  }
+
+  /** Derivados SDD vacíos tras MDD: evita inflar brechas MDD↔API con docs inexistentes. */
+  private pendingDerivativesConformance(): ConformanceWithReadiness {
+    const ok: ConformanceResult = { ok: true, gaps: [] };
+    const apiOk: ApiConformanceResult = { ok: true, missingInApi: [], extraInApi: [] };
+    return {
+      blueprint: ok,
+      blueprintDataModel: ok,
+      api: apiOk,
+      logicFlows: ok,
+      infra: ok,
+    };
   }
 
   private async resolveConformanceHeuristicOrLlm(

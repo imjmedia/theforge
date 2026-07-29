@@ -95,6 +95,7 @@ export const createMddSlice: StateCreator<WorkshopState, [], [], MddSliceActions
       applyMddFromFetchedProject(get, set, data ?? get().project);
       await get().fetchEstimation(pid);
       await get().fetchGenerationStatus(pid);
+      await get().fetchConformance(pid).catch(() => {});
       set({ loading: false, loadingReason: null, agentProgress: [] });
       return data ?? get().project;
     } catch (e) {

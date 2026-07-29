@@ -10,9 +10,9 @@ import { getMddTemplatePlaceholder } from "../state/mdd-structured.schema.js";
 import { mergeMddStructured } from "../utils/mdd-merge-structured.js";
 import { getMddDraftSummary, extractAlreadyDocumentedTopics, extractIdentifiedInfraFromText, logMddNodeOutput, deduplicateMddDraftSections, mergeSection1IntoDraft } from "../utils/mdd-sanitize.js";
 import {
-  draftHasSubstantialSection1,
   draftIsSubstantialForScopedRepair,
 } from "../utils/mdd-section-preserve.util.js";
+import { draftMeetsSection1Quality } from "../utils/mdd-section1-quality.util.js";
 import { finalizeClarifierDraft } from "../utils/mdd-clarifier-draft.util.js";
 import { getUserBrief } from "../utils/mdd-user-brief.js";
 import { buildUserDeclaredStackPromptBlock } from "../utils/user-declared-stack.util.js";
@@ -282,6 +282,7 @@ export function createMddClarifierNode(llm: BaseChatModel) {
         previousDraft: draftTrimmed,
         clarifiedScope: scope,
         dbgaContent: state.dbgaContent ?? "",
+        mddComplexity: state.mddComplexity,
         log: LOG,
       });
       const mergedDraft =
@@ -300,7 +301,7 @@ export function createMddClarifierNode(llm: BaseChatModel) {
         clarifiedScope: scope,
         mddDraft,
         clarifierJustGeneratedQuestions: false,
-        ...(draftHasSubstantialSection1(mddDraft)
+        ...(draftMeetsSection1Quality(mddDraft, state.mddComplexity)
           ? { clarifierMddDraftSnapshot: mddDraft }
           : {}),
       };

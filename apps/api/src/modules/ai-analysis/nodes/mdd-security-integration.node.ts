@@ -6,7 +6,8 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import type { MDDStateType } from "../state/index.js";
 import { createMddSecurityNode } from "./mdd-security.node.js";
 import { createMddIntegrationNode } from "./mdd-integration.node.js";
-import { getMddDraftSummary, getSection6Or7Range, replaceSection6Or7InDraft } from "../utils/mdd-sanitize.js";
+import { getMddDraftSummary, replaceSection6Or7InDraft } from "../utils/mdd-sanitize.js";
+import { resolveSection7BodyForMerge } from "../utils/mdd-tail-parallel.util.js";
 import type { MddStructured } from "../state/mdd-structured.schema.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:SecurityIntegration] ${msg}`, ...args);
@@ -36,10 +37,9 @@ export function createMddSecurityIntegrationNode(llm: BaseChatModel) {
 
     // Extraer §7 del resultado de Integration e inyectarlo en el draft de Security (que tiene §6)
     let finalDraft = secDraft;
-    const range7 = getSection6Or7Range(intDraft, 7);
-    if (range7) {
-      const section7Md = intDraft.slice(range7.start, range7.end);
-      finalDraft = replaceSection6Or7InDraft(secDraft, 7, section7Md);
+    const section7Body = resolveSection7BodyForMerge(intResult, intDraft);
+    if (section7Body) {
+      finalDraft = replaceSection6Or7InDraft(secDraft, 7, section7Body);
     } else {
       LOG("warn: §7 no encontrado en resultado de Integration, usando solo §6");
     }

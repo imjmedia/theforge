@@ -71,7 +71,7 @@ const SECTION4_BLOCKER_RE =
 // body corto es un problema del Architect, no del Clarifier. Para distinguir,
 // exigimos que el mensaje de §2 mencione "faltante" o "faltantes".
 const CLARIFIER_BLOCKER_RE =
-  /§1\s*contexto|1\.\s*contexto|2\.\s*arquitectura\s+y\s*stack\s*faltant|secciones obligatorias faltantes:.*(?:1\.\s*contexto|2\.\s*arquitectura)|placeholder.*guiones|objetivos comerciales/i;
+  /§1\s*contexto|1\.\s*contexto|estructura constituci[oó]n incompleta|2\.\s*arquitectura\s+y\s*stack\s*faltant|secciones obligatorias faltantes:.*(?:1\.\s*contexto|2\.\s*arquitectura)|placeholder.*guiones|objetivos comerciales/i;
 
 const DUPLICATE_SECTION_BLOCKER_RE =
   /repite headings canónicos §1–§7|secciones duplicadas por acumulación del pipeline/i;
@@ -83,7 +83,7 @@ const MISSING_SECTION7_BLOCKER_RE =
 const MISSING_SECTIONS_BLOCKER_RE = /secciones obligatorias faltantes:/i;
 
 const SECTION1_BROKEN_BLOCKER_RE =
-  /1\.\s*contexto.*(?:insuficiente|placeholder|\(pendiente\))/i;
+  /1\.\s*contexto.*(?:insuficiente|placeholder|\(pendiente\)|estructura constituci[oó]n incompleta)/i;
 
 const SECTION2_BROKEN_BLOCKER_RE =
   /2\.\s*arquitectura.*(?:insuficiente|placeholder|\(pendiente\)|pendiente:\s*arquitecto)/i;

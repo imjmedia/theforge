@@ -1269,7 +1269,13 @@ export const createDeliverablesSlice: StateCreator<
         return false;
       }
       await get().fetchProject(pid);
-      set({ error: null });
+      set({
+        conformance: null,
+        readinessAudit: null,
+        crossDocumentGaps: null,
+        error: null,
+      });
+      await get().fetchConformance(pid).catch(() => {});
       return true;
     } catch (e) {
       set({

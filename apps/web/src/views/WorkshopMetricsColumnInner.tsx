@@ -209,7 +209,12 @@ export function WorkshopMetricsColumnInner({
   const sddAuditSummary = useMemo(() => {
     const gapTotal = readinessAudit?.gapSummary.total ?? 0;
     const crossDoc = crossDocumentGaps?.length ?? 0;
+    const derivativesPending =
+      readinessAudit?.gapSummary.items?.some((item) =>
+        /derivatives-pending/i.test(item.message),
+      ) ?? false;
     const derivadosIssue =
+      !derivativesPending &&
       !!conformance &&
       (!conformance.blueprint.ok ||
         conformance.blueprintDataModel?.ok === false ||
@@ -219,8 +224,11 @@ export function WorkshopMetricsColumnInner({
     return {
       gapTotal,
       crossDoc,
+      derivativesPending,
       derivadosIssue,
-      hasIssues: gapTotal > 0 || crossDoc > 0 || derivadosIssue,
+      hasIssues: derivativesPending
+        ? false
+        : gapTotal > 0 || crossDoc > 0 || derivadosIssue,
     };
   }, [readinessAudit, crossDocumentGaps, conformance]);
   const apiBlueprintDmBlocked = conformance?.blueprintDataModel?.ok === false;
@@ -360,7 +368,9 @@ export function WorkshopMetricsColumnInner({
       ? deliveryGate.blockers.length > 0
         ? "red"
         : "yellow"
-      : liveMetrics?.status ?? resolveWorkshopSemaphoreStatus(null, projectStatus);
+      : sddAuditSummary.derivativesPending && deliveryGateOk
+        ? "yellow"
+        : liveMetrics?.status ?? resolveWorkshopSemaphoreStatus(null, projectStatus);
   const statusDiffersByDeliveryGate =
     deliveryGate != null &&
     !deliveryGate.ok &&
@@ -529,6 +539,10 @@ export function WorkshopMetricsColumnInner({
                   <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--destructive)_82%,var(--foreground))]">
                     Bloqueado por gate de entrega
                   </p>
+                ) : sddAuditSummary.derivativesPending && deliveryGateOk ? (
+                  <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--warning)_82%,var(--foreground))]">
+                    MDD OK; genera entregables SDD (Docs bajo porque derivados vacíos)
+                  </p>
                 ) : effectiveStatus === "red" && precisionScore < SEMAPHORE_PRECISION_RED_MAX ? (
                   <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--destructive)_82%,var(--foreground))]">
                     Precisión &lt; {SEMAPHORE_PRECISION_RED_MAX}%
@@ -623,15 +637,17 @@ export function WorkshopMetricsColumnInner({
                   <span className="min-w-0 truncate">Auditoría SDD</span>
                 </h3>
                 <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--muted-foreground)_96%,var(--foreground))]">
-                  {[
-                    readinessAudit
-                      ? `${readinessAudit.gapSummary.total} brecha(s) · ${readinessAudit.gapSummary.auto} auto · ${readinessAudit.gapSummary.llm} LLM · ${readinessAudit.gapSummary.human} humano`
-                      : null,
-                    consistencyScore != null ? `Trazabilidad ${consistencyScore}%` : null,
-                    sddAuditSummary.hasIssues ? "Revisar derivados y MDD" : "Sin brechas críticas detectadas",
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
+                  {sddAuditSummary.derivativesPending
+                    ? "MDD listo; genera entregables SDD (cascada) para alinear Blueprint, API, Flujos e Infra."
+                    : [
+                        readinessAudit
+                          ? `${readinessAudit.gapSummary.total} brecha(s) · ${readinessAudit.gapSummary.auto} auto · ${readinessAudit.gapSummary.llm} LLM · ${readinessAudit.gapSummary.human} humano`
+                          : null,
+                        consistencyScore != null ? `Trazabilidad ${consistencyScore}%` : null,
+                        sddAuditSummary.hasIssues ? "Revisar derivados y MDD" : "Sin brechas críticas detectadas",
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
                 </p>
                 {readinessAudit?.compositeReadiness?.reasons?.length ? (
                   <ul className="list-disc space-y-0.5 pl-4 text-[10px] text-[color-mix(in_oklch,var(--muted-foreground)_96%,var(--foreground))]">

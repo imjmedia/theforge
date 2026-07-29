@@ -2409,11 +2409,10 @@ export class AiAnalysisService {
 
     switch (mode) {
       case "pipeline": {
-        // PR #505: el cache upstream se eliminó del flujo de regeneración.
-        // El cache asumía "upstream sin cambios = MDD OK" pero la realidad
-        // es que un MDD de baja calidad (placeholder con excepciones, modelo
-        // débil) puede pasar el gate y quedar cacheado para siempre. La
-        // regeneración ahora siempre ejecuta el pipeline LLM completo.
+        if (data.forceFullPipeline) {
+          this.nodeCacheService.invalidateAll();
+          this.logger.log(`MDD pipeline forceFullPipeline: node cache invalidated projectId=${projectId}`);
+        }
         const jobResult = await consume(
           this.streamMddAnalysis(
             data.dbgaContent ?? "",

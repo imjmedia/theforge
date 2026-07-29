@@ -64,6 +64,24 @@ function hasCanonicalMdd(source: ProjectDeliverableSource): boolean {
   return (source.mddContent ?? "").trim().length >= 120;
 }
 
+const SDD_DERIVATIVE_FIELDS = [
+  "blueprintContent",
+  "apiContractsContent",
+  "logicFlowsContent",
+  "infraContent",
+] as const;
+
+const MIN_DERIVATIVE_DOC_LENGTH = 80;
+
+/** MDD presente pero derivados SDD clave aún no generados (post-borrado o pre-cascada). */
+export function areSddDerivativesPending(source: ProjectDeliverableSource): boolean {
+  if (!hasCanonicalMdd(source)) return false;
+  return SDD_DERIVATIVE_FIELDS.every((field) => {
+    const body = (source[field] ?? "").trim();
+    return body.length < MIN_DERIVATIVE_DOC_LENGTH;
+  });
+}
+
 export function collectFullCrossArtifactGaps(
   conformance: ConformanceService,
   mdd: string,
@@ -77,6 +95,11 @@ export function collectFullCrossArtifactGaps(
     return collectLowMediumReadinessGaps(ComplexityLevel.MEDIUM, source);
   }
   if (!mdd.trim()) return ["MDD vacío: no se puede verificar conformidad"];
+  if (areSddDerivativesPending(source)) {
+    return [
+      "derivatives-pending: MDD listo; genera entregables SDD (Blueprint, API, Flujos, Infra) para alinear la auditoría.",
+    ];
+  }
   return collectConformanceGaps(conformance, mdd, source);
 }
 

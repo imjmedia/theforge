@@ -50,6 +50,13 @@ describe("resolveDeliveryGateFixTarget (CHANGELOG [Unreleased] → Added → \"D
     assert.equal(target, "clarifier");
   });
 
+  it("rutas a 'clarifier' cuando §1 carece de subsecciones constitución", () => {
+    const target = resolveDeliveryGateFixTarget([
+      "Sección 1. Contexto: estructura constitución incompleta (faltan: Mapa de contextos DDD, Glosario de dominio).",
+    ]);
+    assert.equal(target, "clarifier");
+  });
+
   it("draft cascarón (§1+§2 rotas y §3–§7 faltantes) → software_architect, no clarifier", () => {
     const blockers = [
       "Secciones obligatorias faltantes: 3. Modelo de Datos, 4. Contratos de API, 5. Lógica y Edge Cases, 6. Seguridad, 7. Infraestructura",
