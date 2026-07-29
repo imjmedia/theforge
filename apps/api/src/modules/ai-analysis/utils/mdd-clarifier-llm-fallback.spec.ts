@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   dbgaSnippetForClarifierFallback,
+  resolveClarifierWorkingDraft,
   shouldPreserveClarifierDraftOnLlmFailure,
 } from "./mdd-clarifier-llm-fallback.util.js";
 
@@ -29,5 +30,28 @@ describe("mdd-clarifier-llm-fallback", () => {
   it("no preserva borrador vacío o solo placeholder", () => {
     assert.equal(shouldPreserveClarifierDraftOnLlmFailure(""), false);
     assert.equal(shouldPreserveClarifierDraftOnLlmFailure("## 1. Contexto\n\n(Pendiente)"), false);
+  });
+
+  it("resolveClarifierWorkingDraft restaura desde previousMddDraftForMerge en revisión gate", () => {
+    const s2 = `${"| Componente | Tecnología |\n| Backend | NestJS | React |\n".repeat(20)}`;
+    const good =
+      "# MDD\n\n## 1. Contexto\n\n" +
+      "x".repeat(400) +
+      `\n\n## 2. Arquitectura y Stack\n\n${s2}\n\n## 3. Modelo de Datos\n\n` +
+      `${"CREATE TABLE users (id uuid primary key); ".repeat(12)}\n\n## 4. Contratos de API\n\n` +
+      `${"| GET | /api/v1/health | ok |\n".repeat(15)}`;
+    const skeleton = `# MDD
+## 1. Contexto
+(Pendiente: Clarificador — contexto y alcance del sistema.)
+## 2. Arquitectura y Stack
+(Pendiente: Arquitecto de Software — stack y arquitectura.)`;
+    const out = resolveClarifierWorkingDraft({
+      mddDraft: skeleton,
+      previousMddDraftForMerge: good,
+      deliveryGateLoopActive: true,
+      deliveryGateFixTarget: "clarifier",
+    });
+    assert.match(out, /NestJS/);
+    assert.match(out, /CREATE TABLE users/);
   });
 });

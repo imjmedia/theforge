@@ -5,6 +5,13 @@
 import type { MddDeliveryGateResult } from "@theforge/shared-types";
 import { isAutoRepairableDeliveryGateWarning } from "../../engine/mdd-quality-audit.util.js";
 import type { AuditorGapsState } from "../state/mdd-state.schema.js";
+import type { MDDStateType } from "../state/index.js";
+import {
+  draftHasPersistableSection4,
+  draftHasSubstantialSection2,
+  draftHasSubstantialSection3,
+  draftIsSubstantialForScopedRepair,
+} from "./mdd-section-preserve.util.js";
 import { getSection6Or7Range } from "./mdd-sanitize.js";
 
 /** Máximo de reintentos automáticos del gate de entrega (Fase 4). */
@@ -315,6 +322,24 @@ export function draftHasSubstantialSections6And7(draft: string): boolean {
     .trim();
   const has6 = body6.length > 200 && !/^\s*\(Pendiente[^)]*\)\s*$/im.test(body6);
   return has6 && draftHasSubstantialSection7(draft);
+}
+
+/**
+ * Revisión Clarifier tras delivery gate: si §2–§7 ya eran sustanciales,
+ * no relanzar stack→critic→api (evita borrar 20+ pasos del pipeline).
+ */
+export function shouldClarifierRevisionSkipArchitectPipeline(state: MDDStateType): boolean {
+  if (state.deliveryGateLoopActive !== true || state.deliveryGateFixTarget !== "clarifier") {
+    return false;
+  }
+  const draft = (state.mddDraft ?? "").trim();
+  const previous = (state.previousMddDraftForMerge ?? "").trim();
+  if (draftIsSubstantialForScopedRepair(draft)) return true;
+  if (draftIsSubstantialForScopedRepair(previous)) return true;
+  return (
+    draftHasSubstantialSection2(draft) &&
+    (draftHasSubstantialSection3(draft) || draftHasPersistableSection4(draft))
+  );
 }
 
 export function shouldContinueDeliveryGateLoop(
