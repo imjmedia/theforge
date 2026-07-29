@@ -23,7 +23,7 @@ Subcomponentes extraídos de `WorkshopView.tsx` (Fase 5b del [GOD-REFACTOR](../.
 | **useWorkshopDocToolbarProps.ts** | Hook que construye `WorkshopDocToolbarProps`, `docEditToolbarToggle` y `phase0EntryModeToolbarToggle`. Tipos en `useWorkshopDocToolbarProps.types.ts`. |
 | **useWorkshopDocBubbleMenuItems.ts** | Hook del bubble menu contextual del documento (regenerar, limpiar, descargar, imprimir). Tipos en `useWorkshopDocBubbleMenuItems.types.ts`. |
 | **useWorkshopModalsProps.ts** | Hook que construye `WorkshopModalsProps`. Tipos en `useWorkshopModalsProps.types.ts`. |
-| **WorkshopMetricsColumn.tsx** | Columna métricas: panel móvil + flyout desktop (semáforo). Tipos en `workshopMetricsColumn.types.ts`. Usa `WorkshopMetricsColumnInner` (semáforo; **Coherencia §3/§4** solo con MDD presente vía `generation-status.sddGraph`; sin MDD muestra hint «genera el documento»; Brechas SDD: lista clasificada, **Corregir auto/LLM** → `POST …/repair-sdd-gaps`, **Abrir BRD**, link a auditoría). |
+| **WorkshopMetricsColumn.tsx** | Columna métricas: panel móvil + flyout desktop (semáforo). Tipos en `workshopMetricsColumn.types.ts`. Usa `WorkshopMetricsColumnInner` (semáforo, gate MDD, brechas SDD vía auditoría/conformance, **Corregir auto/LLM** → `POST …/repair-sdd-gaps`, **Abrir BRD**, link a auditoría). La heurística legacy «Coherencia §3/§4» (ex-Falkor) ya no se muestra en panel; sigue en backend solo como `sddDomainGraphOk` opcional al persistir MDD. |
 | **WorkshopLayoutShell.tsx** | Grid principal lg (chat + docs + métricas) con slots para overlays móviles y modales. |
 | **WorkshopChatColumn.tsx** | Columna A: chat redimensionable + rail de expansión en desktop. |
 | **WorkshopMobileNav.tsx** | Barra inferior móvil Chat / Docs / Estado. |
