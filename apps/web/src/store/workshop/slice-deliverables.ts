@@ -1272,7 +1272,7 @@ export const createDeliverablesSlice: StateCreator<
       set({
         conformance: null,
         readinessAudit: null,
-        crossDocumentGaps: null,
+        crossDocumentGaps: [],
         error: null,
       });
       await get().fetchConformance(pid).catch(() => {});

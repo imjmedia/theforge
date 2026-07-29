@@ -242,7 +242,7 @@ export function buildConvergenceFeedbackForDeliverable(
 /** Orden estable de regeneración (API antes que Blueprint, etc.). */
 export function orderConvergenceDeliverables(deliverables: string[]): string[] {
   const set = new Set(deliverables);
-  const ordered = CONVERGENCE_DELIVERABLE_ORDER.filter((d) => set.has(d));
+  const ordered: string[] = CONVERGENCE_DELIVERABLE_ORDER.filter((d) => set.has(d));
   for (const d of deliverables) {
     if (!ordered.includes(d)) ordered.push(d);
   }
