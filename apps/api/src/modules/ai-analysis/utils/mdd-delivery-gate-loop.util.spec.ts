@@ -9,6 +9,7 @@ import {
   resolveDeliveryGateFixTarget,
   resolveDeliveryGateFixTargetFromGate,
   shouldClarifierRevisionSkipArchitectPipeline,
+  shouldContinueDeliveryGateLoop,
 } from "./mdd-delivery-gate-loop.util.js";
 
 describe("resolveDeliveryGateFixTarget (CHANGELOG [Unreleased] → Added → \"Dedicated §5 pass\")", () => {
@@ -220,6 +221,50 @@ describe("shouldClarifierRevisionSkipArchitectPipeline", () => {
         deliveryGateFixTarget: undefined,
         mddDraft: goodTail,
       } as never),
+      false,
+    );
+  });
+});
+
+describe("shouldContinueDeliveryGateLoop", () => {
+  it("no continúa cuando gate.ok=true aunque haya warnings auto-reparables", () => {
+    assert.equal(
+      shouldContinueDeliveryGateLoop(
+        {
+          ok: true,
+          score: 100,
+          blockers: [],
+          warnings: ["Contratos §4: fences JSON desbalanceados"],
+        },
+        2,
+      ),
+      false,
+    );
+  });
+
+  it("continúa solo cuando gate.ok=false y quedan intentos", () => {
+    assert.equal(
+      shouldContinueDeliveryGateLoop(
+        {
+          ok: false,
+          score: 84,
+          blockers: ["Sección 2 placeholder"],
+          warnings: [],
+        },
+        1,
+      ),
+      true,
+    );
+    assert.equal(
+      shouldContinueDeliveryGateLoop(
+        {
+          ok: false,
+          score: 84,
+          blockers: ["Sección 2 placeholder"],
+          warnings: [],
+        },
+        3,
+      ),
       false,
     );
   });

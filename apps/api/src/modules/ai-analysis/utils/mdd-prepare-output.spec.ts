@@ -131,6 +131,42 @@ Las credenciales de servicio y secretos de aplicación se almacenan en un almac�
     assert.strictEqual((out.match(/^##\s+4\./gm) ?? []).length, 1);
     assert.ok(out.includes("Gestión de Secretos"));
   });
+
+  it("conserva §2–§4 sustanciales tras duplicados §7/UI aunque normalize colapse el cuerpo", async () => {
+    const core =
+      FULL_MDD_PREFIX +
+      `## 6. Seguridad
+
+JWT y bcrypt.
+
+## 7. Infraestructura
+
+Kubernetes prod.
+
+## UI/UX Design Intent
+
+Panel admin.
+`;
+    const duplicatedTail = `
+## 7. Infraestructura
+
+Cola duplicada infra.
+
+## UI/UX Design Intent
+
+Cola duplicada ui.
+`;
+    const corrupted = core + duplicatedTail + duplicatedTail;
+    const out = await prepareMddForOutput(
+      { mddDraft: corrupted },
+      { formatForPersist: false, baselineDraft: core },
+    );
+    assert.ok(out.includes("CREATE TABLE users"), "debe conservar §3");
+    assert.ok(out.includes("POST | /auth/login"), "debe conservar §4");
+    assert.ok(out.includes("NestJS con PostgreSQL"), "debe conservar §2");
+    assert.strictEqual(mddHasDuplicateSectionHeadings(out), false);
+    assert.ok(out.length > core.length * 0.7, "no debe colapsar por debajo del 70% del baseline");
+  });
 });
 
 describe("getSection6Or7Range", () => {

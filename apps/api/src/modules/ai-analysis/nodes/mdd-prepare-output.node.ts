@@ -11,7 +11,6 @@ import {
   formatDeliveryGateQualityWarningsFeedback,
   fingerprintPlaceholderBlockers,
   hasUnresolvedAutoRepairableGateWarnings,
-  MAX_MDD_DELIVERY_GATE_ATTEMPTS,
   resolveDeliveryGateFixTargetFromGate,
   shouldContinueDeliveryGateLoop,
 } from "../utils/mdd-delivery-gate-loop.util.js";
@@ -51,9 +50,8 @@ export function createMddPrepareOutputNode(options?: { uiMcpLibraryLabel?: strin
       });
     const attempt = state.deliveryGateAttempt ?? 0;
     const qualityPending = hasUnresolvedAutoRepairableGateWarnings(gate.warnings);
-    const loop =
-      shouldContinueDeliveryGateLoop(gate, attempt) ||
-      (qualityPending && attempt < MAX_MDD_DELIVERY_GATE_ATTEMPTS);
+    // gate.ok=true cierra el pipeline: warnings auto-reparables no re-disparan agentes.
+    const loop = shouldContinueDeliveryGateLoop(gate, attempt);
 
     LOG(
       "gate ok=%s score=%s blockers=%d warnings=%d attempt=%d loop=%s qualityPending=%s",

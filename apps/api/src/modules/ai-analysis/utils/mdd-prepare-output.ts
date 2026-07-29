@@ -32,6 +32,7 @@ import {
   deduplicateMddDraftSections,
   detectCrossConsistencyIssues,
   prepareMddMarkdownForPersist,
+  restoreMddSectionsFromBaselineStrict,
 } from "./mdd-sanitize.js";
 import {
   extractContratosSectionBody,
@@ -130,14 +131,21 @@ export function draftHasSection6Heading(draft: string): boolean {
   return getSection6Or7Range((draft ?? "").trim(), 6) != null;
 }
 
+/** Fuente para restore post-normalize: dedupe antes de comparar (duplicados no deben saltar restore). */
+function resolveSectionRestoreSource(source: string): string {
+  const trimmed = (source ?? "").trim();
+  if (!trimmed) return trimmed;
+  return mddHasDuplicateSectionHeadings(trimmed)
+    ? deduplicateMddDraftSections(trimmed)
+    : trimmed;
+}
+
 /**
  * normalizeMddFormat (deduplicateAndReorderMddSections) puede eliminar §6/§7 recién insertadas.
  * Restaura desde el borrador pre-normalize si desaparecieron.
  */
 function restoreSections6And7AfterNormalize(source: string, normalized: string): string {
-  // No reinyectar desde un borrador con §5/§6/§7 repetidas (evita reintroducir el bucle de duplicación).
-  if (mddHasDuplicateSectionHeadings(source)) return normalized;
-  const sourceRepaired = repairInlineHorizontalRuleSectionBreaks(source);
+  const sourceRepaired = repairInlineHorizontalRuleSectionBreaks(resolveSectionRestoreSource(source));
   let out = normalized;
   for (const section of [6, 7] as const) {
     const srcRange = getSection6Or7Range(sourceRepaired, section);
@@ -151,14 +159,14 @@ function restoreSections6And7AfterNormalize(source: string, normalized: string):
 
 /** Evita que normalizeMddFormat/dedupe dejen §4 en stub tras api_contracts. */
 function restoreSection4AfterNormalize(source: string, normalized: string): string {
-  if (mddHasDuplicateSectionHeadings(source)) return normalized;
-  const srcBody = extractContratosSectionBody(source);
+  const restoreSource = resolveSectionRestoreSource(source);
+  const srcBody = extractContratosSectionBody(restoreSource);
   const normBody = extractContratosSectionBody(normalized);
   if (!srcBody?.trim()) return normalized;
   if (isContratosSectionRegression(srcBody, normBody) && srcBody) {
     return replaceMddSection4Body(normalized, srcBody);
   }
-  if (draftHasPersistableSection4(source) && !draftHasPersistableSection4(normalized)) {
+  if (draftHasPersistableSection4(restoreSource) && !draftHasPersistableSection4(normalized)) {
     return replaceMddSection4Body(normalized, srcBody);
   }
   return normalized;
@@ -171,11 +179,32 @@ function restoreSectionBodyAfterNormalize(
   replaceBody: (draft: string, body: string) => string,
   hasSubstantial: (draft: string) => boolean,
 ): string {
-  if (mddHasDuplicateSectionHeadings(source)) return normalized;
-  const srcBody = extractBody(source);
-  if (!srcBody?.trim() || !hasSubstantial(source)) return normalized;
+  const restoreSource = resolveSectionRestoreSource(source);
+  const srcBody = extractBody(restoreSource);
+  if (!srcBody?.trim() || !hasSubstantial(restoreSource)) return normalized;
   if (hasSubstantial(normalized)) return normalized;
   return replaceBody(normalized, srcBody);
+}
+
+function baselineHasSubstantialCoreSections(draft: string): boolean {
+  return (
+    draftHasSubstantialSection2(draft) ||
+    draftHasSubstantialSection3(draft) ||
+    draftHasPersistableSection4(draft)
+  );
+}
+
+/** Fallback conservador cuando sanitize/dedupe colapsa §2–§4: re-normaliza desde baseline sin pipeline pesado. */
+function applyConservativePrepareFromBaseline(baseline: string): string {
+  const restoreSource = resolveSectionRestoreSource(baseline);
+  const sanitized = replaceContextWhenOnlyMetadata(
+    sanitizeContextKeyValueAndObject(sanitizeContextSection(restoreSource)),
+  );
+  const normalized = restoreCoreSectionsAfterNormalize(
+    restoreSource,
+    normalizeMddFormat(sanitized),
+  );
+  return preserveValidatedSectionsIfSubstantial(baseline, applyPreDeliveryGateFixes(normalized));
 }
 
 function restoreSection2AfterNormalize(source: string, normalized: string): string {
@@ -256,6 +285,9 @@ export async function prepareMddForOutput(
   const resolver = options?.resolver ?? heuristicUiComponentResolver;
   const inputDraftBaseline =
     typeof input === "string" ? input.trim() : (input.mddDraft ?? "").trim();
+  const authoritativeBaseline = deduplicateMddDraftSections(
+    (options?.baselineDraft?.trim() || inputDraftBaseline).trim(),
+  );
   let raw: string;
   if (typeof input === "string") {
     raw = input;
@@ -359,10 +391,34 @@ export async function prepareMddForOutput(
       `[MDD:DeliveryGate] SSOT repair skipped: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-  const preserveBaseline = (options?.baselineDraft?.trim() || inputDraftBaseline || raw).trim();
+  const preserveBaseline = (authoritativeBaseline || inputDraftBaseline || raw).trim();
   const preservedMarkdown = preserveValidatedSectionsIfSubstantial(preserveBaseline, finalMarkdown);
   const tailGuard = guardValidatedSectionsForPersist(preserveBaseline, preservedMarkdown, "prepareMddForOutput");
-  const gatedMarkdown = tailGuard.markdown;
+  let gatedMarkdown = tailGuard.markdown;
+  if (tailGuard.failedSections.length > 0) {
+    gatedMarkdown = restoreMddSectionsFromBaselineStrict(
+      gatedMarkdown,
+      preserveBaseline,
+      tailGuard.failedSections,
+    );
+    const retryGuard = guardValidatedSectionsForPersist(
+      preserveBaseline,
+      gatedMarkdown,
+      "prepareMddForOutput:strict-restore",
+    );
+    gatedMarkdown = retryGuard.markdown;
+    if (
+      retryGuard.failedSections.length > 0 &&
+      preserveBaseline.length > 0 &&
+      gatedMarkdown.length < preserveBaseline.length * 0.75 &&
+      baselineHasSubstantialCoreSections(preserveBaseline)
+    ) {
+      console.warn(
+        `[MDD:PrepareOutput] regresión masiva tras sanitize — conservando baseline sustancial (§${retryGuard.failedSections.join("/§")})`,
+      );
+      gatedMarkdown = applyConservativePrepareFromBaseline(preserveBaseline);
+    }
+  }
   const deliveryGate = validateMddForDelivery(gatedMarkdown, {
     brdMarkdown: options?.brdMarkdown,
     dbgaMarkdown: options?.dbgaMarkdown,
