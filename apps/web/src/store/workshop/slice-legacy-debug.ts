@@ -77,7 +77,9 @@ export const createLegacyDebugSlice: StateCreator<
               ? status.gates
               : (s.generationStatus?.gates ?? {}),
           mddUpstreamSync: status.mddUpstreamSync ?? s.generationStatus?.mddUpstreamSync ?? null,
-          sddGraph: status.sddGraph ?? s.generationStatus?.sddGraph ?? null,
+          sddGraph: status.busy
+            ? (status.sddGraph ?? s.generationStatus?.sddGraph ?? null)
+            : (status.sddGraph ?? null),
         },
       }));
       const mddJob = primaryMddJob(status);

@@ -244,7 +244,6 @@ export function WorkshopMetricsColumnInner({
   const loading = useWorkshopStore((s) => s.loading);
   const loadingReason = useWorkshopStore((s) => s.loadingReason);
   const generationStatus = useWorkshopStore((s) => s.generationStatus);
-  const sddGraph = generationStatus?.sddGraph ?? null;
   const mddReviewing = useWorkshopStore((s) => s.mddReviewing);
   const cascadeRunning = loading && (loadingReason === "deliverables-cascade" || loadingReason === "legacy-deliverables");
   const repairSddRunning = loading && loadingReason === "repair-sdd-gaps";
@@ -304,6 +303,7 @@ export function WorkshopMetricsColumnInner({
   const setWorkshopActiveDocPanel = useWorkshopStore((s) => s.setWorkshopActiveDocPanel);
 
   const mddEmpty = !((mddContent ?? "").trim() || (project?.mddContent ?? "").trim());
+  const sddGraph = mddEmpty ? null : (generationStatus?.sddGraph ?? null);
   const precisionScore = mddEmpty ? 0 : (liveMetrics?.precision ?? project?.precisionScore ?? 0);
   const infraContent = infraContentField ?? project?.infraContent ?? null;
   const costDisplayFallback = calculateCostFromMdd(mddContent, {
@@ -377,6 +377,7 @@ export function WorkshopMetricsColumnInner({
     liveMetrics?.status != null &&
     effectiveStatus !== liveMetrics.status;
   const precisionFormulaBreakdown = useMemo(() => {
+    if (mddEmpty) return null;
     const docsScore = liveMetrics?.completeness?.overall ?? documentCompleteness?.overall;
     const traceScore = liveMetrics?.consistencyScore ?? consistencyScore;
     const mddScore = liveMetrics?.mddQualityScore;
@@ -386,7 +387,7 @@ export function WorkshopMetricsColumnInner({
       trace: traceScore,
       mdd: mddScore,
     };
-  }, [liveMetrics, documentCompleteness, consistencyScore]);
+  }, [mddEmpty, liveMetrics, documentCompleteness, consistencyScore]);
   const semaphoreConfig =
     effectiveStatus === "red"
       ? {
@@ -516,7 +517,7 @@ export function WorkshopMetricsColumnInner({
                 </p>
                 <p className="text-[11px] text-[color-mix(in_oklch,var(--muted-foreground)_96%,var(--foreground))]">
                   Precisión {precisionScore}%
-                  {deliveryGate ? ` · Gate ${deliveryGate.score}/100` : ""}
+                  {!mddEmpty && deliveryGate ? ` · Gate ${deliveryGate.score}/100` : ""}
                 </p>
                 {precisionFormulaBreakdown ? (
                   <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--muted-foreground)_92%,var(--foreground))]">
@@ -539,9 +540,13 @@ export function WorkshopMetricsColumnInner({
                   <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--destructive)_82%,var(--foreground))]">
                     Bloqueado por gate de entrega
                   </p>
-                ) : sddAuditSummary.derivativesPending && deliveryGateOk ? (
+                ) : !mddEmpty && sddAuditSummary.derivativesPending && deliveryGateOk ? (
                   <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--warning)_82%,var(--foreground))]">
                     MDD OK; genera entregables SDD (Docs bajo porque derivados vacíos)
+                  </p>
+                ) : mddEmpty ? (
+                  <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--muted-foreground)_92%,var(--foreground))]">
+                    Sin MDD — genera el documento para evaluar coherencia §3/§4 y desbloquear la cascada.
                   </p>
                 ) : effectiveStatus === "red" && precisionScore < SEMAPHORE_PRECISION_RED_MAX ? (
                   <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--destructive)_82%,var(--foreground))]">
@@ -584,7 +589,7 @@ export function WorkshopMetricsColumnInner({
                 ) : null}
               </div>
             ) : null}
-            {deliveryGate && !deliveryGate.ok ? (
+            {deliveryGate && !mddEmpty && !deliveryGate.ok ? (
               <div
                 role="status"
                 className={cn(
