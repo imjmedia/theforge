@@ -4,9 +4,22 @@ import type { Job, Queue } from "bullmq";
 export const BULLMQ_WORKER_RESTARTED_REASON =
   "Proceso API reiniciado; vuelve a generar el MDD";
 
+/** Worker recibió SIGTERM (redeploy); el job activo debe reencolarse manualmente. */
+export const BULLMQ_WORKER_SHUTDOWN_REASON =
+  "Worker detenido (redeploy o reinicio); vuelve a generar el MDD";
+
+/** Job activo sustituido por uno nuevo del mismo proyecto (cancel + relanzar). */
+export const BULLMQ_JOB_PREEMPTED_REASON = "Reemplazado por un job MDD más reciente";
+
 /** Mensaje estándar para jobs huérfanos de la cola de entregables (cascada, spec, etc.). */
 export const BULLMQ_DELIVERABLES_ORPHAN_REASON =
   "Cola de entregables interrumpida (reinicio o caída del worker). Recarga el proyecto; si los documentos ya están, no regeneres la cascada.";
+
+/** BullMQ LockManager cuando el worker perdió el lock (redeploy, cancel, otro worker). */
+export function isBullMqLockRenewalError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /could not renew lock/i.test(msg);
+}
 
 type RecoverLogger = {
   log: (message: string) => void;
