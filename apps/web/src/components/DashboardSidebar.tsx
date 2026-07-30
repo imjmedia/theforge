@@ -589,7 +589,7 @@ export function DashboardSidebar({
         "relative flex w-full shrink-0 flex-col lg:z-40 lg:w-auto lg:shrink-0",
         inWorkshop
           ? "lg:h-full lg:min-h-0"
-          : "h-[100dvh] min-h-[100dvh] max-h-[100dvh] bg-[var(--sidebar)] lg:overflow-hidden",
+          : "lg:h-[100dvh] lg:min-h-[100dvh] lg:max-h-[100dvh] bg-[var(--sidebar)] lg:overflow-hidden",
       )}
     >
       <header
