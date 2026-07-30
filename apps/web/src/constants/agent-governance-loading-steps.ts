@@ -5,7 +5,7 @@ export const AGENT_GOVERNANCE_GENERATION_STEPS = [
   "Detectar artefactos / analizar MDD",
   "Generar gobernanza (LLM)",
   "Reconciliar scaffold",
-  "Exportar entregables SDD",
+  "Persistir scaffold en proyecto",
 ] as const;
 
 export function createAgentGovernanceProgressItems(): AgentProgressItem[] {
