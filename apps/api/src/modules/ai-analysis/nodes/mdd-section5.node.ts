@@ -158,7 +158,11 @@ export function createMddSection5Node(llm: BaseChatModel) {
       const sum = getMddDraftSummary(merged);
       LOG("ok nueva §5 len=%s totalDraftLen=%s section2=%s", cleaned.length, sum.length, sum.section2);
       logMddNodeOutput("Section5", merged);
-      return { mddDraft: merged, section5FormatSkipped: false };
+      return {
+        mddDraft: merged,
+        section5FormatSkipped: false,
+        section5MddDraftSnapshot: merged,
+      };
     } catch (err) {
       LOG("error: %s", err instanceof Error ? err.message : String(err));
       // No tirar el draft — preservar el estado y dejar que el loop lo marque.

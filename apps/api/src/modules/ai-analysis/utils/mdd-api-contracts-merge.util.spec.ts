@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { mergeApiContractsChunkBodies } from "./mdd-api-contracts-chunk.util.js";
-import { mergeApiContractsBodyIntoDraft } from "./mdd-api-contracts-merge.util.js";
-import { extractContratosSectionBody, extractSection3Body, replaceMddSection4Body } from "./mdd-sanitize.js";
+import {
+  mergeApiContractsBodyIntoDraft,
+  repairMergeBaselineBeforeApiContractsMerge,
+} from "./mdd-api-contracts-merge.util.js";
+import { extractContratosSectionBody, extractSection3Body, extractSection5Body, replaceMddSection4Body } from "./mdd-sanitize.js";
 import { stripEmbeddedTailSectionsFromContratosBody } from "./mdd-sanitize/contratos-format.js";
 import { draftHasSubstantialSection4, draftHasPersistableSection4 } from "./mdd-section-preserve.util.js";
 
@@ -87,5 +90,81 @@ ${"Infra. ".repeat(40)}`;
     const s4 = extractContratosSectionBody(out) ?? "";
     assert.match(s4, /GET \/api\/v1\/health/);
     assert.doesNotMatch(s4, /^##\s+5\./m);
+  });
+
+  it("repara JSON pegado con arrays vacíos (keys: [,) en merge §4", () => {
+    const baseline = `# MDD
+## 1. Contexto
+Alcance.
+## 2. Arquitectura y Stack
+Stack.
+## 3. Modelo de Datos
+\`\`\`sql
+CREATE TABLE keys (id UUID PRIMARY KEY);
+\`\`\`
+## 4. Contratos de API
+(Pendiente)
+## 5. Lógica y Edge Cases
+(Pendiente)`;
+    const gluedChunk =
+      "### GET /api/v1/keys\n\n```json\n{\"keys\": [, \"meta\": {}}\n```\n\n" +
+      "### POST /api/v1/keys\n\n```json\n{\"id\":\"1\"}\n```\n";
+    const out = mergeApiContractsBodyIntoDraft(baseline, gluedChunk);
+    const s4 = extractContratosSectionBody(out) ?? "";
+    assert.match(s4, /GET \/api\/v1\/keys/);
+    assert.doesNotMatch(s4, /"keys":\s*\[\s*,/);
+    assert.equal((s4.match(/```/g) ?? []).length % 2, 0);
+  });
+
+  it("repara fences ```json anidados en bloques detallados de endpoint", () => {
+    const baseline = `# MDD
+## 1. Contexto
+Alcance del producto con catálogo de items y operaciones CRUD documentadas.
+## 2. Arquitectura y Stack
+Stack NestJS con PostgreSQL y API REST versionada.
+## 3. Modelo de Datos
+\`\`\`sql
+CREATE TABLE items (id UUID PRIMARY KEY);
+\`\`\`
+## 4. Contratos de API
+(Pendiente)
+## 5. Lógica y Edge Cases
+(Pendiente)`;
+    const nestedFence =
+      "### POST /api/v1/items\n\nDescripción del endpoint de creación de items.\n\n" +
+      "```json\n```json\n{\"items\":[],\"meta\":{\"page\":1}}\n```\n```\n\n" +
+      "### GET /api/v1/items\n\n```json\n{\"items\":[]}\n```\n";
+    const out = mergeApiContractsBodyIntoDraft(baseline, nestedFence);
+    const s4 = extractContratosSectionBody(out) ?? "";
+    assert.match(s4, /POST \/api\/v1\/items/);
+    assert.doesNotMatch(s4, /```json\s*\n```json/);
+    assert.equal((s4.match(/```/g) ?? []).length % 2, 0);
+  });
+
+  it("repairMergeBaselineBeforeApiContractsMerge cierra fence §4 abierto antes de snapshot data_model", () => {
+    const openFence = `# MDD
+## 1. Contexto
+Alcance.
+## 2. Arquitectura y Stack
+Stack.
+## 3. Modelo de Datos
+\`\`\`sql
+CREATE TABLE items (id UUID PRIMARY KEY);
+\`\`\`
+## 4. Contratos de API
+### POST /api/v1/items
+\`\`\`json
+{"id":"1"}
+## 5. Lógica y Edge Cases
+Reglas BDD detalladas del dominio con idempotencia y reintentos.
+## 6. Seguridad
+JWT.
+## 7. Infraestructura
+Docker.`;
+    const repaired = repairMergeBaselineBeforeApiContractsMerge(openFence);
+    assert.ok(String(extractSection5Body(repaired)).includes("Reglas BDD"));
+    assert.equal((repaired.match(/```/g) ?? []).length % 2, 0);
+    const merged = mergeApiContractsBodyIntoDraft(repaired, "### GET /api/v1/health\n\n```json\n{\"ok\":true}\n```");
+    assert.ok(String(extractSection5Body(merged)).includes("Reglas BDD"));
   });
 });

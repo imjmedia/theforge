@@ -91,6 +91,8 @@ export const mddStateSchema = z.object({
   dataModelArchitectMddDraftSnapshot: z.string().optional(),
   /** Snapshot del borrador tras api_contracts (pipeline HIGH): ancla §4 frente a format/SSOT. */
   apiContractsArchitectMddDraftSnapshot: z.string().optional(),
+  /** Snapshot del borrador tras section5: ancla §5 frente a format/SSOT/tail. */
+  section5MddDraftSnapshot: z.string().optional(),
   /** Snapshot tras post_critic_parallel con §6 sustancial. */
   securityArchitectMddDraftSnapshot: z.string().optional(),
   /** Snapshot tras post_critic_parallel con §7 sustancial. */
@@ -222,6 +224,7 @@ export const defaultMDDState: MDDState = {
   stackArchitectMddDraftSnapshot: undefined,
   dataModelArchitectMddDraftSnapshot: undefined,
   apiContractsArchitectMddDraftSnapshot: undefined,
+  section5MddDraftSnapshot: undefined,
   securityArchitectMddDraftSnapshot: undefined,
   integrationArchitectMddDraftSnapshot: undefined,
   securitySectionMd: undefined,

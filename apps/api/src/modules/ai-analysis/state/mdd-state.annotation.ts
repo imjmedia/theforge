@@ -70,6 +70,8 @@ export const MDDStateAnnotation = Annotation.Root({
   dataModelArchitectMddDraftSnapshot: Annotation<string | undefined>(),
   /** Borrador post-api_contracts (§4 anclada) para restaurar tras format/SSOT/tail. */
   apiContractsArchitectMddDraftSnapshot: Annotation<string | undefined>(),
+  /** Borrador post-section5 (§5 anclada) para restaurar tras format/SSOT/tail. */
+  section5MddDraftSnapshot: Annotation<string | undefined>(),
   /** Borrador post post_critic_parallel con §6 sustancial — ancla cola frente a format/dedupe/gate. */
   securityArchitectMddDraftSnapshot: Annotation<string | undefined>(),
   /** Borrador post post_critic_parallel con §7 sustancial — ancla cola frente a format/dedupe/gate. */

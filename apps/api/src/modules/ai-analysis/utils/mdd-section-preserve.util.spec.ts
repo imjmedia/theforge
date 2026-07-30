@@ -17,6 +17,8 @@ import {
   preserveSection3IfSubstantial,
   preserveSection4IfSubstantial,
   preserveSection5IfSubstantial,
+  preserveSection5FromSection5Snapshot,
+  isSection5SectionRegression,
   preserveSection6IfSubstantial,
   preserveSection7IfSubstantial,
   preserveSection6FromSecuritySnapshot,
@@ -234,6 +236,23 @@ describe("preserveSection5IfSubstantial", () => {
     const out = preserveSection5IfSubstantial(stubThenGood, wiped);
     assert.ok(out.includes("JWT tras credenciales"));
     assert.equal(draftHasSubstantialSection5(out), true);
+  });
+
+  it("restaura §5 por regresión aunque baseline >3× current sustancial", () => {
+    const richS5 = `${"Regla BDD detallada con edge cases del dominio KMS. ".repeat(400)}`;
+    const mediumS5 = `${"Regla corta pero sustancial para el gate. ".repeat(12)}`;
+    const rich = BASE.replace(S5_BODY, richS5);
+    const shrunk = rich.replace(richS5, mediumS5);
+    assert.ok(isSection5SectionRegression(richS5, mediumS5));
+    assert.ok(richS5.length > mediumS5.length * 3);
+    const out = preserveSection5IfSubstantial(rich, shrunk);
+    assert.ok(out.includes("Regla BDD detallada"));
+  });
+
+  it("preserveSection5FromSection5Snapshot restaura tras wipe", () => {
+    const wiped = BASE.replace(S5_BODY, "(Pendiente)");
+    const out = preserveSection5FromSection5Snapshot(BASE, wiped);
+    assert.ok(out.includes("JWT tras credenciales"));
   });
 });
 

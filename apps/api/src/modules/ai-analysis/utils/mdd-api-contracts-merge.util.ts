@@ -10,6 +10,7 @@ import {
   CONTRATOS_HAS_ENDPOINTS,
   extractContratosSectionBody,
   normalizeGluedSection4HeadingInDraft,
+  repairContratosJsonGlueIssues,
   stripEmbeddedTailSectionsFromContratosBody,
 } from "./mdd-sanitize/contratos-format.js";
 import { closeUnclosedCodeFencesInDraft } from "./mdd-sanitize/persist-format.util.js";
@@ -28,6 +29,10 @@ export function repairMergeBaselineBeforeApiContractsMerge(baseline: string): st
   out = closeUnclosedCodeFencesInDraft(out);
   out = repairSection3SqlFenceBeforeJsonBlock(out);
   out = normalizeGluedSection4HeadingInDraft(out);
+  const s4Body = extractContratosSectionBody(out);
+  if (s4Body?.trim()) {
+    out = replaceMddSection4Body(out, repairContratosJsonGlueIssues(s4Body));
+  }
   return out;
 }
 
@@ -110,7 +115,10 @@ export function mergeApiContractsBodyIntoDraft(baseline: string, mergedSection4:
   let draft = base;
   if (fragmentBody.length >= 80 && CONTRATOS_HAS_ENDPOINTS.test(fragmentBody)) {
     draft = normalizeGluedSection4HeadingInDraft(
-      replaceMddSection4Body(base, stripEmbeddedTailSectionsFromContratosBody(fragmentBody)),
+      replaceMddSection4Body(
+        base,
+        stripEmbeddedTailSectionsFromContratosBody(repairContratosJsonGlueIssues(fragmentBody)),
+      ),
     );
   }
 
@@ -120,7 +128,10 @@ export function mergeApiContractsBodyIntoDraft(baseline: string, mergedSection4:
 
   if (!draftHasPersistableSection4(draft) && fragmentBody.length >= 80) {
     draft = normalizeGluedSection4HeadingInDraft(
-      insertMddSection4Block(base, stripEmbeddedTailSectionsFromContratosBody(fragmentBody)),
+      insertMddSection4Block(
+        base,
+        stripEmbeddedTailSectionsFromContratosBody(repairContratosJsonGlueIssues(fragmentBody)),
+      ),
     );
   }
 
@@ -128,5 +139,5 @@ export function mergeApiContractsBodyIntoDraft(baseline: string, mergedSection4:
     draft = trimAbsorbedContratosTailFromSection3(draft);
   }
 
-  return draft;
+  return closeUnclosedFencesBeforeCanonicalH2(draft);
 }

@@ -5,6 +5,7 @@ import { guardValidatedSectionsForPersist } from "./mdd-section-preserve.util.js
 import { mddHasDuplicateSectionHeadings } from "./mdd-sanitize.js";
 import { getSection6Or7Range, replaceSection6Or7InDraft, seguridadItemsToSection6Markdown } from "./mdd-sanitize.js";
 import { mddSeguridadItemSchema } from "../state/mdd-structured.schema.js";
+import { extractSection3Body } from "./mdd-sanitize/section-merge.js";
 
 const FULL_MDD_PREFIX = `# Master Design Document
 
@@ -162,6 +163,45 @@ Las credenciales de servicio y secretos de aplicación se almacenan en un almac�
     assert.ok(previewOut.includes("Gestión de Secretos"));
     assert.strictEqual(mddHasDuplicateSectionHeadings(previewOut), false);
     assert.ok(fullOut.includes("Gestión de Secretos"));
+  });
+
+  it("aplica platformStripped del SSOT repair al markdown final", async () => {
+    const draft =
+      `# Master Design Document
+
+## 1. Contexto
+
+KMS interno: claves, secretos, certificados. Sin chat ni MCP.
+
+## 2. Arquitectura y Stack
+
+NestJS con PostgreSQL.
+
+## 3. Modelo de Datos
+
+\`\`\`sql
+CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);
+CREATE TABLE mcp_plugins (id UUID PRIMARY KEY);
+CREATE TABLE roles (id UUID PRIMARY KEY, name TEXT NOT NULL);
+\`\`\`
+
+## 4. Contratos de API
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | /auth/login | Inicio de sesión |
+
+## 5. Lógica y Edge Cases
+
+Dado un usuario autenticado cuando solicita recurso entonces se valida ownership.
+
+` + EXISTING_SECTION6;
+    const brd = "KMS interno: claves, secretos, certificados. Sin chat ni MCP.";
+    const out = await prepareMddForOutput(
+      { mddDraft: draft },
+      { formatForPersist: false, brdMarkdown: brd, dbgaMarkdown: brd },
+    );
+    assert.doesNotMatch(extractSection3Body(out) ?? "", /CREATE TABLE mcp_plugins/i);
   });
 
   it("conserva §2–§4 sustanciales tras duplicados §7/UI aunque normalize colapse el cuerpo", async () => {

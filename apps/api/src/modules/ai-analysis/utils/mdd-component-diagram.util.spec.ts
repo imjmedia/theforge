@@ -6,6 +6,8 @@ import {
   injectProposedComponentDiagramIntoSection2,
   parseGreenfieldMddSignals,
   proposedComponentDiagramIsGeneric,
+  resolveBackendFromStackTable,
+  section2ComponentDiagramBackendMismatch,
 } from "./mdd-component-diagram.util.js";
 
 const SAMPLE_MDD = `# Master Design Document
@@ -259,6 +261,69 @@ x
 `;
     const signals = parseGreenfieldMddSignals(mdd);
     assert.equal(signals?.cacheOrQueue, "RabbitMQ");
+  });
+
+  it("resolveBackendFromStackTable prioriza fila Backend sobre prosa NestJS", () => {
+    const section2 = `| Componente | Tecnología |
+|:-----------|:-----------|
+| Backend | Go 1.22 |
+| Base de datos | PostgreSQL |
+
+NestJS mencionado en otro contexto histórico.`;
+    assert.equal(resolveBackendFromStackTable(section2), "Go");
+    const signals = parseGreenfieldMddSignals(
+      `# MDD\n## 2. Arquitectura y Stack\n${section2}\n## 3. Modelo de Datos\n\`\`\`sql\nCREATE TABLE users (id UUID PRIMARY KEY);\n\`\`\`\n## 4. Contratos de API\n| GET | /health | ok |\n## 5. Lógica\nx\n## 6. Seguridad\nx\n## 7. Infraestructura\nx`,
+    );
+    assert.equal(signals?.backend, "Go");
+  });
+
+  it("regenera diagrama cuando backend del diagrama contradice tabla §2", () => {
+    const mdd = `# MDD
+
+## 2. Arquitectura y Stack
+
+| Componente | Tecnología |
+|:-----------|:-----------|
+| Backend | Go |
+
+### 2.6 Diagrama de componentes
+
+\`\`\`mermaid
+graph TD
+  subgraph Microservicios
+    AUTH[Auth Service NestJS]
+    KMS[Key Service]
+  end
+  GW[Kong Gateway] --> AUTH
+\`\`\`
+
+## 3. Modelo de Datos
+
+\`\`\`sql
+CREATE TABLE users (id UUID PRIMARY KEY);
+\`\`\`
+
+## 4. Contratos de API
+
+| GET | /api/v1/health | Health |
+
+## 5. Lógica
+
+x
+
+## 6. Seguridad
+
+x
+
+## 7. Infraestructura
+
+x
+`;
+    const section2 = mdd.match(/^##\s*2\.[\s\S]*?(?=\n##\s*3\.)/im)?.[0] ?? "";
+    assert.ok(section2ComponentDiagramBackendMismatch(section2));
+    const out = injectProposedComponentDiagramIntoSection2(mdd);
+    assert.match(out, /### Diagrama de componentes propuesto/);
+    assert.match(out, /Go/);
   });
 
   it("no inyecta diagrama propuesto si §2 ya tiene diagrama de microservicios", () => {

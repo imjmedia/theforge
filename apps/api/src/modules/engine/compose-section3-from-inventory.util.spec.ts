@@ -23,6 +23,32 @@ Registro de peticiones no cumplidas.
 `;
 
 describe("compose-section3-from-inventory", () => {
+  it("no inyecta tablas plataforma desde inventario en dominio KMS", () => {
+    const brd = `
+## 3. Capacidades
+### 3.1 Gestión de claves
+Rotación de claves y secretos. Sin chat ni MCP.
+`;
+    const inv = buildDomainInventory({ brdMarkdown: brd });
+    const mdd = `# MDD
+## 1. Contexto
+KMS interno. Sin chat ni MCP.
+## 3. Modelo de Datos
+\`\`\`sql
+CREATE TABLE users (id UUID PRIMARY KEY);
+CREATE TABLE keys (id UUID PRIMARY KEY);
+\`\`\`
+`;
+    const missing = missingDomainEntities(inv, mdd);
+    assert.ok(!missing.includes("channels"));
+    assert.ok(!missing.includes("llm_configs"));
+    assert.ok(!missing.includes("mcp_plugins"));
+    assert.ok(!missing.includes("requests"));
+    const { injected } = mergeDomainTablesIntoMdd(mdd, inv);
+    assert.ok(!injected.includes("channels"));
+    assert.ok(!injected.includes("llm_configs"));
+  });
+
   it("detects missing domain entities vs auth-only MDD", () => {
     const inv = buildDomainInventory({ brdMarkdown: BRD });
     const mdd = `
@@ -58,6 +84,7 @@ CREATE TABLE users (id UUID PRIMARY KEY);
 CREATE TABLE watchlists (id UUID PRIMARY KEY);
 CREATE TABLE operations (id UUID PRIMARY KEY);
 CREATE TABLE users (id UUID PRIMARY KEY);
+CREATE TABLE credentials (id UUID PRIMARY KEY);
 `;
     const mdd = `# MDD
 ## 3. Modelo de Datos

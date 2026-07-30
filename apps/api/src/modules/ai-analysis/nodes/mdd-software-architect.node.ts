@@ -38,6 +38,7 @@ import {
   deduplicateMddDraftSections,
 } from "../utils/mdd-sanitize.js";
 import { repairMergeBaselineBeforeApiContractsMerge } from "../utils/mdd-api-contracts-merge.util.js";
+import { stripUnjustifiedPlatformTablesFromMdd } from "../../engine/mdd-platform-table-strip.util.js";
 import {
   architectScopePromptPrefix,
   architectScopeSectionNumber,
@@ -1146,6 +1147,21 @@ export function createMddSoftwareArchitectNode(
       }
       const preDedupeStackSnapshot =
         scope === "stack" && draftHasSubstantialSection2(mddDraft) ? mddDraft : undefined;
+      if (scope === "data_model" && draftHasSubstantialSection3(mddDraft)) {
+        const repaired = repairMergeBaselineBeforeApiContractsMerge(mddDraft);
+        if (repaired !== mddDraft) {
+          LOG("repaired §3/§4 fences post-data_model (len=%s→%s)", mddDraft.length, repaired.length);
+          mddDraft = repaired;
+        }
+        const stripped = stripUnjustifiedPlatformTablesFromMdd(mddDraft, {
+          brdMarkdown: state.brdContent,
+          dbgaMarkdown: state.dbgaContent,
+        });
+        if (stripped.stripped.length > 0) {
+          LOG("stripped platform tables post-data_model: %s", stripped.stripped.join(","));
+          mddDraft = stripped.markdown;
+        }
+      }
       mddDraft = deduplicateMddDraftSections(mddDraft);
       if (scope === "stack") {
         const snapshotForRestore =

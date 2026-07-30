@@ -66,7 +66,7 @@ export const SECTION5_REGRESSION_LENGTH_RATIO = 0.75;
 const SECTION5_INFLATED_DUP_RATIO = 3;
 
 /** Extrae §5 para preserve: tolera baselineDup salvo hinchamiento extremo entre candidatos. */
-function resolveSection5PreserveBaselineBody(baseline: string): string | null {
+export function resolveSection5PreserveBaselineBody(baseline: string): string | null {
   const trimmed = (baseline ?? "").trim();
   if (!trimmed) return null;
   if (!mddHasDuplicateSectionHeadings(trimmed)) {
@@ -125,6 +125,8 @@ export type TailSectionSnapshotSource = {
   stackArchitectMddDraftSnapshot?: string | null;
   dataModelArchitectMddDraftSnapshot?: string | null;
   apiContractsArchitectMddDraftSnapshot?: string | null;
+  /** Snapshot post-section5 (§5 anclada) para restaurar tras format/SSOT/tail. */
+  section5MddDraftSnapshot?: string | null;
 };
 
 function sectionMdToBaselineDraft(sectionMd: string, sectionNum: 6 | 7): string {
@@ -291,6 +293,7 @@ export function preserveValidatedSectionsFromSnapshots(
   out = preserveSection2FromStackSnapshot(source.stackArchitectMddDraftSnapshot, out);
   out = preserveSection3FromDataModelSnapshot(source.dataModelArchitectMddDraftSnapshot, out);
   out = preserveSection4FromApiContractsSnapshot(source.apiContractsArchitectMddDraftSnapshot, out);
+  out = preserveSection5FromSection5Snapshot(source.section5MddDraftSnapshot, out);
   return preserveTailSectionsFromSnapshots(source, out);
 }
 
@@ -561,6 +564,20 @@ function preserveSectionBodyIfSubstantial(
   }
 
   if (curSubstantial && baselineLen > curLen * 3) {
+    if (
+      isSection5 &&
+      prevBody &&
+      curBody &&
+      isSection5SectionRegression(prevBody, curBody)
+    ) {
+      const restored = replaceBody(current, prevBody);
+      if (restored !== current) {
+        console.warn(
+          `[MDD:SectionPreserve] §5 restaurada por regresión (bypass >3× skip) (${curLen}→${baselineLen} chars)`,
+        );
+      }
+      return restored;
+    }
     if (isSection5) logSection5PreserveSkip("current sustancial pero baseline >3× current", skipCtx);
     return current;
   }
@@ -644,6 +661,16 @@ export function preserveSection3FromDataModelSnapshot(
     );
   }
   return restored;
+}
+
+/** Restaura §5 desde el snapshot del nodo section5 si format/SSOT la vació. */
+export function preserveSection5FromSection5Snapshot(
+  section5Snapshot: string | null | undefined,
+  currentDraft: string,
+): string {
+  const snap = (section5Snapshot ?? "").trim();
+  if (!snap || !draftHasSubstantialSection5(snap)) return currentDraft;
+  return preserveSection5IfSubstantial(snap, currentDraft);
 }
 
 /** Restaura §4 desde el snapshot de api_contracts si format/SSOT la vació (pipeline HIGH scoped). */

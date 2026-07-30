@@ -14,7 +14,7 @@ import { getInternalDirectivesContext } from "../utils/mdd-mesh-topology.js";
 import { auditorConstitutionRigorAppendix } from "../utils/mdd-complexity-rigor.js";
 import { domainInventoryPromptBlock } from "../utils/mdd-domain-prompt.util.js";
 import { extractLlmText, extractLlmToolCalls, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
-import { resolveMddAuditorHardTimeoutMs } from "../utils/mdd-llm-timeout.util.js";
+import { resolveMddAuditorNodeBudgetMs, resolveMddAuditorPerInvokeHardTimeoutMs } from "../utils/mdd-llm-timeout.util.js";
 import {
   buildAuditorFeedbackFromGaps,
   computeDeterministicAuditorScore,
@@ -175,10 +175,11 @@ export function createMddAuditorNode(
     );
 
     try {
-      const auditorHardTimeoutMs = resolveMddAuditorHardTimeoutMs();
+      const auditorPerInvokeMs = resolveMddAuditorPerInvokeHardTimeoutMs();
+      const auditorNodeBudgetMs = resolveMddAuditorNodeBudgetMs();
       const auditorStartedAt = Date.now();
-      const auditorRemainingMs = () =>
-        Math.max(0, auditorHardTimeoutMs - (Date.now() - auditorStartedAt));
+      const auditorRemainingNodeMs = () =>
+        Math.max(0, auditorNodeBudgetMs - (Date.now() - auditorStartedAt));
 
       const draftForLlm = truncateDraftForAuditorLlm(draft);
       let prompt =
@@ -205,11 +206,12 @@ export function createMddAuditorNode(
       const MAX_EMPTY_FINAL_ATTEMPTS = 2;
 
       while (loopCount < MAX_TOOL_LOOPS) {
-        const remainingMs = auditorRemainingMs();
-        if (remainingMs <= 0) {
-          LOG("hard timeout %sms — abortando tool-loop", auditorHardTimeoutMs);
+        const nodeRemainingMs = auditorRemainingNodeMs();
+        if (nodeRemainingMs <= 0) {
+          LOG("node budget %sms agotado — abortando tool-loop", auditorNodeBudgetMs);
           break;
         }
+        const invokeHardTimeoutMs = Math.min(auditorPerInvokeMs, nodeRemainingMs);
         const isFinalIteration = loopCount === MAX_TOOL_LOOPS - 1;
         const useRetry =
           isFinalIteration ||
@@ -219,7 +221,7 @@ export function createMddAuditorNode(
           maxAttempts: useRetry ? (isFinalIteration ? 3 : 2) : 1,
           acceptToolCallsWithoutContent: true,
           isResponseValid: (text) => text.trim().length > 0,
-          hardTimeoutMs: remainingMs,
+          hardTimeoutMs: invokeHardTimeoutMs,
         });
         if (!response) {
           LOG("tool-loop LLM sin respuesta tras reintentos (iter=%s); saliendo del loop", loopCount);

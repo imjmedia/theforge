@@ -77,6 +77,7 @@ function repairJsonCodeBlockInner(inner: string): string {
       .replace(/```/g, "");
   }
   cleaned = cleaned.trim();
+  cleaned = repairGluedEmptyJsonArrays(cleaned);
   if (!cleaned) return inner.trim();
   try {
     const parsed = fixSingleNestedArrayWrappers(JSON.parse(cleaned) as unknown);
@@ -84,6 +85,34 @@ function repairJsonCodeBlockInner(inner: string): string {
   } catch {
     return cleaned;
   }
+}
+
+/**
+ * Repara arrays JSON vacíos pegados por el LLM al mergear chunks (p. ej. `"keys": [,`).
+ * Idempotente sobre `[]` ya válidos.
+ */
+export function repairGluedEmptyJsonArrays(text: string): string {
+  if (!text?.trim()) return text ?? "";
+  let out = text;
+  let prev = "";
+  while (prev !== out) {
+    prev = out;
+    out = out
+      .replace(/:\s*\[\s*,/g, ": [],")
+      .replace(/:\s*\[\s*,\s*\]/g, ": []")
+      .replace(/:\s*\[\s*,\s*\n/g, ": []\n")
+      .replace(/,\s*\[\s*,/g, ", [],")
+      .replace(/\[\s*,\s*\]/g, "[]");
+  }
+  return out;
+}
+
+/**
+ * Repara fences ```json anidados y arrays vacíos pegados en el cuerpo de §4.
+ */
+export function repairContratosJsonGlueIssues(body: string): string {
+  if (!body?.trim()) return body ?? "";
+  return repairNestedJsonFencesInDraft(repairGluedEmptyJsonArrays(body));
 }
 
 /**
@@ -722,6 +751,7 @@ export function repairStrayFencesInContratosTable(body: string): string {
  */
 export function formatContratosBody(body: string): string {
   let normalized = stripLeadingContratosPlaceholder(body);
+  normalized = repairContratosJsonGlueIssues(normalized);
   normalized = repairStrayFencesInContratosTable(normalized);
   normalized = splitHeaderAndSeparatorOnSameLine(normalized);
   normalized = deduplicateTableSeparators(normalized);

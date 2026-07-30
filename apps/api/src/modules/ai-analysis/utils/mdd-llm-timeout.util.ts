@@ -38,6 +38,16 @@ export function resolveMddAuditorHardTimeoutMs(): number {
   return readPositiveIntEnv("LANGGRAPH_MDD_AUDITOR_HARD_TIMEOUT_MS", 180_000);
 }
 
+/** Tope duro por invocación LLM dentro del Auditor (cada tool-loop). */
+export function resolveMddAuditorPerInvokeHardTimeoutMs(): number {
+  return readPositiveIntEnv("LANGGRAPH_MDD_AUDITOR_PER_INVOKE_HARD_TIMEOUT_MS", 120_000);
+}
+
+/** Presupuesto wall-clock total del nodo Auditor (varias invocaciones + tools). */
+export function resolveMddAuditorNodeBudgetMs(): number {
+  return readPositiveIntEnv("LANGGRAPH_MDD_AUDITOR_NODE_BUDGET_MS", 360_000);
+}
+
 /** `true` salvo que `LANGGRAPH_LLM_STREAMING` valga `0`/`false`/`off`/`no`. */
 export function isLlmStreamingEnabled(): boolean {
   const raw = process.env.LANGGRAPH_LLM_STREAMING?.trim().toLowerCase();

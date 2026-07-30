@@ -8,6 +8,11 @@ import { extractEntities } from "./conformance.service.js";
 import { extractSectionByNumber } from "./mdd-markdown-parser.js";
 import { checkMissingDbgaCoreEntitiesInMdd } from "./domain-inventory-conformance.util.js";
 import { entityHasRichProseInSection3 } from "./mdd-quality-audit.util.js";
+import {
+  isChatLlmPlatformScope,
+  MULTI_TENANT_SAAS_NOISE_TABLES,
+  THEFORGE_PLATFORM_NOISE_TABLES,
+} from "./mdd-platform-table-strip.util.js";
 
 function stubCreateTable(entity: string): string {
   return `CREATE TABLE ${entity} (
@@ -34,6 +39,15 @@ function section3ExtractBodyLen(mddMarkdown: string): number {
   return section3.replace(/^##[^\n]+\n?/, "").trim().length;
 }
 
+function isPlatformNoiseEntityForMerge(entity: string, mddMarkdown: string): boolean {
+  const e = entity.toLowerCase();
+  if (MULTI_TENANT_SAAS_NOISE_TABLES.has(e)) return true;
+  if (!THEFORGE_PLATFORM_NOISE_TABLES.has(e)) return false;
+  const section1 = extractSectionByNumber(mddMarkdown, 1) ?? "";
+  const corpus = section1;
+  return !isChatLlmPlatformScope(corpus);
+}
+
 /** Business entities from inventory missing in MDD §3. */
 export function missingDomainEntities(
   inventory: DomainInventory,
@@ -43,6 +57,7 @@ export function missingDomainEntities(
   const existing = extractEntities(section3);
   return inventory.suggestedEntities.filter((e) => {
     if (AUTH_ENTITY_FAMILY.has(e)) return false;
+    if (isPlatformNoiseEntityForMerge(e, mddMarkdown)) return false;
     if (existing.has(e)) return false;
     if (entityHasRichProseInSection3(section3, e)) return false;
     return true;

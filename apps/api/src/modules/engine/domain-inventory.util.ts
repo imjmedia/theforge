@@ -292,7 +292,23 @@ function inferTrigger(cap: BrdCapability): string {
   return "user.request";
 }
 
-const PLATFORM_INVENTORY_NOISE = new Set(["llm_configs", "mcp_plugins", "tenants", "tenant_quotas"]);
+const PLATFORM_INVENTORY_NOISE = new Set([
+  "llm_configs",
+  "mcp_plugins",
+  "tenants",
+  "tenant_quotas",
+  "channels",
+  "channel",
+  "conversations",
+  "conversation",
+  "requests",
+  "request",
+  "agent_runs",
+  "agent_run",
+  "messages",
+  "message",
+  "conversation_memory",
+]);
 
 function shouldSuggestPlatformInventoryEntity(
   entity: string,

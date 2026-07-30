@@ -62,6 +62,7 @@ import {
   guardValidatedSectionsForPersist,
   resolveTailPreserveBaseline,
   restoreSections6And7IfRegressed,
+  resolveSection5PreserveBaselineBody,
 } from "./mdd-section-preserve.util.js";
 import { ensureMddGovernanceSection, extractGovernanceSection } from "@theforge/shared-types/mdd-governance-patterns";
 import { validateMddForDeliveryMemo } from "./mdd-off-graph-memo.util.js";
@@ -190,11 +191,14 @@ function restoreSectionBodyAfterNormalize(
   sectionLabel?: string,
 ): string {
   const restoreSource = resolveSectionRestoreSource(source);
-  if (sectionLabel === "§5" && mddHasDuplicateSectionHeadings(source)) {
-    console.warn("[MDD:PrepareRestore] §5 skip restore — source tiene headings duplicados");
+  const srcBody =
+    sectionLabel === "§5" && mddHasDuplicateSectionHeadings(source)
+      ? resolveSection5PreserveBaselineBody(restoreSource)
+      : extractBody(restoreSource);
+  if (sectionLabel === "§5" && mddHasDuplicateSectionHeadings(source) && !srcBody?.trim()) {
+    console.warn("[MDD:PrepareRestore] §5 skip restore — headings duplicados sin baseline resoluble");
     return normalized;
   }
-  const srcBody = extractBody(restoreSource);
   if (!srcBody?.trim() || !hasSubstantial(restoreSource)) return normalized;
   if (hasSubstantial(normalized)) return normalized;
   const normLen = extractBody(normalized)?.length ?? 0;
@@ -414,17 +418,19 @@ export async function prepareMddForOutput(
         specMarkdown: options?.specMarkdown,
         inventory,
       });
-      if (
+      const ssotChanged =
         repaired.section3Injected.length > 0 ||
         repaired.uatInjected.length > 0 ||
         repaired.section4Injected.length > 0 ||
-        repaired.platformAnnotated.length > 0
-      ) {
+        repaired.platformAnnotated.length > 0 ||
+        repaired.platformStripped.length > 0 ||
+        repaired.markdown !== finalMarkdown;
+      if (ssotChanged) {
         finalMarkdown = formatForPersist
           ? prepareMddMarkdownForPersist(repaired.markdown)
           : applyPreDeliveryGateFixes(repaired.markdown);
         console.log(
-          `[MDD:DeliveryGate] SSOT repair — §3:${repaired.section3Injected.length} UAT:${repaired.uatInjected.length} §4:${repaired.section4Injected.length} platform:${repaired.platformAnnotated.length}`,
+          `[MDD:DeliveryGate] SSOT repair — §3:${repaired.section3Injected.length} UAT:${repaired.uatInjected.length} §4:${repaired.section4Injected.length} platform:${repaired.platformAnnotated.length} stripped:${repaired.platformStripped.length}`,
         );
       }
       const contratosAfterSsot = extractContratosSectionBody(finalMarkdown);

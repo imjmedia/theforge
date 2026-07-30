@@ -70,4 +70,39 @@ CREATE TABLE users (id UUID PRIMARY KEY);
     assert.ok(result.section3Injected.includes("credentials"));
     assert.match(result.markdown, /CREATE TABLE credentials/i);
   });
+
+  it("no re-inyecta tablas plataforma tras merge inventario en KMS", () => {
+    const brd = `
+## 3. Capacidades
+### 3.1 Gestión de claves
+Rotación de claves y secretos corporativos. Sin chat ni MCP.
+`;
+    const mdd = `
+## 1. Contexto
+KMS interno. Sin chat ni MCP.
+
+## 3. Modelo de Datos
+\`\`\`sql
+CREATE TABLE keys (id UUID PRIMARY KEY);
+CREATE TABLE secrets (id UUID PRIMARY KEY);
+CREATE TABLE users (id UUID PRIMARY KEY);
+\`\`\`
+
+## 4. Contratos de API
+| Método | Ruta | Desc |
+|--------|------|------|
+| GET | \`/api/v1/keys\` | listar |
+`;
+    const result = reconcileMddSsotBeforeDeliveryGate(mdd, { brdMarkdown: brd });
+    assert.doesNotMatch(result.markdown, /CREATE TABLE channels/i);
+    assert.doesNotMatch(result.markdown, /CREATE TABLE llm_configs/i);
+    assert.doesNotMatch(result.markdown, /CREATE TABLE mcp_plugins/i);
+    assert.doesNotMatch(result.markdown, /CREATE TABLE requests/i);
+    assert.doesNotMatch(result.markdown, /CREATE TABLE agent_runs/i);
+    assert.ok(
+      !result.section3Injected.some((e) =>
+        ["channels", "llm_configs", "mcp_plugins", "requests", "agent_runs"].includes(e),
+      ),
+    );
+  });
 });

@@ -202,6 +202,8 @@ export const KNOWN_PROMPT_EXAMPLE_TABLE_NAMES: ReadonlySet<string> = new Set([
   "mcp_plugins",
   "mcp_plugin",
   "conversation_memory",
+  "channels",
+  "channel",
 ]);
 
 export type UnanchoredTablesResult = {
