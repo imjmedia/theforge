@@ -453,7 +453,7 @@ export default function WorkshopView({
   const activeMddJob = primaryMddJob(generationStatus);
   const activeDeliverablesJob = generationStatus?.activeJob ?? generationStatus?.queuedJobs?.[0] ?? null;
   const cascadeWaveDocsReady = useMemo(
-    () => (project ? projectCascadeWaveDeliverablesReady(project as Record<string, unknown>) : false),
+    () => (project ? projectCascadeWaveDeliverablesReady(project) : false),
     [project],
   );
   const cascadeJobPostProcessing =
