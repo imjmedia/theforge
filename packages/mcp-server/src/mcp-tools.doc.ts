@@ -99,6 +99,8 @@
  * - **`list_theforge_projects`**: `GET /theforge/projects` (índice multi-root en Ariadne)
  * - **`resolve_forge_project_for_ariadne`**: `POST /theforge/resolve-forge-project-for-ariadne` — input: al menos uno de `ariadneProjectId`, `ariadneRepositoryId`, `projectKey`, `repoSlug`, `gitRemoteUrl`. 200 → `{ forgeProjectId, linkKind, … }`; 404 → `{ error: "not_found" }`; 409 → `{ error: "ambiguous", candidates[] }`
  * - **`create_stage_from_ariadne_change_pack`**: `POST /theforge/create-stage-from-ariadne-change-pack` — body `{ forgeProjectId, pack: { version:"1", changeDescription, filesToModify?, … }, stageId?, stageName?, activate?, runLegacyStart?, wireAriadne? }`. Crea etapa LEGACY o importa en existente; devuelve `recommendedNextTools`.
+ * - **`get_integration_status`**: `GET /projects/:projectId/integration` — enlaces NEW↔LEGACY, handoff, traces, warnings, `promotableItemIds` (LEGACY).
+ * - **`get_integration_traces`**: `GET /projects/:projectId/integration/traces` — matriz NEW-LEG ↔ LEG (`IntegrationTraceRow[]`).
  *
  * **Secuencia alternativa (sin tool unificada):** `resolve_forge_project_for_ariadne` → `create_project_stage` → aplicar pack vía API integration o `POST …/integration/stages/:stageId/import-handoff` (handoff NEW) → `legacy_generate_mdd` / `legacy_generate_deliverables` con `stageId`.
  *
@@ -121,4 +123,4 @@
  * Revisión del catálogo; incrementar si cambia el conjunto de tools.
  * @constant
  */
-export const MCP_THEFORGE_TOOLS_DOC_REVISION = 11;
+export const MCP_THEFORGE_TOOLS_DOC_REVISION = 12;

@@ -11,6 +11,8 @@ Servidor MCP que expone la API REST de The Forge como herramientas (`stdio` o HT
 
 **Integración Ariadne:** `resolve_forge_project_for_ariadne` resuelve el proyecto Workshop; `create_stage_from_ariadne_change_pack` crea/importa etapa desde change pack v1. En 404/409 del resolve, JSON estructurado para modal en Ariadne.
 
+**Integración NEW ↔ LEGACY:** `get_integration_status(projectId)` → `GET /projects/:id/integration` (handoff, traces, enlaces, warnings). `get_integration_traces(projectId)` → `GET /projects/:id/integration/traces` (matriz NEW-LEG ↔ LEG).
+
 Variables típicas: `THEFORGE_API_URL`, `MCP_M2M_SECRET` (header del cliente en HTTP), `PORT` (modo HTTP, default **3000**).
 
 **HTTP:** escucha en `0.0.0.0:$PORT`. `GET /health` → `{"ok":true}` sin auth.
