@@ -1227,9 +1227,6 @@ export default function WorkshopView({
   const [mddInicialViewMode, setMddInicialViewMode] = useState<"preview" | "source">("preview");
   const [aemViewMode, setAemViewMode] = useState<"preview" | "source">("preview");
   const [agentGovernanceViewMode, setAgentGovernanceViewMode] = useState<"preview" | "source">("preview");
-  const [agentGovernanceExportScaffold, setAgentGovernanceExportScaffold] =
-    useState<import("@theforge/shared-types").AgentGovernanceScaffold | null>(null);
-  const [agentGovernanceExportLoading, setAgentGovernanceExportLoading] = useState(false);
   const [tasksViewMode, setTasksViewMode] = useState<"preview" | "source">("preview");
   const [mddInicialLocalContent, setMddInicialLocalContent] = useState("");
   const [mddInicialSaving, setMddInicialSaving] = useState(false);
@@ -2413,8 +2410,8 @@ export default function WorkshopView({
     handleAemBlur,
     agentGovernanceContent,
     agentGovernanceViewMode,
-    agentGovernanceExportScaffold,
-    agentGovernanceExportLoading,
+    agentGovernanceExportScaffold: null,
+    agentGovernanceExportLoading: false,
     agentGovernanceGenerating,
     hasAgentGovernance,
     documentationGapsRefreshNonce,
