@@ -104,7 +104,7 @@ export function buildPromptInicialCore(
     "Implementa la **primera tarea pendiente** del checklist:\n\n" +
     tasksPreview +
     "\n\n" +
-    `Cruza con **\`${featureRef}/plan.md\`**, **\`spec.md\`**, contratos API, flujos lógicos, **\`pantallas.md\`** (si hay UI) y **\`architecture.md\`** según lo que exija la tarea. ` +
+    `Cruza con **\`${featureRef}/plan.md\`**, **\`spec.md\`**, contratos API, flujos lógicos, **\`design-system.md\`** (tokens y estilos obligatorios en UI), **\`pantallas.md\`** (si hay UI) y **\`architecture.md\`** según lo que exija la tarea. ` +
     `Al cerrar un checkpoint, ejecuta smoke tests de **\`${featureRef}/quickstart.md\`**.\n\n` +
     "## Paso 4 — Gates antes de cerrar\n\n" +
     buildGatesSection(facts, complexity) +

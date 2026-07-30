@@ -105,7 +105,7 @@ El mensaje de usuario indica `complexity`: `LOW`, `MEDIUM` o `HIGH`. Ajusta el �
 | §2 backend | `docs/agent-governance/rules/stack-backend.mdc` |
 | §2 frontend | `docs/agent-governance/rules/stack-frontend.mdc` |
 | §2 monorepo | `AGENTS.md` anidados (solo HIGH) |
-| §2 design system | skill en `docs/agent-governance/skills/` |
+| §2 design system / frontend | `stack-frontend.mdc` + skill en `docs/agent-governance/skills/`; **toda UI** usa tokens y estilos de `design-system.md` |
 | §4 API | `docs/agent-governance/rules/api-contracts.mdc` |
 | §6 auth | `docs/agent-governance/rules/security-auth.mdc` |
 | §7 deploy | skill deploy en `docs/agent-governance/skills/` |
@@ -148,6 +148,7 @@ Secciones en español: qué es el paquete, instalación (sin exigir buscar `.cur
 ## docs/agent-governance/rules/*.mdc
 
 - Frontmatter YAML: `description`, `globs`, `alwaysApply`.
+- **`stack-frontend.mdc`:** incluye sección **Design System (obligatorio)**: toda creación de frontend debe seguir tokens y estilos de `design-system.md` (espejo `docs/sdd/ux-ui-guide.md`); prohibido valores ad-hoc.
 
 ## docs/agent-governance/skills/*/SKILL.md
 

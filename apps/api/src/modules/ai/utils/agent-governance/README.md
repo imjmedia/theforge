@@ -11,3 +11,7 @@ Módulos extraídos de `agent-governance.util.ts` (Fase 6-4 — GOD-REFACTOR): p
 | **sdd-conflict.util.ts** | Bloques de conflictos SDD en overlays de gobernanza. |
 
 El orquestador (`parseAgentGovernanceResponse`, `reconcileAgentGovernanceScaffold`, export ZIP, fallbacks LLM) permanece en **`../agent-governance.util.ts`** (~1 870 L tras 6-4).
+
+## Regla Design System (frontend)
+
+Toda creación de UI en el scaffold generado debe alinearse a **`design-system.md`** (espejo `docs/sdd/ux-ui-guide.md`): tokens y estilos del documento Design System, sin valores ad-hoc. Aplica en `stack-frontend.mdc`, reglas críticas de `AGENTS.md` y skills `design-system-ui` / `ui-pantallas`.
