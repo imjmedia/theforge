@@ -163,6 +163,17 @@ Versionado y aprobación.
   });
 });
 
+describe("stripClarifierAgentBriefFromSection1", () => {
+  it("elimina bloque Resumen para agentes (Clarified Scope) embebido en §1", async () => {
+    const { stripClarifierAgentBriefFromSection1 } = await import("./mdd-clarifier-draft.util.js");
+    const draft = `# MDD\n\n## 1. Contexto y alcance\n\n### Propósito\n\nSistema CRM.\n\n## Resumen para agentes (Clarified Scope)\n\nDecisiones para §6.\n\n## 2. Arquitectura y Stack\n\nNestJS.`;
+    const out = stripClarifierAgentBriefFromSection1(draft);
+    assert.match(out, /Sistema CRM/);
+    assert.doesNotMatch(out, /Resumen para agentes/i);
+    assert.match(out, /## 2\. Arquitectura/);
+  });
+});
+
 describe("isSafeClarifierMergeBaseline", () => {
   it("rechaza baseline con headings duplicados", async () => {
     const { isSafeClarifierMergeBaseline } = await import("./mdd-clarifier-draft.util.js");

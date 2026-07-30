@@ -25,6 +25,49 @@ import {
   evaluateSection1BodyQuality,
 } from "./mdd-section1-quality.util.js";
 
+/** Bloques de `clarifiedScope` / §1 que no deben volcar en el cuerpo de §1. */
+const CLARIFIER_AGENT_BRIEF_IN_SECTION1_RE =
+  /\n#{1,3}\s*Resumen para agentes(?:\s*\([^)]*\))?(?:\s+siguientes)?[\s\S]*?(?=\n#{1,3}\s|\n##\s*[2-7]\.\s|$)/gi;
+
+const CLARIFIER_AGENT_BRIEF_HEADING_RE =
+  /\n##\s*Resumen para agentes(?:\s*\([^)]*\))?(?:\s+siguientes)?[\s\S]*?(?=\n##\s*[2-7]\.\s)/gi;
+
+const CLARIFIER_DECISIONES_VALIDADAS_RE =
+  /\n\*\*Decisiones validadas:\*\*[\s\S]*?(?=\n#{1,3}\s|\n##\s*[2-7]\.\s|$)/gi;
+
+/** Quita metadatos de agentes (scope leak) del borrador — bloque entre §1 y §2. */
+export function stripClarifierAgentBriefFromSection1(draft: string): string {
+  const trimmed = (draft ?? "").trim();
+  if (!/Resumen para agentes/i.test(trimmed)) return trimmed;
+  let out = trimmed.replace(CLARIFIER_AGENT_BRIEF_HEADING_RE, "\n");
+  const body = extractContextSectionBody(out);
+  if (body?.trim()) {
+    const cleanedBody = body
+      .replace(CLARIFIER_AGENT_BRIEF_IN_SECTION1_RE, "")
+      .replace(CLARIFIER_DECISIONES_VALIDADAS_RE, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    if (cleanedBody !== body.trim()) {
+      out = replaceSection1BodyFromAnyHeading(out, cleanedBody);
+    }
+  }
+  return out.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** Evita usar `clarifiedScope` crudo como fallback de §1 (sólo primer párrafo útil). */
+export function section1FallbackFromClarifiedScope(scope: string): string {
+  const trimmed = (scope ?? "").trim();
+  if (!trimmed) return "(Pendiente)";
+  const withoutAgentBrief = trimmed
+    .replace(CLARIFIER_AGENT_BRIEF_IN_SECTION1_RE, "")
+    .replace(CLARIFIER_DECISIONES_VALIDADAS_RE, "")
+    .replace(/^#{1,3}\s*Resumen para agentes(?:\s*\([^)]*\))?(?:\s+siguientes)?\s*/im, "")
+    .trim();
+  const firstParagraph = (withoutAgentBrief.split(/\n\n+/)[0] ?? withoutAgentBrief).trim();
+  if (firstParagraph.length >= 20) return firstParagraph.slice(0, 800);
+  return withoutAgentBrief.slice(0, 300) || "(Desde DBGA)";
+}
+
 /** Removes governance wizard from LLM draft — system re-injects on persist. */
 export function stripClarifierGovernanceFromDraft(draft: string): string {
   const trimmed = (draft ?? "").trim();
@@ -101,7 +144,7 @@ export function finalizeClarifierDraft(params: FinalizeClarifierDraftParams): st
   const llmQuality = evaluateSection1BodyQuality(llmS1Body, complexity);
 
   if (llmDraft && draftMeetsSection1Quality(llmDraft, complexity) && draftIsSubstantialForScopedRepair(llmDraft)) {
-    return llmDraft;
+    return stripClarifierAgentBriefFromSection1(llmDraft);
   }
 
   if (
@@ -130,8 +173,8 @@ export function finalizeClarifierDraft(params: FinalizeClarifierDraftParams): st
     });
     const shell =
       llmDraft.length > 80
-        ? assembleClarifierMddDraft(llmDraft, scope.slice(0, 300) || "(Desde DBGA)")
-        : getMddTemplatePlaceholder(scope.slice(0, 300) || "(Desde DBGA)");
+        ? assembleClarifierMddDraft(llmDraft, section1FallbackFromClarifiedScope(scope))
+        : getMddTemplatePlaceholder(section1FallbackFromClarifiedScope(scope));
     const hydrated = replaceSection1BodyFromAnyHeading(shell, hydratedBody);
     const hydratedQuality = evaluateSection1BodyQuality(extractContextSectionBody(hydrated), complexity);
     const hydratedS1Len = extractContextSectionBody(hydrated)?.length ?? 0;
@@ -143,7 +186,7 @@ export function finalizeClarifierDraft(params: FinalizeClarifierDraftParams): st
       hydratedQuality.missingSubsections.join("|") || "none",
     );
     if (hydratedQuality.ok || hydratedS1Len > llmQuality.bodyLen) {
-      return hydrated;
+      return stripClarifierAgentBriefFromSection1(hydrated);
     }
 
     if (!draftHasSubstantialSection1(llmDraft)) {
@@ -158,6 +201,6 @@ export function finalizeClarifierDraft(params: FinalizeClarifierDraftParams): st
     }
   }
 
-  if (llmDraft.length > 80) return llmDraft;
+  if (llmDraft.length > 80) return stripClarifierAgentBriefFromSection1(llmDraft);
   return getMddTemplatePlaceholder(scope || "(Pendiente de definir según alcance.)");
 }

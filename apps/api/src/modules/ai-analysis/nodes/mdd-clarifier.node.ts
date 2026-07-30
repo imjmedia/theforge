@@ -18,6 +18,8 @@ import {
   finalizeClarifierDraft,
   assembleClarifierMddDraft,
   stripClarifierGovernanceFromDraft,
+  stripClarifierAgentBriefFromSection1,
+  section1FallbackFromClarifiedScope,
   isSafeClarifierMergeBaseline,
 } from "../utils/mdd-clarifier-draft.util.js";
 import { buildClarifierDbgaBrief } from "../utils/mdd-clarifier-dbga-brief.util.js";
@@ -28,10 +30,18 @@ import { extractFirstJsonObject, parseJsonOrThrow } from "../utils/parse-json.js
 import { clarifierComplexityAppendix } from "../utils/mdd-complexity-rigor.js";
 import { buildInventoryFromMddState, domainInventoryPromptBlock } from "../utils/mdd-domain-prompt.util.js";
 import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
+import { resolveMddClarifierHardTimeoutMs } from "../utils/mdd-llm-timeout.util.js";
 import {
   dbgaSnippetForClarifierFallback,
   shouldPreserveClarifierDraftOnLlmFailure,
 } from "../utils/mdd-clarifier-llm-fallback.util.js";
+import {
+  applySection1OnlyResult,
+  buildClarifierFormatBlock,
+  buildSection1OnlyPromptBlock,
+  canUseSection1OnlyMode,
+  parseClarifierDelimitedOutput,
+} from "../utils/mdd-clarifier-section1-only.util.js";
 import { z } from "zod";
 
 /** Acepta string o objeto (el LLM a veces devuelve objeto); normaliza a string. */
@@ -64,6 +74,8 @@ const questionsOnlySchema = z.object({
 });
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Clarifier] ${msg}`, ...args);
+
+const clarifierLlmOpts = { hardTimeoutMs: resolveMddClarifierHardTimeoutMs() };
 
 /** Si el LLM falla pero ya hay borrador sustancial, no resetear a template placeholder. */
 function clarifierFallbackOnLlmFailure(
@@ -127,7 +139,10 @@ export function createMddClarifierNode(llm: BaseChatModel) {
         }
         const context = contextParts.join("\n");
         const prompt = `${CLARIFIER_QUESTIONS_ONLY_MDD_PROMPT}\n\n---\n${context}`;
-        const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], { tag: "Clarifier:questions" });
+        const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], {
+          tag: "Clarifier:questions",
+          ...clarifierLlmOpts,
+        });
         if (!response) {
           LOG("questions-only: LLM sin respuesta tras reintentos — usando fallback");
           return {
@@ -189,7 +204,12 @@ export function createMddClarifierNode(llm: BaseChatModel) {
         prompt +=
           "\n\n**Obligatorio en §1 Contexto:** enumera las capacidades de negocio del inventario (no solo auth/RBAC). Las capacidades de autenticación van como complemento.";
       }
-      if (draftTrimmed) {
+      // §1-only: la rama `hasSubstantialDraft` de abajo descarta §2–§7 del LLM, así que
+      // pedirlas es latencia y coste por trabajo tirado. Ver mdd-clarifier-section1-only.util.
+      const section1OnlyMode = canUseSection1OnlyMode(draftTrimmed, hasSubstantialDraft);
+      if (section1OnlyMode) {
+        prompt += buildSection1OnlyPromptBlock(draftTrimmed);
+      } else if (draftTrimmed) {
         const maxDraftLen = 14_000;
         const draftBlock =
           draftTrimmed.length > maxDraftLen
@@ -207,7 +227,17 @@ export function createMddClarifierNode(llm: BaseChatModel) {
           prompt += `\n\n**Importante:** La última respuesta es un acuerdo breve; el usuario acepta la propuesta concreta del Feedback del Auditor (ej. transacciones ACID, consistencia eventual, Docker, etc.). Incorpórala explícitamente al borrador en la sección correspondiente.`;
         }
       }
-      const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], { tag: "Clarifier:draft" });
+      prompt += buildClarifierFormatBlock(section1OnlyMode ? "section1-only" : "full");
+      LOG(
+        "invoke mode=%s promptChars=%s (draftLen=%s)",
+        section1OnlyMode ? "section1-only" : "full",
+        prompt.length,
+        draftTrimmed.length,
+      );
+      const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], {
+        tag: "Clarifier:draft",
+        ...clarifierLlmOpts,
+      });
       if (!response) {
         const preserved = clarifierFallbackOnLlmFailure(draftTrimmed, state, "LLM sin respuesta tras reintentos");
         if (preserved) return preserved;
@@ -241,34 +271,68 @@ export function createMddClarifierNode(llm: BaseChatModel) {
           clarifierJustGeneratedQuestions: false,
         };
       }
-      const jsonStr = extractFirstJsonObject(text) ?? text.trim();
-      let parsed: ClarifierParsed | undefined;
-      try {
-        parsed = parseJsonOrThrow(jsonStr, clarifierOutputSchema) as ClarifierParsed;
-      } catch (parseErr) {
-        // Reintento antes del fallback: si el Clarificador falla, §1/§2 quedan como placeholders
-        // y el borrador nace sin headings canónicos, así que el resto del pipeline trabaja en
-        // vano (job 81: §2/§3/§4 generadas y descartadas). El fallo típico es escapado inválido
-        // al meter el MDD markdown dentro de un campo string del JSON.
-        LOG("JSON inválido en respuesta del Clarificador — reintentando 1x con formato reforzado");
-        const retryPrompt =
-          `${prompt}\n\n---\n**FORMATO OBLIGATORIO (reintento):** Responde EXCLUSIVAMENTE con un ` +
-          "objeto JSON válido con las claves `clarifiedScope` y `mddDraft`, ambas string. " +
-          "Escapa correctamente saltos de línea (`\\n`), comillas (`\\\"`) y barras invertidas " +
-          "dentro de los valores. No envuelvas la respuesta en ```json ni añadas texto fuera del objeto.";
-        const retryResponse = await invokeLlmWithRetry(llm, [new HumanMessage(retryPrompt)], {
-          tag: "Clarifier:draft:retry",
-        });
-        const retryText = retryResponse ? extractLlmText(retryResponse) : "";
-        if (retryText.trim()) {
-          try {
-            parsed = parseJsonOrThrow(
-              extractFirstJsonObject(retryText) ?? retryText.trim(),
-              clarifierOutputSchema,
-            ) as ClarifierParsed;
-            LOG("retry del Clarificador OK — JSON válido");
-          } catch {
-            LOG("retry del Clarificador también falló");
+      /**
+       * Formato delimitado primero; JSON como compatibilidad con modelos que
+       * ignoran la instrucción de formato. En §1-only la §1 devuelta se reinyecta
+       * en el borrador previo para que el resto del nodo vea un documento completo.
+       */
+      const toParsedFromDelimited = (raw: string): ClarifierParsed | undefined => {
+        const delimited = parseClarifierDelimitedOutput(raw);
+        if (!delimited) return undefined;
+        if (section1OnlyMode) {
+          if (!delimited.section1Body) return undefined;
+          const mergedFull = applySection1OnlyResult(draftTrimmed, delimited.section1Body);
+          if (!mergedFull) return undefined;
+          return { clarifiedScope: delimited.clarifiedScope, mddDraft: mergedFull };
+        }
+        if (!delimited.mddDraft) return undefined;
+        return { clarifiedScope: delimited.clarifiedScope, mddDraft: delimited.mddDraft };
+      };
+
+      let parsed: ClarifierParsed | undefined = toParsedFromDelimited(text);
+      if (parsed) {
+        LOG("salida delimitada parseada (mode=%s draftLen=%s)", section1OnlyMode ? "section1-only" : "full", parsed.mddDraft.length);
+      } else {
+        const jsonStr = extractFirstJsonObject(text) ?? text.trim();
+        try {
+          parsed = parseJsonOrThrow(jsonStr, clarifierOutputSchema) as ClarifierParsed;
+          if (section1OnlyMode) {
+            // El modelo devolvió JSON pese al modo acotado: su `mddDraft` es sólo §1
+            // si no trae encabezados canónicos, así que se reinyecta igual.
+            const jsonDraft = String(parsed.mddDraft ?? "").trim();
+            if (jsonDraft && !/^##\s*[2-7]\.\s/m.test(jsonDraft)) {
+              const mergedFull = applySection1OnlyResult(draftTrimmed, jsonDraft);
+              if (mergedFull) parsed = { ...parsed, mddDraft: mergedFull };
+            }
+          }
+        } catch {
+          // Reintento antes del fallback: si el Clarificador falla, §1/§2 quedan como placeholders
+          // y el borrador nace sin headings canónicos, así que el resto del pipeline trabaja en
+          // vano (job 81: §2/§3/§4 generadas y descartadas).
+          LOG("salida no parseable (ni delimitada ni JSON) — reintentando 1x con formato reforzado");
+          const retryPrompt =
+            `${prompt}\n\n---\n**RECORDATORIO DE FORMATO (reintento):** tu respuesta anterior no ` +
+            "respetó los delimitadores. Responde EXCLUSIVAMENTE con los bloques delimitados " +
+            "indicados arriba, cada delimitador solo en su línea, sin JSON, sin ```json y sin " +
+            "texto fuera de los bloques.";
+          const retryResponse = await invokeLlmWithRetry(llm, [new HumanMessage(retryPrompt)], {
+            tag: "Clarifier:draft:retry",
+            ...clarifierLlmOpts,
+          });
+          const retryText = retryResponse ? extractLlmText(retryResponse) : "";
+          if (retryText.trim()) {
+            parsed = toParsedFromDelimited(retryText);
+            if (!parsed) {
+              try {
+                parsed = parseJsonOrThrow(
+                  extractFirstJsonObject(retryText) ?? retryText.trim(),
+                  clarifierOutputSchema,
+                ) as ClarifierParsed;
+              } catch {
+                LOG("retry del Clarificador también falló");
+              }
+            }
+            if (parsed) LOG("retry del Clarificador OK");
           }
         }
       }
@@ -288,7 +352,7 @@ export function createMddClarifierNode(llm: BaseChatModel) {
       }
       let scope = String(parsed.clarifiedScope ?? "").trim();
       let draft = stripClarifierGovernanceFromDraft(String(parsed.mddDraft ?? "").trim());
-      draft = assembleClarifierMddDraft(draft, scope.split(/\n\n+/)[0]?.trim());
+      draft = assembleClarifierMddDraft(draft, section1FallbackFromClarifiedScope(scope));
 
       const enriched = enrichClarifiedScopeFromInventory(scope, inventory);
       if (enriched.enriched) {
@@ -391,7 +455,9 @@ export function createMddClarifierNode(llm: BaseChatModel) {
           );
         }
       }
-      const mddDraft = deduplicateMddDraftSections(mergedDraft);
+      const mddDraft = stripClarifierAgentBriefFromSection1(
+        deduplicateMddDraftSections(mergedDraft),
+      );
       const outStructured = merged ?? (slice ? mergeMddStructured(undefined, slice) : undefined);
       const sum = getMddDraftSummary(mddDraft);
       const durationMs = Date.now() - startedAt;
