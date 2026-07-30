@@ -14,6 +14,7 @@ import { getInternalDirectivesContext } from "../utils/mdd-mesh-topology.js";
 import { auditorConstitutionRigorAppendix } from "../utils/mdd-complexity-rigor.js";
 import { domainInventoryPromptBlock } from "../utils/mdd-domain-prompt.util.js";
 import { extractLlmText, extractLlmToolCalls, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
+import { resolveMddAuditorNodeBudgetMs, resolveMddAuditorPerInvokeHardTimeoutMs } from "../utils/mdd-llm-timeout.util.js";
 import {
   buildAuditorFeedbackFromGaps,
   computeDeterministicAuditorScore,
@@ -147,6 +148,7 @@ function buildStructuralAuditorResult(
     delegateTarget: undefined,
     sectionsToRun: undefined,
     acceptedProposalDirective: undefined,
+    auditorRan: true,
   };
 }
 
@@ -173,6 +175,12 @@ export function createMddAuditorNode(
     );
 
     try {
+      const auditorPerInvokeMs = resolveMddAuditorPerInvokeHardTimeoutMs();
+      const auditorNodeBudgetMs = resolveMddAuditorNodeBudgetMs();
+      const auditorStartedAt = Date.now();
+      const auditorRemainingNodeMs = () =>
+        Math.max(0, auditorNodeBudgetMs - (Date.now() - auditorStartedAt));
+
       const draftForLlm = truncateDraftForAuditorLlm(draft);
       let prompt =
         `${AUDITOR_MDD_PROMPT}\n\n---\n**Borrador completo del MDD:**\n${draftForLlm || "(vacío)"}\n\n` +
@@ -198,18 +206,23 @@ export function createMddAuditorNode(
       const MAX_EMPTY_FINAL_ATTEMPTS = 2;
 
       while (loopCount < MAX_TOOL_LOOPS) {
+        const nodeRemainingMs = auditorRemainingNodeMs();
+        if (nodeRemainingMs <= 0) {
+          LOG("node budget %sms agotado — abortando tool-loop", auditorNodeBudgetMs);
+          break;
+        }
+        const invokeHardTimeoutMs = Math.min(auditorPerInvokeMs, nodeRemainingMs);
         const isFinalIteration = loopCount === MAX_TOOL_LOOPS - 1;
         const useRetry =
           isFinalIteration ||
           (loopCount > 0 && emptyFinalAttempts > 0 && loopCount < MAX_TOOL_LOOPS - 1);
-        const response = useRetry
-          ? await invokeLlmWithRetry(llmWithTools, messages, {
-              tag: "Auditor:tools",
-              maxAttempts: isFinalIteration ? 3 : 2,
-              acceptToolCallsWithoutContent: true,
-              isResponseValid: (text) => text.trim().length > 0,
-            })
-          : await llmWithTools.invoke(messages);
+        const response = await invokeLlmWithRetry(llmWithTools, messages, {
+          tag: "Auditor:tools",
+          maxAttempts: useRetry ? (isFinalIteration ? 3 : 2) : 1,
+          acceptToolCallsWithoutContent: true,
+          isResponseValid: (text) => text.trim().length > 0,
+          hardTimeoutMs: invokeHardTimeoutMs,
+        });
         if (!response) {
           LOG("tool-loop LLM sin respuesta tras reintentos (iter=%s); saliendo del loop", loopCount);
           lastContent = "";
@@ -357,10 +370,11 @@ export function createMddAuditorNode(
         auditorFeedback: finalFeedback,
         auditorGaps,
         auditorDecision: decision,
-mddIteration: decision === "clarifier" ? iteration : (state.mddIteration ?? 0),
+        mddIteration: decision === "clarifier" ? iteration : (state.mddIteration ?? 0),
         delegateTarget: undefined,
         sectionsToRun: undefined,
         acceptedProposalDirective: undefined,
+        auditorRan: true,
       };
     } catch (err) {
       LOG("error: %s — fallback estructural", err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300));

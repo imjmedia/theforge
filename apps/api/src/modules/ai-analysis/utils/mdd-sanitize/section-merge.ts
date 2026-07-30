@@ -8,11 +8,24 @@ import { isMddTailParallelEnabled } from "../mdd-tail-parallel.config.js";
 import { stripBrdPasteNoiseFromSection1 } from "../mdd-section1-cleanup.util.js";
 import {
   countContratosEndpointRows,
+  extractContratosSectionBody,
   isContratosPlaceholder,
   isContratosSectionRegression,
   isContratosSubstantial,
+  normalizeGluedSection4HeadingInDraft,
+  stripEmbeddedTailSectionsFromContratosBody,
   stripLeadingContratosPlaceholder,
 } from "./contratos-format.js";
+import { MDD_SECTION5_TAIL_PLACEHOLDER } from "../mdd-tail-parallel.config.js";
+import {
+  closeUnclosedFencesBeforeCanonicalH2,
+  ensureDocumentFenceParity,
+  findH2HeadingMatch,
+  getSectionBody,
+  indexOfNextH2OutsideFenced,
+  RE_SECTION5_H2,
+} from "./section-fence.util.js";
+import { guardCanonicalH2Loss } from "./section-invariant.util.js";
 
 const RE_SECTION6_H2_LINE = /^##\s+(?:6\.\s+)?Seguridad/i;
 
@@ -65,9 +78,22 @@ export function repairMisplacedCanonicalSectionsAfterUiUx(draft: string): string
   return reattachMddUiUxDesignIntentSuffix(mergedCore, uiUxBlock);
 }
 
+/**
+ * Primera línea de cuerpo pegada a un H2 canónico como viñeta o negrita.
+ *
+ * Job 92: `## 6. Seguridad- Autenticación LDAP/AD…` hacía que `extractSection`
+ * tomase la línea entera como *heading*, así que al reensamblar con el heading
+ * canónico esa primera viñeta desaparecía: §6 pasó de 3 viñetas a 2 (145 chars)
+ * y el gate de persist tumbó el job. Se separa como cuerpo, no como `###`: una
+ * viñeta no es un subtítulo.
+ */
+const GLUED_BULLET_AFTER_CANONICAL_H2_RE =
+  /^(##\s*[1-7]\.\s*[^\n#*-]*?[^\s#*-])[ \t]*((?:[-*][ \t]+|\*\*)\S[^\n]*)$/gim;
+
 /** Despega subtítulo del H2 (ej. `## 6. SeguridadGestión…:` o `## 6. Seguridad. Autenticación:` → H2 + ###). */
 export function fixGluedSection6Heading(draft: string): string {
   let out = repairGluedMarkdownHeadings(draft);
+  out = out.replace(GLUED_BULLET_AFTER_CANONICAL_H2_RE, "$1\n\n$2");
   out = out.replace(
     /^##\s*3\.\s*Modelo\s+de\s+Datos(?=[A-ZÁÉÍÓÚÑ])/gim,
     "## 3. Modelo de Datos\n\n",
@@ -98,7 +124,14 @@ const MDD_SECTION_H2_PATTERNS: Record<1 | 2 | 3 | 4 | 5 | 6 | 7, RegExp> = {
 
 /** Cuenta ocurrencias de un heading H2 de sección canónica (§1–§7). */
 function countMddSectionH2Occurrences(draft: string, section: 1 | 2 | 3 | 4 | 5 | 6 | 7): number {
-  return (draft.match(new RegExp(MDD_SECTION_H2_PATTERNS[section].source, "gm")) ?? []).length;
+  const re = new RegExp(MDD_SECTION_H2_PATTERNS[section].source, "gim");
+  let count = 0;
+  let m: RegExpExecArray | null = null;
+  while ((m = re.exec(draft)) !== null) {
+    if ((draft.slice(0, m.index).match(/```/g) ?? []).length % 2 === 0) count++;
+    if (re.lastIndex === m.index) re.lastIndex++;
+  }
+  return count;
 }
 
 /** Índice de la enésima ocurrencia de un heading H2 canónico (1-based), o -1 si no existe. */
@@ -173,7 +206,8 @@ export function stripTrailingDuplicateMddSections(draft: string): string {
 
 /** Dedup §1–§7 tras merge del Architect o reintentos del Clarifier (idempotente). */
 export function deduplicateMddDraftSections(draft: string): string {
-  let out = stripTrailingDuplicateMddSections((draft ?? "").trim());
+  // Cerrar fences antes de dedupe: §4 impar traga §5–§7 y dispara ciclos anti-swallow (job 100/101).
+  let out = closeUnclosedFencesBeforeCanonicalH2((draft ?? "").trim());
   if (mddHasDuplicateSectionHeadings(out)) {
     out = deduplicateAndReorderMddSections(out);
   }
@@ -182,8 +216,6 @@ export function deduplicateMddDraftSections(draft: string): string {
   }
   return out;
 }
-
-const CONTEXTO_HEADING = "## 1. Contexto y alcance";
 
 /**
  * Localiza el H2 de §1 sin tratar `## 1. Contexto` como prefijo de
@@ -196,21 +228,29 @@ export function findSection1HeadingSpan(
   const re =
     /(^|\n)(##\s*1\.\s*Contexto(?:\s+y\s+alcance)?|##\s*Contexto\s+y\s+alcance)[ \t]*(?=\n|$)/gi;
   const m = re.exec(draft);
-  if (!m || m.index == null) return null;
-  const prefixLen = m[1]?.length ?? 0;
-  const headingStart = m.index + prefixLen;
-  const full = m[0];
-  const bodyStart = m.index + full.length;
-  return { headingStart, bodyStart };
+  if (m && m.index != null) {
+    const prefixLen = m[1]?.length ?? 0;
+    return { headingStart: m.index + prefixLen, bodyStart: m.index + m[0].length };
+  }
+  // Fallback (job 96): heading con cuerpo pegado en la MISMA línea, incluso con el
+  // título/`---` delante ("# Master Design Document --- ## 1. Contexto y alcance ### Propósito…").
+  // El match estricto (ancla de línea + fin de línea tras el título) devolvía null, todo el
+  // pipeline medía §1=0 y SectionPreserve la daba por perdida sin poder restaurarla.
+  // Sin ancla de línea: solo exige espacio antes de `##` y contenido después del título.
+  const glued =
+    /(^|\s)(##\s*1\.\s*Contexto(?:\s+y\s+alcance)?|##\s*Contexto\s+y\s+alcance)\b[ \t]+(?=\S)/i.exec(draft);
+  if (!glued || glued.index == null) return null;
+  const prefixLen = glued[1]?.length ?? 0;
+  return { headingStart: glued.index + prefixLen, bodyStart: glued.index + glued[0].length };
 }
 
-/** Extrae el cuerpo de la sección "## 1. Contexto" (hasta el siguiente ## o fin). */
+/** Extrae el cuerpo de la sección "## 1. Contexto" (hasta el siguiente ## fuera de fences o fin). */
 export function extractContextSectionBody(draft: string): string | null {
   const span = findSection1HeadingSpan(draft);
   if (!span) return null;
-  const after = draft.slice(span.bodyStart).replace(/^\s*\n+/, "");
-  const nextHeading = after.search(/\n##\s+/);
-  const body = nextHeading !== -1 ? after.slice(0, nextHeading).trim() : after.trim();
+  const nextH2 = indexOfNextH2OutsideFenced(draft, span.bodyStart);
+  const bodyEnd = nextH2 !== -1 ? nextH2 : draft.length;
+  const body = draft.slice(span.bodyStart, bodyEnd).replace(/^\s*\n+/, "").trim();
   return body || null;
 }
 
@@ -224,34 +264,39 @@ export function mergeSection1IntoDraft(previousDraft: string, newDraft: string):
 
 /** Reemplaza el cuerpo de "## 1. Contexto y alcance" en draft por newBody. */
 export function replaceContextSectionBody(draft: string, newBody: string): string {
-  const idx = draft.indexOf(CONTEXTO_HEADING);
-  if (idx === -1) return draft;
-  const sectionStart = idx + CONTEXTO_HEADING.length;
-  const rest = draft.slice(sectionStart);
-  const nextHeadingInRest = rest.search(/\n##\s+/);
-  const endOfSection = nextHeadingInRest !== -1 ? sectionStart + nextHeadingInRest : draft.length;
+  const span = findSection1HeadingSpan(draft);
+  if (!span) return draft;
+  const nextH2 = indexOfNextH2OutsideFenced(draft, span.bodyStart);
+  const endOfSection = nextH2 !== -1 ? nextH2 : draft.length;
   const afterSection = endOfSection < draft.length ? draft.slice(endOfSection).trimStart() : "";
-  return draft.slice(0, sectionStart) + "\n\n" + newBody.trim() + (afterSection ? "\n\n" + afterSection : "");
+  return guardCanonicalH2Loss(
+    draft,
+    draft.slice(0, span.bodyStart) +
+      "\n\n" +
+      newBody.trim() +
+      (afterSection ? "\n\n" + afterSection : ""),
+    "replaceContextSectionBody(§1)",
+  );
 }
 
 /** Reemplaza el cuerpo de la sección 1 (cualquier variante de título) por newBody. Para regenerar §1 sin depender del título exacto. */
 export function replaceSection1BodyFromAnyHeading(draft: string, newBody: string): string {
   const span = findSection1HeadingSpan(draft);
   if (!span) return draft;
-  const rest = draft.slice(span.bodyStart);
-  const nextHeadingInRest = rest.search(/\n##\s+/);
-  const endOfSection =
-    nextHeadingInRest !== -1 ? span.bodyStart + nextHeadingInRest : draft.length;
+  const nextH2 = indexOfNextH2OutsideFenced(draft, span.bodyStart);
+  const endOfSection = nextH2 !== -1 ? nextH2 : draft.length;
   const afterSection = endOfSection < draft.length ? draft.slice(endOfSection).trimStart() : "";
-  return (
+  return guardCanonicalH2Loss(
+    draft,
     draft.slice(0, span.bodyStart) +
-    "\n\n" +
-    newBody.trim() +
-    (afterSection ? "\n\n" + afterSection : "")
+      "\n\n" +
+      newBody.trim() +
+      (afterSection ? "\n\n" + afterSection : ""),
+    "replaceSection1BodyFromAnyHeading(§1)",
   );
 }
 
-const METADATA_KEYS = /^(section\d|toolPreference|diagramFormat|apiFormat|tool\s*:)$/i;
+const METADATA_KEYS =/^(section\d|toolPreference|diagramFormat|apiFormat|tool\s*:)$/i;
 
 /** Detecta si el cuerpo de Contexto es solo metadatos (section3, toolPreference, etc.) sin prosa sustancial. */
 function isContextOnlyMetadata(body: string): boolean {
@@ -444,7 +489,9 @@ export function replaceArquitecturaSectionBody(draft: string, newBody: string): 
     const afterSection = endOfSection < draft.length ? draft.slice(endOfSection).trimStart() : "";
     return draft.slice(0, sectionStart) + "\n\n" + newBody.trim() + (afterSection ? "\n\n" + afterSection : "");
   }
-  return draft;
+  // §2 ausente (borrador degradado, p. ej. Clarificador caído): insertar en vez de descartar
+  // silenciosamente el trabajo del Arquitecto. Ver insertMddSectionByNumber.
+  return insertMddSectionByNumber(draft, 2, newBody);
 }
 
 /** Si el draft anterior tiene §2 sustancial y el nuevo tiene (Pendiente) o muy corto, preserva el anterior. */
@@ -518,18 +565,6 @@ const SECTION_HEADINGS_CANONICAL = [
   "7. Infraestructura",
 ];
 
-function getSectionBody(draft: string, pattern: RegExp): string | null {
-  const trimmed = (draft ?? "").trim();
-  pattern.lastIndex = 0;
-  const match = pattern.exec(trimmed);
-  if (!match || match.index == null) return null;
-  const headingEnd = match.index + match[0].length;
-  const nextH2 = indexOfNextH2OutsideFenced(trimmed, headingEnd);
-  const bodyEnd = nextH2 !== -1 ? nextH2 : trimmed.length;
-  const body = trimmed.slice(headingEnd, bodyEnd).replace(/^\s*\n+/, "").trim();
-  return body.length > 0 ? body : null;
-}
-
 export type MddSection3Status = "sql" | "placeholder" | "empty";
 
 /** Resumen del draft para logs: longitud y estado de §3 (modelo de datos). */
@@ -555,16 +590,17 @@ export function getSection6Or7Range(
   const trimmed = fixGluedSection6Heading((draft ?? "").trim());
   const re =
     section === 6
-      ? /(?:^|\n)(##\s+(?:6\.\s+)?Seguridad[^\n]*)/im
-      : /(?:^|\n)(##\s+(?:7\.\s+)?(?:Infraestructura|Integración)[^\n]*)/im;
+      ? /(?:^|\n)(##(?!#)\s+(?:6\.\s+)?Seguridad[^\n]*)/im
+      : /(?:^|\n)(##(?!#)\s+(?:7\.\s+)?(?:Infraestructura|Integración)[^\n]*)/im;
   const m = trimmed.match(re);
   if (!m || m.index == null) return null;
   const heading = m[1] ?? (section === 6 ? "## 6. Seguridad" : "## 7. Infraestructura");
   const start = m.index + (m[0].startsWith("\n") ? 1 : 0);
   const afterHeading = start + heading.length;
-  const rest = trimmed.slice(afterHeading).replace(/^\s*\n+/, "");
-  const nextH2 = rest.search(/\n##\s+/);
-  const end = nextH2 >= 0 ? afterHeading + nextH2 : trimmed.length;
+  // `search` sobre el resto ya recortado desalineaba el índice (end corto por las \n iniciales)
+  // y contaba `##` dentro de fences, así que §6/§7 medían distinto que §5 (job 85).
+  const nextH2 = indexOfNextH2OutsideFenced(trimmed, afterHeading);
+  const end = nextH2 >= 0 ? nextH2 : trimmed.length;
   return { start, end, heading };
 }
 
@@ -583,7 +619,7 @@ export function replaceSection6Or7InDraft(
   if (section === 6) {
     sectionMd = sectionMd.replace(/\s*--\s*\n*$/, "").trim();
   }
-  const trimmed = (draft ?? "").trim();
+  const trimmed = fixGluedSection6Heading((draft ?? "").trim());
   const range = getSection6Or7Range(trimmed, section);
   if (range) {
     const before = trimmed.slice(0, range.start);
@@ -595,7 +631,12 @@ export function replaceSection6Or7InDraft(
     return (trimmed.slice(0, otherRange.start) + sectionMd + "\n\n" + trimmed.slice(otherRange.start)).trim();
   }
   if (section === 7 && otherRange) {
-    return (trimmed.slice(0, otherRange.end) + "\n\n" + sectionMd + (otherRange.end < trimmed.length ? "\n\n" + trimmed.slice(otherRange.end) : "")).trim();
+    return (
+      trimmed.slice(0, otherRange.end) +
+      "\n\n" +
+      sectionMd +
+      (otherRange.end < trimmed.length ? "\n\n" + trimmed.slice(otherRange.end) : "")
+    ).trim();
   }
   return (trimmed + "\n\n" + sectionMd).trim();
 }
@@ -616,45 +657,101 @@ export function isMddSectionPlaceholderBody(body: string | null | undefined): bo
   return isMddSectionPipelinePlaceholderBody(b);
 }
 
-export function extractSection6Body(draft: string): string | null {
-  const range = getSection6Or7Range((draft ?? "").trim(), 6);
+/** Cuerpo de §6/§7 sobre el mismo texto normalizado que usó el range (evita índices desfasados). */
+function extractSection6Or7Body(draft: string, section: 6 | 7): string | null {
+  const source = fixGluedSection6Heading((draft ?? "").trim());
+  const range = getSection6Or7Range(source, section);
   if (!range) return null;
-  const body = draft.slice(range.start + range.heading.length, range.end).replace(/^\s*\n+/, "").trim();
+  const body = source
+    .slice(range.start + range.heading.length, range.end)
+    .replace(/^\s*\n+/, "")
+    .trim();
   return isMddSectionPlaceholderBody(body) ? null : body;
+}
+
+export function extractSection6Body(draft: string): string | null {
+  return extractSection6Or7Body(draft, 6);
 }
 
 export function extractSection7Body(draft: string): string | null {
-  const range = getSection6Or7Range((draft ?? "").trim(), 7);
-  if (!range) return null;
-  const body = draft.slice(range.start + range.heading.length, range.end).replace(/^\s*\n+/, "").trim();
-  return isMddSectionPlaceholderBody(body) ? null : body;
+  return extractSection6Or7Body(draft, 7);
 }
 
-function replaceH2SectionBody(draft: string, headingPattern: RegExp, newBody: string): string {
-  headingPattern.lastIndex = 0;
-  const match = headingPattern.exec(draft);
-  if (!match || match.index == null) return draft;
+const CANONICAL_SECTION_HEADING_TEXT: Record<number, string> = {
+  1: "## 1. Contexto y alcance",
+  2: "## 2. Arquitectura y Stack",
+  3: "## 3. Modelo de Datos",
+  4: "## 4. Contratos de API",
+  5: "## 5. Lógica y Edge Cases",
+  6: "## 6. Seguridad",
+  7: "## 7. Infraestructura",
+};
+
+/**
+ * Inserta una sección canónica ausente en su posición por número.
+ *
+ * Sin esto, `replaceH2SectionBody` devolvía el borrador intacto cuando el heading no existía:
+ * con el Clarificador caído (borrador sin `## 1.`/`## 2.`), cada merge del Arquitecto era un
+ * no-op silencioso que además logueaba `merged=true`, así que 7k/14k/23k chars de §2/§3/§4
+ * generados por el LLM se evaporaban y el draft se quedaba en ~3k (job 81).
+ */
+function insertMddSectionByNumber(draft: string, num: number, newBody: string): string {
+  const heading = CANONICAL_SECTION_HEADING_TEXT[num];
+  const body = (newBody ?? "").trim();
+  if (!heading || !body) return draft;
+  const trimmed = (draft ?? "").trim();
+  const sectionMd = `${heading}\n\n${body}`;
+  if (!trimmed) return sectionMd;
+
+  const re = /^##\s+(\d)\./gm;
+  let m: RegExpExecArray | null = null;
+  let insertAt = -1;
+  while ((m = re.exec(trimmed)) !== null) {
+    if ((trimmed.slice(0, m.index).match(/```/g) ?? []).length % 2 !== 0) continue;
+    if (parseInt(m[1]!, 10) > num) {
+      insertAt = m.index;
+      break;
+    }
+  }
+  if (insertAt === -1) return `${trimmed}\n\n${sectionMd}`.trim();
+  return `${trimmed.slice(0, insertAt).trimEnd()}\n\n${sectionMd}\n\n${trimmed.slice(insertAt).trimStart()}`.trim();
+}
+
+function replaceH2SectionBody(
+  draft: string,
+  headingPattern: RegExp,
+  newBody: string,
+  sectionNum?: number,
+): string {
+  const match = findH2HeadingMatch(draft, headingPattern);
+  if (!match || match.index == null) {
+    return sectionNum != null ? insertMddSectionByNumber(draft, sectionNum, newBody) : draft;
+  }
   const sectionStart = match.index + match[0].length;
   const nextH2 = indexOfNextH2OutsideFenced(draft, sectionStart);
   const endOfSection = nextH2 !== -1 ? nextH2 : draft.length;
   const afterSection = endOfSection < draft.length ? draft.slice(endOfSection).trimStart() : "";
-  return draft.slice(0, sectionStart) + "\n\n" + newBody.trim() + (afterSection ? "\n\n" + afterSection : "");
+  const replaced =
+    draft.slice(0, sectionStart) + "\n\n" + newBody.trim() + (afterSection ? "\n\n" + afterSection : "");
+  return guardCanonicalH2Loss(draft, replaced, `replaceH2SectionBody(§${sectionNum ?? "?"})`);
 }
 
 function replaceSection3Body(draft: string, newBody: string): string {
-  return replaceH2SectionBody(draft, /##\s*3\.\s*Modelo\s+(?:de\s+)?datos/i, newBody);
+  return replaceH2SectionBody(draft, /##\s*3\.\s*Modelo\s+(?:de\s+)?datos/i, newBody, 3);
 }
 
 function replaceSection4Body(draft: string, newBody: string): string {
+  const normalized = normalizeGluedSection4HeadingInDraft(draft);
   return replaceH2SectionBody(
-    draft,
+    normalized,
     /##\s*4\.\s*Contratos\s+de\s+API|##\s*3\.\s*Contratos\s+de\s+API|##\s*Contratos\s+de\s*API/i,
     newBody,
+    4,
   );
 }
 
 function replaceSection5Body(draft: string, newBody: string): string {
-  return replaceH2SectionBody(draft, /##\s*5\.\s*Lógica\s+y\s*Edge\s+Cases/i, newBody);
+  return replaceH2SectionBody(draft, /##\s*5\.\s*Lógica\s+y\s*Edge\s+Cases/i, newBody, 5);
 }
 
 /** Reemplaza solo el cuerpo de ## 3. Modelo de datos. */
@@ -664,7 +761,8 @@ export function replaceMddSection3Body(draft: string, newBody: string): string {
 
 /** Reemplaza solo el cuerpo de ## 4. Contratos de API. */
 export function replaceMddSection4Body(draft: string, newBody: string): string {
-  return replaceSection4Body(draft, newBody);
+  const cleaned = stripEmbeddedTailSectionsFromContratosBody(newBody);
+  return replaceSection4Body(draft, cleaned);
 }
 
 /** Inserta §5 antes de §6/§7, tras §4, o al final si no existe el heading.canónico. */
@@ -726,10 +824,23 @@ export function insertMddSection4Block(draft: string, newBody: string): string {
 export function replaceMddSection5Body(draft: string, newBody: string): string {
   const body = (newBody ?? "").trim();
   if (!body) return draft;
-  if (/##\s*5\.\s*Lógica\s+y\s*Edge\s+Cases/i.test(draft)) {
-    return replaceSection5Body(draft, body);
+  const hasRealSection5H2 = findH2HeadingMatch(
+    draft,
+    /##\s*5\.\s*Lógica\s+y\s*Edge\s+Cases/i,
+  );
+  const result = hasRealSection5H2
+    ? replaceSection5Body(draft, body)
+    : insertMddSection5Block(draft, body);
+  if (
+    result === draft &&
+    body.length >= 200 &&
+    !isMddSectionPipelinePlaceholderBody(body)
+  ) {
+    console.warn(
+      `[MDD:Section5Merge] replaceMddSection5Body no-op con cuerpo sustancial (${body.length} chars, hasH2=${!!hasRealSection5H2})`,
+    );
   }
-  return insertMddSection5Block(draft, body);
+  return result;
 }
 
 const MIN_SURGICAL_SECTION_BODY_LEN = 80;
@@ -944,21 +1055,17 @@ export function logSection3Debug(label: string, draft: string): void {
   console.log(`[MDD:§3 DEBUG] ${label} len=${len} tables=[${tables}] preview=${preview}`);
 }
 
-/** Extrae el cuerpo de la sección ## 4. Contratos de API (hasta el siguiente ## o fin). */
+/** Extrae el cuerpo de la sección ## 4. Contratos de API (fence-aware; fuente única con gate/preserve). */
 export function extractSection4Body(draft: string): string | null {
-  const body = getSectionBody(
-    (draft ?? "").trim(),
-    /##\s*4\.\s*Contratos\s+de\s+API|##\s*3\.\s*Contratos\s+de\s*API|##\s*Contratos\s+de\s*API/i,
-  );
-  return body && body.length > 0 ? body : null;
+  return extractContratosSectionBody(draft);
 }
 
 /** Extrae el cuerpo de la sección ## 5. Lógica y Edge Cases (hasta el siguiente ## o fin). */
 export function extractSection5Body(draft: string): string | null {
-  const body = getSectionBody(
-    (draft ?? "").trim(),
-    /##\s*5\.\s*Lógica\s+y\s*Edge\s+Cases/i,
-  );
+  const trimmed = ensureDocumentFenceParity((draft ?? "").trim());
+  let body = getSectionBody(trimmed, RE_SECTION5_H2);
+  if (body && body.length > 0) return body;
+  body = getSectionBody(trimmed, /##\s*5\.\s*L[oó]gica\b/i);
   return body && body.length > 0 ? body : null;
 }
 
@@ -1089,26 +1196,44 @@ export function ensureMissingCanonicalSections(draft: string, baseline?: string)
 }
 
 /**
- * Índice del siguiente ## que NO está dentro de un bloque con fences (```...```).
- * Así no cortamos una sección en un ## que sea contenido literal (ej. dentro de ```markdown).
- */
-function indexOfNextH2OutsideFenced(text: string, fromIndex: number): number {
-  const rest = text.slice(fromIndex);
-  const re = /\n##\s+/g;
-  let match: RegExpExecArray | null = null;
-  while ((match = re.exec(rest)) !== null) {
-    const pos = fromIndex + match.index;
-    const before = text.slice(0, pos);
-    const fences = (before.match(/```/g) || []).length;
-    if (fences % 2 === 0) return pos;
-  }
-  return -1;
-}
-
-/**
  * Extrae el contenido de una sección (desde la línea del heading hasta el siguiente ## o fin).
  * No considera ## que estén dentro de bloques ```...``` para no partir en contenido embebido.
  */
+/**
+ * Trunca un cuerpo de sección en el primer H2 canónico de *otra* sección embebido.
+ *
+ * Job 96: un fence impar en §4 hacía que `indexOfNextH2OutsideFenced` no encontrase
+ * frontera y el cuerpo extraído de §5 "tragase" §6+§7 (candidatos de 59k cuando §5 real
+ * medía 4.9k). El reorder elige el candidato más largo, así que el cuerpo corrupto ganaba
+ * siempre; al reensamblar, las secciones tragadas quedaban duplicadas y cada pasada de
+ * dedupe multiplicaba el documento (89k→329k→1M). Este saneo cierra los fences locales del
+ * cuerpo y corta en el primer `## N.` ajeno: las secciones tragadas no se pierden — sus
+ * headings originales siguen en el texto y el escaneo de candidatos ya las recoge aparte.
+ */
+function truncateBodyAtEmbeddedCanonicalH2(body: string, ownNum: number | null): string {
+  const trimmedBody = (body ?? "").trim();
+  if (!trimmedBody || !/^##\s+[1-7]\.\s/m.test(trimmedBody)) return trimmedBody;
+
+  const balanced = closeUnclosedFencesBeforeCanonicalH2(trimmedBody);
+  const lines = balanced.split("\n");
+  let parity = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]!;
+    if (parity === 0) {
+      const m = line.match(/^##\s+([1-7])\.\s/);
+      if (m && parseInt(m[1]!, 10) !== ownNum) {
+        const cut = lines.slice(0, i).join("\n").trimEnd();
+        console.warn(
+          `[MDD:Dedupe] candidato §${ownNum ?? "?"} tragó §${m[1]} — truncado ${trimmedBody.length}→${cut.length} chars`,
+        );
+        return cut;
+      }
+    }
+    parity = (parity + (line.match(/```/g) ?? []).length) % 2;
+  }
+  return balanced === trimmedBody ? trimmedBody : balanced;
+}
+
 function extractSection(draft: string, startIndex: number): { heading: string; body: string } {
   const afterStart = draft.slice(startIndex).replace(/^\s*\n+/, "");
   const firstNewline = afterStart.indexOf("\n");
@@ -1121,17 +1246,53 @@ function extractSection(draft: string, startIndex: number): { heading: string; b
   return { heading, body };
 }
 
-/** Si el cuerpo de la sección 2 contiene ## 3, ## 4 (Contratos o Arquitectura Frontend), ### 4.x (frontend) o bloque ```markdown con ##, es contenido desplazado; reemplazar por placeholder. */
+/** H2 ajenos embebidos en §2 (§3/§4 desplazados). No incluye ### 4.x legítimo dentro de §2. */
+const MISPLACED_SECTION_H2_IN_STACK_RE =
+  /\n##\s*3\.\s*Modelo\s+(?:de\s+)?datos|\n##\s*4\.\s*Contratos\s+de\s+API|\n##\s*4\.\s*Arquitectura\s+Frontend/gi;
+
+function findFirstMisplacedSectionH2OutsideFences(body: string): number {
+  const re = new RegExp(MISPLACED_SECTION_H2_IN_STACK_RE.source, "gi");
+  let match: RegExpExecArray | null;
+  let earliest = -1;
+  while ((match = re.exec(body)) !== null) {
+    const pos = match.index;
+    const before = body.slice(0, pos);
+    const fences = (before.match(/```/g) || []).length;
+    if (fences % 2 === 0 && (earliest === -1 || pos < earliest)) {
+      earliest = pos;
+    }
+  }
+  return earliest;
+}
+
+function stripMisplacedMarkdownFencedBlocks(body: string): string {
+  return body.replace(/```markdown\s*[\s\S]*?```/gi, (block) =>
+    /##\s*[34]\./i.test(block) ? "" : block,
+  );
+}
+
+/**
+ * Limpia §2 con secciones ajenas embebidas: trunca antes de ## 3/## 4 H2 o elimina bloques
+ * ```markdown con esas secciones. Nunca borra contenido sustancial a placeholder.
+ */
 function sanitizeArquitecturaStackBody(body: string): string {
-  const hasMisplaced =
-    /##\s*3\.\s*Modelo\s+(?:de\s+)?datos/i.test(body) ||
-    /##\s*4\.\s*Contratos\s+de\s+API/i.test(body) ||
-    /##\s*4\.\s*Arquitectura\s+Frontend/i.test(body) ||
-    /###\s*4\.\d+/i.test(body) ||
-    /###\s*4\.\s/i.test(body) ||
-    /```markdown\s*[\s\S]*?##\s*[34]\./i.test(body);
-  if (hasMisplaced) return "(Pendiente: Arquitecto de Software)";
-  return body;
+  const trimmed = (body ?? "").trim();
+  if (!trimmed) return "(Pendiente: Arquitecto de Software)";
+  if (isMddSectionPipelinePlaceholderBody(trimmed)) return trimmed;
+
+  let cleaned = stripMisplacedMarkdownFencedBlocks(trimmed);
+  const cutAt = findFirstMisplacedSectionH2OutsideFences(cleaned);
+  if (cutAt >= 0) {
+    cleaned = cleaned.slice(0, cutAt).trim();
+  }
+
+  if (cleaned.length >= 100 && !isMddSectionPipelinePlaceholderBody(cleaned)) {
+    return cleaned;
+  }
+  if (isMddSectionPipelinePlaceholderBody(trimmed) || trimmed.length < 50) {
+    return "(Pendiente: Arquitecto de Software)";
+  }
+  return cleaned.length > 0 ? cleaned : "(Pendiente: Arquitecto de Software)";
 }
 
 /** Número canónico 1–7 a partir del heading ## N. … */
@@ -1185,6 +1346,60 @@ function scoreSection3Body(body: string): number {
   return normalized.length;
 }
 
+const MIN_SECTION5_SUBSTANTIAL_SCORE_LEN = 200;
+
+/** §5 real (no stub de heading BDD/AAA sin cuerpo). */
+function isSection5SubstantialBody(body: string): boolean {
+  const normalized = (body ?? "").trim();
+  if (!normalized || normalized.length < MIN_SECTION5_SUBSTANTIAL_SCORE_LEN) return false;
+  if (isMddSectionPipelinePlaceholderBody(normalized)) return false;
+  if (normalized === MDD_SECTION5_TAIL_PLACEHOLDER) return false;
+  if (/Pendiente:\s*paso dedicado Lógica/i.test(normalized)) return false;
+  return true;
+}
+
+function scoreSection5Body(body: string): number {
+  const normalized = (body ?? "").trim();
+  if (!normalized) return 0;
+  if (isMddSectionPipelinePlaceholderBody(normalized)) return normalized.length;
+  if (normalized === MDD_SECTION5_TAIL_PLACEHOLDER) return normalized.length;
+  if (/Pendiente:\s*paso dedicado Lógica/i.test(normalized)) return normalized.length;
+  // Stubs cortos con «BDD/AAA» en el heading no deben ganar por bonus semántico (job 97).
+  if (!isSection5SubstantialBody(normalized)) return normalized.length;
+  const hasBdd = /reglas de negocio|BDD|AAA|edge case|casos borde/i.test(normalized);
+  const hasSubsections = /^###/m.test(normalized);
+  if (hasBdd || hasSubsections) return 10_000 + normalized.length;
+  return 5_000 + normalized.length;
+}
+
+function pickBestSection5Candidate(
+  candidates: Array<{ heading: string; body: string }>,
+): { heading: string; body: string } {
+  const substantial = candidates.filter((c) => isSection5SubstantialBody(c.body));
+  if (substantial.length > 0) {
+    return substantial.reduce((best, cur) => {
+      const bestLen = best.body.trim().length;
+      const curLen = cur.body.trim().length;
+      if (curLen !== bestLen) return curLen > bestLen ? cur : best;
+      return scoreSection5Body(cur.body) >= scoreSection5Body(best.body) ? cur : best;
+    });
+  }
+  return candidates.reduce((best, cur) =>
+    scoreSection5Body(cur.body) >= scoreSection5Body(best.body) ? cur : best,
+  );
+}
+
+/** Mejor cuerpo §5 aunque el borrador repita headings (p. ej. stub + versión buena). */
+export function extractBestSection5Body(draft: string): string | null {
+  const trimmed = (draft ?? "").trim();
+  if (!trimmed) return null;
+  if (mddHasDuplicateSectionHeadings(trimmed)) {
+    const deduped = deduplicateAndReorderMddSections(trimmed);
+    return extractSection5Body(deduped);
+  }
+  return extractSection5Body(trimmed);
+}
+
 /**
  * Elige la mejor ocurrencia cuando hay headings duplicados: preferir cuerpo sustancial y más largo.
  */
@@ -1203,6 +1418,9 @@ function pickBestMddSectionCandidate(
       scoreSection3Body(cur.body) >= scoreSection3Body(best.body) ? cur : best,
     );
   }
+  if (firstNum === 5) {
+    return pickBestSection5Candidate(candidates);
+  }
   return candidates.reduce((best, cur) => {
     const bestPh = isMddSectionPipelinePlaceholderBody(best.body);
     const curPh = isMddSectionPipelinePlaceholderBody(cur.body);
@@ -1213,25 +1431,49 @@ function pickBestMddSectionCandidate(
 }
 
 /** Fusiona ocurrencias duplicadas de la misma §N (p. ej. §4 principal + journey core al final). */
+/** Rutas `### MÉTODO /ruta` de un cuerpo §4, normalizadas para comparar candidatos solapados. */
+function extractContratosRouteKeys(body: string): Set<string> {
+  const keys = new Set<string>();
+  const re = /^###\s+(GET|POST|PUT|DELETE|PATCH)\s+(\S+)/gim;
+  let m: RegExpExecArray | null = null;
+  while ((m = re.exec(body)) !== null) {
+    keys.add(`${m[1]!.toUpperCase()} ${m[2]!.replace(/[),.;]+$/, "").toLowerCase()}`);
+  }
+  return keys;
+}
+
 function mergeDuplicateSectionCandidates(
   candidates: Array<{ heading: string; body: string }>,
+  allowSection4Concat = true,
 ): { heading: string; body: string } {
   if (candidates.length <= 1) return candidates[0]!;
   const best = pickBestMddSectionCandidate(candidates);
   const sectionNum = canonicalSectionNumber(best.heading);
-  if (sectionNum !== 4) return best;
+  if (sectionNum !== 4 || !allowSection4Concat) {
+    return {
+      heading: best.heading,
+      body: truncateBodyAtEmbeddedCanonicalH2(best.body, sectionNum),
+    };
+  }
 
   const ranked = [...candidates].sort(
     (a, b) => scoreContratosSectionBody(b.body) - scoreContratosSectionBody(a.body),
   );
   const uniqueBodies: string[] = [];
+  const keptRoutes = new Set<string>();
   for (const candidate of ranked) {
-    const body = candidate.body.trim();
+    let body = truncateBodyAtEmbeddedCanonicalH2(candidate.body.trim(), 4);
     if (!body) continue;
     const sig = body.slice(0, 100);
     if (uniqueBodies.some((existing) => existing.includes(sig) || body.includes(existing.slice(0, 100)))) {
       continue;
     }
+    // La firma de 100 chars no detecta copias de §4 que empiezan distinto pero documentan
+    // los mismos endpoints (p. ej. varias pasadas de api_contracts). Sin este chequeo cada
+    // ronda de dedupe reconcatena §4 y el documento crece geométricamente.
+    const routes = extractContratosRouteKeys(body);
+    if (routes.size > 0 && [...routes].every((r) => keptRoutes.has(r))) continue;
+    for (const r of routes) keptRoutes.add(r);
     uniqueBodies.push(body);
   }
   if (uniqueBodies.length <= 1) return best;
@@ -1240,74 +1482,141 @@ function mergeDuplicateSectionCandidates(
 
 /**
  * Reordena el MDD a 1..7 y elimina secciones duplicadas.
- * No parte en ## que estén dentro de bloques ```. Si la sección 2 contiene ## 3/## 4 embebidos, la reemplaza por placeholder.
+ * No parte en ## que estén dentro de bloques ```. Si §2 contiene ## 3/## 4 H2 embebidos, trunca antes de ese H2 (conserva §2 sustancial).
  */
 export function deduplicateAndReorderMddSections(draft: string): string {
-  let trimmed = stripTrailingDuplicateMddSections((draft || "").trim());
+  // NO recortar por posición antes de reordenar: `stripTrailingDuplicateMddSections` borra todo
+  // lo posterior a la primera §7 sin mirar calidad, así que una §5 buena regenerada al final se
+  // perdía y sobrevivía el stub de arriba (job 80: gate atascado en "§5 36 chars"). El reorder de
+  // abajo ya elige el cuerpo más largo por sección; el recorte queda como último recurso al final.
+  let trimmed = closeUnclosedFencesBeforeCanonicalH2((draft || "").trim());
   trimmed = fixGluedSection6Heading(trimmed);
   trimmed = ensureSection6WhenSection7Present(trimmed);
   if (!trimmed) return draft;
-  const hadDuplicates = mddHasDuplicateSectionHeadings(trimmed);
+  // Evaluar el guard sobre el texto YA recortado, como antes de mover el strip al final: si se
+  // calcula sobre el texto completo, `hadDuplicates` se vuelve true más a menudo y puentea la
+  // protección `result < 50%`, que es lo único que impide tirar secciones no canónicas
+  // (p. ej. el bloque de gobernanza inmutable) cuando el borrador viene degradado.
+  const hadDuplicates = mddHasDuplicateSectionHeadings(
+    stripTrailingDuplicateMddSections(trimmed),
+  );
   // Corregir §6 pegada a ### antes de extraer (evita que extractSection tome "## 6. Seguridad###..." como una sola línea)
   trimmed = trimmed.replace(/(6\.\s*Seguridad)\s*(#{1,6})/gi, "$1\n\n$2");
   const titleMatch = trimmed.match(/^#\s+Master\s+Design\s+Document[^\n]*/i);
   const title = titleMatch ? titleMatch[0] : "# Master Design Document";
   const afterTitle = titleMatch ? trimmed.slice(titleMatch[0].length).replace(/^\s*\n+/, "") : trimmed;
   const withNewline = "\n" + afterTitle;
-  const sections: Array<{ heading: string; body: string }> = [];
-  for (const { pattern } of SECTION_ORDER) {
-    const re = /\n(##\s+[^\n]+)/gi;
-    let match: RegExpExecArray | null = null;
-    const candidates: Array<{ heading: string; body: string }> = [];
-    while ((match = re.exec(withNewline)) !== null) {
-      const line = match[1];
-      if (pattern.test(line)) {
-        const { heading: actualHeading, body } = extractSection(withNewline, match.index);
-        let bodyToUse = body;
-        if (/^##\s*2\.\s*Arquitectura\s+y\s*Stack/i.test(actualHeading))
-          bodyToUse = sanitizeArquitecturaStackBody(body);
-        candidates.push({ heading: actualHeading, body: bodyToUse });
+  const assemble = (allowSection4Concat: boolean): string | null => {
+    const sections: Array<{ heading: string; body: string }> = [];
+    for (const { pattern } of SECTION_ORDER) {
+      const re = /\n(##\s+[^\n]+)/gi;
+      let match: RegExpExecArray | null = null;
+      const candidates: Array<{ heading: string; body: string }> = [];
+      while ((match = re.exec(withNewline)) !== null) {
+        const line = match[1];
+        if (pattern.test(line)) {
+          const { heading: actualHeading, body } = extractSection(withNewline, match.index);
+          // Anti-swallow: si el cuerpo extraído contiene el H2 canónico de otra sección
+          // (fence impar aguas arriba), truncar antes de puntuar — un candidato que tragó
+          // la cola siempre gana por longitud y duplica el documento al reensamblar.
+          let bodyToUse = truncateBodyAtEmbeddedCanonicalH2(
+            body,
+            canonicalSectionNumber(actualHeading),
+          );
+          if (/^##\s*2\.\s*Arquitectura\s+y\s*Stack/i.test(actualHeading))
+            bodyToUse = sanitizeArquitecturaStackBody(bodyToUse);
+          candidates.push({ heading: actualHeading, body: bodyToUse });
+        }
       }
+      if (candidates.length === 0) continue;
+      if (candidates.length > 1 && /^##\s+5\.\s*Lógica/i.test(candidates[0]!.heading)) {
+        const lengths = candidates.map((c) => c.body.trim().length);
+        const picked = mergeDuplicateSectionCandidates(candidates, allowSection4Concat);
+        console.warn(
+          `[MDD:Dedupe] §5 ${candidates.length} candidatos lens=[${lengths.join(",")}] picked=${picked.body.trim().length}`,
+        );
+        sections.push(picked);
+        continue;
+      }
+      sections.push(mergeDuplicateSectionCandidates(candidates, allowSection4Concat));
     }
-  if (candidates.length === 0) continue;
-    sections.push(mergeDuplicateSectionCandidates(candidates));
-  }
-  // El escaneo por SECTION_ORDER puede perder §6/§7 recién insertadas (p. ej. tras /seguridad).
-  // Recuperarlas del borrador original con getSection6Or7Range antes de reconstruir.
-  for (const sectionNum of [6, 7] as const) {
-    const range = getSection6Or7Range(trimmed, sectionNum);
-    if (!range) continue;
-    const canonical = sectionNum === 6 ? "## 6. Seguridad" : "## 7. Infraestructura";
-    const already = sections.some((s) =>
-      sectionNum === 6
-        ? RE_SECTION6_H2_LINE.test(s.heading)
-        : /^##\s+(?:7\.\s+)?(?:Infraestructura|Integraci[oó]n)/i.test(s.heading),
+    // El escaneo por SECTION_ORDER puede perder §6/§7 recién insertadas (p. ej. tras /seguridad).
+    // Recuperarlas del borrador original con getSection6Or7Range antes de reconstruir.
+    for (const sectionNum of [6, 7] as const) {
+      const range = getSection6Or7Range(trimmed, sectionNum);
+      if (!range) continue;
+      const canonical = sectionNum === 6 ? "## 6. Seguridad" : "## 7. Infraestructura";
+      const already = sections.some((s) =>
+        sectionNum === 6
+          ? RE_SECTION6_H2_LINE.test(s.heading)
+          : /^##\s+(?:7\.\s+)?(?:Infraestructura|Integraci[oó]n)/i.test(s.heading),
+      );
+      if (already) continue;
+      const body = trimmed
+        .slice(range.start + range.heading.length, range.end)
+        .replace(/^\s*\n+/, "")
+        .trim();
+      if (body.length > 0) sections.push({ heading: canonical, body });
+    }
+    const byNumber = new Map<number, { heading: string; body: string }>();
+    for (const s of sections) {
+      const num = canonicalSectionNumber(s.heading);
+      if (num == null) continue;
+      const prev = byNumber.get(num);
+      if (!prev || s.body.length >= prev.body.length) byNumber.set(num, s);
+    }
+    const orderedSections = [...byNumber.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([, s]) => s);
+    if (orderedSections.length === 0) return null;
+    // El `---` separador de la sección siguiente queda absorbido al final del cuerpo; sin quitarlo
+    // cada pasada re-añade el suyo y el documento deriva al alza indefinidamente (no idempotente).
+    const out = [
+      title,
+      "",
+      ...orderedSections.flatMap((s) => [
+        "---",
+        s.heading,
+        "",
+        s.body.replace(/\n*-{3,}\s*$/, "").trimEnd(),
+        "",
+      ]),
+    ];
+    return out.join("\n").trim();
+  };
+
+  let result = assemble(true);
+  if (result === null) return draft;
+  // Invariante: deduplicar no puede hacer crecer el documento. El merge por concatenación de §4
+  // puede reunir copias solapadas y, al repetirse por pasada del pipeline (formatter → prepare →
+  // persist), dispara crecimiento geométrico (89 KB → 237 KB → 681 KB → 2.4 MB observado en job 78).
+  // Si crece, rehacer quedándose solo con la mejor §4.
+  // El 10% de margen absorbe el overhead de reensamblado (`---`, headings canónicos) en
+  // documentos pequeños; la explosión real supera el +150%.
+  if (result.length > trimmed.length * 1.1) {
+    console.warn(
+      `[MDD:Dedupe] inflate trimmed=${trimmed.length} result=${result.length} (>${Math.round(trimmed.length * 1.1)})`,
     );
-    if (already) continue;
-    const body = trimmed
-      .slice(range.start + range.heading.length, range.end)
-      .replace(/^\s*\n+/, "")
-      .trim();
-    if (body.length > 0) sections.push({ heading: canonical, body });
+    const withoutConcat = assemble(false);
+    if (withoutConcat !== null && withoutConcat.length < result.length) {
+      console.warn(
+        `[MDD:Dedupe] inflate retry sin concat §4 result=${withoutConcat.length}`,
+      );
+      result = withoutConcat;
+    }
   }
-  const byNumber = new Map<number, { heading: string; body: string }>();
-  for (const s of sections) {
-    const num = canonicalSectionNumber(s.heading);
-    if (num == null) continue;
-    const prev = byNumber.get(num);
-    if (!prev || s.body.length >= prev.body.length) byNumber.set(num, s);
-  }
-  const orderedSections = [...byNumber.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([, s]) => s);
-  if (orderedSections.length === 0) return draft;
-  const out = [title, "", ...orderedSections.flatMap((s) => ["---", s.heading, "", s.body, ""])];
-  let result = out.join("\n").trim();
   // Con duplicados conocidos, forzar dedup aunque el resultado sea mucho más corto.
   if (!hadDuplicates && result.length < trimmed.length * 0.5) return draft;
   result = ensureSection6WhenSection7Present(result);
   if (mddHasDuplicateSectionHeadings(result)) {
     result = stripTrailingDuplicateMddSections(result);
   }
+  const outLen = result.length;
+  const s4Len = extractSection4Body(result)?.length ?? 0;
+  const s5Len = extractSection5Body(result)?.length ?? 0;
+  const fenceCount = (result.match(/```/g) ?? []).length;
+  console.log(
+    `[MDD:Dedupe:diag] in=${trimmed.length} out=${outLen} §4=${s4Len} §5=${s5Len} fences=${fenceCount}${fenceCount % 2 === 1 ? " IMPAR" : ""}`,
+  );
   return result;
 }

@@ -13,12 +13,28 @@ const DOC_WEIGHTS: Record<keyof PlanningDocumentFields, number> = {
   tasksContent: 0.05,
 };
 
-const THIN_USE_CASES_RE = /thin\s*[—–-]\s*ProcessInventory|ProcessInventory/i;
+const THIN_USE_CASES_RE =
+  /#\s*Casos de uso\s*\(\s*thin\s*[—–-]\s*ProcessInventory\s*\)|thin\s*[—–-]\s*ProcessInventory/i;
+const THIN_UC_EMPTY_RE = /_Sin procesos en inventario/i;
+const THIN_UC_PROCESS_HEADING_RE = /^##\s+CU-[^\n]+/m;
+const THIN_UC_SUBSTANCE_RE = /-\s*\*\*(?:Pasos|Trigger):\*\*|^\s+\d+\.\s+/m;
+
+/** UC thin ProcessInventory (HIGH cascade) — entregable válido sin prosa literaria. */
+export function isThinProcessInventoryUseCases(content: string): boolean {
+  return THIN_USE_CASES_RE.test(content);
+}
+
+/** Al menos un CU de inventario con trigger o pasos (no stub vacío). */
+export function hasSubstantiveThinUseCaseProcesses(content: string): boolean {
+  if (THIN_UC_EMPTY_RE.test(content)) return false;
+  if (!THIN_UC_PROCESS_HEADING_RE.test(content)) return false;
+  return THIN_UC_SUBSTANCE_RE.test(content);
+}
 
 /**
  * Calcula la completitud de cada documento del proyecto.
  * 100 = completo (≥300 chars), 50 = parcial (≥80 chars), 10 = mínimo (algún contenido), 0 = vacío.
- * Use Cases "thin" (ProcessInventory) se capan a 50 aunque superen 300 chars.
+ * Use Cases thin stub se capan a 50; thin con ProcessInventory sustantivo cuenta como 100.
  * El `overall` es el promedio ponderado por `DOC_WEIGHTS`.
  */
 export function computeDocumentCompleteness(docs: PlanningDocumentFields): DocumentCompleteness {
@@ -38,8 +54,12 @@ export function computeDocumentCompleteness(docs: PlanningDocumentFields): Docum
     } else {
       score = 0;
     }
-    if (key === "useCasesContent" && trimmed.length > 0 && THIN_USE_CASES_RE.test(trimmed)) {
-      score = Math.min(score, 50);
+    if (key === "useCasesContent" && trimmed.length > 0 && isThinProcessInventoryUseCases(trimmed)) {
+      if (hasSubstantiveThinUseCaseProcesses(trimmed)) {
+        score = 100;
+      } else {
+        score = Math.min(score, 50);
+      }
     }
     result[key] = score;
     weightedSum += (score / 100) * weight;

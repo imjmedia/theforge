@@ -53,6 +53,10 @@ export function WorkshopMddPanel({
   onClearMddJustGeneratedFromBenchmark,
   onRequestGenerateMdd,
   onReapplyMddFormat,
+  canRegenerateMddSection,
+  mddSectionRegenDisabledReason,
+  onRegenerateMddSection: _onRegenerateMddSection,
+  onRegenerateMddSection5Pipeline,
   onOpenSuggestMddPatterns,
   onOpenEditMddPatterns,
   onOpenClearMddConfirm,
@@ -180,6 +184,22 @@ export function WorkshopMddPanel({
                                   className={mddReapplyingFormat ? "animate-spin" : undefined}
                                 />
                                 {mddReapplyingFormat ? "Aplicando formato…" : "Re-aplicar formato"}
+                              </WorkshopPanelButton>
+                            )}
+                            {effectiveMddTrimmed.length > 0 && (
+                              <WorkshopPanelButton
+                                tone="secondary"
+                                onClick={() => void onRegenerateMddSection5Pipeline()}
+                                disabled={!canRegenerateMddSection}
+                                className="w-full justify-center lg:w-auto"
+                                title={
+                                  canRegenerateMddSection
+                                    ? "Regenera §5 con la misma secuencia del MDD completo (section5 → Formatter → prepare). Más lento que /logica; no regenera §1–§4 ni §6–§7."
+                                    : mddSectionRegenDisabledReason
+                                }
+                              >
+                                <WorkshopButtonIcon icon={RefreshCw} tone="secondary" />
+                                Regenerar §5 (pipeline)
                               </WorkshopPanelButton>
                             )}
                             {effectiveMddTrimmed.length > 0 && (

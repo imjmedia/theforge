@@ -14,6 +14,7 @@ import {
   shouldDecoupleSection5FromArchitect,
 } from "./mdd-architect-pipeline.util.js";
 import { tryMergeSingleArchitectSectionIntoDraft } from "./mdd-sanitize/section-merge.js";
+import { softwareArchitectMddPrompt } from "../prompts/load-prompts.js";
 
 describe("mdd-architect-pipeline.util", () => {
   const baseState = { mddComplexity: "HIGH" } as MDDStateType;
@@ -129,6 +130,15 @@ describe("mdd-architect-pipeline.util", () => {
     const frankenstein = `# Master Design Document\n\n## 2. Arquitectura\n(Pendiente)\n\n## 3. Modelo de Datos\n\`\`\`sql\nCREATE TABLE t (id UUID);\n\`\`\``;
     const live = resolveLiveDraftForScopedArchitectStream("data_model", frankenstein, stable);
     assert.equal(live, stable);
+  });
+
+  it("softwareArchitectMddPrompt scoped no incluye orden de 7 secciones", () => {
+    const stack = softwareArchitectMddPrompt("stack");
+    const full = softwareArchitectMddPrompt("full");
+    assert.match(stack, /§2 únicamente/);
+    assert.doesNotMatch(stack, /Orden de salida \(estricto\)/);
+    assert.match(full, /Orden de salida \(estricto\)/);
+    assert.match(full, /7 secciones/);
   });
 
   it("resolveLiveDraftForScopedArchitectStream publica §2 sustancial aunque parezca MDD completo", () => {

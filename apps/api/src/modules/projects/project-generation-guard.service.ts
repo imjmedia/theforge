@@ -17,6 +17,8 @@ import { DeliverablesQueueService } from "./deliverables-queue.service.js";
 import { MddQueueService } from "../ai-analysis/mdd/mdd-queue.service.js";
 import { MddUpstreamSyncService } from "../ai-analysis/mdd/mdd-upstream-sync.service.js";
 import { MddCoherenceService } from "../engine/mdd-coherence/mdd-coherence.service.js";
+import { readSddGraphContext } from "../engine/mdd-coherence/sdd-graph-context.util.js";
+import { resolveDomainInventory } from "../engine/domain-inventory-persist.util.js";
 import { pickPrimaryStage } from "./stage-helpers.js";
 
 type TrackedBgJob = {
@@ -122,12 +124,32 @@ export class ProjectGenerationGuardService {
         (stageId?.trim() && stages.find((s) => String(s.id ?? "") === stageId.trim())) ||
         pickPrimaryStage(stages as Parameters<typeof pickPrimaryStage>[0]);
       const stage = stageRaw as
-        | { id?: string; mddContent?: string | null; shortTermContext?: unknown }
+        | {
+            id?: string;
+            mddContent?: string | null;
+            brdContent?: string | null;
+            dbgaContent?: string | null;
+            domainInventory?: unknown;
+            shortTermContext?: unknown;
+          }
         | null
         | undefined;
       if (stage?.id) {
         const mdd = String(stage.mddContent ?? (project as { mddContent?: string }).mddContent ?? "");
-        sddGraph = await this.mddCoherence.evaluateFromMdd(projectId, String(stage.id), mdd);
+        const { context } = readSddGraphContext(stage.shortTermContext);
+        const inventory = resolveDomainInventory({
+          persisted: stage.domainInventory,
+          brdMarkdown: String(stage.brdContent ?? (project as { brdContent?: string }).brdContent ?? ""),
+          dbgaMarkdown: String(stage.dbgaContent ?? (project as { dbgaContent?: string }).dbgaContent ?? ""),
+          mddMarkdown: mdd,
+        });
+        sddGraph = await this.mddCoherence.evaluateFromMdd(
+          projectId,
+          String(stage.id),
+          mdd,
+          context,
+          { inventory },
+        );
       }
     } catch {
       sddGraph = null;

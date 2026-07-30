@@ -93,6 +93,47 @@ Reglas.
     assert.match(out, /journey core/i);
     assert.match(out, /\/api\/v1\/tenants/);
   });
+
+  it("no crece el documento al fusionar copias solapadas de §4 (anti-explosión job 78)", () => {
+    const endpoints = Array.from(
+      { length: 30 },
+      (_, i) =>
+        `### GET /api/v1/recurso-${i}\n\nDevuelve el recurso ${i}. ${"Detalle del contrato. ".repeat(20)}`,
+    ).join("\n\n");
+    // Dos pasadas de api_contracts documentando los MISMOS endpoints con preámbulo distinto:
+    // la firma de 100 chars no las detecta como duplicadas.
+    const raw = `# MDD
+## 1. Contexto
+${"Alcance del producto. ".repeat(40)}
+## 2. Arquitectura y Stack
+NestJS stack.
+## 3. Modelo de Datos
+\`\`\`sql
+CREATE TABLE t (id UUID PRIMARY KEY);
+\`\`\`
+## 4. Contratos de API
+${endpoints}
+## 5. Lógica y Edge Cases
+Reglas.
+## 4. Contratos de API
+Todos los endpoints usan el prefijo \`/api/v1\` y autenticación JWT Bearer.
+
+${endpoints}
+`;
+    const out = deduplicateAndReorderMddSections(raw);
+    assert.equal((out.match(/## 4\. Contratos de API/g) ?? []).length, 1);
+    assert.ok(
+      out.length <= raw.length,
+      `dedupe no debe hacer crecer el doc (raw=${raw.length} out=${out.length})`,
+    );
+    // Idempotente: una segunda pasada tampoco puede inflar.
+    const twice = deduplicateAndReorderMddSections(out);
+    assert.ok(
+      twice.length <= out.length,
+      `dedupe debe ser idempotente (out=${out.length} twice=${twice.length})`,
+    );
+    assert.match(out, /\/api\/v1\/recurso-0/);
+  });
 });
 
 describe("normalizeMddFormat pipeline parcial HIGH", () => {

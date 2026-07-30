@@ -32,8 +32,22 @@ import { extractFirstJsonObject, parseJsonOrThrow } from "../utils/parse-json.js
 import { getInternalDirectivesContext, extractInternalDirectives } from "../utils/mdd-mesh-topology.js";
 import { stripThinkingTags } from "../utils/mdd-security-parse.js";
 import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
-import { draftHasSubstantialSection7 } from "../utils/mdd-section-preserve.util.js";
+import { resolveMddTailNodeHardTimeoutMs } from "../utils/mdd-llm-timeout.util.js";
+import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
+import { buildTrimmedTailAgentContext } from "../utils/mdd-tail-parallel.util.js";
+import {
+  draftHasSubstantialSection7,
+  reinjectTailSectionsFromSnapshotsForGateLoop,
+  stateHasSubstantialTailSnapshots,
+} from "../utils/mdd-section-preserve.util.js";
 import { z } from "zod";
+
+export type MddIntegrationNodeOptions = {
+  /** F3: solo devuelve slice structured (sin mddDraft). */
+  sliceOnly?: boolean;
+  /** F3: contexto §1+§2+DDL§3+tabla§4 (sin JSON). */
+  trimmedTailContext?: boolean;
+};
 
 /** Schema de salida estructurada: integracion con subsections y manifest opcional. */
 const integrationStructuredSchema = z.object({
@@ -182,10 +196,30 @@ function getIntegrationHint(title: string, scope: string): string {
 }
 
 /** Creates the MDD Integration Engineer node. Outputs structured integracion; merge into mddStructured and derive mddDraft. */
-export function createMddIntegrationNode(llm: BaseChatModel) {
+export function createMddIntegrationNode(llm: BaseChatModel, opts?: MddIntegrationNodeOptions) {
   return async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
-    LOG("entry mddDraftLen=%s", (state.mddDraft ?? "").length);
+    const sliceOnly = opts?.sliceOnly === true;
+    LOG("entry mddDraftLen=%s sliceOnly=%s", (state.mddDraft ?? "").length, sliceOnly);
     try {
+      if (
+        state.deliveryGateLoopActive === true &&
+        state.deliveryGateFixTarget === "integration" &&
+        stateHasSubstantialTailSnapshots(state)
+      ) {
+        const reinjected = reinjectTailSectionsFromSnapshotsForGateLoop(state);
+        if (reinjected) {
+          LOG("gate loop integration — re-inyectado §6/§7 desde snapshots (skip LLM)");
+          if (sliceOnly) {
+            return {
+              mddStructured: state.mddStructured,
+              ...(reinjected.securitySectionMd ? { securitySectionMd: reinjected.securitySectionMd } : {}),
+              ...(reinjected.integrationSectionMd ? { integrationSectionMd: reinjected.integrationSectionMd } : {}),
+            };
+          }
+          return reinjected;
+        }
+      }
+
       const brief = getUserBrief(state);
       const briefBlock = brief
         ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Elaborar la sección 7. Infraestructura/Integración para una aplicación que cumple este objetivo.\n\n---\n\n`
@@ -235,9 +269,14 @@ export function createMddIntegrationNode(llm: BaseChatModel) {
       if (scope) {
         contextParts.push("**Alcance clarificado:**", scope, "");
       }
+      const draftBlock = opts?.trimmedTailContext
+        ? buildTrimmedTailAgentContext(state.mddDraft ?? "")
+        : (state.mddDraft ?? "(vacío)");
       contextParts.push(
-        "**Borrador actual del MDD (usa las secciones 1–4 y Seguridad para derivar ## Integración):**",
-        state.mddDraft || "(vacío)",
+        opts?.trimmedTailContext
+          ? "**Contexto MDD (referencia acotada para Integración):**"
+          : "**Borrador actual del MDD (usa las secciones 1–4 y Seguridad para derivar ## Integración):**",
+        draftBlock,
         getInternalDirectivesContext(state, "integration_engineer"),
       );
       if (state.auditorFeedback?.trim()) {
@@ -250,9 +289,28 @@ export function createMddIntegrationNode(llm: BaseChatModel) {
       const context = contextParts.join("\n");
       const prompt = `${INTEGRATION_ENGINEER_MDD_PROMPT}\n\n---\n${context}`;
       const inputDraftLen = (state.mddDraft ?? "").trim().length;
-      const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], { tag: "Integration" });
-      const text = response ? stripThinkingTags(extractLlmText(response)) : "";
+      const startedAt = Date.now();
+      const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], {
+        tag: "Integration",
+        hardTimeoutMs: resolveMddTailNodeHardTimeoutMs(),
+        maxAttempts: 2,
+      });
+      const rawText = response ? extractLlmText(response) : "";
+      const text = stripThinkingTags(rawText);
+      logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, rawText.length));
       if (!text.trim()) {
+        const reinjected = reinjectTailSectionsFromSnapshotsForGateLoop(state);
+        if (reinjected) {
+          LOG("LLM vacío — restaurado §6/§7 desde snapshots");
+          if (sliceOnly) {
+            return {
+              mddStructured: state.mddStructured,
+              ...(reinjected.securitySectionMd ? { securitySectionMd: reinjected.securitySectionMd } : {}),
+              ...(reinjected.integrationSectionMd ? { integrationSectionMd: reinjected.integrationSectionMd } : {}),
+            };
+          }
+          return { ...reinjected, mddStructured: state.mddStructured ?? {} };
+        }
         if (draftHasSubstantialSection7(state.mddDraft ?? "")) {
           LOG("LLM sin respuesta — preservando §7 existente (inputLen=%s)", inputDraftLen);
           logMddNodeOutput("Integration", state.mddDraft ?? "", { inputLen: inputDraftLen });
@@ -276,6 +334,12 @@ export function createMddIntegrationNode(llm: BaseChatModel) {
           }),
         };
         const merged = mergeMddStructured(state.mddStructured, slice, state.mddDraft ?? "");
+        if (sliceOnly) {
+          return {
+            mddStructured: { integracion: merged.integracion ?? slice.integracion },
+            integrationSectionMd: integracionToSection7Markdown(slice.integracion),
+          };
+        }
         let fallbackDraft = replaceSection6Or7InDraft(state.mddDraft ?? "", 7, integracionToSection7Markdown(slice.integracion));
         if (state.executorControlled === true && state.previousMddDraftForMerge?.trim()) {
           const preserve = getSectionsToPreserveFromExecutorPlan(state.sectionsToRun);
@@ -342,7 +406,31 @@ export function createMddIntegrationNode(llm: BaseChatModel) {
       const integracionForMd = Array.isArray(merged.integracion)
         ? { subsections: merged.integracion }
         : (merged.integracion ?? slice.integracion);
-      const section7Md = integracionToSection7Markdown(integracionForMd);
+      let section7Md = integracionToSection7Markdown(integracionForMd);
+      const s7BodyFromLlm = section7Md.replace(/^##[^\n]+\n+/, "").trim();
+      if (!draftHasSubstantialSection7(`# MDD\n${section7Md}`)) {
+        const reinjected = reinjectTailSectionsFromSnapshotsForGateLoop(state);
+        if (reinjected?.integrationSectionMd) {
+          section7Md = reinjected.integrationSectionMd;
+          LOG("§7 LLM insustancial — restaurado desde snapshot");
+        }
+      } else if (s7BodyFromLlm.length < 200) {
+        const reinjected = reinjectTailSectionsFromSnapshotsForGateLoop(state);
+        if (reinjected?.integrationSectionMd) {
+          section7Md = reinjected.integrationSectionMd;
+          LOG("§7 LLM corto — restaurado desde snapshot");
+        }
+      }
+
+      if (sliceOnly) {
+        LOG("ok sliceOnly integracion subs=%s", integracionForMd.subsections?.length ?? 0);
+        return {
+          mddStructured: { integracion: merged.integracion ?? slice.integracion },
+          integrationSectionMd: section7Md,
+          ...meshUpdate,
+        };
+      }
+
       const draftWithSection6 = ensureSection6WhenSection7Present(state.mddDraft ?? "");
       let mddDraft = replaceSection6Or7InDraft(draftWithSection6, 7, section7Md);
       if (state.executorControlled === true && state.previousMddDraftForMerge?.trim()) {

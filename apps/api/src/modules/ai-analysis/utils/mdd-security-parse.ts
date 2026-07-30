@@ -11,11 +11,84 @@ import {
   jsonSectionToMarkdown,
   unbulletAndJoinForJson,
 } from "./mdd-sanitize.js";
-import { extractFirstJsonObject, parseJsonOrThrow } from "./parse-json.js";
+import {
+  extractFirstJsonObject,
+  parseJsonOrThrow,
+  repairTruncatedJsonObject,
+} from "./parse-json.js";
 
-const securityStructuredSchema = z.object({
-  seguridad: z.array(mddSeguridadItemSchema),
+export { repairTruncatedJsonObject };
+
+function coerceStringArray(value: unknown): string[] {
+  return flattenSecurityContentValue(value);
+}
+
+/** Aplana content anidado (heading/details, objetos en array) a strings legibles. */
+function flattenSecurityContentValue(value: unknown): string[] {
+  if (value == null) return [];
+  if (typeof value === "string") {
+    const t = value.trim();
+    return t ? [t] : [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => flattenSecurityContentValue(entry));
+  }
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const heading = [obj.title, obj.heading].find((h) => typeof h === "string" && h.trim()) as
+      | string
+      | undefined;
+    const nested = obj.content ?? obj.details ?? obj.text ?? obj.body;
+    if (nested != null) {
+      const lines = flattenSecurityContentValue(nested);
+      if (heading?.trim() && lines.length) {
+        return [`**${heading.trim()}:** ${lines[0]}`, ...lines.slice(1)];
+      }
+      if (lines.length) return lines;
+    }
+    if (heading?.trim()) return [heading.trim()];
+    return [JSON.stringify(value, null, 2)];
+  }
+  const s = String(value).trim();
+  return s ? [s] : [];
+}
+
+function hasSubstantialSeguridadItems(items: MddSeguridadItem[]): boolean {
+  return items.some((item) => {
+    const body = (item.content ?? []).join(" ").trim();
+    return body.length >= 20 && !/^(fragment|pending|placeholder)/i.test(body);
+  });
+}
+
+/** Acepta variantes DeepSeek/legacy: content string, heading/details, fences ```json. */
+const securityStructuredRawSchema = z.object({
+  seguridad: z.array(
+    z.object({
+      title: z.string().optional(),
+      heading: z.string().optional(),
+      content: z
+        .union([z.array(z.string()), z.string(), z.record(z.unknown()), z.array(z.unknown())])
+        .optional(),
+      details: z
+        .union([z.array(z.string()), z.string(), z.record(z.unknown()), z.array(z.unknown())])
+        .optional(),
+    }),
+  ),
 });
+
+function normalizeSeguridadStructuredRaw(
+  raw: z.infer<typeof securityStructuredRawSchema>,
+): MddSeguridadItem[] {
+  return raw.seguridad.map((item) => {
+    const rawTitle = (item.title ?? item.heading ?? "Seguridad").trim();
+    const title = rawTitle.replace(/^\d+(?:\.\d+)+\.\s*/, "").trim() || rawTitle;
+    const content = coerceStringArray(item.content ?? item.details ?? []);
+    return mddSeguridadItemSchema.parse({
+      title,
+      content: content.length ? content : ["(Pendiente de definir.)"],
+    });
+  });
+}
 
 const legacySecurityOutputSchema = z.object({
   securitySection: z
@@ -61,12 +134,23 @@ export function isCorruptedSecurityLlmText(text: string): boolean {
   if (CORRUPTED_SECURITY_TEXT_PATTERNS.some((re) => re.test(t))) return true;
   const jsonishLineCount = t.split(/\n/).filter((line) => lineLooksLikeJsonFragment(line)).length;
   const lineCount = t.split(/\n/).filter((l) => l.trim()).length;
-  if (lineCount >= 4 && jsonishLineCount / lineCount > 0.35) return true;
+  if (lineCount >= 4 && jsonishLineCount / lineCount > 0.35) {
+    if (t.startsWith("{")) {
+      try {
+        const extracted = extractFirstJsonObject(t) ?? t;
+        const parsed = JSON.parse(extracted) as unknown;
+        if (securityStructuredRawSchema.safeParse(parsed).success) return false;
+      } catch {
+        /* sigue evaluación heurística */
+      }
+    }
+    return true;
+  }
   if (t.startsWith("{")) {
     try {
       const extracted = extractFirstJsonObject(t) ?? t;
       const parsed = JSON.parse(extracted) as unknown;
-      if (!securityStructuredSchema.safeParse(parsed).success && /placeholder|will\s+rewrite|thinking/i.test(t)) {
+      if (!securityStructuredRawSchema.safeParse(parsed).success && /placeholder|will\s+rewrite|thinking/i.test(t)) {
         return true;
       }
     } catch {
@@ -97,7 +181,16 @@ export function isCorruptedSeguridadSlice(seguridad: MddSeguridadItem[] | undefi
   if (seguridad.length === 1) {
     const only = seguridad[0]!;
     const body = (only.content ?? []).join("\n").trim();
-    if (body.startsWith("{") && body.includes('"') && body.length < 4000) return true;
+    // Solo JSON crudo sin parsear (1 línea); items multi-viñeta legibles no son corruptos.
+    if (
+      body.startsWith("{") &&
+      body.includes('"seguridad"') &&
+      body.length < 4000 &&
+      !body.includes("\n- ") &&
+      !body.includes("\n###")
+    ) {
+      return true;
+    }
   }
   return false;
 }
@@ -117,7 +210,7 @@ export function sanitizeSeguridadItems(
     const content = (item.content ?? [])
       .map((c) => c.replace(/^#+\s*/, "").replace(/^-\s*/, "").trim())
       .filter((c) => c.length > 0)
-      .filter((c) => !lineLooksLikeJsonFragment(c))
+      .filter((c) => !lineLooksLikeJsonFragment(c) || c.length > 80)
       .filter((c) => !CORRUPTED_SECURITY_TEXT_PATTERNS.some((re) => re.test(c)));
     if (content.length) out.push(mddSeguridadItemSchema.parse({ title, content }));
   }
@@ -172,14 +265,45 @@ function markdownToSeguridadItem(md: string): MddSeguridadItem {
 }
 
 function tryStructuredJson(text: string): MddSeguridadItem[] | null {
-  const jsonStr = extractFirstJsonObject(text) ?? text.trim();
-  if (!jsonStr.startsWith("{")) return null;
+  const stripped = text.replace(/^```(?:json)?\s*|\s*```$/gim, "").trim();
+  const jsonStr = extractFirstJsonObject(stripped) ?? (stripped.startsWith("{") ? stripped : null);
+  if (!jsonStr?.startsWith("{")) return null;
+  let parsed: unknown;
   try {
-    const parsed = parseJsonOrThrow(jsonStr, securityStructuredSchema);
-    return parsed.seguridad;
+    parsed = JSON.parse(jsonStr) as unknown;
   } catch {
-    return null;
+    const repaired = repairTruncatedJsonObject(jsonStr);
+    if (!repaired) return null;
+    try {
+      parsed = JSON.parse(repaired) as unknown;
+    } catch {
+      return null;
+    }
   }
+  const safe = securityStructuredRawSchema.safeParse(parsed);
+  if (!safe.success) return null;
+  return normalizeSeguridadStructuredRaw(safe.data);
+}
+
+/** Fallback: extrae `{ seguridad: [...] }` del texto crudo cuando el parse principal falló. */
+export function recoverSeguridadItemsFromRawLlmText(text: string): MddSeguridadItem[] | null {
+  const trimmed = stripThinkingTags(text);
+  if (!trimmed) return null;
+  const structured = tryStructuredJson(trimmed);
+  if (structured?.length) {
+    const sanitized = sanitizeSeguridadItems(structured);
+    const items = sanitized?.length ? sanitized : structured;
+    if (hasSubstantialSeguridadItems(items) && !isCorruptedSeguridadSlice(items)) return items;
+    if (hasSubstantialSeguridadItems(items)) return items;
+  }
+  const legacySection = tryLegacyJson(trimmed);
+  if (legacySection) {
+    const fromLegacy = tryMarkdownSection(
+      legacySection.startsWith("##") ? legacySection : `## Seguridad\n\n${legacySection}`,
+    );
+    if (fromLegacy) return fromLegacy;
+  }
+  return null;
 }
 
 function tryLegacyJson(text: string): string | null {
@@ -280,28 +404,11 @@ export function parseSecurityLlmResponse(text: string): MddSeguridadItem[] | nul
   const trimmed = stripThinkingTags(text);
   if (!trimmed) return null;
 
-  // 1. Try structured JSON first: { seguridad: [...] }
-  //    (before corruption check — valid JSON has high "json fragment" line ratio
-  //    which isCorruptedSecurityLlmText would incorrectly flag as corrupted).
-  const structured = tryStructuredJson(trimmed);
-  if (structured) {
-    const sanitized = sanitizeSeguridadItems(structured);
-    if (sanitized && !isCorruptedSeguridadSlice(sanitized)) return sanitized;
-  }
+  const recovered = recoverSeguridadItemsFromRawLlmText(trimmed);
+  if (recovered) return recovered;
 
-  // 2. Try legacy JSON: { securitySection: "## 6. Seguridad\n\n..." }
-  //    (before corruption check — DeepSeek/Claude often output this format
-  //    following the default prompt instruction.)
-  const legacySection = tryLegacyJson(trimmed);
-  if (legacySection) {
-    const fromLegacy = tryMarkdownSection(legacySection.startsWith("##") ? legacySection : `## Seguridad\n\n${legacySection}`);
-    if (fromLegacy) return fromLegacy;
-  }
-
-  // 3. Corruption check only for raw markdown fallback
-  //    (structured and legacy JSON already exhausted).
+  // Corruption check solo para markdown crudo (JSON ya agotado arriba).
   if (isCorruptedSecurityLlmText(trimmed)) return null;
 
-  // 4. Try raw markdown
   return tryMarkdownSection(trimmed);
 }

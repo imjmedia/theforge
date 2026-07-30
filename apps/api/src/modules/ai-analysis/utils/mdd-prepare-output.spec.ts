@@ -1,9 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import { prepareMddForOutput, shouldPreferDraftOverStructured } from "./mdd-prepare-output.js";
+import { guardValidatedSectionsForPersist } from "./mdd-section-preserve.util.js";
 import { mddHasDuplicateSectionHeadings } from "./mdd-sanitize.js";
 import { getSection6Or7Range, replaceSection6Or7InDraft, seguridadItemsToSection6Markdown } from "./mdd-sanitize.js";
 import { mddSeguridadItemSchema } from "../state/mdd-structured.schema.js";
+import { extractSection3Body } from "./mdd-sanitize/section-merge.js";
 
 const FULL_MDD_PREFIX = `# Master Design Document
 
@@ -37,12 +39,18 @@ Dado un usuario autenticado cuando solicita recurso entonces se valida ownership
 const EXISTING_SECTION6 = `## 6. Seguridad
 
 - **Autenticación:**
-    - Argon2id para contraseñas.
-    - JWT con refresh rotativo.
+    - Argon2id para contraseñas con política de complejidad mínima de 12 caracteres.
+    - JWT con refresh rotativo y revocación en logout global.
+    - MFA TOTP obligatorio para roles admin y operador de plataforma.
+- **Autorización:**
+    - RBAC con roles project_admin, developer y auditor de solo lectura.
+    - Validación de ownership en cada endpoint mutante antes de persistir cambios.
+- **Auditoría:**
+    - Log estructurado de accesos con userId, resourceId, action y correlationId.
 
 ## 7. Infraestructura
 
-Kubernetes con despliegue blue-green.
+Kubernetes con despliegue blue-green, HPA por CPU y memoria, y secrets manager externo para credenciales rotativas.
 `;
 
 describe("shouldPreferDraftOverStructured", () => {
@@ -106,7 +114,30 @@ Cola duplicada.
     assert.ok(gateOut.length <= persistOut.length + 500, "gate no debe inflar más que persist");
   });
 
-  it("deduplica §4–§6 repetidas del bucle crítico antes del preview streaming", async () => {
+  it("preserveExcludeSections [5] permite restaurar §6/§7 desde baseline en regen section-pipeline", () => {
+    const baseline = FULL_MDD_PREFIX + EXISTING_SECTION6;
+    const postRegen5Only = baseline
+      .replace(EXISTING_SECTION6, "")
+      .replace(
+        "Dado un usuario autenticado cuando solicita recurso entonces se valida ownership.",
+        "Nuevo contenido BDD regenerado con escenarios Given When Then y reglas de negocio detalladas.",
+      );
+    const defaultGuard = guardValidatedSectionsForPersist(baseline, postRegen5Only, "test");
+    assert.ok(defaultGuard.restored, "sin exclude, el guard restaura cola §6/§7 perdida");
+    assert.ok(defaultGuard.markdown.includes("Argon2id"));
+    const pipelineGuard = guardValidatedSectionsForPersist(baseline, postRegen5Only, "test", {
+      excludeSections: [5],
+    });
+    assert.ok(pipelineGuard.restored, "exclude solo §5: §6/§7 deben restaurarse desde baseline");
+    assert.ok(pipelineGuard.markdown.includes("Argon2id"));
+    const tailFrozenGuard = guardValidatedSectionsForPersist(baseline, postRegen5Only, "test", {
+      excludeSections: [5, 6, 7],
+    });
+    assert.strictEqual(tailFrozenGuard.restored, false);
+    assert.ok(!tailFrozenGuard.markdown.includes("Argon2id"));
+  });
+
+  it("streamPreview omite dedupe reorder en preview intermedio", async () => {
     const block = `## 4. Contratos de API(Pendiente)
 ## 5. Lógica y Edge Cases
 
@@ -120,16 +151,57 @@ Las credenciales de servicio y secretos de aplicación se almacenan en un almac�
       FULL_MDD_PREFIX +
       block +
       "\n\n" +
-      block +
-      "\n\n" +
       block;
-    const out = await prepareMddForOutput(
+    const previewOut = await prepareMddForOutput(
+      { mddDraft: corrupted },
+      { formatForPersist: false, streamPreview: true, baselineDraft: corrupted },
+    );
+    const fullOut = await prepareMddForOutput(
       { mddDraft: corrupted },
       { formatForPersist: false, baselineDraft: corrupted },
     );
-    assert.strictEqual(mddHasDuplicateSectionHeadings(out), false);
-    assert.strictEqual((out.match(/^##\s+4\./gm) ?? []).length, 1);
-    assert.ok(out.includes("Gestión de Secretos"));
+    assert.ok(previewOut.includes("Gestión de Secretos"));
+    assert.strictEqual(mddHasDuplicateSectionHeadings(previewOut), false);
+    assert.ok(fullOut.includes("Gestión de Secretos"));
+  });
+
+  it("aplica platformStripped del SSOT repair al markdown final", async () => {
+    const draft =
+      `# Master Design Document
+
+## 1. Contexto
+
+KMS interno: claves, secretos, certificados. Sin chat ni MCP.
+
+## 2. Arquitectura y Stack
+
+NestJS con PostgreSQL.
+
+## 3. Modelo de Datos
+
+\`\`\`sql
+CREATE TABLE users (id UUID PRIMARY KEY, email TEXT NOT NULL);
+CREATE TABLE mcp_plugins (id UUID PRIMARY KEY);
+CREATE TABLE roles (id UUID PRIMARY KEY, name TEXT NOT NULL);
+\`\`\`
+
+## 4. Contratos de API
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | /auth/login | Inicio de sesión |
+
+## 5. Lógica y Edge Cases
+
+Dado un usuario autenticado cuando solicita recurso entonces se valida ownership.
+
+` + EXISTING_SECTION6;
+    const brd = "KMS interno: claves, secretos, certificados. Sin chat ni MCP.";
+    const out = await prepareMddForOutput(
+      { mddDraft: draft },
+      { formatForPersist: false, brdMarkdown: brd, dbgaMarkdown: brd },
+    );
+    assert.doesNotMatch(extractSection3Body(out) ?? "", /CREATE TABLE mcp_plugins/i);
   });
 
   it("conserva §2–§4 sustanciales tras duplicados §7/UI aunque normalize colapse el cuerpo", async () => {

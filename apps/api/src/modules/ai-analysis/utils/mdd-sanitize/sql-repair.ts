@@ -1,3 +1,5 @@
+import { indexOfNextH2OutsideFenced } from "./section-fence.util.js";
+
 const SQL_DDL_STATEMENT =
   /^\s*(CREATE\s+TABLE|CREATE\s+INDEX|CREATE\s+UNIQUE|ALTER\s+TABLE|PARTITION\s+OF|FOR\s+VALUES|\)\s*;|\);|CONSTRAINT|PRIMARY\s+KEY|FOREIGN\s+KEY|UNIQUE\s*\(|CHECK\s*\(|REFERENCES\s+)/i;
 
@@ -400,15 +402,20 @@ export function sqlBlockContainsProseArtifact(sqlContent: string): boolean {
 
 /** Cierra ```sql en §3 cuando un ```json de §4 quedó absorbido por un fence sin cerrar. */
 export function repairSection3SqlFenceBeforeJsonBlock(draft: string): string {
-  const heading = "## 3. Modelo de Datos";
-  const idx = draft.indexOf(heading);
-  if (idx === -1) return draft;
-  const sectionStart = idx + heading.length;
-  const rest = draft.slice(sectionStart);
-  const nextH2 = rest.search(/\n##\s+/);
-  const body = nextH2 !== -1 ? rest.slice(0, nextH2) : rest;
-  if (!/```sql[\s\S]*```json/i.test(body)) return draft;
+  const headingRe = /(?:^|\n)(##\s*3\.\s*Modelo\s+(?:de\s+)?datos)/im;
+  const headingMatch = draft.match(headingRe);
+  if (!headingMatch?.index && headingMatch?.index !== 0) return draft;
+  const idx = headingMatch.index + (headingMatch[0].startsWith("\n") ? 1 : 0);
+  const sectionStart = idx + headingMatch[1]!.length;
+  const nextH2 = indexOfNextH2OutsideFenced(draft, sectionStart);
+  const bodyEnd = nextH2 !== -1 ? nextH2 : draft.length;
+  const body = draft.slice(sectionStart, bodyEnd);
+  const sqlJsonMatch = body.match(/(```sql[\s\S]*?)(\n```json)/i);
+  if (!sqlJsonMatch?.index && sqlJsonMatch?.index !== 0) return draft;
+  const between = sqlJsonMatch[1] ?? "";
+  // Si ya hay cierre ``` entre ```sql y ```json, no insertar otro (evita §4 dentro de fence).
+  if (/\n```[ \t]*(?:\r?\n|$)/.test(between.slice(6))) return draft;
   const fixedBody = body.replace(/(```sql[\s\S]*?)(\n```json)/i, "$1\n```$2");
   if (fixedBody === body) return draft;
-  return draft.slice(0, sectionStart) + fixedBody + (nextH2 !== -1 ? rest.slice(nextH2) : "");
+  return draft.slice(0, sectionStart) + fixedBody + draft.slice(bodyEnd);
 }

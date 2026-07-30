@@ -13,12 +13,19 @@ import {
 export const MIN_GENERATION_CONTENT_LEN = 48;
 
 /** Modos de job MDD en cola background (`theforge-mdd`). */
-export type MddJobMode = "pipeline" | "manager" | "section" | "legacy" | "upstream-sync";
+export type MddJobMode =
+  | "pipeline"
+  | "manager"
+  | "section"
+  | "section-pipeline"
+  | "legacy"
+  | "upstream-sync";
 
 export const MDD_JOB_MODE_LABELS: Record<MddJobMode, string> = {
   pipeline: "MDD desde benchmark",
   manager: "MDD (Manager)",
   section: "Regeneración de sección MDD",
+  "section-pipeline": "Regeneración §5 (pipeline MDD)",
   legacy: "MDD legacy (codebase)",
   "upstream-sync": "Sincronización MDD desde upstream",
 };

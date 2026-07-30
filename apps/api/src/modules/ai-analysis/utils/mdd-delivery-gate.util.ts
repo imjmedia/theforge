@@ -22,6 +22,7 @@ import { checkBrdDecisionLogClosure } from "../../engine/brd-decision-log.util.j
 import { evaluateBrdToMddTraceability } from "../estimation/brd-mdd-traceability.util.js";
 import { prepareMddForDeliveryGateValidation } from "../../projects/mdd-deterministic-repair.util.js";
 import { evaluateSection1BodyQuality } from "./mdd-section1-quality.util.js";
+import { evaluateMddContentQuality } from "./mdd-content-quality.util.js";
 
 export type { MddDeliveryGateResult };
 
@@ -59,7 +60,7 @@ const CANONICAL_SECTION_TITLES: ReadonlyArray<{ num: number; title: string; patt
   { num: 2, title: "2. Arquitectura y Stack", pattern: /^##\s+2\.\s*(?:Arquitectura(?:\s+y\s*Stack)?|Stack(?:\s+t[eé]cnico)?)\b/i },
   { num: 3, title: "3. Modelo de Datos", pattern: /^##\s+3\.\s*Modelo\s+(?:de\s+)?datos/i },
   { num: 4, title: "4. Contratos de API", pattern: /^##\s+4\.\s*Contratos\s+de\s+API/i },
-  { num: 5, title: "5. Lógica y Edge Cases", pattern: /^##\s+5\.\s*Lógica\s+y\s+Edge\s+Cases/i },
+  { num: 5, title: "5. Lógica y Edge Cases", pattern: /^##\s+5\.\s*L[oó]gica\s+y\s+Edge\s+Cases/i },
   { num: 6, title: "6. Seguridad", pattern: /^##\s+6\.\s*Seguridad\b|^##\s*Seguridad\b/i },
   { num: 7, title: "7. Infraestructura", pattern: /^##\s+7\.\s*Infraestructura\b|^##\s*Infraestructura\b|^##\s*Integración\b/i },
 ];
@@ -303,6 +304,28 @@ export function validateMddForDelivery(
       "UI/UX Design Intent usa columnas genéricas repetidas (id, name, status); regenerar desde §3.",
     );
     score -= 10;
+  }
+
+  // Checks de *contenido* (no solo forma): un MDD puede pasar longitud mínima y aun así
+  // tener §4 solo-catálogo sin specs, §1 sin NFRs medibles, §5 cortada a mitad, §6/§7
+  // redundantes, o tablas §3 copiadas del ejemplo del prompt de otro dominio. Todos
+  // detectables sin LLM extra; se reportan como warning salvo §4 en HIGH (ver abajo).
+  const domainCorpusForAnchor =
+    options?.brdMarkdown?.trim() || options?.dbgaMarkdown?.trim()
+      ? `${options?.brdMarkdown ?? ""}\n${options?.dbgaMarkdown ?? ""}\n${options?.specMarkdown ?? ""}`.toLowerCase()
+      : undefined;
+  const contentQuality = evaluateMddContentQuality({
+    draft: trimmed,
+    domainCorpus: domainCorpusForAnchor,
+  });
+  for (const issue of contentQuality.warnings) {
+    // §4 con ratio de schema bajo es más grave en HIGH: catálogo sin contrato no es
+    // implementable sin inventar — sube a blocker igual que el check de longitud de §4.
+    if (isHigh && /^§4 Contratos de API: solo/.test(issue)) {
+      blockers.push(issue);
+    } else {
+      warnings.push(issue);
+    }
   }
 
   if (options?.brdMarkdown?.trim() || options?.dbgaMarkdown?.trim()) {

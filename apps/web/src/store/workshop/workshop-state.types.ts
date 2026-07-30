@@ -270,6 +270,11 @@ export interface WorkshopState {
   persistAndReviewMdd: () => Promise<void>;
   /** Re-ejecuta sanitizeMddAtPersist en servidor sin editar manualmente el borrador. */
   reapplyMddFormat: () => Promise<void>;
+  /** §5 con paridad pipeline (section5 + Formatter + prepare); no usa mode section ligero. */
+  regenerateMddSection5Pipeline: (
+    projectId: string,
+    options?: { gapReasons?: string[] },
+  ) => Promise<void>;
   setBlueprintContent: (content: string | null) => void;
   persistBlueprintContent: (content: string) => Promise<void>;
   generateBlueprint: (projectId: string, options?: { gapsFeedback?: string }) => Promise<Project | null>;

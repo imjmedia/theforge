@@ -6,6 +6,7 @@ describe("computeDocumentCompleteness", () => {
   it("returns 100 when all docs have >=300 chars", () => {
     const fill = (n: number) => "x".repeat(n);
     const docs = {
+      mddContent: fill(300),
       brdContent: fill(300),
       toBeManualContent: fill(300),
       asIsManualContent: fill(300),
@@ -60,9 +61,45 @@ describe("computeDocumentCompleteness", () => {
     assert.equal(r.overall, 11);
   });
 
-  it("caps thin ProcessInventory use cases at 50 even when long", () => {
+  it("scores thin ProcessInventory use cases at 100 when processes have steps", () => {
+    const thin = `# Casos de uso (thin — ProcessInventory)
+
+Documento generado sin prosa literaria (PLAN-CASCADE-90). Cada proceso = journey Spec.
+
+## CU-proc-cap-4: Captura de leads
+- **Trigger:** user.request
+- **Pasos:**
+  1. Validar formulario
+  2. Persistir lead
+- **Entidades:** leads
+`;
+    const r = computeDocumentCompleteness({ useCasesContent: thin });
+    assert.equal(r.useCasesContent, 100);
+  });
+
+  it("caps stub thin ProcessInventory use cases at 50 even when long", () => {
     const thin = `# Casos de uso (thin — ProcessInventory)\n${"x".repeat(400)}`;
     const r = computeDocumentCompleteness({ useCasesContent: thin });
     assert.equal(r.useCasesContent, 50);
+  });
+
+  it("scores empty use cases at 0", () => {
+    const r = computeDocumentCompleteness({ useCasesContent: "" });
+    assert.equal(r.useCasesContent, 0);
+  });
+
+  it("scores literary use cases at 100 when long enough", () => {
+    const literary = `# Casos de uso\n\n## CU-001: Login\nActor: usuario\n${"Flujo principal detallado. ".repeat(30)}`;
+    const r = computeDocumentCompleteness({ useCasesContent: literary });
+    assert.equal(r.useCasesContent, 100);
+  });
+
+  it("scores thin ProcessInventory with empty inventory message low", () => {
+    const thin = `# Casos de uso (thin — ProcessInventory)
+
+_Sin procesos en inventario; regenerar BRD/MDD._
+`;
+    const r = computeDocumentCompleteness({ useCasesContent: thin });
+    assert.ok(r.useCasesContent <= 50);
   });
 });

@@ -17,6 +17,7 @@ import {
 import { extractFirstJsonObject } from "../utils/parse-json.js";
 import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
 import { z } from "zod";
+import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
 
 const criticOutputSchema = z.object({
   verdict: z.enum(["ok", "gap"]),
@@ -117,6 +118,7 @@ export function createMddArchitectCriticNode(llm: BaseChatModel) {
       (inventoryBlock ? `${inventoryBlock.trim()}\n\n` : "") +
       `**Fragmento de MDD recién generado (${afterSection3Only ? "solo §3" : "§3 y §4"}):**\n${fragment.slice(0, 6000)}`;
     const prompt = `${ARCHITECT_CRITIC_MDD_PROMPT}\n\n---\n${context}`;
+    const startedAt = Date.now();
 
     const fallbackGapFeedback = afterSection3Only
       ? "No se pudo verificar §3 automáticamente. Revisa SQL, diagrama ER y cobertura del inventario de dominio antes de generar contratos API."
@@ -127,6 +129,9 @@ export function createMddArchitectCriticNode(llm: BaseChatModel) {
         isResponseValid: (t) => t.trim().length > 0,
       });
       const text = response ? extractLlmText(response) : "";
+      logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, text.length), {
+        phase: afterSection3Only ? "after_section3" : "after_full",
+      });
       const parsedData = parseArchitectCriticOutput(text);
       if (!parsedData) {
         LOG("parse critic output failed, treating as gap for one retry");

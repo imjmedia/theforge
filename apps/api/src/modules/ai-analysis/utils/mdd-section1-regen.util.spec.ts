@@ -3,10 +3,12 @@ import { describe, it } from "node:test";
 import { repairGluedMarkdownHeadings } from "@theforge/shared-types";
 import {
   demoteCanonicalSectionHeadingsInSection1Body,
+  isClarifiedScopeUsableForUpstreamSync,
   isContextSynthesizerBodySubstantial,
   MIN_SECTION1_REGEN_BODY_LENGTH,
   normalizeContextSynthesizerBody,
   peelContextSynthesizerLlmOutput,
+  resolveSection1BodyFromClarifiedScope,
   resolveUpstreamSyncSection1Body,
 } from "./mdd-section1-regen.util.js";
 import {
@@ -163,6 +165,53 @@ describe("resolveUpstreamSyncSection1Body", () => {
       clarifiedScope: LONG_CONTEXTO,
     });
     assert.equal(body, LONG_CONTEXTO);
+  });
+
+  it("acepta scope con ## Actores cuando mddDraft no aporta §1", () => {
+    const scope = [
+      "## Actores",
+      "",
+      LONG_CONTEXTO,
+      "",
+      "## Alcance",
+      "",
+      "Renovación automática de certificados y alertas por cola.",
+    ].join("\n");
+    const body = resolveUpstreamSyncSection1Body({
+      clarifierMddDraft: "",
+      clarifiedScope: scope,
+    });
+    assert.ok(body && body.length >= MIN_SECTION1_REGEN_BODY_LENGTH);
+    assert.match(body, /certificados X\.509/);
+  });
+});
+
+describe("isClarifiedScopeUsableForUpstreamSync", () => {
+  it("acepta scope estructurado con ## Actores (no exige ## 1. Contexto)", () => {
+    const scope = [
+      "Plataforma de gestión de certificados para cuentas de servicio.",
+      "",
+      "## Actores",
+      "",
+      "Operadores de seguridad, integradores LDAP y equipos de plataforma.",
+      "",
+      "## Alcance",
+      "",
+      LONG_CONTEXTO,
+      "",
+      "Fuera de alcance: portal de autoservicio público y CA raíz propia.",
+    ].join("\n");
+    assert.equal(isClarifiedScopeUsableForUpstreamSync(scope), true);
+  });
+
+  it("rechaza dump Domain Benchmark sin §1 MDD", () => {
+    const dump =
+      "# Domain Benchmark\n\n## 1. Overview\n\nCorto.\n\n## 2. Gaps\n\nInvestigación de mercado.";
+    assert.equal(isClarifiedScopeUsableForUpstreamSync(dump), false);
+  });
+
+  it("acepta prosa larga sin headings", () => {
+    assert.equal(isClarifiedScopeUsableForUpstreamSync(LONG_CONTEXTO), true);
   });
 });
 

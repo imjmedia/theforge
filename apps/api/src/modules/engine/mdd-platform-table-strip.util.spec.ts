@@ -21,6 +21,30 @@ Integración MCP y mensajería en tiempo real.
 `;
 
 describe("mdd-platform-table-strip.util", () => {
+  it("strip channels/llm_configs/requests/agent_runs en dominio KMS", () => {
+    const mdd = `
+## 1. Contexto
+KMS interno. Sin chat ni MCP.
+
+## 3. Modelo de Datos
+\`\`\`sql
+CREATE TABLE keys (id UUID PRIMARY KEY);
+CREATE TABLE channels (id UUID PRIMARY KEY);
+CREATE TABLE llm_configs (id UUID PRIMARY KEY);
+CREATE TABLE requests (id UUID PRIMARY KEY);
+CREATE TABLE agent_runs (id UUID PRIMARY KEY);
+\`\`\`
+`;
+    const { markdown, stripped } = stripUnjustifiedPlatformTablesFromMdd(mdd, {});
+    assert.deepEqual(
+      stripped.sort(),
+      ["agent_runs", "channels", "llm_configs", "requests"].sort(),
+    );
+    assert.match(markdown, /CREATE TABLE keys/);
+    assert.doesNotMatch(markdown, /CREATE TABLE channels/);
+    assert.doesNotMatch(markdown, /CREATE TABLE llm_configs/);
+  });
+
   it("strip mcp_plugins/messages en dominio KMS sin ancla chat", () => {
     const { markdown, stripped } = stripUnjustifiedPlatformTablesFromMdd(KMS_MDD, {});
     assert.deepEqual(stripped.sort(), ["mcp_plugins", "messages"].sort());

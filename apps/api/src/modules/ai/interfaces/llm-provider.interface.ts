@@ -94,6 +94,8 @@ export interface GenerateResponseOptions {
     node?: string | null;
     jobId?: string | null;
   };
+  /** Cancelación cooperativa: aborta la petición HTTP al proveedor LLM. */
+  abortSignal?: AbortSignal;
 }
 
 export interface LLMProvider {

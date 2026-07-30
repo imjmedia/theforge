@@ -54,11 +54,15 @@ export function buildInventoryFromMddState(state: MDDStateType) {
 }
 
 /** Prompt appendix when BRD/DBGA yields a non-empty inventory. */
-export function domainInventoryPromptBlock(state: MDDStateType): string {
+export function domainInventoryPromptBlock(
+  state: MDDStateType,
+  options?: { maxChars?: number },
+): string {
   const { brd, dbga, inventory } = buildInventoryFromMddState(state);
   if (!brd && !dbga) return "";
   if (inventory.capabilities.length === 0 && inventory.suggestedEntities.length === 0) return "";
-  return "\n\n" + formatDomainInventoryForPrompt(inventory);
+  const maxChars = options?.maxChars ?? 3_500;
+  return "\n\n" + formatDomainInventoryForPrompt(inventory, maxChars);
 }
 
 /** True when §3 is auth-only while BRD has substantial domain capabilities. */

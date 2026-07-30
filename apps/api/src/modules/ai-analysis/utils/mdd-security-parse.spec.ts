@@ -60,6 +60,74 @@ Let me draft the security section...
     assert.ok(isCorruptedSeguridadSlice(slice));
     assert.strictEqual(sanitizeSeguridadItems(slice), null);
   });
+
+  it("parsea JSON con fences ```json y content string", () => {
+    const text = `\`\`\`json
+{
+  "seguridad": [
+    {
+      "title": "Autenticación",
+      "content": "Argon2id y JWT RS256 con rotación de refresh tokens en cookies httpOnly."
+    }
+  ]
+}
+\`\`\``;
+    const items = parseSecurityLlmResponse(text);
+    assert.ok(items && items.length >= 1);
+    assert.ok(items![0]!.content.join(" ").includes("Argon2id"));
+  });
+
+  it("parsea variantes heading/details (DeepSeek)", () => {
+    const text = JSON.stringify({
+      seguridad: [
+        {
+          heading: "Protección de Datos",
+          details: ["TLS 1.3 obligatorio.", "Cifrado AES-256 en reposo para PII."],
+        },
+      ],
+    });
+    const items = parseSecurityLlmResponse(text);
+    assert.ok(items && items.length === 1);
+    assert.ok(items![0]!.title.includes("Protección"));
+    assert.ok(items![0]!.content.some((c) => c.includes("TLS")));
+  });
+
+  it("recoverSeguridadItemsFromRawLlmText rescata JSON válido tras fallo intermedio", () => {
+    const text = `{ "seguridad": [{ "title": "Auth", "content": ["MFA TOTP", "Lockout 5 intentos"] }] }`;
+    const items = parseSecurityLlmResponse(text);
+    assert.ok(items && items.length === 1);
+    assert.ok(!isPlaceholderSeguridad(items));
+  });
+
+  it("parsea JSON job-69-like con title 6.1 y content anidado", () => {
+    const text = JSON.stringify({
+      seguridad: [
+        {
+          title: "6.1. Autenticación y Autorización",
+          content: [
+            "Política Argon2id con rotación de refresh tokens.",
+            {
+              heading: "MFA",
+              details: ["TOTP obligatorio para administradores", "Lockout tras 5 intentos fallidos"],
+            },
+          ],
+        },
+        {
+          title: "6.2. Protección de Datos",
+          content: ["TLS 1.3 obligatorio.", "Cifrado AES-256 en reposo para PII."],
+        },
+      ],
+    });
+    const items = parseSecurityLlmResponse(text);
+    assert.ok(items && items.length === 2, `esperaba 2 items, got ${items?.length ?? "null"}`);
+    assert.ok(items![0]!.title.includes("Autenticación"));
+    assert.ok(items![0]!.content.some((c) => c.includes("MFA")));
+    assert.ok(items![0]!.content.some((c) => c.includes("Argon2id")));
+    assert.ok(!isPlaceholderSeguridad(items));
+    const md = seguridadItemsToSection6Markdown(items!);
+    assert.ok(md.includes("## 6. Seguridad"));
+    assert.ok(!md.includes('"seguridad"'));
+  });
 });
 
 describe("seguridadItemsFromDraftSection6", () => {

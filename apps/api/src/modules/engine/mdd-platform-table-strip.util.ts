@@ -18,6 +18,7 @@ export const THEFORGE_PLATFORM_NOISE_TABLES = new Set([
   "agent_runs",
   "channels",
   "conversations",
+  "requests",
 ]);
 
 /** Tablas SaaS multi-tenant TheForge; quitar si BRD las excluye explícitamente. */

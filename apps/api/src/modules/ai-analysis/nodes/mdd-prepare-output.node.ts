@@ -13,6 +13,7 @@ import {
   hasUnresolvedAutoRepairableGateWarnings,
   resolveDeliveryGateFixTargetFromGate,
   shouldContinueDeliveryGateLoop,
+  shouldContinueDeliveryGateQualityLoop,
 } from "../utils/mdd-delivery-gate-loop.util.js";
 import { isHighSplitArchitectPipeline } from "../utils/mdd-architect-pipeline.util.js";
 import { resolveBrdFromMddState } from "../utils/mdd-domain-prompt.util.js";
@@ -39,6 +40,7 @@ export function createMddPrepareOutputNode(options?: { uiMcpLibraryLabel?: strin
         baselineDraft,
         mddComplexity: state.mddComplexity,
         formatForPersist: false,
+        tailSnapshotSource: state,
       },
     );
     const gate =
@@ -50,8 +52,9 @@ export function createMddPrepareOutputNode(options?: { uiMcpLibraryLabel?: strin
       });
     const attempt = state.deliveryGateAttempt ?? 0;
     const qualityPending = hasUnresolvedAutoRepairableGateWarnings(gate.warnings);
-    // gate.ok=true cierra el pipeline: warnings auto-reparables no re-disparan agentes.
-    const loop = shouldContinueDeliveryGateLoop(gate, attempt);
+    const loop =
+      shouldContinueDeliveryGateLoop(gate, attempt) ||
+      shouldContinueDeliveryGateQualityLoop(gate, attempt);
 
     LOG(
       "gate ok=%s score=%s blockers=%d warnings=%d attempt=%d loop=%s qualityPending=%s",
@@ -69,6 +72,12 @@ export function createMddPrepareOutputNode(options?: { uiMcpLibraryLabel?: strin
         splitArchitectPipeline: isHighSplitArchitectPipeline(state),
         previousPlaceholderFingerprint: state.deliveryGatePlaceholderFingerprint,
         deliveryGateAttempt: attempt + 1,
+        sealedSections: {
+          mddDraft: prepared,
+          stackArchitectMddDraftSnapshot: state.stackArchitectMddDraftSnapshot,
+          dataModelArchitectMddDraftSnapshot: state.dataModelArchitectMddDraftSnapshot,
+          apiContractsArchitectMddDraftSnapshot: state.apiContractsArchitectMddDraftSnapshot,
+        },
       });
       const agentFeedback = [
         formatDeliveryGateBlockersFeedback(gate.blockers),

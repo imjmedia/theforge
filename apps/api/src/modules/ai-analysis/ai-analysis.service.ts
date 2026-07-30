@@ -30,8 +30,12 @@ import {
   replaceSection1BodyFromAnyHeading,
   restoreContextSectionFromBaselineIfMissing,
   restoreMddSectionsFromBaselineStrict,
+  mddHasDuplicateSectionHeadings,
+  deduplicateMddDraftSections,
 } from "./utils/mdd-sanitize.js";
 import { evaluateMddPersistTailGuard } from "./utils/mdd-persist-tail-guard.util.js";
+import { evaluateMddDraftPersistFloor } from "./utils/mdd-draft-persist-floor.util.js";
+import { logMddPersistFenceDiag } from "./utils/mdd-persist-fence-diag.util.js";
 import { ProjectsService } from "../projects/projects.service.js";
 import { pickPrimaryStage } from "../projects/stage-helpers.js";
 import { TheForgeService } from "../theforge/theforge.service.js";
@@ -49,13 +53,14 @@ import { CONTEXT_SYNTHESIZER_PROMPT } from "./prompts/load-prompts.js";
 import { createMddIntegrationNode } from "./nodes/mdd-integration.node.js";
 import { createMddSecurityNode } from "./nodes/mdd-security.node.js";
 import { createMddSection5Node } from "./nodes/mdd-section5.node.js";
+import { createMddFormatterNode } from "./nodes/mdd-formatter.node.js";
+import { preflightSanitizeDraftForSection5 } from "./utils/mdd-tail-parallel.util.js";
 import { createMddSoftwareArchitectNode } from "./nodes/mdd-software-architect.node.js";
 import {
   agentsForArchitectSection,
   resolveLiveDraftForScopedArchitectStream,
   type MddSoftwareArchitectScope,
 } from "./utils/mdd-architect-pipeline.util.js";
-import { createMddClarifierNode } from "./nodes/mdd-clarifier.node.js";
 import { getMddArchitectTools } from "./tools/tool-registry.js";
 import { contextSynthesizerComplexityAppendix } from "./utils/mdd-complexity-rigor.js";
 import { formatDbgaStreamError } from "./utils/dbga-stream-error.util.js";
@@ -67,7 +72,6 @@ import {
   isContextSynthesizerBodySubstantial,
   MIN_SECTION1_REGEN_BODY_LENGTH,
   normalizeContextSynthesizerBody,
-  resolveUpstreamSyncSection1Body,
 } from "./utils/mdd-section1-regen.util.js";
 import {
   INSUFFICIENT_DBGA_IDEA_MESSAGE,
@@ -301,12 +305,63 @@ export class AiAnalysisService {
     return prepareMddForOutputCore(input, { ...options, resolver, uiMcpLibraryLabel });
   }
 
+  private streamDraftCacheKey(draft: string): string {
+    const trimmed = (draft ?? "").trim();
+    if (trimmed.length < 80) return "";
+    let hash = 5381;
+    for (let i = 0; i < trimmed.length; i += 1) {
+      hash = ((hash << 5) + hash) ^ trimmed.charCodeAt(i);
+    }
+    return `${trimmed.length}:${(hash >>> 0).toString(36)}`;
+  }
+
+  /** Evita re-ejecutar prepare completo en cada tick `values` cuando el borrador no cambió. */
+  private async prepareMddForStreamDraft(
+    cache: { draftKey: string; markdown: string },
+    input: Parameters<typeof prepareMddForOutputCore>[0],
+    options?: PrepareMddForOutputOptions,
+  ): Promise<string> {
+    const draft = typeof input === "string" ? input.trim() : (input.mddDraft ?? "").trim();
+    const key = this.streamDraftCacheKey(draft);
+    if (key && key === cache.draftKey && cache.markdown.length > 80) {
+      return cache.markdown;
+    }
+    const prepared = await this.runPrepareMddForOutput(input, {
+      ...options,
+      formatForPersist: false,
+      streamPreview: true,
+    });
+    if (key && prepared.length > 80) {
+      cache.draftKey = key;
+      cache.markdown = prepared;
+    }
+    return prepared;
+  }
+
   /** Evita persistir MDD con §2–§7 borradas por prepare/dedupe tras borrador sustancial. */
   private guardMarkdownTailForPersist(
     prePrepareDraft: string,
     markdown: string,
   ): { markdown: string; errorMessage?: string } {
-    const guard = evaluateMddPersistTailGuard(prePrepareDraft, markdown, "PersistCheck");
+    let working = markdown;
+    if (mddHasDuplicateSectionHeadings(working)) {
+      const deduped = deduplicateMddDraftSections(working);
+      if (!mddHasDuplicateSectionHeadings(deduped)) {
+        this.logger.warn(
+          `[MDD:PersistCheck] auto-dedupe headings duplicados (len ${working.length}→${deduped.length})`,
+        );
+        working = deduped;
+      } else {
+        return {
+          markdown: working,
+          errorMessage:
+            "El borrador final repite headings canónicos §1–§7 (secciones duplicadas). " +
+            "No se persistió; reintenta la generación del MDD.",
+        };
+      }
+    }
+
+    const guard = evaluateMddPersistTailGuard(prePrepareDraft, working, "PersistCheck");
     if (guard.restored) {
       this.logger.warn(
         `[MDD:PersistCheck] §2–§7 restaurada(s) tras prepare (draftLen=${prePrepareDraft.length})`,
@@ -680,6 +735,7 @@ export class AiAnalysisService {
     };
 
     let lastState: MDDState = initialState;
+    const streamPrepareCache = { draftKey: "", markdown: "" };
     const auditTrail: string[] = [];
     const editLogTracker = new MddStreamEditLogTracker(
       initialState.mddDraft ?? "",
@@ -728,7 +784,8 @@ export class AiAnalysisService {
             if (lastState.auditorGaps) {
               this.estimationService.setAuditorGaps(projectId.trim(), lastState.auditorGaps, estimationStage);
             }
-            const prepared = await this.runPrepareMddForOutput(
+            const prepared = await this.prepareMddForStreamDraft(
+              streamPrepareCache,
               { mddStructured: lastState.mddStructured, mddDraft: draft },
               prepareOpts,
             );
@@ -750,10 +807,21 @@ export class AiAnalysisService {
           mddStructured: lastState.mddStructured,
           mddDraft: raw || lastState.mddDraft,
         },
-        { ...prepareOpts, baselineDraft: mddDraftRaw || undefined },
+        {
+          ...prepareOpts,
+          baselineDraft: mddDraftRaw || undefined,
+          // Sin esto la pasada de persist corre sin ningún snapshot §1–§7: normalize/dedupe/SSOT
+          // pueden vaciar secciones ya validadas y nada las restaura antes del gate.
+          tailSnapshotSource: lastState,
+        },
       );
       const tailPersistGuard = this.guardMarkdownTailForPersist(mddDraftRaw, markdown);
       markdown = tailPersistGuard.markdown;
+      console.log(
+        `[MDD:PersistCheck:diag] stream-done preLen=${mddDraftRaw.length} postLen=${markdown.length} err=${tailPersistGuard.errorMessage ? "yes" : "no"}`,
+      );
+      logMddPersistFenceDiag("PersistCheck:stream-done-pre", mddDraftRaw);
+      logMddPersistFenceDiag("PersistCheck:stream-done-post", markdown);
       if (tailPersistGuard.errorMessage) {
         yield { type: "error", message: tailPersistGuard.errorMessage };
         return;
@@ -924,6 +992,7 @@ export class AiAnalysisService {
 
     let lastState: MDDState = initialState;
     let lastNonEmptyDraft = (initialState.mddDraft ?? "").trim() || "";
+    const streamPrepareCache = { draftKey: "", markdown: "" };
     const auditTrail: string[] = [];
     const editLogTracker = new MddStreamEditLogTracker(
       initialState.mddDraft ?? "",
@@ -1031,7 +1100,8 @@ export class AiAnalysisService {
             if (lastState.auditorGaps) {
               this.estimationService.setAuditorGaps(projectId.trim(), lastState.auditorGaps, estimationStageId);
             }
-            const prepared = await this.runPrepareMddForOutput(
+            const prepared = await this.prepareMddForStreamDraft(
+              streamPrepareCache,
               {
                 mddStructured: lastState?.mddStructured,
                 mddDraft: draft,
@@ -1062,7 +1132,11 @@ export class AiAnalysisService {
           mddStructured: lastState?.mddStructured,
           mddDraft: rawMarkdown,
         },
-        { ...managerPrepareOpts, baselineDraft: finalDraft || undefined },
+        {
+          ...managerPrepareOpts,
+          baselineDraft: finalDraft || undefined,
+          tailSnapshotSource: lastState ?? undefined,
+        },
       );
       const managerTailGuard = this.guardMarkdownTailForPersist(finalDraft, markdown);
       markdown = managerTailGuard.markdown;
@@ -1255,6 +1329,7 @@ export class AiAnalysisService {
       recursionLimit: LANGGRAPH_RECURSION_LIMIT,
     };
     const auditTrail: string[] = [];
+    const streamPrepareCache = { draftKey: "", markdown: "" };
     let lastState: MDDState | null = null;
     let lastNonEmptyDraft = "";
 
@@ -1421,7 +1496,8 @@ export class AiAnalysisService {
                 this.estimationService.setAuditorGaps(projectId.trim(), lastState.auditorGaps, estimationStage);
               }
             }
-            const prepared = await this.runPrepareMddForOutput(
+            const prepared = await this.prepareMddForStreamDraft(
+              streamPrepareCache,
               {
                 mddStructured: lastState?.mddStructured,
                 mddDraft: draft,
@@ -1474,7 +1550,11 @@ export class AiAnalysisService {
             mddStructured: lastState?.mddStructured,
             mddDraft: raw,
           },
-          { ...resumePrepareOpts, baselineDraft: finalDraft || undefined },
+          {
+            ...resumePrepareOpts,
+            baselineDraft: finalDraft || undefined,
+            tailSnapshotSource: lastState ?? undefined,
+          },
         );
         const resumeTailGuard = this.guardMarkdownTailForPersist(finalDraft, markdown);
         markdown = resumeTailGuard.markdown;
@@ -1599,6 +1679,7 @@ export class AiAnalysisService {
     stageId?: string | null,
     gapReasons?: string[],
     upstreamContext?: { dbgaContent?: string; changeSummary?: string },
+    regenOptions?: { pipelineParity?: boolean },
   ): AsyncGenerator<StreamMddManagerEvent> {
     const pid = projectId?.trim();
     if (!pid) {
@@ -1609,8 +1690,9 @@ export class AiAnalysisService {
       yield { type: "error", message: "section debe ser 1–7" };
       return;
     }
+    const pipelineParity = regenOptions?.pipelineParity === true && section === 5;
     const tracer = new MddRegenTracer({
-      mode: "section",
+      mode: pipelineParity ? "section-pipeline" : "section",
       projectId: pid,
       section,
       stageId: stageId?.trim() || undefined,
@@ -1867,16 +1949,53 @@ export class AiAnalysisService {
         return;
       }
       if (section === 5) {
+        const preflight = preflightSanitizeDraftForSection5(mddContent);
+        mddContent = preflight.draft;
         // Nodo quirúrgico: SOLO reescribe ## 5. No usar Software Architect aquí —
         // ese agente regenera §2–§5 como bloque y puede borrar contenido bueno en §2–§4.
         const section5Node = createMddSection5Node(llm);
         const result = yield* runRegenWithHeartbeat(
-          section5Node(state as MDDStateType),
+          section5Node({ ...(state as MDDStateType), mddDraft: mddContent } as MDDStateType),
           getAgentLabel("section5"),
-          "Regenerando §5 Lógica y Edge Cases…",
+          pipelineParity
+            ? "Regenerando §5 (pipeline: section5 + Formatter lite)…"
+            : "Regenerando §5 Lógica y Edge Cases…",
           tracer,
         );
-        const finalDraft = (result.mddDraft ?? mddContent).trim();
+        let workingState: MDDStateType = { ...(state as MDDStateType), mddDraft: mddContent, ...result };
+        if (pipelineParity) {
+          if (mddHasDuplicateSectionHeadings(workingState.mddDraft ?? "")) {
+            const deduped = deduplicateMddDraftSections(workingState.mddDraft ?? "");
+            if (!mddHasDuplicateSectionHeadings(deduped)) {
+              this.logger.warn(
+                `[MDD regenerate-section] §5 section-pipeline: dedupe pre-formatter (len ${(workingState.mddDraft ?? "").length}→${deduped.length})`,
+              );
+              workingState = { ...workingState, mddDraft: deduped };
+            }
+          }
+          const formatterNode = createMddFormatterNode({ lite: true });
+          const formatterState: MDDStateType = {
+            ...workingState,
+            securitySectionMd: undefined,
+            integrationSectionMd: undefined,
+            securityArchitectMddDraftSnapshot: undefined,
+            integrationArchitectMddDraftSnapshot: undefined,
+            mddStructured: workingState.mddStructured
+              ? {
+                  ...workingState.mddStructured,
+                  seguridad: undefined,
+                  integracion: undefined,
+                }
+              : undefined,
+          };
+          const formatResult = await tracer.step(
+            "format-after-architect",
+            async () => formatterNode(formatterState),
+            { draftLen: (workingState.mddDraft ?? mddContent).length },
+          );
+          workingState = { ...workingState, ...formatResult };
+        }
+        const finalDraft = (workingState.mddDraft ?? mddContent).trim();
         if (finalDraft === mddContent.trim()) {
           this.logger.warn(
             `[MDD regenerate-section] §5 sin cambios (LLM vacío/placeholder o merge no aplicado) projectId=${pid}`,
@@ -1890,10 +2009,39 @@ export class AiAnalysisService {
           };
           return;
         }
-        const markdown = await tracer.step("prepare-output", async () => this.runPrepareMddForOutput(
-          { mddStructured: result.mddStructured ?? state.mddStructured, mddDraft: finalDraft },
-          regenPrepareOpts,
-        ), { draftLen: finalDraft.length });
+        const prepareOpts: PrepareMddForOutputOptions = pipelineParity
+          ? {
+              ...regenPrepareOpts,
+              baselineDraft: regenBaselineMdd,
+              tailSnapshotSource: undefined,
+              preserveExcludeSections: [5],
+            }
+          : regenPrepareOpts;
+        const markdown = await tracer.step(
+          "prepare-output",
+          async () =>
+            this.runPrepareMddForOutput(
+              {
+                mddStructured: workingState.mddStructured ?? state.mddStructured,
+                mddDraft: finalDraft,
+              },
+              prepareOpts,
+            ),
+          { draftLen: finalDraft.length, pipelineParity },
+        );
+        if (pipelineParity && mddHasDuplicateSectionHeadings(markdown)) {
+          this.logger.error(
+            `[MDD regenerate-section] §5 section-pipeline: headings duplicados tras prepare projectId=${pid}`,
+          );
+          tracer.summary(false, { reason: "section5-pipeline-duplicate-headings" });
+          yield {
+            type: "error",
+            message:
+              "La regeneración de §5 (pipeline) dejó secciones duplicadas §1–§7. " +
+              "No se persistió el borrador corrupto; reintenta o regenera el MDD completo.",
+          };
+          return;
+        }
         const metrics = await tracer.step("metrics", async () => this.estimationService.calculateLiveMetrics(markdown, regenEstOpts));
         const regenGate5 = mddStreamDeliveryGateFields(regenGateRef.current, metrics.status);
         tracer.summary(true, { mddLen: markdown.length, precision: metrics.precision });
@@ -1976,6 +2124,7 @@ export class AiAnalysisService {
 
   /**
    * Sincroniza el MDD existente con cambios en DBGA/BRD/Benchmark regenerando solo las secciones indicadas.
+   * Misma mecánica que `streamMddRegenerateSection` por cada §N (§1 = sintetizador de contexto, no Clarifier).
    */
   async *streamMddUpstreamSync(
     projectId: string,
@@ -2017,145 +2166,51 @@ export class AiAnalysisService {
     const baselineMddBeforeSync = mddContent;
     const sectionsToPreserve = [1, 2, 3, 4, 5, 6, 7].filter((n) => !ordered.includes(n));
 
-    const brdContent = sid
-      ? (await this.prisma.stage.findUnique({ where: { id: sid }, select: { brdContent: true } }))?.brdContent ?? null
-      : null;
     const upstreamCtx = { dbgaContent, changeSummary };
     const gapLines = changeSummary.trim() ? [changeSummary.trim()] : [];
 
     for (const section of ordered) {
       const title = MDD_SECTION_TITLES[section] ?? `§${section}`;
+      const syncAgent =
+        section === 1
+          ? "Contexto"
+          : section === 5
+            ? getAgentLabel("section5")
+            : section === 6
+              ? getAgentLabel("security")
+              : section === 7
+                ? getAgentLabel("integration")
+                : getAgentLabel("software_architect");
       yield {
         type: "progress",
-        agent: getAgentLabel(section === 1 ? "clarifier" : section === 6 ? "security" : section === 7 ? "integration" : "software_architect"),
+        agent: syncAgent,
         message: `Sincronizando ${title}…`,
         phase: "active",
       };
 
-      if (section === 1) {
-        try {
-          const regenUserId = await this.resolveUserId(pid);
-          const llm = await createDbgaLLM(this.aiFactory, regenUserId);
-          let dbgaEffective = dbgaContent.trim() || mddContent.slice(0, 4000);
-          const pre = composeBrdPreamble(brdContent);
-          if (pre) dbgaEffective = pre + dbgaEffective;
-          const clarifierNode = createMddClarifierNode(llm);
-          const agentCtx = await this.buildMddAgentContext(pid, sid ?? null);
-          const prevSection1 = extractContextSectionBody(mddContent) ?? "";
-          const result = await clarifierNode({
-            ...defaultMDDState,
-            dbgaContent: dbgaEffective,
-            brdContent: (brdContent ?? "").trim() || undefined,
-            mddDraft: mddContent,
-            projectId: pid,
-            auditorFeedback: changeSummary.trim() || undefined,
-            ...agentCtx,
-          } as MDDStateType);
-          const body = resolveUpstreamSyncSection1Body({
-            clarifierMddDraft: result.mddDraft,
-            clarifiedScope: result.clarifiedScope,
-          });
-          if (!body) {
-            this.logger.warn(
-              `[MDD upstream-sync] §1 sin sustancia tras Clarifier (prevLen=${prevSection1.length}); se preserva §1 previa projectId=${pid}`,
-            );
-            yield {
-              type: "error",
-              message:
-                "La sincronización de §1 no produjo contenido suficiente (Clarifier JSON inválido, " +
-                "dump DBGA como scope, o cuerpo < 200 chars). Se preservó la sección anterior; " +
-                "reintenta con un modelo más capaz o regenera el MDD completo.",
-            };
-            return;
-          }
-          // Clarifier en fallback (JSON inválido) reusa mddDraft previo + scope dump `#…`.
-          // No marcar sync OK ni capturar baseline si §1 no cambió y no hay scope usable.
-          const scopeRaw = (result.clarifiedScope ?? "").trim();
-          let scopeUsable = false;
-          if (scopeRaw && !scopeRaw.startsWith("#") && !/\n##\s+/m.test(scopeRaw)) {
-            scopeUsable = isContextSynthesizerBodySubstantial(
-              normalizeContextSynthesizerBody(scopeRaw).body,
-            );
-          } else if (scopeRaw) {
-            const ex = extractContextSectionBody(scopeRaw);
-            scopeUsable = Boolean(ex && isContextSynthesizerBodySubstantial(ex));
-          }
-          if (
-            isContextSynthesizerBodySubstantial(prevSection1) &&
-            body.trim() === prevSection1.trim() &&
-            !scopeUsable
-          ) {
-            this.logger.warn(
-              `[MDD upstream-sync] Clarifier no actualizó §1 (fallback/sin scope usable) projectId=${pid}`,
-            );
-            yield {
-              type: "error",
-              message:
-                "El Clarificador no generó un §1 nuevo usable (respuesta JSON inválida o scope = dump DBGA). " +
-                "Se preservó el MDD anterior; reintenta con un modelo más capaz o regenera el documento completo.",
-            };
-            return;
-          }
-          // No degradar §1 sustancial previa con un cuerpo mucho más corto (ratio < 40%).
-          if (
-            isContextSynthesizerBodySubstantial(prevSection1) &&
-            body.length < Math.max(MIN_SECTION1_REGEN_BODY_LENGTH, Math.floor(prevSection1.length * 0.4))
-          ) {
-            this.logger.warn(
-              `[MDD upstream-sync] §1 candidato demasiado corto vs previa (prev=${prevSection1.length} new=${body.length}); abort projectId=${pid}`,
-            );
-            yield {
-              type: "error",
-              message:
-                "La sincronización de §1 habría acortado demasiado el contexto existente. " +
-                "Se preservó la sección anterior; reintenta o regenera el MDD completo.",
-            };
-            return;
-          }
-          mddContent = replaceSection1BodyFromAnyHeading(mddContent, body);
-          const afterBody = extractContextSectionBody(mddContent) ?? "";
-          if (!isContextSynthesizerBodySubstantial(afterBody)) {
-            mddContent = baselineMddBeforeSync;
-            yield {
-              type: "error",
-              message:
-                "La sincronización de §1 dejó el contexto insuficiente tras el merge. " +
-                "Se restauró el MDD previo; reintenta o regenera el documento completo.",
-            };
-            return;
-          }
-        } catch (err) {
-          yield {
-            type: "error",
-            message: `Error al sincronizar §1: ${err instanceof Error ? err.message : String(err)}`,
-          };
+      let sectionMarkdown = "";
+      for await (const event of this.streamMddRegenerateSection(
+        pid,
+        section,
+        mddContent,
+        stageId,
+        gapLines,
+        upstreamCtx,
+      )) {
+        if (event.type === "progress") yield event;
+        if (event.type === "error") {
+          yield event;
           return;
         }
-      } else {
-        let sectionMarkdown = "";
-        for await (const event of this.streamMddRegenerateSection(
-          pid,
-          section,
-          mddContent,
-          stageId,
-          gapLines,
-          upstreamCtx,
-        )) {
-          if (event.type === "progress") yield event;
-          if (event.type === "error") {
-            yield event;
-            return;
-          }
-          if (event.type === "done" && event.markdown?.trim()) {
-            sectionMarkdown = event.markdown;
-          }
+        if (event.type === "done" && event.markdown?.trim()) {
+          sectionMarkdown = event.markdown;
         }
-        if (!sectionMarkdown.trim()) {
-          yield { type: "error", message: `La sincronización de §${section} no devolvió contenido.` };
-          return;
-        }
-        mddContent = sectionMarkdown;
       }
+      if (!sectionMarkdown.trim()) {
+        yield { type: "error", message: `La sincronización de §${section} no devolvió contenido.` };
+        return;
+      }
+      mddContent = sectionMarkdown;
 
       yield {
         type: "progress",
@@ -2311,10 +2366,24 @@ export class AiAnalysisService {
       }
     }
 
+    // Suelo anti-wipe entre reintentos de BullMQ: `lastPersistedLen` se reinicia en cada
+    // intento, así que sin este baseline el esqueleto del Clarificador del intento 2 pisa
+    // el MDD bueno del intento 1 (job 92: 70k → 3084).
+    const storedBaselineLen = peelDocumentBodyForPersist(resolvedPatterns.stageMddContent).trim().length;
+
     const persistMarkdown = async (markdown: string, finalize: boolean): Promise<void> => {
       const cleaned = cleanDocumentContent(markdown);
       if (cleaned.trim().length < 48) return;
       if (cleaned.length === lastPersistedLen && !finalize) return;
+      const floor = evaluateMddDraftPersistFloor({
+        candidateLen: cleaned.trim().length,
+        storedBaselineLen,
+        finalize,
+      });
+      if (!floor.allowed) {
+        this.logger.warn(`MDD job ${mode} (${projectId}): ${floor.reason}`);
+        return;
+      }
       lastPersistedLen = cleaned.length;
       await this.projects.persistMddFromBackgroundJob(projectId, markdown, {
         stageId: stageId?.trim() || undefined,
@@ -2364,7 +2433,8 @@ export class AiAnalysisService {
           // full pipeline runs; a single-section regen shouldn't be blocked because other
           // sections are missing/corrupt (that's exactly what the user is trying to fix
           // by regenerating individual sections).
-          const isSectionRegen = mode === "section" || mode === "upstream-sync";
+          const isSectionRegen =
+            mode === "section" || mode === "section-pipeline" || mode === "upstream-sync";
           await persistMarkdown(event.markdown, !isSectionRegen);
           if (projectId?.trim()) {
             this.estimationService.clearLiveDraft(projectId.trim(), stageId ?? undefined);
@@ -2427,6 +2497,32 @@ export class AiAnalysisService {
             data.initialMessage,
             data.mddContent,
             stageId,
+          ),
+        );
+        if (jobResult.ok && jobResult.outcome === "done") {
+          return this.finalizeMddJobUpstreamBaseline(projectId, stageId, jobResult);
+        }
+        return jobResult;
+      }
+      case "section-pipeline": {
+        const rawSection = data.section;
+        if (rawSection !== 5) {
+          throw new Error("section-pipeline only supports section 5");
+        }
+        onProgress({
+          phase: "section-pipeline",
+          section: 5,
+          message: "Regenerando §5 (paridad pipeline)…",
+        });
+        const jobResult = await consume(
+          this.streamMddRegenerateSection(
+            projectId,
+            5,
+            data.mddContent,
+            stageId,
+            data.gapReasons,
+            undefined,
+            { pipelineParity: true },
           ),
         );
         if (jobResult.ok && jobResult.outcome === "done") {

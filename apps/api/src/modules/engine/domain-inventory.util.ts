@@ -12,6 +12,8 @@ import {
   type ProcessInventoryItem,
 } from "@theforge/shared-types";
 import { isPlatformTableJustified } from "./platform-table-justify.util.js";
+import { isChatLlmPlatformScope } from "./mdd-platform-table-strip.util.js";
+import { corpusExcludesMultiTenantSaaS } from "./mdd-brd-scope.util.js";
 import { stableCrudUserStoryId, stableJourneyUserStoryId } from "@theforge/shared-types";
 
 const AUTH_CAPABILITY_RE =
@@ -290,6 +292,36 @@ function inferTrigger(cap: BrdCapability): string {
   return "user.request";
 }
 
+const PLATFORM_INVENTORY_NOISE = new Set([
+  "llm_configs",
+  "mcp_plugins",
+  "tenants",
+  "tenant_quotas",
+  "channels",
+  "channel",
+  "conversations",
+  "conversation",
+  "requests",
+  "request",
+  "agent_runs",
+  "agent_run",
+  "messages",
+  "message",
+  "conversation_memory",
+]);
+
+function shouldSuggestPlatformInventoryEntity(
+  entity: string,
+  corpus: string,
+): boolean {
+  const e = entity.toLowerCase();
+  if (!PLATFORM_INVENTORY_NOISE.has(e)) return true;
+  if (e === "tenants" || e === "tenant_quotas") {
+    return !corpusExcludesMultiTenantSaaS(corpus);
+  }
+  return isChatLlmPlatformScope(corpus);
+}
+
 export function buildDomainInventory(input: {
   brdMarkdown?: string | null;
   dbgaMarkdown?: string | null;
@@ -303,8 +335,10 @@ export function buildDomainInventory(input: {
     input.mddMarkdown,
   );
   const dbgaCanonical = extractDbgaCanonicalEntities(input.dbgaMarkdown ?? "");
+  const corpus = [input.brdMarkdown, input.dbgaMarkdown, input.mddMarkdown].filter(Boolean).join("\n");
   const suggestedRaw = [...new Set([...suggestedFromProse, ...dbgaCanonical])];
   const suggestedEntities = suggestedRaw
+    .filter((e) => shouldSuggestPlatformInventoryEntity(e, corpus))
     .filter(
       (e) =>
         !PLATFORM_ORPHAN_TABLES.has(e) ||

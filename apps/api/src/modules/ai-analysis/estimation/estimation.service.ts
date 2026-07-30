@@ -63,6 +63,11 @@ import {
   findApiSemanticAliasWarnings,
   type ConformanceSummary,
 } from "../../engine/mdd-quality-audit.util.js";
+import { evaluateSection5TailTruncation } from "../utils/mdd-content-quality.util.js";
+import {
+  extractBestSection5Body,
+  isMddSectionPipelinePlaceholderBody,
+} from "../utils/mdd-sanitize/section-merge.js";
 
 /** Horas base por unidad (entidades, pantallas, endpoints) para derivar total. */
 const HOURS_PER_ENTITY = 12;
@@ -254,6 +259,64 @@ const TRACEABILITY_SECTION_KEYS = [
   "seguridad",
 ] as const;
 
+/** Mínimo §5 sustancial (alineado con delivery gate HIGH). */
+const MIN_SECTION5_BODY_LENGTH_HIGH = 150;
+
+const BDD_RULE_RE =
+  /\b(?:dado|given)\b[\s\S]{0,240}?\b(?:cuando|when)\b[\s\S]{0,240}?\b(?:entonces|then)\b/i;
+
+const EDGE_CASES_RE =
+  /\bedge\s*cases?\b|\bcasos?\s+de\s+borde\b|\bcondici[oó]n\s+de\s+carrera\b|\bidempotenc/i;
+
+function scoreSection5ForPrecisionBreakdown(
+  md: string,
+  complexity: EstimationComplexity,
+): { score: number; reasons: string[] } {
+  const body = (extractBestSection5Body(md) ?? "").trim();
+  const reasons: string[] = [];
+  const minLen = complexity === "HIGH" ? MIN_SECTION5_BODY_LENGTH_HIGH : 200;
+
+  if (!body) {
+    return { score: 0, reasons: ["§5 Lógica y Edge Cases ausente o no detectable en el MDD."] };
+  }
+  if (isMddSectionPipelinePlaceholderBody(body)) {
+    return {
+      score: 0,
+      reasons: ["§5 es placeholder del pipeline (Pendiente: paso dedicado). Regenera §5."],
+    };
+  }
+
+  const bodyLen = body.length;
+  if (bodyLen < minLen) {
+    reasons.push(`§5 muy breve (${bodyLen} chars; mínimo ${minLen}).`);
+  }
+
+  let score = 100;
+  if (bodyLen < minLen) {
+    score = Math.max(0, Math.round((bodyLen / minLen) * 50));
+  } else if (bodyLen < 200) {
+    score -= 15;
+    reasons.push("§5 por debajo de longitud sustancial (~200 chars).");
+  }
+
+  if (!BDD_RULE_RE.test(body)) {
+    score -= 25;
+    reasons.push("Faltan reglas BDD/AAA (Dado/cuando/entonces o Given/When/Then).");
+  }
+  if (!EDGE_CASES_RE.test(body)) {
+    score -= 15;
+    reasons.push("No documenta edge cases explícitos (carrera, idempotencia, rollback, etc.).");
+  }
+
+  const tailIssue = evaluateSection5TailTruncation(body);
+  if (tailIssue) {
+    score -= 25;
+    reasons.push(tailIssue);
+  }
+
+  return { score: Math.max(0, Math.min(100, Math.round(score))), reasons };
+}
+
 /**
  * Desglose de precisión por sección/agente (0–100) para la tabla del chat.
  * Usa las mismas secciones y gaps que el semáforo; cada dimensión se penaliza según gaps que la afectan.
@@ -326,6 +389,9 @@ function computePrecisionBreakdown(md: string, complexity: EstimationComplexity 
     ),
   );
 
+  const section5Breakdown = scoreSection5ForPrecisionBreakdown(md, complexity);
+  const logicaEdgeCases = section5Breakdown.score;
+
   const sectionReasons: PrecisionBreakdown["sectionReasons"] = {};
   const trazaMsg =
     "Trazabilidad: concepto en Contexto sin ningún soporte en Modelo, API ni Seguridad (añade al menos uno o quítalo del contexto).";
@@ -360,11 +426,16 @@ function computePrecisionBreakdown(md: string, complexity: EstimationComplexity 
   if (gaps.infraStackGap) intReasons.push("Stack (NestJS/Node) no reflejado en Infra (Dockerfile Node).");
   if (intReasons.length) sectionReasons.integracion = intReasons.join(" ");
 
+  if (section5Breakdown.reasons.length > 0 && logicaEdgeCases < 100) {
+    sectionReasons.logicaEdgeCases = section5Breakdown.reasons.join(" ");
+  }
+
   return {
     contexto,
     modeloDatos,
     apiContracts,
     frontend,
+    logicaEdgeCases,
     seguridad,
     integracion,
     ...(Object.keys(sectionStatus).length > 0 ? { sectionStatus } : {}),

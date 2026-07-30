@@ -70,6 +70,12 @@ export const MDDStateAnnotation = Annotation.Root({
   dataModelArchitectMddDraftSnapshot: Annotation<string | undefined>(),
   /** Borrador post-api_contracts (§4 anclada) para restaurar tras format/SSOT/tail. */
   apiContractsArchitectMddDraftSnapshot: Annotation<string | undefined>(),
+  /** Borrador post-section5 (§5 anclada) para restaurar tras format/SSOT/tail. */
+  section5MddDraftSnapshot: Annotation<string | undefined>(),
+  /** Borrador post post_critic_parallel con §6 sustancial — ancla cola frente a format/dedupe/gate. */
+  securityArchitectMddDraftSnapshot: Annotation<string | undefined>(),
+  /** Borrador post post_critic_parallel con §7 sustancial — ancla cola frente a format/dedupe/gate. */
+  integrationArchitectMddDraftSnapshot: Annotation<string | undefined>(),
   sectionsToRun: Annotation<string[] | undefined>(),
   acceptedProposalDirective: Annotation<string | undefined>(),
   lastStepFailed: Annotation<{ node: string; error: string } | undefined>(),
@@ -122,6 +128,14 @@ export const MDDStateAnnotation = Annotation.Root({
   deliveryGateFixTarget: Annotation<DeliveryGateFixTarget | undefined>(),
   /** Fingerprint placeholder blockers (circuit breaker). */
   deliveryGatePlaceholderFingerprint: Annotation<string | undefined>(),
+  /** F3: post_critic_parallel completó §4∥§6∥§7 (skip tail_parallel). */
+  postCriticParallelDone: Annotation<boolean | undefined>(),
+  /** §5 sin cambios: skip format_after_architect redundante. */
+  section5FormatSkipped: Annotation<boolean | undefined>(),
+  /** Reintentos stack_architect cuando §2 sigue placeholder. */
+  stackArchitectAttempt: Annotation<number | undefined>(),
+  /** True tras primera pasada del Auditor — evita re-auditoría en gate loop. */
+  auditorRan: Annotation<boolean | undefined>(),
 });
 
 export type MDDStateType = typeof MDDStateAnnotation.State;

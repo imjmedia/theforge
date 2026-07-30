@@ -73,16 +73,19 @@ export class AnthropicAdapter implements LLMProvider {
     if (options?.jsonObjectMode) {
       messages.push({ role: "assistant", content: "{" });
     }
-    const res = await this.client.messages.create({
-      model: this.model,
-      max_tokens:
-        options?.maxTokensOverride ??
-        resolveLlmMaxTokensForWorkshopTab(options?.activeTab, {
-          welcomeBrief: options?.welcomeBrief,
-        }),
-      system: options?.systemPrompt,
-      messages,
-    });
+    const res = await this.client.messages.create(
+      {
+        model: this.model,
+        max_tokens:
+          options?.maxTokensOverride ??
+          resolveLlmMaxTokensForWorkshopTab(options?.activeTab, {
+            welcomeBrief: options?.welcomeBrief,
+          }),
+        system: options?.systemPrompt,
+        messages,
+      },
+      options?.abortSignal ? { signal: options.abortSignal } : undefined,
+    );
     if (res.usage) {
       recordTokenUsageFromContext(
         "anthropic",
@@ -102,17 +105,20 @@ export class AnthropicAdapter implements LLMProvider {
     history: ChatMessage[],
     options?: GenerateResponseOptions,
   ): Promise<AsyncIterable<string>> {
-    const stream = await this.client.messages.create({
-      model: this.model,
-      max_tokens:
-        options?.maxTokensOverride ??
-        resolveLlmMaxTokensForWorkshopTab(options?.activeTab, {
-          welcomeBrief: options?.welcomeBrief,
-        }),
-      system: options?.systemPrompt,
-      messages: toAnthropicMessages(history, prompt, options?.userMessageImages),
-      stream: true,
-    });
+    const stream = await this.client.messages.create(
+      {
+        model: this.model,
+        max_tokens:
+          options?.maxTokensOverride ??
+          resolveLlmMaxTokensForWorkshopTab(options?.activeTab, {
+            welcomeBrief: options?.welcomeBrief,
+          }),
+        system: options?.systemPrompt,
+        messages: toAnthropicMessages(history, prompt, options?.userMessageImages),
+        stream: true,
+      },
+      options?.abortSignal ? { signal: options.abortSignal } : undefined,
+    );
 
     let promptTokens = 0;
     let completionTokens = 0;

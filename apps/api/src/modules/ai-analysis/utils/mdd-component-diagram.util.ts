@@ -305,6 +305,7 @@ const FRONTEND_PATTERNS = [
 
 const BACKEND_PATTERNS = [
   { re: /\bnestjs\b/i, label: "NestJS" },
+  { re: /\bgolang\b|\bgo\b(?:\s|$|[\d./])/i, label: "Go" },
   { re: /\bexpress\b/i, label: "Express" },
   { re: /\bfastapi\b/i, label: "FastAPI" },
   { re: /\bdjango\b/i, label: "Django" },
@@ -332,6 +333,20 @@ const CACHE_QUEUE_PATTERNS = [
   { re: /\bkafka\b/i, label: "Kafka" },
 ];
 
+/** Backend explícito en tabla §2 (prioridad sobre regex en prosa). */
+export function resolveBackendFromStackTable(section2Body: string): string | undefined {
+  const tableRow = section2Body.match(
+    /\|\s*(?:\*\*)?(?:Backend|Servidor|API\s+Server|Lenguaje\s+backend)(?:\*\*)?\s*\|\s*([^|\n]+)/i,
+  )?.[1];
+  if (tableRow) {
+    const cell = tableRow.trim();
+    for (const { re, label } of BACKEND_PATTERNS) {
+      if (re.test(cell)) return label;
+    }
+  }
+  return firstMatchLabel(section2Body, BACKEND_PATTERNS);
+}
+
 /** Broker explícito en tabla §2 (evita falso BullMQ por `@nestjs/bull` en Circuit Breaker). */
 function resolveMessageBrokerLabel(section2Body: string): string | undefined {
   const tableRow = section2Body.match(
@@ -355,8 +370,26 @@ function section2HasDetailedComponentDiagram(section2Body: string): boolean {
   );
 }
 
+function inferBackendLabelFromMermaid(mermaid: string): string | undefined {
+  return firstMatchLabel(mermaid, BACKEND_PATTERNS);
+}
+
+/** True si el diagrama §2 existente contradice el backend declarado en la tabla §2. */
+export function section2ComponentDiagramBackendMismatch(section2Body: string): boolean {
+  const tableBackend = resolveBackendFromStackTable(section2Body);
+  if (!tableBackend) return false;
+  const blocks = section2Body.match(/```mermaid\s*([\s\S]*?)```/gi) ?? [];
+  for (const block of blocks) {
+    const inner = block.replace(/^```mermaid\s*/i, "").replace(/```$/i, "").trim();
+    const diagramBackend = inferBackendLabelFromMermaid(inner);
+    if (diagramBackend && diagramBackend !== tableBackend) return true;
+  }
+  return false;
+}
+
 /** True si §2 ya tiene un diagrama de componentes Mermaid usable (aristas o erDiagram). */
 export function section2HasValidComponentDiagram(section2Body: string): boolean {
+  if (section2ComponentDiagramBackendMismatch(section2Body)) return false;
   if (!section2HasDetailedComponentDiagram(section2Body)) return false;
   const blocks = section2Body.match(/```mermaid\s*([\s\S]*?)```/gi) ?? [];
   if (blocks.length === 0) return false;
@@ -390,7 +423,7 @@ export function parseGreenfieldMddSignals(draft: string): GreenfieldStackSignals
   const stackText = [section2.body, section3?.body ?? "", section4?.body ?? ""].join("\n");
   const uiExcluded = section2ExcludesUiSurface(section2.body);
   const frontend = uiExcluded ? undefined : firstMatchLabel(section2.body, FRONTEND_PATTERNS);
-  const backend = firstMatchLabel(section2.body, BACKEND_PATTERNS);
+  const backend = resolveBackendFromStackTable(section2.body);
   const primaryDb = firstMatchLabel(stackText, DB_PATTERNS);
   const graphDb = firstMatchLabel(stackText, GRAPH_PATTERNS);
   const cacheOrQueue = resolveMessageBrokerLabel(section2.body);

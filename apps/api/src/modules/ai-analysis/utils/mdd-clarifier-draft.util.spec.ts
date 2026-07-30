@@ -1,12 +1,15 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import {
+  assembleClarifierMddDraft,
   finalizeClarifierDraft,
   MIN_DBGA_LEN_FOR_STRICT_CLARIFIER_DRAFT,
+  stripClarifierGovernanceFromDraft,
 } from "./mdd-clarifier-draft.util.js";
 import { preserveValidatedSectionsIfSubstantial } from "./mdd-section-preserve.util.js";
 import { getMddTemplatePlaceholder } from "../state/mdd-structured.schema.js";
 import { evaluateSection1BodyQuality } from "./mdd-section1-quality.util.js";
+import { MDD_GOVERNANCE_WIZARD_BODY } from "@theforge/shared-types/mdd-governance-patterns";
 
 const longScope = "A".repeat(250);
 
@@ -109,5 +112,78 @@ describe("finalizeClarifierDraft", () => {
     assert.match(out, /NestJS \+ PostgreSQL/);
     assert.match(out, /Mapa de contextos/);
     assert.doesNotMatch(out, /Pendiente: Arquitecto de Software/);
+  });
+
+  it("hidrata §1 desde brief DBGA (no slice ciego) cuando scope es corto", () => {
+    const largeDbga = `
+## Objetivo
+KMS empresarial con taxonomías y workflows.
+
+## Alcance
+Gestión documental y búsqueda semántica.
+
+## Capacidades
+### Documentos
+Versionado y aprobación.
+`.repeat(120);
+
+    const thinLlm = getMddTemplatePlaceholder("(vacío)");
+    const out = finalizeClarifierDraft({
+      llmDraft: thinLlm,
+      previousDraft: "",
+      clarifiedScope: "corto",
+      dbgaContent: largeDbga,
+      mddComplexity: "HIGH",
+    });
+
+    assert.match(out, /Objetivo|KMS|Gestión documental/i);
+    assert.ok(out.length >= 250);
+  });
+
+  it("stripClarifierGovernanceFromDraft quita sección inmutable", () => {
+    const withGov = `# Master Design Document\n\n${MDD_GOVERNANCE_WIZARD_BODY}\n\n## 1. Contexto\n\nTexto.\n`;
+    const out = stripClarifierGovernanceFromDraft(withGov);
+    assert.ok(!out.includes("[ARQUITECTURA - SECCIÓN INMUTABLE]"));
+    assert.match(out, /## 1\. Contexto/);
+  });
+
+  it("assembleClarifierMddDraft arma plantilla cuando LLM solo devuelve §1", () => {
+    const onlyS1 = `# Master Design Document\n\n## 1. Contexto\n\n${"Contexto detallado. ".repeat(30)}\n`;
+    const out = assembleClarifierMddDraft(onlyS1);
+    assert.match(out, /## 2\. Arquitectura y Stack/);
+    assert.match(out, /\(Pendiente\)/);
+    assert.match(out, /Contexto detallado/);
+  });
+
+  it("assembleClarifierMddDraft preserva borrador sustancial de refinamiento", () => {
+    const substantial = `# Master Design Document\n\n## 1. Contexto\n\nCorto.\n\n## 2. Arquitectura y Stack\n\n${"NestJS stack detallado. ".repeat(80)}\n\n## 3. Modelo de Datos\n\n${"CREATE TABLE foo (id INT); ".repeat(20)}\n`;
+    const out = assembleClarifierMddDraft(substantial);
+    assert.match(out, /NestJS stack detallado/);
+    assert.match(out, /CREATE TABLE foo/);
+  });
+});
+
+describe("stripClarifierAgentBriefFromSection1", () => {
+  it("elimina bloque Resumen para agentes (Clarified Scope) embebido en §1", async () => {
+    const { stripClarifierAgentBriefFromSection1 } = await import("./mdd-clarifier-draft.util.js");
+    const draft = `# MDD\n\n## 1. Contexto y alcance\n\n### Propósito\n\nSistema CRM.\n\n## Resumen para agentes (Clarified Scope)\n\nDecisiones para §6.\n\n## 2. Arquitectura y Stack\n\nNestJS.`;
+    const out = stripClarifierAgentBriefFromSection1(draft);
+    assert.match(out, /Sistema CRM/);
+    assert.doesNotMatch(out, /Resumen para agentes/i);
+    assert.match(out, /## 2\. Arquitectura/);
+  });
+});
+
+describe("isSafeClarifierMergeBaseline", () => {
+  it("rechaza baseline con headings duplicados", async () => {
+    const { isSafeClarifierMergeBaseline } = await import("./mdd-clarifier-draft.util.js");
+    const duped = `# MDD\n## 1. Contexto y alcance\n${"x".repeat(300)}\n## 3. Modelo de Datos\nA\n## 3. Modelo de Datos\nB\n`;
+    assert.equal(isSafeClarifierMergeBaseline(duped, "y".repeat(500)), false);
+  });
+
+  it("rechaza merge cuando newDraft > 3× baseline", async () => {
+    const { isSafeClarifierMergeBaseline } = await import("./mdd-clarifier-draft.util.js");
+    const baseline = `# MDD\n## 1. Contexto y alcance\n${"x".repeat(300)}\n## 3. Modelo de Datos\n${"CREATE TABLE t (id INT); ".repeat(20)}\n`;
+    assert.equal(isSafeClarifierMergeBaseline(baseline, "z".repeat(baseline.length * 4)), false);
   });
 });

@@ -17,8 +17,17 @@ import {
   preserveSection3IfSubstantial,
   preserveSection4IfSubstantial,
   preserveSection5IfSubstantial,
+  preserveSection5FromSection5Snapshot,
+  isSection5SectionRegression,
   preserveSection6IfSubstantial,
   preserveSection7IfSubstantial,
+  preserveSection6FromSecuritySnapshot,
+  preserveSection7FromIntegrationSnapshot,
+  preserveTailSectionsFromSnapshots,
+  reinjectTailSectionsFromSnapshotsForGateLoop,
+  restoreSections6And7IfRegressed,
+  resolveTailPreserveBaseline,
+  stateHasSubstantialTailSnapshots,
   preserveSection1FromClarifierSnapshot,
   preserveTailSectionsIfSubstantial,
   preserveValidatedSectionsIfSubstantial,
@@ -191,9 +200,59 @@ describe("preserveSection5IfSubstantial", () => {
     assert.ok(out.length > wiped.length);
   });
 
+  it("restaura §5 por regresión de longitud (16539→4543)", () => {
+    const richS5 = `${"Regla BDD detallada con edge cases del dominio KMS. ".repeat(400)}`;
+    const rich = BASE.replace(S5_BODY, richS5);
+    const shrunk = rich.replace(richS5, "Regla corta.");
+    const out = preserveSection5IfSubstantial(rich, shrunk);
+    assert.ok(out.includes("Regla BDD detallada"));
+    assert.ok(out.length > shrunk.length);
+  });
+
   it("no toca si §5 sigue sustancial", () => {
     const tweaked = BASE.replace("idempotencia", "idempotencia mejorada");
     assert.equal(preserveSection5IfSubstantial(BASE, tweaked), tweaked);
+  });
+
+  it("no restaura §5 desde baseline hinchada (>3× current sustancial)", () => {
+    const current = BASE;
+    const bloatedBaseline =
+      BASE +
+      `\n## 5. Lógica y Edge Cases\n${"Duplicado regresión. ".repeat(2000)}\n` +
+      `\n## 5. Lógica y Edge Cases\n${"Otro duplicado. ".repeat(2000)}\n`;
+    const wiped = BASE.replace(S5_BODY, "(Pendiente)");
+    const out = preserveSection5IfSubstantial(bloatedBaseline, wiped);
+    assert.ok(!out.includes("Duplicado regresión"));
+    assert.equal(out, wiped);
+  });
+
+  it("restaura §5 aunque baseline tenga headings duplicados (stub + sustancial)", () => {
+    const stubThenGood =
+      BASE.replace(
+        `## 5. Lógica y Edge Cases\n${S5_BODY}`,
+        `## 5. Lógica y Edge Cases\n(Pendiente: paso dedicado Lógica y Edge Cases)\n\n## 5. Lógica y Edge Cases\n${S5_BODY}`,
+      );
+    const wiped = BASE.replace(S5_BODY, "(Pendiente)");
+    const out = preserveSection5IfSubstantial(stubThenGood, wiped);
+    assert.ok(out.includes("JWT tras credenciales"));
+    assert.equal(draftHasSubstantialSection5(out), true);
+  });
+
+  it("restaura §5 por regresión aunque baseline >3× current sustancial", () => {
+    const richS5 = `${"Regla BDD detallada con edge cases del dominio KMS. ".repeat(400)}`;
+    const mediumS5 = `${"Regla corta pero sustancial para el gate. ".repeat(12)}`;
+    const rich = BASE.replace(S5_BODY, richS5);
+    const shrunk = rich.replace(richS5, mediumS5);
+    assert.ok(isSection5SectionRegression(richS5, mediumS5));
+    assert.ok(richS5.length > mediumS5.length * 3);
+    const out = preserveSection5IfSubstantial(rich, shrunk);
+    assert.ok(out.includes("Regla BDD detallada"));
+  });
+
+  it("preserveSection5FromSection5Snapshot restaura tras wipe", () => {
+    const wiped = BASE.replace(S5_BODY, "(Pendiente)");
+    const out = preserveSection5FromSection5Snapshot(BASE, wiped);
+    assert.ok(out.includes("JWT tras credenciales"));
   });
 });
 
@@ -222,6 +281,55 @@ describe("preserveTailSectionsIfSubstantial (simula wipe Cross/Diagram)", () => 
     assert.ok(preserveSection6IfSubstantial(TAIL_BASE, wiped6).includes("rotación de claves"));
     const wiped7 = TAIL_BASE.replace(S7_BODY, "(Pendiente)");
     assert.ok(preserveSection7IfSubstantial(TAIL_BASE, wiped7).includes("Docker Compose"));
+  });
+
+  it("restaura §6/§7 desde securitySectionMd tras dedupe wipe", () => {
+    const secMd = `## 6. Seguridad\n${S6_BODY}`;
+    const intMd = `## 7. Infraestructura\n${S7_BODY}`;
+    const wiped = TAIL_BASE.replace(S6_BODY, "(Pendiente)").replace(S7_BODY, "(Pendiente)");
+    const out = preserveTailSectionsFromSnapshots(
+      { securitySectionMd: secMd, integrationSectionMd: intMd },
+      wiped,
+    );
+    assert.ok(out.includes("rotación de claves"));
+    assert.ok(out.includes("Docker Compose"));
+  });
+
+  it("reinjectTailSectionsFromSnapshotsForGateLoop fuerza §6/§7 sin stub", () => {
+    const secMd = `## 6. Seguridad\n${S6_BODY}`;
+    const intMd = `## 7. Infraestructura\n${S7_BODY}`;
+    const wiped = TAIL_BASE.replace(S6_BODY, "(Pendiente de definir.)").replace(S7_BODY, "(Pendiente de definir.)");
+    const reinjected = reinjectTailSectionsFromSnapshotsForGateLoop({
+      mddDraft: wiped,
+      securitySectionMd: secMd,
+      integrationSectionMd: intMd,
+    });
+    assert.ok(reinjected);
+    assert.ok(reinjected!.mddDraft.includes("rotación de claves"));
+    assert.ok(reinjected!.mddDraft.includes("Docker Compose"));
+    assert.ok(stateHasSubstantialTailSnapshots({ securitySectionMd: secMd, integrationSectionMd: intMd }));
+  });
+
+  it("restoreSections6And7IfRegressed tras dedupe simulado", () => {
+    const wiped = TAIL_BASE.replace(S6_BODY, "(Pendiente)").replace(S7_BODY, "(Pendiente)");
+    const restored = restoreSections6And7IfRegressed(TAIL_BASE, wiped);
+    assert.ok(restored.includes("rotación de claves"));
+    assert.ok(restored.includes("Docker Compose"));
+  });
+
+  it("resolveTailPreserveBaseline enriquece draft con snapshots", () => {
+    const secMd = `## 6. Seguridad\n${S6_BODY}`;
+    const baseline = resolveTailPreserveBaseline(TAIL_BASE.replace(S6_BODY, "(Pendiente)"), {
+      securitySectionMd: secMd,
+    });
+    assert.ok(baseline.includes("rotación de claves"));
+  });
+
+  it("no restaura §6 desde stub Pendiente si había sustancia en current", () => {
+    const stubMd = "## 6. Seguridad\n(Pendiente de definir.)";
+    const current = TAIL_BASE;
+    const out = preserveSection6FromSecuritySnapshot(stubMd, stubMd, current);
+    assert.equal(out, current);
   });
 });
 

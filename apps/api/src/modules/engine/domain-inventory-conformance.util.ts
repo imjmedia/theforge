@@ -44,6 +44,13 @@ export function mddSection3HasDbgaCoreEntity(
   return false;
 }
 
+/** True cuando el corpus apunta a vertical trading/inversión (no KMS puro, etc.). */
+export function isTradingVerticalCorpus(corpus: string): boolean {
+  return /\b(trading|watchlist|estrategia|strateg(?:y|ies)|operaciones?\s+(?:de\s+)?trading|broker|alpaca|inversi[oó]n|portafolio|señal|recomendaci[oó]n\s+de\s+inversi[oó]n)\b/i.test(
+    corpus,
+  );
+}
+
 /** Entidades núcleo DBGA que deben existir en §3 para este proyecto. */
 export function resolveRequiredDbgaCoreEntities(params: {
   dbgaMarkdown?: string | null;
@@ -51,6 +58,7 @@ export function resolveRequiredDbgaCoreEntities(params: {
 }): string[] {
   const dbgaCanonical = extractDbgaCanonicalEntities(params.dbgaMarkdown ?? "");
   const corpus = `${params.dbgaMarkdown ?? ""}\n${params.brdMarkdown ?? ""}`;
+  const tradingVertical = isTradingVerticalCorpus(corpus);
   const required = new Set<string>();
 
   for (const entity of dbgaCanonical) {
@@ -65,7 +73,7 @@ export function resolveRequiredDbgaCoreEntities(params: {
     if (new RegExp(`\\b${slug}\\b`, "i").test(corpus)) required.add(entity);
   }
 
-  if (dbgaCanonical.length >= 3) {
+  if (tradingVertical && dbgaCanonical.length >= 3) {
     for (const entity of DBGA_CORE_ENTITIES) required.add(entity);
   }
 

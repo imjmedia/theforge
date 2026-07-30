@@ -1,5 +1,53 @@
 /** Reparación JSON y formateo de la sección §4 Contratos de API. */
 
+import {
+  closeTrailingUnclosedFences,
+  closeUnclosedFencesBeforeCanonicalH2,
+  getSectionBody,
+  indexOfNextH2OutsideFenced,
+} from "./section-fence.util.js";
+import { extractSection5Body } from "./section-merge.js";
+
+/** Headings canónicos que nunca deben quedar dentro del cuerpo formateado de §4. */
+const CANONICAL_TAIL_HEADING_RE = /^##\s+[5-7]\.\s/m;
+
+/**
+ * Trunca el cuerpo de §4 en el primer H2 embebido §5–§7 (fence-aware) o bloque
+ * placeholder «paso dedicado Lógica» que el LLM suele pegar al final de §4.
+ */
+export function stripEmbeddedTailSectionsFromContratosBody(body: string): string {
+  const trimmed = (body ?? "").trim();
+  if (!trimmed || !CANONICAL_TAIL_HEADING_RE.test(trimmed)) {
+    const placeholderOnly = trimmed.match(
+      /\n?\(Pendiente:\s*paso dedicado Lógica[\s\S]*$/i,
+    );
+    if (placeholderOnly?.index != null && placeholderOnly.index > 0) {
+      return trimmed.slice(0, placeholderOnly.index).trimEnd();
+    }
+    return trimmed;
+  }
+
+  const lines = trimmed.split("\n");
+  let parity = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]!;
+    if (parity === 0 && CANONICAL_TAIL_HEADING_RE.test(line)) {
+      const cut = lines.slice(0, i).join("\n").trimEnd();
+      console.warn(
+        `[MDD:Contratos] §4 truncado en H2 embebido §5–§7 (${trimmed.length}→${cut.length} chars)`,
+      );
+      return cut;
+    }
+    parity = (parity + (line.match(/```/g) ?? []).length) % 2;
+  }
+
+  const placeholderTail = trimmed.match(/\n?\(Pendiente:\s*paso dedicado Lógica[\s\S]*$/i);
+  if (placeholderTail?.index != null && placeholderTail.index > 0) {
+    return trimmed.slice(0, placeholderTail.index).trimEnd();
+  }
+  return trimmed;
+}
+
 /** Repara contenido interno de un bloque ```json (fences anidados, blockquote, pretty-print). */
 function fixSingleNestedArrayWrappers(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -29,6 +77,7 @@ function repairJsonCodeBlockInner(inner: string): string {
       .replace(/```/g, "");
   }
   cleaned = cleaned.trim();
+  cleaned = repairGluedEmptyJsonArrays(cleaned);
   if (!cleaned) return inner.trim();
   try {
     const parsed = fixSingleNestedArrayWrappers(JSON.parse(cleaned) as unknown);
@@ -36,6 +85,34 @@ function repairJsonCodeBlockInner(inner: string): string {
   } catch {
     return cleaned;
   }
+}
+
+/**
+ * Repara arrays JSON vacíos pegados por el LLM al mergear chunks (p. ej. `"keys": [,`).
+ * Idempotente sobre `[]` ya válidos.
+ */
+export function repairGluedEmptyJsonArrays(text: string): string {
+  if (!text?.trim()) return text ?? "";
+  let out = text;
+  let prev = "";
+  while (prev !== out) {
+    prev = out;
+    out = out
+      .replace(/:\s*\[\s*,/g, ": [],")
+      .replace(/:\s*\[\s*,\s*\]/g, ": []")
+      .replace(/:\s*\[\s*,\s*\n/g, ": []\n")
+      .replace(/,\s*\[\s*,/g, ", [],")
+      .replace(/\[\s*,\s*\]/g, "[]");
+  }
+  return out;
+}
+
+/**
+ * Repara fences ```json anidados y arrays vacíos pegados en el cuerpo de §4.
+ */
+export function repairContratosJsonGlueIssues(body: string): string {
+  if (!body?.trim()) return body ?? "";
+  return repairNestedJsonFencesInDraft(repairGluedEmptyJsonArrays(body));
 }
 
 /**
@@ -193,18 +270,22 @@ export function stripLeadingContratosPlaceholder(body: string): string {
   return rest;
 }
 
-const SECTION4_CONTRATOS_HEADING_REGEX =
+export const SECTION4_CONTRATOS_HEADING_REGEX =
   /##\s*4\.\s*Contratos\s+de\s+API|##\s*3\.\s*Contratos\s+de\s+API|##\s*Contratos\s+de\s+API/i;
 
-/** Extrae el cuerpo de §4 Contratos de API (sin el heading). */
+/** Despega placeholder del H2: `## 4. Contratos de API(Pendiente: …)` → heading + cuerpo. */
+export function normalizeGluedSection4HeadingInDraft(draft: string): string {
+  if (!draft?.trim()) return draft ?? "";
+  return draft.replace(
+    /^##\s*4\.\s*Contratos\s+de\s+API\s*\(([^)\n]+)\)\s*$/gim,
+    "## 4. Contratos de API\n\n($1)",
+  );
+}
+
+/** Extrae el cuerpo de §4 Contratos de API (sin el heading), fence-aware. */
 export function extractContratosSectionBody(draft: string): string | null {
-  const t = (draft ?? "").trim();
-  const match = t.match(SECTION4_CONTRATOS_HEADING_REGEX);
-  if (!match) return null;
-  const start = t.indexOf(match[0]) + match[0].length;
-  const rest = t.slice(start).replace(/^\s*\n+/, "");
-  const nextH2 = rest.search(/\n##\s+/);
-  return (nextH2 !== -1 ? rest.slice(0, nextH2) : rest).trim() || null;
+  const body = getSectionBody((draft ?? "").trim(), SECTION4_CONTRATOS_HEADING_REGEX);
+  return body && body.length > 0 ? body : null;
 }
 
 /** True si el cuerpo es placeholder o carece de endpoints/JSON reales. */
@@ -240,7 +321,10 @@ export function countContratosEndpointRows(body: string | null | undefined): num
 export const MIN_CONTRATOS_BASELINE_FOR_REGRESSION_GUARD = 1_200;
 
 /** Ratio mínimo (nuevo/baseline) para aceptar un merge quirúrgico de §4. */
-export const CONTRATOS_REGRESSION_LENGTH_RATIO = 0.4;
+export const CONTRATOS_REGRESSION_LENGTH_RATIO = 0.75;
+
+/** Ratio mínimo de filas endpoint (candidato/baseline) cuando baseline ≥ 6. */
+export const CONTRATOS_REGRESSION_ENDPOINT_RATIO = 0.8;
 
 /**
  * True si el candidato es sustancial pero claramente peor que el baseline
@@ -260,7 +344,10 @@ export function isContratosSectionRegression(
   if (ratio < CONTRATOS_REGRESSION_LENGTH_RATIO) return true;
   const baselineEndpoints = countContratosEndpointRows(baseline);
   const candidateEndpoints = countContratosEndpointRows(candidate);
-  if (baselineEndpoints >= 6 && candidateEndpoints < Math.ceil(baselineEndpoints * 0.5)) {
+  if (
+    baselineEndpoints >= 6 &&
+    candidateEndpoints < Math.ceil(baselineEndpoints * CONTRATOS_REGRESSION_ENDPOINT_RATIO)
+  ) {
     return true;
   }
   return false;
@@ -664,6 +751,7 @@ export function repairStrayFencesInContratosTable(body: string): string {
  */
 export function formatContratosBody(body: string): string {
   let normalized = stripLeadingContratosPlaceholder(body);
+  normalized = repairContratosJsonGlueIssues(normalized);
   normalized = repairStrayFencesInContratosTable(normalized);
   normalized = splitHeaderAndSeparatorOnSameLine(normalized);
   normalized = deduplicateTableSeparators(normalized);
@@ -711,25 +799,64 @@ const CONTRATOS_SECTION_HEADINGS = [
   "## Contratos de API",
 ] as const;
 
-/** Aplica `formatContratosBody` a cada ocurrencia de §4 (pre-dedup o multi-bloque). */
+/**
+ * Aplica `formatContratosBody` a cada ocurrencia de §4 (pre-dedup o multi-bloque).
+ *
+ * Job 92: un fence ```json sin cerrar en §4 dejaba a `indexOfNextH2OutsideFenced`
+ * sin encontrar el H2 de cierre (paridad de ``` impar para siempre), así que el
+ * "cuerpo de §4" pasaba a ser §4+§5+§6+§7 y el formateo de contratos reflowaba la
+ * cola entera; §5 medía 0 y §6 quedaba en 145 chars, tumbando el gate de persist
+ * tras 17 min de pipeline correcto. Doble defensa: se cierran los fences primero
+ * (idempotente) y se aborta el formateo de cualquier cuerpo que aún contenga un
+ * heading canónico §5–§7.
+ */
 export function formatAllContratosSectionsInDraft(draft: string): string {
-  let out = draft ?? "";
+  let out = closeUnclosedFencesBeforeCanonicalH2(draft ?? "");
   for (const heading of CONTRATOS_SECTION_HEADINGS) {
     let searchFrom = 0;
     while (searchFrom < out.length) {
       const contratosIdx = out.indexOf(heading, searchFrom);
       if (contratosIdx === -1) break;
       const sectionStart = contratosIdx + heading.length;
-      const rest = out.slice(sectionStart);
-      const nextH2 = rest.search(/\n##\s+/);
-      const body = nextH2 !== -1 ? rest.slice(0, nextH2) : rest;
+      const nextH2Abs = indexOfNextH2OutsideFenced(out, sectionStart);
+      const body =
+        nextH2Abs !== -1 ? out.slice(sectionStart, nextH2Abs) : out.slice(sectionStart);
+      const bodyFenceCount = (body.match(/```/g) ?? []).length;
+      const embedsTail = CANONICAL_TAIL_HEADING_RE.test(body);
+      console.log(
+        `[MDD:Contratos:diag] ${heading} bodyLen=${body.length} fenceParity=${bodyFenceCount % 2 === 0 ? "PAR" : "IMPAR"} embedsTail=${embedsTail} nextH2=${nextH2Abs}`,
+      );
+      if (CANONICAL_TAIL_HEADING_RE.test(body)) {
+        console.warn(
+          `[MDD:Contratos] cuerpo de «${heading}» abarca §5–§7 (${body.length} chars) — formateo omitido para no dañar la cola`,
+        );
+        searchFrom = sectionStart + body.length;
+        continue;
+      }
       let formatted = formatContratosBody(body);
       formatted = repairDisplacedJsonBracesInContratos(formatted);
+      // Job 96: el propio formateo puede DEJAR paridad ``` impar (reflow de JSON inline a
+      // bloques + reparaciones de fences sueltos). Un cuerpo §4 con fence abierto sepulta
+      // §5–§7 para todos los extractores fence-aware posteriores («§5 4920→0» pese al
+      // preflight de entrada). Reparar la paridad del cuerpo antes de reinsertarlo.
+      if (((formatted.match(/```/g) ?? []).length & 1) === 1) {
+        console.warn(
+          `[MDD:Contratos] cuerpo formateado de «${heading}» quedó con fence impar — cerrando antes de reinsertar`,
+        );
+        formatted = `${formatted.trimEnd()}\n\`\`\`\n`;
+      }
       if (formatted !== body) {
-        out = out.slice(0, sectionStart) + formatted + (nextH2 !== -1 ? rest.slice(nextH2) : "");
+        out =
+          out.slice(0, sectionStart) +
+          formatted +
+          (nextH2Abs !== -1 ? out.slice(nextH2Abs) : "");
       }
       searchFrom = sectionStart + formatted.length;
     }
   }
-  return out;
+  const result = closeTrailingUnclosedFences(out);
+  console.log(
+    `[MDD:Contratos:diag] post-format §5extract=${extractSection5Body(result)?.length ?? 0}`,
+  );
+  return result;
 }

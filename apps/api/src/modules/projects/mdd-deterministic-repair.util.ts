@@ -8,6 +8,7 @@ import { rebuildDomainInventoryPreferringBrd } from "../engine/domain-inventory-
 import { reconcileDomainInventoryIntoMdd } from "../engine/domain-inventory-reconciler.util.js";
 import { reconcileMddSsotBeforeDeliveryGate } from "../engine/mdd-ssot-repair.util.js";
 import { applyPreDeliveryGateFixes } from "../ai-analysis/utils/mdd-sanitize.js";
+import { repairMddCoherenceSection4Gaps } from "../engine/mdd-coherence/mdd-coherence-repair.util.js";
 
 export type DeterministicMddRepairResult = {
   markdown: string;
@@ -56,6 +57,14 @@ export function applyDeterministicMddRepairs(
       ...ssot.uatInjected,
       ...ssot.section4Injected,
     );
+  }
+
+  const coherence = repairMddCoherenceSection4Gaps(markdown, {
+    inventory: params.inventory,
+  });
+  if (coherence.injected.length > 0) {
+    markdown = coherence.markdown;
+    notes.push(...coherence.injected.map((id) => `coherence §4: ${id}`));
   }
 
   return {

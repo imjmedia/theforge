@@ -4,6 +4,8 @@ import {
   checkMissingDbgaCoreEntitiesInMdd,
   checkPlatformTablesOutsideBrd,
   collectDomainInventoryConformanceGaps,
+  isTradingVerticalCorpus,
+  resolveRequiredDbgaCoreEntities,
 } from "./domain-inventory-conformance.util.js";
 
 const MDD_WITH_AUTH_ONLY = `
@@ -117,5 +119,35 @@ CREATE TABLE otp_sessions (id UUID PRIMARY KEY);
       mddMarkdown: mdd,
     });
     assert.deepEqual(missing, []);
+  });
+
+  it("KMS DBGA no exige las 7 entidades núcleo trading", () => {
+    const kmsDbga = `
+CREATE TABLE kms_keys (id UUID PRIMARY KEY);
+CREATE TABLE key_assignments (id UUID PRIMARY KEY);
+CREATE TABLE users (id UUID PRIMARY KEY);
+CREATE TABLE audit_logs (id UUID PRIMARY KEY);
+`;
+    const kmsBrd = `
+## 3. Capacidades
+### Gestión de claves KMS
+Rotación y asignación de claves de cifrado para APIs internas.
+`;
+    assert.equal(isTradingVerticalCorpus(`${kmsDbga}\n${kmsBrd}`), false);
+    const required = resolveRequiredDbgaCoreEntities({
+      dbgaMarkdown: kmsDbga,
+      brdMarkdown: kmsBrd,
+    });
+    assert.ok(!required.includes("watchlists"));
+    assert.ok(!required.includes("strategies"));
+    assert.ok(!required.includes("operations"));
+
+    const missing = checkMissingDbgaCoreEntitiesInMdd({
+      dbgaMarkdown: kmsDbga,
+      brdMarkdown: kmsBrd,
+      mddMarkdown: MDD_WITH_AUTH_ONLY,
+    });
+    assert.ok(!missing.includes("watchlists"));
+    assert.ok(!missing.includes("operations"));
   });
 });

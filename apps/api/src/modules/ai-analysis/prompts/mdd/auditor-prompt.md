@@ -96,7 +96,7 @@ Las herramientas **informan** tu juicio; **tú** decides el score y los `critica
 
 Detecta tablas o columnas **inventadas** que no derivan del dominio de negocio:
 
-1.  **Tablas plataforma sin ancla BRD/DBGA:** `messages`, `conversation_memory`, `mcp_plugins` solo son válidas si el BRD/DBGA describe mensajería real (WhatsApp, inbox), RAG/memoria conversacional persistente o integración MCP — **no** basta mencionar “chat del taller” u orquestación Workshop en §1.
+1.  **Tablas plataforma sin ancla BRD/DBGA:** `messages`, `conversation_memory`, `mcp_plugins`, `llm_configs`, `scheduled_tasks`, `failed_request_logs` solo son válidas si el BRD/DBGA describe mensajería real (WhatsApp, inbox), RAG/memoria conversacional persistente, integración MCP, o el propio dominio del proyecto **es** orquestación/agentes — **no** basta mencionar “chat del taller” u orquestación Workshop en §1. Si el dominio es otro (ej. KMS, CRM, e-commerce) y aparece alguna de estas tablas, es casi siempre copia literal del ejemplo de otro prompt: bloquéala.
 2.  **Patrones sospechosos:** columnas genéricas (`payload_type`, `signal_unique_id`, outbox/event sin dominio), entidades duplicadas con sinónimos inventados, tablas que copian plantillas de otros proyectos.
 3.  **Domain-auth-only-skew:** inventario/BRD con ≥3 capacidades de negocio y §3 solo auth → **RECHAZADO**.
 

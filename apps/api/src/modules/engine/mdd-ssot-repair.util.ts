@@ -65,13 +65,14 @@ export function reconcileMddSsotBeforeDeliveryGate(
     section3Injected.push(...domain.injected);
   }
 
-  const stripped = stripUnjustifiedPlatformTablesFromMdd(markdown, {
+  const strippedFirst = stripUnjustifiedPlatformTablesFromMdd(markdown, {
     brdMarkdown: params.brdMarkdown,
     dbgaMarkdown: params.dbgaMarkdown,
     specMarkdown: params.specMarkdown,
     inventory: inventory ?? undefined,
   });
-  markdown = stripped.markdown;
+  markdown = strippedFirst.markdown;
+  const platformStripped: string[] = [...strippedFirst.stripped];
 
   const platform = annotateJustifiedPlatformTablesInMdd(markdown, {
     brdMarkdown: params.brdMarkdown,
@@ -100,6 +101,17 @@ export function reconcileMddSsotBeforeDeliveryGate(
   );
   markdown = section4Repair.markdown;
 
+  const finalStrip = stripUnjustifiedPlatformTablesFromMdd(markdown, {
+    brdMarkdown: params.brdMarkdown,
+    dbgaMarkdown: params.dbgaMarkdown,
+    specMarkdown: params.specMarkdown,
+    inventory: inventory ?? undefined,
+  });
+  markdown = finalStrip.markdown;
+  for (const table of finalStrip.stripped) {
+    if (!platformStripped.includes(table)) platformStripped.push(table);
+  }
+
   const invAfter = collectDomainInventoryConformanceGaps({
     brdMarkdown: params.brdMarkdown,
     dbgaMarkdown: params.dbgaMarkdown,
@@ -124,7 +136,7 @@ export function reconcileMddSsotBeforeDeliveryGate(
     uatInjected: uatRepair.injected,
     section4Injected: section4Repair.injected,
     platformAnnotated: platform.annotated,
-    platformStripped: stripped.stripped,
+    platformStripped,
     remainingGaps: [...invAfter.gaps, ...uatAfter.gaps, ...section4After.gaps],
   };
 }

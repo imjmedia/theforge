@@ -38,8 +38,8 @@ export function createMddFormatSecIntNode() {
 
     return {
       mddDraft: draft,
-      securitySectionMd: undefined,
-      integrationSectionMd: undefined,
+      ...(sec6Md ? { securitySectionMd: sec6Md } : {}),
+      ...(sec7Md ? { integrationSectionMd: sec7Md } : {}),
     };
   };
 }

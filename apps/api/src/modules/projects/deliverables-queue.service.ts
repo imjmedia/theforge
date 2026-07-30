@@ -527,18 +527,18 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
         if (preview) {
           result = await this.projects.generateBlueprintPreview(projectId, gapsFeedback);
         } else {
-          result = await this.projects.generateBlueprint(projectId, gapsFeedback);
+          result = await this.projects.generateBlueprint(projectId, gapsFeedback, signal);
         }
         break;
       case "api-contracts":
         if (preview) {
           result = await this.projects.generateApiContractsPreview(projectId, gapsFeedback);
         } else {
-          result = await this.projects.generateApiContracts(projectId, gapsFeedback);
+          result = await this.projects.generateApiContracts(projectId, gapsFeedback, signal);
         }
         break;
       case "logic-flows":
-        result = await this.projects.generateLogicFlows(projectId, gapsFeedback);
+        result = await this.projects.generateLogicFlows(projectId, gapsFeedback, signal);
         break;
       case "tasks":
         result = await this.projects.generateTasks(
@@ -546,6 +546,7 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
           (data.gapsFeedback as string | null) ?? undefined,
           {
             acknowledgeGaps: data.acknowledgeGaps === true,
+            signal,
             onProgress: (progress) => {
               onProgress({ ...progress, percent: tasksPipelineProgressPercent(progress) });
             },
@@ -558,27 +559,30 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
             forceRegenerate: forceRegenerate !== false,
           });
         } else {
-          result = await this.projects.generateAgentGovernance(projectId, target, {
-            forceRegenerate: forceRegenerate !== false,
-          });
+          result = await this.projects.generateAgentGovernance(
+            projectId,
+            target,
+            { forceRegenerate: forceRegenerate !== false },
+            signal,
+          );
         }
         break;
       case "infra":
         if (preview) {
           result = await this.projects.generateInfraPreview(projectId, gapsFeedback);
         } else {
-          result = await this.projects.generateInfra(projectId, gapsFeedback);
+          result = await this.projects.generateInfra(projectId, gapsFeedback, signal);
         }
         break;
       case "architecture":
         if (preview) {
           result = await this.projects.generateArchitecturePreview(projectId);
         } else {
-          result = await this.projects.generateArchitecture(projectId);
+          result = await this.projects.generateArchitecture(projectId, undefined, signal);
         }
         break;
       case "spec":
-        result = await this.projects.generateSpec(projectId);
+        result = await this.projects.generateSpec(projectId, signal);
         break;
       case "aem": {
         const marketScope = data.marketScope;
@@ -592,14 +596,14 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
         if (preview) {
           result = await this.projects.generateUseCasesPreview(projectId);
         } else {
-          result = await this.projects.generateUseCases(projectId);
+          result = await this.projects.generateUseCases(projectId, signal);
         }
         break;
       case "user-stories":
         if (preview) {
           result = await this.projects.generateUserStoriesPreview(projectId);
         } else {
-          result = await this.projects.generateUserStories(projectId);
+          result = await this.projects.generateUserStories(projectId, signal);
         }
         break;
       case "doc-reconcile-partial": {

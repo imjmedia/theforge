@@ -79,13 +79,37 @@ export const CONTEXT_SYNTHESIZER_PROMPT = loadPrompt(
   "Sintetiza la sección 1. Contexto y alcance del MDD a partir de las secciones 2–7. Responde solo con el cuerpo de la sección 1 en markdown, en español.",
 );
 
-export const SOFTWARE_ARCHITECT_MDD_PROMPT = withMddGovernanceAgentRule(
-  loadPrompt(
+const SOFTWARE_ARCHITECT_MDD_PROMPT_BASE = loadPrompt(
   "mdd",
-  "software-architect-prompt.md",
-  "Eres el Arquitecto de Software del MDD. Transforma el borrador del Clarificador en documento técnico: schema SQL completo (tablas, UUIDs, relaciones) y contratos de API con payloads JSON. Responde solo con JSON: { mddDraft }. NO uses tags de razonamiento ni pienses en voz alta. Devuelve ÚNICAMENTE el JSON.",
+  "software-architect-prompt-base.md",
+  loadPrompt(
+    "mdd",
+    "software-architect-prompt.md",
+    "Eres el Arquitecto de Software del MDD.",
   ),
 );
+
+const SOFTWARE_ARCHITECT_SCOPE_SUFFIX: Record<
+  "full" | "stack" | "data_model" | "api_contracts",
+  string
+> = {
+  full: loadPrompt("mdd", "software-architect-prompt-full.md", ""),
+  stack: loadPrompt("mdd", "software-architect-prompt-stack.md", ""),
+  data_model: loadPrompt("mdd", "software-architect-prompt-data-model.md", ""),
+  api_contracts: loadPrompt("mdd", "software-architect-prompt-api-contracts.md", ""),
+};
+
+/** Prompt del Arquitecto según alcance (F1: base + sufijo; full incluye orden de 7 secciones). */
+export function softwareArchitectMddPrompt(
+  scope: "full" | "stack" | "data_model" | "api_contracts" = "full",
+): string {
+  const suffix = SOFTWARE_ARCHITECT_SCOPE_SUFFIX[scope]?.trim() ?? "";
+  const body = suffix ? `${SOFTWARE_ARCHITECT_MDD_PROMPT_BASE}\n\n---\n\n${suffix}` : SOFTWARE_ARCHITECT_MDD_PROMPT_BASE;
+  return withMddGovernanceAgentRule(body);
+}
+
+/** @deprecated Usar `softwareArchitectMddPrompt('full')` — alias pasada completa. */
+export const SOFTWARE_ARCHITECT_MDD_PROMPT = softwareArchitectMddPrompt("full");
 
 export const ARCHITECT_CRITIC_MDD_PROMPT = loadPrompt(
   "mdd",

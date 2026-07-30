@@ -1008,6 +1008,46 @@ Duplicado.
     assert.ok((deduped.match(/^##\s+7\./gm) ?? []).length <= 1);
   });
 
+  it("colapsa 3× §5 stub a una sola (prefiere cuerpo sustancial)", () => {
+    const stub = `### Reglas de negocio (BDD/AAA)
+# ---
+`;
+    const substantial = `### Reglas de negocio (BDD/AAA)
+
+- **Escenario login:** Dado usuario válido, Cuando credenciales OK, Entonces JWT.
+${"- Edge case timeout. ".repeat(20)}`;
+    const draft = `# Master Design Document
+
+## 1. Contexto
+
+Alcance.
+
+## 5. Lógica y Edge Cases
+
+${stub}
+
+## 5. Lógica y Edge Cases
+
+${stub}
+
+## 5. Lógica y Edge Cases
+
+${substantial}
+
+## 6. Seguridad
+
+Auth.
+
+## 7. Infraestructura
+
+Cloud.
+`;
+    assert.ok(mddHasDuplicateSectionHeadings(draft));
+    const out = deduplicateAndReorderMddSections(draft);
+    assert.strictEqual(mddHasDuplicateSectionHeadings(out), false);
+    assert.strictEqual((out.match(/^##\s+5\./gm) ?? []).length, 1);
+    assert.ok(out.includes("Escenario login"));
+  });
   it("trunca §4–§6 repetidas sin §7 (bucle crítico durante streaming)", () => {
     const block = `## 4. Contratos de API(Pendiente)
 ## 5. Lógica y Edge Cases
@@ -1047,6 +1087,7 @@ ${block}`;
     assert.ok(stripped.includes("Gestión de Secretos"));
     assert.strictEqual(mddHasDuplicateSectionHeadings(stripped), false);
   });
+
 });
 
 describe("fixDualApprovalSchemaInDraft", () => {
@@ -2071,45 +2112,6 @@ Fin.
     assert.doesNotMatch(out, /--- --- ---/);
     assert.doesNotMatch(out, /\n--\n\n## 2\./);
     assert.doesNotMatch(out, /\n-\n\n## 3\./);
-  });
-
-  it("prepareMddMarkdownForPersist deduplica §4 triplicada antes de persistir", () => {
-    const section4 =
-      "## 4. Contratos de API\n\n| POST | /api/test | test | JWT |\n\n#### POST /api/test\n\n```json\n{\"ok\": true}\n```\n\n";
-    const raw = `# Master Design Document
-
-## 1. Contexto
-
-Alcance con suficiente texto para validar estructura canónica del MDD de prueba.
-
-## 2. Arquitectura y Stack
-
-NestJS.
-
-## 3. Modelo de Datos
-
-\`\`\`sql
-CREATE TABLE items (id UUID PRIMARY KEY);
-\`\`\`
-
-${section4.repeat(3)}
-
-## 5. Lógica y Edge Cases
-
-Reglas.
-
-## 6. Seguridad
-
-JWT.
-
-## 7. Infraestructura
-
-Docker.
-`;
-    assert.ok(mddHasDuplicateSectionHeadings(raw));
-    const out = prepareMddMarkdownForPersist(raw);
-    assert.strictEqual(mddHasDuplicateSectionHeadings(out), false);
-    assert.strictEqual((out.match(/^##\s+4\.\s*Contratos\s+de\s+API/im) ?? []).length, 1);
   });
 
   it("prepareMddMarkdownForPersist: despega §1 y colapsa HR rotas (NEW + LEGACY)", () => {

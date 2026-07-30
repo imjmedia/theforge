@@ -53,6 +53,60 @@ function looksLikeFullMddDump(text: string): boolean {
   return false;
 }
 
+/** Dump de DBGA/Benchmark/BRD (no clarifiedScope estructurado con ## Actores/Alcance). */
+function looksLikeUpstreamDocDump(text: string): boolean {
+  const t = text.trim();
+  if (/^#\s*(?:Domain\s+)?Benchmark\b/im.test(t)) return true;
+  if (/^#\s*(?:DBGA|Business\s+Requirements|BRD|Fase\s*0)\b/im.test(t)) return true;
+  if (/^#\s*[^\n]{0,80}\n[\s\S]*\n##\s+\d+\.\s+/m.test(t) && !/^##\s*1\.\s*Contexto\b/im.test(t)) {
+    // Título H1 + secciones numeradas típicas de Fase 0 / research, sin §1 MDD.
+    return /(?:Overview|Gaps|Stakeholders|Research|Competenc)/i.test(t);
+  }
+  return false;
+}
+
+/**
+ * Extrae cuerpo §1 usable desde `clarifiedScope` (sin mirar mddDraft).
+ * Acepta prosa, `## Actores` / `## Alcance`, o §1 MDD embebido; rechaza dumps DBGA/Benchmark.
+ */
+export function resolveSection1BodyFromClarifiedScope(
+  scopeRaw: string | null | undefined,
+): string | null {
+  const scope = (scopeRaw ?? "").trim();
+  if (!scope) return null;
+
+  if (looksLikeFullMddDump(scope) || looksLikeUpstreamDocDump(scope)) {
+    const extracted = extractContextSectionBody(scope);
+    return extracted && isContextSynthesizerBodySubstantial(extracted) ? extracted : null;
+  }
+
+  if (!scope.startsWith("#") && !/\n##\s+/m.test(scope)) {
+    const norm = normalizeContextSynthesizerBody(scope);
+    return isContextSynthesizerBodySubstantial(norm.body) ? norm.body : null;
+  }
+
+  const extracted = extractContextSectionBody(scope);
+  if (extracted && isContextSynthesizerBodySubstantial(extracted)) return extracted;
+
+  const withoutHeadings = scope
+    .replace(/^#{1,6}\s+[^\n]*\n?/gm, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (isContextSynthesizerBodySubstantial(withoutHeadings)) return withoutHeadings;
+
+  const norm = normalizeContextSynthesizerBody(scope);
+  return isContextSynthesizerBodySubstantial(norm.body) ? norm.body : null;
+}
+
+/**
+ * ¿El clarifiedScope del Clarifier es usable para upstream-sync?
+ * Antes: cualquier scope con `#` / `##` exigía `## 1. Contexto` → falso positivo
+ * cuando el LLM escribe scope estructurado (## Actores, ## Alcance) de 4–5k chars.
+ */
+export function isClarifiedScopeUsableForUpstreamSync(scopeRaw: string | null | undefined): boolean {
+  return resolveSection1BodyFromClarifiedScope(scopeRaw) !== null;
+}
+
 /**
  * Peel ligero para respuesta "solo cuerpo §1" del sintetizador.
  * `peelDocumentBodyForPersist` está pensado para MDD completo; sobre prosa corta
@@ -162,17 +216,5 @@ export function resolveUpstreamSyncSection1Body(input: {
     return fromDraft;
   }
 
-  const scope = (input.clarifiedScope ?? "").trim();
-  if (!scope) return null;
-
-  // Dump DBGA/MDD con headings: solo aceptar §1 MDD extraíble y sustancial.
-  if (scope.startsWith("#") || /\n##\s+/m.test(scope)) {
-    const extracted = extractContextSectionBody(scope);
-    if (extracted && isContextSynthesizerBodySubstantial(extracted)) return extracted;
-    return null;
-  }
-
-  const norm = normalizeContextSynthesizerBody(scope);
-  if (isContextSynthesizerBodySubstantial(norm.body)) return norm.body;
-  return null;
+  return resolveSection1BodyFromClarifiedScope(input.clarifiedScope);
 }

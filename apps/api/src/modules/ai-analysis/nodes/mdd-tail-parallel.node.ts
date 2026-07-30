@@ -9,6 +9,7 @@ import { mergeTailParallelResults } from "../utils/mdd-tail-parallel.util.js";
 import { createMddIntegrationNode } from "./mdd-integration.node.js";
 import { createMddSection5Node } from "./mdd-section5.node.js";
 import { createMddSecurityNode } from "./mdd-security.node.js";
+import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:TailParallel] ${msg}`, ...args);
 
@@ -22,7 +23,17 @@ export function createMddTailParallelNode(section5Llm: BaseChatModel, structural
   const integrationFn = createMddIntegrationNode(structuralLlm);
 
   return async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
-    LOG("entry parallel mddDraftLen=%s", (state.mddDraft ?? "").length);
+    const startedAt = Date.now();
+    LOG("entry parallel mddDraftLen=%s postCriticDone=%s", (state.mddDraft ?? "").length, state.postCriticParallelDone === true);
+
+    if (state.postCriticParallelDone === true) {
+      const s5Result = await section5Fn(state);
+      const merged = mergeTailParallelResults(state, s5Result, {}, {});
+      logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, 0, (merged.mddDraft ?? "").length), {
+        section5Only: true,
+      });
+      return merged;
+    }
 
     const [s5Result, secResult, intResult] = await Promise.all([
       section5Fn(state),
@@ -33,6 +44,7 @@ export function createMddTailParallelNode(section5Llm: BaseChatModel, structural
     const merged = mergeTailParallelResults(state, s5Result, secResult, intResult);
     const finalDraft = deduplicateMddDraftSections(merged.mddDraft ?? state.mddDraft ?? "");
     const sum = getMddDraftSummary(finalDraft);
+    logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, 0, finalDraft.length), { parallel: true });
     LOG(
       "ok parallel done finalDraftLen=%s §5=%s §6=%s §7=%s",
       sum.length,

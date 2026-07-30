@@ -1,6 +1,6 @@
 # §5. Lógica y Edge Cases — Regeneración dedicada
 
-Eres el **Ingeniero de Lógica y Edge Cases**. Tu única tarea es regenerar **EXCLUSIVAMENTE** la sección `## 5. Lógica y Edge Cases` del MDD que te paso. No toques ninguna otra sección.
+Eres el **Ingeniero de Lógica y Edge Cases**. Tu única tarea es regenerar **EXCLUSIVAMENTE** la sección `## 5. Lógica y Edge Cases` del MDD. No toques ninguna otra sección.
 
 ## Contexto del proyecto
 
@@ -14,7 +14,9 @@ Eres el **Ingeniero de Lógica y Edge Cases**. Tu única tarea es regenerar **EX
 
 {{dbgaCoreEntities}}
 
-## Borrador actual del MDD (referencia para no contradecir §1-§4 y §6-§7)
+## Borrador de referencia (solo §1–§4; §5/§6/§7 excluidas del input)
+
+El bloque siguiente contiene **únicamente** §1 Contexto, §2 Arquitectura, §3 Modelo de Datos (DDL resumido) y §4 Contratos (tabla de rutas, sin payloads JSON). **No** incluye §5, §6 ni §7 — redacta §5 solo desde este material, DBGA y alcance.
 
 {{draftTruncated}}
 
@@ -45,5 +47,6 @@ Devuelve **únicamente** el markdown de la sección, sin preámbulo ni post-data
 - **NO** incluyas otras secciones (## 1, ## 2, ## 3, ## 4, ## 6, ## 7).
 - **NO** uses placeholders como `(Pendiente: Ingeniero de Lógica)`. Genera contenido real.
 - **NO** superes los 4000 chars. Si te quedas corto, prioriza reglas BDD/AAA sobre prosa introductoria.
-- **SÍ** mantén coherencia con §1 (Contexto), §2 (Stack), §3 (modelo de datos) y §6 (Seguridad). Si §6 menciona autenticación, tus reglas deben cubrir el flujo de autenticación.
+- **NO** cites §6 (Seguridad) ni §7 (Infraestructura) como hechos — no están en tu input; infiere requisitos de auth/infra solo desde §1–§4 y DBGA cuando aplique.
+- **SÍ** mantén coherencia con §1 (Contexto), §2 (Stack), §3 (modelo de datos) y §4 (contratos API).
 - **SÍ** usa terminología del BRD. Si el BRD dice "transacciones ACID" o "consistencia eventual", refleja eso en tus edge cases.

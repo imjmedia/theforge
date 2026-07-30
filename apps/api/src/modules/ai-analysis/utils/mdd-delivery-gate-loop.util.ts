@@ -10,9 +10,12 @@ import {
   draftHasPersistableSection4,
   draftHasSubstantialSection2,
   draftHasSubstantialSection3,
+  draftHasSubstantialSection6 as draftHasSubstantialSection6Preserve,
+  draftHasSubstantialSection7 as draftHasSubstantialSection7Preserve,
   draftIsSubstantialForScopedRepair,
+  isScopedSectionSealed,
+  type ScopedSectionSealSource,
 } from "./mdd-section-preserve.util.js";
-import { getSection6Or7Range } from "./mdd-sanitize.js";
 
 /** Máximo de reintentos automáticos del gate de entrega (Fase 4). */
 export const MAX_MDD_DELIVERY_GATE_ATTEMPTS = 3;
@@ -41,6 +44,8 @@ export type ResolveDeliveryGateFixTargetOptions = {
   previousPlaceholderFingerprint?: string;
   /** Intento actual del auto-loop (1-based tras incremento en prepare_output). */
   deliveryGateAttempt?: number;
+  /** Snapshots scoped HIGH — no re-enrutar a nodos que ya sellaron §2–§4. */
+  sealedSections?: ScopedSectionSealSource;
 };
 
 const PLACEHOLDER_BLOCKER_RE =
@@ -86,6 +91,10 @@ const SECTION4_TRUNCATED_BLOCKER_RE =
   /§4 Contratos.*truncado|catálogo API insuficiente/i;
 const MISSING_SECTION7_BLOCKER_RE =
   /secciones obligatorias faltantes:\s*7\.\s*infraestructura\b/i;
+const MISSING_SECTIONS_67_BLOCKER_RE =
+  /secciones obligatorias faltantes:.*(?:6\.\s*seguridad|7\.\s*infraestructura)/i;
+const SECTION6_BLOCKER_RE =
+  /§6|6\.\s*seguridad|seguridad.*(?:insuficiente|placeholder|\(pendiente\))/i;
 
 const MISSING_SECTIONS_BLOCKER_RE = /secciones obligatorias faltantes:/i;
 
@@ -117,6 +126,11 @@ export function needsFullArchitectPipelineRegeneration(blockers: string[]): bool
  *  si el substance check sólo menciona §5, enruta a "section5" (más eficiente
  *  que re-correr software_architect). */
 function resolveSplitArchitectFixTarget(items: string[]): DeliveryGateFixTarget {
+  const hasSection2Broken = items.some(
+    (b) =>
+      SECTION2_BROKEN_BLOCKER_RE.test(b) ||
+      (PLACEHOLDER_BLOCKER_RE.test(b) && SECTION2_BLOCKER_RE.test(b)),
+  );
   let stackScore = 0;
   let dataScore = 0;
   let apiScore = 0;
@@ -125,8 +139,10 @@ function resolveSplitArchitectFixTarget(items: string[]): DeliveryGateFixTarget 
     else if (SECTION3_BLOCKER_RE.test(b)) dataScore++;
     else if (SECTION2_BLOCKER_RE.test(b)) stackScore++;
   }
+  if (hasSection2Broken && stackScore > 0) return "stack_architect";
   if (apiScore > 0 && apiScore >= dataScore && apiScore >= stackScore) return "api_contracts";
-  if (dataScore > 0 && dataScore >= stackScore) return "data_model";
+  if (stackScore > 0 && stackScore >= dataScore) return "stack_architect";
+  if (dataScore > 0) return "data_model";
   if (stackScore > 0) return "stack_architect";
   return "data_model";
 }
@@ -162,6 +178,34 @@ export function guardFixTargetAgainstSection5Blockers(
   return target;
 }
 
+/** No re-enruta a nodos scoped que ya sellaron §2–§4 (snapshots + sustancia en draft). */
+export function guardFixTargetAgainstSealedScopedSections(
+  target: DeliveryGateFixTarget,
+  blockers: string[],
+  sealed?: ScopedSectionSealSource,
+): DeliveryGateFixTarget {
+  if (!sealed) return target;
+  const onlyScopedArchitectBlockers = blockers.every(
+    (b) =>
+      SECTION2_BLOCKER_RE.test(b) ||
+      SECTION3_BLOCKER_RE.test(b) ||
+      SECTION4_BLOCKER_RE.test(b) ||
+      PLACEHOLDER_BLOCKER_RE.test(b),
+  );
+  if (!onlyScopedArchitectBlockers) return target;
+
+  if (target === "stack_architect" && isScopedSectionSealed(2, sealed)) {
+    return gateHasSection5SubstanceBlocker(blockers) ? "section5" : "integration";
+  }
+  if (target === "data_model" && isScopedSectionSealed(3, sealed)) {
+    return gateHasSection5SubstanceBlocker(blockers) ? "section5" : "api_contracts";
+  }
+  if (target === "api_contracts" && isScopedSectionSealed(4, sealed)) {
+    return gateHasSection5SubstanceBlocker(blockers) ? "section5" : "integration";
+  }
+  return target;
+}
+
 /** Resuelve fixTarget: blockers de sustancia primero; warnings solo si no hay blockers. */
 export function resolveDeliveryGateFixTargetFromGate(
   blockers: string[],
@@ -169,10 +213,11 @@ export function resolveDeliveryGateFixTargetFromGate(
   options?: ResolveDeliveryGateFixTargetOptions,
 ): DeliveryGateFixTarget {
   if (blockers.length > 0) {
-    return guardFixTargetAgainstSection5Blockers(
+    const target = guardFixTargetAgainstSection5Blockers(
       blockers,
       resolveDeliveryGateFixTarget(blockers, options),
     );
+    return guardFixTargetAgainstSealedScopedSections(target, blockers, options?.sealedSections);
   }
   const autoWarnings = warnings.filter((w) => isAutoRepairableDeliveryGateWarning(w));
   if (autoWarnings.length > 0) {
@@ -240,12 +285,23 @@ export function resolveDeliveryGateFixTarget(
     return "clarifier";
   }
 
+  if (items.some((b) => MISSING_SECTIONS_67_BLOCKER_RE.test(b))) {
+    return "integration";
+  }
+
   if (items.some((b) => MISSING_SECTION7_BLOCKER_RE.test(b))) {
     return "integration";
   }
 
   if (items.some((b) => DUPLICATE_SECTION_BLOCKER_RE.test(b))) {
-    return options?.splitArchitectPipeline ? "data_model" : "software_architect";
+    return "integration";
+  }
+
+  if (
+    items.some((b) => SECTION6_BLOCKER_RE.test(b) && !SECTION3_BLOCKER_RE.test(b) && !SECTION4_BLOCKER_RE.test(b)) &&
+    items.some((b) => INTEGRATION_BLOCKER_RE.test(b) || MISSING_SECTIONS_67_BLOCKER_RE.test(b))
+  ) {
+    return "integration";
   }
   if (items.some((b) => SECTION4_TRUNCATED_BLOCKER_RE.test(b))) {
     return options?.splitArchitectPipeline ? "api_contracts" : "software_architect";
@@ -268,7 +324,16 @@ export function resolveDeliveryGateFixTarget(
   if (options?.splitArchitectPipeline && architectScore > 0) {
     return resolveSplitArchitectFixTarget(items);
   }
-  if (options?.splitArchitectPipeline && items.some((b) => PLACEHOLDER_BLOCKER_RE.test(b))) {
+  if (
+    options?.splitArchitectPipeline &&
+    items.some((b) => PLACEHOLDER_BLOCKER_RE.test(b)) &&
+    !items.some(
+      (b) =>
+        MISSING_SECTIONS_67_BLOCKER_RE.test(b) ||
+        SECTION6_BLOCKER_RE.test(b) ||
+        INTEGRATION_BLOCKER_RE.test(b),
+    )
+  ) {
     return resolveSplitArchitectFixTarget(items);
   }
   return INTEGRATION_BLOCKER_RE.test(text) ? "integration" : "software_architect";
@@ -303,25 +368,27 @@ export function formatDeliveryGateQualityWarningsFeedback(warnings: string[]): s
 }
 
 export function draftHasSubstantialSection7(draft: string): boolean {
-  const range = getSection6Or7Range((draft ?? "").trim(), 7);
-  if (!range) return false;
-  const body = draft
-    .slice(range.start + range.heading.length, range.end)
-    .replace(/^\s*\n+/, "")
-    .trim();
-  return body.length > 200 && !/^\s*\(Pendiente[^)]*\)\s*$/im.test(body);
+  return draftHasSubstantialSection7Preserve(draft);
 }
 
 /** True si §6 y §7 tienen contenido sustancial (saltar re-ejecución en reintentos del gate). */
 export function draftHasSubstantialSections6And7(draft: string): boolean {
-  const range6 = getSection6Or7Range((draft ?? "").trim(), 6);
-  if (!range6) return false;
-  const body6 = draft
-    .slice(range6.start + range6.heading.length, range6.end)
-    .replace(/^\s*\n+/, "")
-    .trim();
-  const has6 = body6.length > 200 && !/^\s*\(Pendiente[^)]*\)\s*$/im.test(body6);
-  return has6 && draftHasSubstantialSection7(draft);
+  return draftHasSubstantialSection6Preserve(draft) && draftHasSubstantialSection7Preserve(draft);
+}
+
+/**
+ * True si TODOS los blockers son headings duplicados.
+ *
+ * Duplicar headings es un defecto mecánico de string: `prepareMddForOutput` ya intenta
+ * `deduplicateAndReorderMddSections` dos veces (pre-preserve y post-guard) y el persist
+ * reintenta con `deduplicateMddDraftSections`. Si aun así sobrevive, ningún agente LLM lo
+ * arregla — el fixTarget es "integration", que regenera §6/§7 y suele destruir secciones
+ * ya buenas. Mejor no gastar el intento.
+ */
+export function blockersAreOnlyDuplicateHeadings(blockers: string[]): boolean {
+  const items = blockers.filter((b) => b.trim().length > 0);
+  if (items.length === 0) return false;
+  return items.every((b) => DUPLICATE_SECTION_BLOCKER_RE.test(b));
 }
 
 /**
@@ -347,5 +414,25 @@ export function shouldContinueDeliveryGateLoop(
   attempt: number,
 ): boolean {
   if (!gate || gate.ok) return false;
+  if (blockersAreOnlyDuplicateHeadings(gate.blockers)) return false;
   return attempt < MAX_MDD_DELIVERY_GATE_ATTEMPTS;
+}
+
+/**
+ * Auto-loop por warnings auto-reparables del gate (coherencia, SQL, Mermaid).
+ * Si el gate ya pasó sin blockers, no re-invoca agentes LLM: `prepareMddForOutput` ya
+ * aplicó reparación determinista (`applyPreDeliveryGateFixes`) y un merge scoped de §4
+ * puede truncar el catálogo API (regresión KMS).
+ */
+export function shouldContinueDeliveryGateQualityLoop(
+  gate: MddDeliveryGateResult | undefined,
+  attempt: number,
+): boolean {
+  if (!gate || attempt >= MAX_MDD_DELIVERY_GATE_ATTEMPTS) return false;
+  if (gate.ok && gate.blockers.length === 0) return false;
+  // Mismo motivo que en shouldContinueDeliveryGateLoop: con duplicados como único blocker no hay
+  // agente que ayude. Sin este corte el quality loop reactivaba el ciclo (job 79: 3 pasadas de
+  // "integration" que solo re-inyectaban §6/§7 e inflaron el draft de 95k a 409k).
+  if (blockersAreOnlyDuplicateHeadings(gate.blockers)) return false;
+  return hasUnresolvedAutoRepairableGateWarnings(gate.warnings);
 }

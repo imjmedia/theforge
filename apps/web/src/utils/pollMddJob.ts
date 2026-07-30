@@ -1,8 +1,9 @@
 import { apiFetch, API_BASE, fetchWithRetry } from "./apiClient";
 
 const POLL_MAX_ATTEMPTS = 10_800;
-const POLL_INTERVAL_MS = 2_000;
-/** Tras N fallos de red seguidos al hacer poll, avisamos (≈30 s con intervalo 2 s). */
+/** Poll MDD job cada 5s (F5: menos ruido mientras stream/job activo). */
+const POLL_INTERVAL_MDD_ACTIVE_MS = 5_000;
+/** Tras N fallos de red seguidos al hacer poll, avisamos (≈75 s con intervalo 5 s). */
 const MAX_CONSECUTIVE_POLL_NETWORK_ERRORS = 15;
 
 export type MddJobStatusResponse = {
@@ -51,6 +52,10 @@ export type PollMddJobOptions = {
   onProgress?: (progress: MddJobStatusResponse["progress"]) => void;
   signal?: AbortSignal;
   /**
+   * Intervalo de poll en ms. Default 5s (job MDD activo). Pasar `pollIntervalMs: 2000` para legacy.
+   */
+  pollIntervalMs?: number;
+  /**
    * Dispara justo después de que el POST a `/ai-analysis/mdd/jobs` devuelve
    * un `jobId` válido (es decir, cuando el job ya está encolado en el servidor).
    * Útil para refrescar `generationStatus` y arrancar el polling del banner
@@ -69,9 +74,10 @@ export async function pollMddJob(
 ): Promise<MddJobStatusResponse> {
   const pollUrl = `${API_BASE}/projects/${projectId}/mdd-jobs/${jobId}`;
   let consecutiveNetworkErrors = 0;
+  const pollIntervalMs = options?.pollIntervalMs ?? POLL_INTERVAL_MDD_ACTIVE_MS;
   for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
     if (options?.signal?.aborted) throw new Error("Cancelado por el usuario");
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
     try {
       const pr = await fetchWithRetry(pollUrl, undefined, 2);
       consecutiveNetworkErrors = 0;

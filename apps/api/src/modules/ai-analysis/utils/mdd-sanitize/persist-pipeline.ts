@@ -24,6 +24,7 @@ import {
   deduplicateMddDraftSections,
   ensureMissingCanonicalSections,
   extractContextSectionBody,
+  extractSection5Body,
   replaceContextSectionBody,
   fixGluedSection6Heading,
   mddHasDuplicateSectionHeadings,
@@ -58,6 +59,10 @@ import {
   ensureHorizontalRuleBeforeH2,
 } from "./persist-format.util.js";
 import {
+  closeUnclosedFencesBeforeCanonicalH2,
+  ensureDocumentFenceParity,
+} from "./section-fence.util.js";
+import {
   formatAllContratosSectionsInDraft,
   repairDisplacedJsonBracesInContratos,
   repairNestedJsonFencesInDraft,
@@ -82,7 +87,7 @@ import {
   ensureSecurityLockoutInSection6,
   fixDeterministicMddCoherence,
 } from "./cross-consistency.js";
-import { replaceAwsProseWithGenericWhenInfraNotAws } from "./infra-manifest.js";
+import { replaceAwsProseWithGenericWhenInfraNotAws, hydrateEmptyManifestStackInDraft } from "./infra-manifest.js";
 import {
   ensureManifestInJsonBlock,
   ensureSection2SqlBlockClosed,
@@ -95,6 +100,24 @@ import {
   ensureTechnicalMetadataBlockInDraft,
   mddExcludesWebUiSurface,
 } from "./internal.js";
+import {
+  preserveSection5IfSubstantial,
+  restoreSections6And7IfRegressed,
+} from "../mdd-section-preserve.util.js";
+import { logMddPersistFenceDiag } from "../mdd-persist-fence-diag.util.js";
+import { extractSection4Body } from "./section-merge.js";
+
+function warnSection5LenChange(step: string, before: number, after: number): void {
+  if (before !== after) {
+    console.warn(`[MDD:normalizeMddFormat] §5 length ${step}: ${before}→${after}`);
+  }
+}
+
+function warnSection4LenChange(step: string, before: number, after: number): void {
+  if (before !== after) {
+    console.warn(`[MDD:normalizeMddFormat] §4 length ${step}: ${before}→${after}`);
+  }
+}
 
 function repairDisplacedJsonBracesInContratosSection(draft: string): string {
   const heading = "## 4. Contratos de API";
@@ -163,6 +186,7 @@ function collapseDuplicateManifestHeadings(draft: string): string {
 
 export function applyPreDeliveryGateFixes(draft: string): string {
   let out = repairMisplacedCanonicalSectionsAfterUiUx(normalizeCanonicalMddSectionHeadings(draft ?? ""));
+  out = closeUnclosedFencesBeforeCanonicalH2(out);
   out = alignInfraNodeVersionWithSection2(out);
   out = repairNestedJsonFencesInDraft(out);
   out = repairDisplacedJsonBracesInContratosSection(out);
@@ -183,6 +207,8 @@ export function applyPreDeliveryGateFixes(draft: string): string {
     }
   }
   out = deduplicateUatSections(out);
+  out = hydrateEmptyManifestStackInDraft(out);
+  out = ensureDocumentFenceParity(out);
   return out;
 }
 
@@ -287,8 +313,24 @@ export function sanitizeMddAtPersist(mddMarkdown: string): string {
   return finalizeMddPersistFormatting(out);
 }
 
+/**
+ * Toque mínimo antes de persistir markdown que ya pasó PersistCheck en el grafo.
+ * Evita re-ejecutar `prepareMddForOutput` (hydrate/dedupe destructivos) en el update-pipeline.
+ */
+export function touchPrevalidatedMddBeforePersist(
+  markdown: string,
+  baseline?: string | null,
+): string {
+  let out = closeUnclosedFencesBeforeCanonicalH2(markdown ?? "");
+  out = ensureDocumentFenceParity(out);
+  const base = (baseline ?? "").trim();
+  if (base) out = preserveSection5IfSubstantial(base, out);
+  return out;
+}
+
 export function prepareMddMarkdownForPersist(mddMarkdown: string): string {
   if (!mddMarkdown?.trim()) return mddMarkdown;
+  logMddPersistFenceDiag("[MDD:PersistPipeline] entry", mddMarkdown);
   const preservedGov = extractGovernanceSection(mddMarkdown);
   const lockedPatternIds = selectedPatternIdsFromMdd(mddMarkdown);
   let body = normalizeCanonicalMddSectionHeadings(mddMarkdown);
@@ -308,12 +350,21 @@ export function prepareMddMarkdownForPersist(mddMarkdown: string): string {
   formatted = repairApiResponse204NoContent(formatted);
   formatted = normalizeCanonicalMddSectionHeadings(formatted);
   formatted = repairSection3SqlFenceBeforeJsonBlock(formatted);
+  // Cerrar fences antes de dedupe: §4 impar traga §5–§7 y el restore posterior cuesta ciclos (job 100).
+  formatted = closeUnclosedFencesBeforeCanonicalH2(formatted);
+  formatted = ensureDocumentFenceParity(formatted);
   formatted = deduplicateMddDraftSections(formatted);
+  logMddPersistFenceDiag("[MDD:PersistPipeline] after deduplicateMddDraftSections", formatted);
   if (mddHasDuplicateSectionHeadings(formatted)) {
     formatted = deduplicateAndReorderMddSections(formatted);
+    logMddPersistFenceDiag("[MDD:PersistPipeline] after deduplicateAndReorderMddSections", formatted);
   }
   formatted = repairMddFormatIssues(formatted);
   formatted = finalizeMddPersistFormatting(formatted);
+  logMddPersistFenceDiag("[MDD:PersistPipeline] after finalizeMddPersistFormatting", formatted);
+  formatted = ensureDocumentFenceParity(formatted);
+  logMddPersistFenceDiag("[MDD:PersistPipeline] after ensureDocumentFenceParity", formatted);
+  logMddPersistFenceDiag("[MDD:PersistPipeline] exit", formatted);
   return formatted;
 }
 
@@ -325,9 +376,19 @@ export function sanitizeMddForExport(mddMarkdown: string): string {
   return sanitizeMddAtPersist(mddMarkdown);
 }
 
-export function normalizeMddFormat(draft: string): string {
+export type NormalizeMddFormatOptions = {
+  /** Omite `formatAllContratosSectionsInDraft` (regen §5 section-pipeline: evita inflar §4). */
+  skipContratosInflate?: boolean;
+};
+
+export function normalizeMddFormat(draft: string, options?: NormalizeMddFormatOptions): string {
+  // Primero de todo: un fence abierto (```json de §4, ```sql de §3) hace que cada
+  // extractor y cada `replace` por sección de aquí abajo vea §5–§7 sepultadas dentro
+  // de la sección anterior — job 92 perdió §6 así. Idempotente.
   let out = repairGarbageHeadings(
-    normalizeCanonicalMddSectionHeadings(deduplicateMddDraftSections((draft || "").trim())),
+    normalizeCanonicalMddSectionHeadings(
+      deduplicateMddDraftSections(closeUnclosedFencesBeforeCanonicalH2((draft || "").trim())),
+    ),
   );
   out = fixGluedSection6Heading(out);
   if (!out) return draft;
@@ -424,7 +485,21 @@ export function normalizeMddFormat(draft: string): string {
   }
 
   // Formatear cada ocurrencia de Contratos de API (JSON en bloques ```json con indentación)
-  out = formatAllContratosSectionsInDraft(out);
+  const s4BeforeContratos = extractSection4Body(out)?.length ?? 0;
+  const s5BeforeContratos = extractSection5Body(out)?.length ?? 0;
+  if (!options?.skipContratosInflate) {
+    out = formatAllContratosSectionsInDraft(out);
+  }
+  warnSection4LenChange(
+    "after formatAllContratosSectionsInDraft",
+    s4BeforeContratos,
+    extractSection4Body(out)?.length ?? 0,
+  );
+  warnSection5LenChange(
+    "after formatAllContratosSectionsInDraft",
+    s5BeforeContratos,
+    extractSection5Body(out)?.length ?? 0,
+  );
   out = repairMddFormatIssues(out);
 
   out = fixGluedSection6Heading(out);
@@ -459,7 +534,17 @@ export function normalizeMddFormat(draft: string): string {
   }
 
   // Deduplicar y reordenar secciones (1, 2, 3, 4, Seguridad, Integración)
+  const beforeDedupe = out;
+  const s4BeforeDedupe = extractSection4Body(beforeDedupe)?.length ?? 0;
+  const s5BeforeDedupe = extractSection5Body(beforeDedupe)?.length ?? 0;
   out = deduplicateAndReorderMddSections(out);
+  const s4AfterDedupe = extractSection4Body(out)?.length ?? 0;
+  const s5AfterDedupe = extractSection5Body(out)?.length ?? 0;
+  warnSection4LenChange("after dedupe", s4BeforeDedupe, s4AfterDedupe);
+  warnSection5LenChange("after dedupe", s5BeforeDedupe, s5AfterDedupe);
+  out = restoreSections6And7IfRegressed(beforeDedupe, out);
+  out = preserveSection5IfSubstantial(beforeDedupe, out);
+  warnSection5LenChange("after restore §5", s5AfterDedupe, extractSection5Body(out)?.length ?? 0);
 
   // Separación visual: --- antes de cada ## (excepto si ya hay --- justo antes)
   out = ensureHorizontalRuleBeforeH2(out);
@@ -472,6 +557,7 @@ export function normalizeMddFormat(draft: string): string {
 
   // Si la sección 7 tiene manifest como texto plano (stack/pending sin ```json), envolver en ```json
   out = ensureManifestInJsonBlock(out);
+  out = hydrateEmptyManifestStackInDraft(out);
 
   // En sección 7: quitar ### Integración redundante justo bajo ## 7. Infraestructura
   out = stripRedundantIntegracionHeadingInSection7(out);
@@ -499,7 +585,17 @@ export function normalizeMddFormat(draft: string): string {
   out = stripMeshDirectivesFromDraft(out);
 
   if (mddHasDuplicateSectionHeadings(out)) {
+    const beforeLateDedupe = out;
+    const s4BeforeLateDedupe = extractSection4Body(beforeLateDedupe)?.length ?? 0;
+    const s5BeforeLateDedupe = extractSection5Body(beforeLateDedupe)?.length ?? 0;
     out = deduplicateAndReorderMddSections(out);
+    const s4AfterLateDedupe = extractSection4Body(out)?.length ?? 0;
+    const s5AfterLateDedupe = extractSection5Body(out)?.length ?? 0;
+    warnSection4LenChange("after late dedupe", s4BeforeLateDedupe, s4AfterLateDedupe);
+    warnSection5LenChange("after late dedupe", s5BeforeLateDedupe, s5AfterLateDedupe);
+    out = restoreSections6And7IfRegressed(beforeLateDedupe, out);
+    out = preserveSection5IfSubstantial(beforeLateDedupe, out);
+    warnSection5LenChange("after late restore §5", s5AfterLateDedupe, extractSection5Body(out)?.length ?? 0);
   }
   if (mddHasDuplicateSectionHeadings(out)) {
     out = stripTrailingDuplicateMddSections(out);
@@ -513,6 +609,7 @@ export function normalizeMddFormat(draft: string): string {
     }
   }
 
+  out = ensureDocumentFenceParity(out);
   return out.trim();
 }
 

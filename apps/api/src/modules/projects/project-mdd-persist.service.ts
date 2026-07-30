@@ -181,7 +181,15 @@ export class ProjectMddPersistService {
     const result = await this.mddUpdatePipeline.process(
       pipelineInput,
       buildSemaphoreBaseFromProject(mergedForSemaphore),
-      { projectId, stageId: targetStage.id },
+      {
+        projectId,
+        stageId: targetStage.id,
+        brdMarkdown: targetStage.brdContent,
+        dbgaMarkdown: existing.dbgaContent,
+        domainInventory: targetStage.domainInventory,
+        prevalidatedFromStream: true,
+        baselineDraft: mddForPipeline,
+      },
     );
     if (!result.ok) {
       if (result.code === MDD_DELIVERY_GATE_ERR) {
@@ -227,7 +235,7 @@ export class ProjectMddPersistService {
     await this.prisma.stage.update({
       where: { id: targetStage.id },
       data: {
-        mddContent: storeMddMarkdownForPersist(finalMdd),
+        mddContent: result.persistFormatted ? finalMdd : storeMddMarkdownForPersist(finalMdd),
         shortTermContext: nextCtx as Prisma.InputJsonValue,
       },
     });
@@ -307,7 +315,13 @@ export class ProjectMddPersistService {
     const result = await this.mddUpdatePipeline.process(
       pipelineInput,
       buildSemaphoreBaseFromProject(mergedForSemaphore),
-      { projectId, stageId },
+      {
+        projectId,
+        stageId,
+        brdMarkdown: stageRow?.brdContent,
+        dbgaMarkdown: projectRow?.dbgaContent,
+        domainInventory: stageRow?.domainInventory,
+      },
     );
     if (!result.ok) {
       return await this.throwMddPipelineBadRequest(result, stageId, mddMarkdown);

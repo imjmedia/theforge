@@ -42,6 +42,7 @@ export {
   buildNewFormatManifestFromIdentifiedTerms,
   extractAlreadyDocumentedTopics,
   extractIdentifiedInfraFromText,
+  hydrateEmptyManifestStackInDraft,
   replaceAwsProseWithGenericWhenInfraNotAws,
   sanitizeManifestToMatchIdentifiedInfra,
 } from "./mdd-sanitize/infra-manifest.js";
@@ -57,6 +58,7 @@ export { draftUsesLdapPrimaryAuth } from "./mdd-sanitize/security-manifest.js";
 export {
   detectUnclosedSqlFences,
   formatSqlBlockWithNewlines,
+  repairSection3SqlFenceBeforeJsonBlock,
   repairSqlDetachedCheckConstraints,
   repairSqlProseInTableBodies,
   repairSqlSpacedColumnIdentifiers,
@@ -132,6 +134,7 @@ export {
   finalizeMddDeliverable,
   normalizeMddFormat,
   prepareMddMarkdownForPersist,
+  touchPrevalidatedMddBeforePersist,
   repairGarbageHeadings,
   repairManifestJsonClosing,
   sanitizeMddAtPersist,

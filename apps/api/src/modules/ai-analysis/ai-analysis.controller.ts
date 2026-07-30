@@ -111,16 +111,23 @@ export class AiAnalysisController {
   }
 
   /**
-   * Borra el checkpoint LangGraph del hilo DBGA (mddStageId vacío) para el proyecto.
-   * Usar al limpiar el benchmark en el taller para no reanudar un grafo antiguo.
+   * Borra checkpoint LangGraph: siempre el hilo DBGA (`mddStageId` vacío).
+   * Con `stageId`, también el hilo MDD Manager de esa etapa.
    */
   @Delete("dbga/checkpoint")
-  async clearDbgaCheckpoint(@Query("projectId") projectId: string) {
+  async clearDbgaCheckpoint(
+    @Query("projectId") projectId: string,
+    @Query("stageId") stageId?: string,
+  ) {
     const id = typeof projectId === "string" ? projectId.trim() : "";
     if (!id) {
       throw new BadRequestException("projectId is required");
     }
     await this.aiAnalysis.clearMddCheckpoint(id, "");
+    const sid = typeof stageId === "string" ? stageId.trim() : "";
+    if (sid) {
+      await this.aiAnalysis.clearMddCheckpoint(id, sid);
+    }
     return { ok: true };
   }
 
@@ -256,15 +263,15 @@ export class AiAnalysisController {
 
   /**
    * Encola generación/regeneración MDD en background (sobrevive cerrar el navegador con Redis).
-   * Body: { mode: pipeline|manager|section, projectId, stageId?, dbgaContent?, initialMessage?, mddContent?, section?, gapReasons? }
+   * Body: { mode: pipeline|manager|section|section-pipeline, projectId, stageId?, dbgaContent?, initialMessage?, mddContent?, section?, gapReasons? }
    */
   @Post("mdd/jobs")
   async enqueueMddJob(@Body() body: Record<string, unknown>) {
     const mode = body?.mode as MddJobMode | undefined;
     const projectId = typeof body?.projectId === "string" ? body.projectId.trim() : "";
     if (!projectId) throw new BadRequestException("projectId is required");
-    if (!mode || !["pipeline", "manager", "section", "upstream-sync"].includes(mode)) {
-      throw new BadRequestException("mode must be pipeline, manager, section, or upstream-sync");
+    if (!mode || !["pipeline", "manager", "section", "section-pipeline", "upstream-sync"].includes(mode)) {
+      throw new BadRequestException("mode must be pipeline, manager, section, section-pipeline, or upstream-sync");
     }
     const project = await this.prisma.project.findUnique({ where: { id: projectId } });
     if (project && (project as { projectType?: string }).projectType === "LEGACY") {
@@ -290,10 +297,13 @@ export class AiAnalysisController {
         typeof body?.upstreamChangeSummary === "string" ? body.upstreamChangeSummary.trim() : undefined,
       forceFullPipeline: body?.forceFullPipeline === true,
     };
-    if (mode === "section") {
+    if (mode === "section" || mode === "section-pipeline") {
       const section = data.section;
       if (!Number.isInteger(section) || section! < 1 || section! > 7) {
         throw new BadRequestException("section must be 1–7");
+      }
+      if (mode === "section-pipeline" && section !== 5) {
+        throw new BadRequestException("section-pipeline only supports section 5");
       }
     }
     if (mode === "upstream-sync") {
