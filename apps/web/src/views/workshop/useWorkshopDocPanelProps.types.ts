@@ -183,6 +183,10 @@ export interface UseWorkshopDocPanelPropsArgs {
   clearMddJustGeneratedFromBenchmark: () => void;
   requestGenerateMdd: () => void;
   reapplyMddFormat: () => void;
+  canRegenerateMddSection: boolean;
+  mddSectionRegenDisabledReason: string;
+  onRegenerateMddSection: (section: number) => void | Promise<void>;
+  onRegenerateMddSection5Pipeline: () => void | Promise<void>;
   openSuggestMddPatterns: () => void;
   openEditMddPatterns: () => void;
   setClearMddConfirmOpen: (open: boolean) => void;

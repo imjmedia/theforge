@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildRegenerateSectionChatMessage,
   buildMddSectionRegenNotice,
+  buildMddSection5PipelineRegenNotice,
   mddSectionRegenShortLabel,
   canRegenerateMddSectionFromWorkshop,
   detectNaturalRegenerateSection,
@@ -46,6 +47,16 @@ describe("mddSectionRegen", () => {
   it("buildMddSectionRegenNotice incluye sección y etiqueta", () => {
     expect(buildMddSectionRegenNotice(6)).toBe("Regenerando §6 (Seguridad)…");
     expect(mddSectionRegenShortLabel(6)).toBe("Seguridad");
+  });
+
+  it("buildMddSection5PipelineRegenNotice describe paridad pipeline", () => {
+    expect(buildMddSection5PipelineRegenNotice()).toMatch(/pipeline/i);
+    expect(buildMddSection5PipelineRegenNotice()).toMatch(/§5/);
+  });
+
+  it("resolveMddReadinessHintActions sugiere §5 para lógica/BDD", () => {
+    const actions = resolveMddReadinessHintActions("Refuerza §5 Lógica y edge cases con reglas BDD/AAA.");
+    expect(actions).toEqual([{ kind: "regenerate", section: 5, label: "Regenerar §5" }]);
   });
 
   it("resolveMddReadinessHintActions sugiere formato y §7 para trazabilidad", () => {

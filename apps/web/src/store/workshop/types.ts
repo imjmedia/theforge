@@ -60,10 +60,23 @@ export interface PrecisionBreakdown {
   modeloDatos: number;
   apiContracts: number;
   frontend: number;
+  /** §5 Lógica y Edge Cases. */
+  logicaEdgeCases: number;
   seguridad: number;
   integracion: number;
   /** Motivo de la calificación por sección (por qué se obtuvo ese %). */
-  sectionReasons?: Partial<Record<"contexto" | "modeloDatos" | "apiContracts" | "frontend" | "seguridad" | "integracion", string>>;
+  sectionReasons?: Partial<
+    Record<
+      | "contexto"
+      | "modeloDatos"
+      | "apiContracts"
+      | "frontend"
+      | "logicaEdgeCases"
+      | "seguridad"
+      | "integracion",
+      string
+    >
+  >;
 }
 
 /** Breakdown de completitud por documento (0-100). Coincide con backend PlanningDocumentFields. */

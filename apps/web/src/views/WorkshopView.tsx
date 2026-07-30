@@ -506,6 +506,7 @@ export default function WorkshopView({
   const revertMddContent = useWorkshopStore((s) => s.revertMddContent);
   const persistAndReviewMdd = useWorkshopStore((s) => s.persistAndReviewMdd);
   const reapplyMddFormat = useWorkshopStore((s) => s.reapplyMddFormat);
+  const regenerateMddSection5Pipeline = useWorkshopStore((s) => s.regenerateMddSection5Pipeline);
   const mddReviewing = useWorkshopStore((s) => s.mddReviewing);
   const mddReapplyingFormat = useWorkshopStore((s) => s.mddReapplyingFormat);
   const mddPersisting = useWorkshopStore((s) => s.mddPersisting);
@@ -1668,6 +1669,25 @@ export default function WorkshopView({
     [canRegenerateMddSection, setCentralPanel, sendMessage, precisionBreakdown],
   );
 
+  const handleRegenerateMddSection5Pipeline = useCallback(async () => {
+    if (!canRegenerateMddSection || !projectId?.trim()) return;
+    setCentralPanel("mdd");
+    const row = MDD_QUALITY_TABLE_ROWS.find((r) => r.section === 5);
+    const gapReasons =
+      row && precisionBreakdown?.sectionReasons?.[row.reasonKey]
+        ? [precisionBreakdown.sectionReasons[row.reasonKey]!]
+        : undefined;
+    await regenerateMddSection5Pipeline(projectId.trim(), {
+      ...(gapReasons?.length ? { gapReasons } : {}),
+    });
+  }, [
+    canRegenerateMddSection,
+    projectId,
+    setCentralPanel,
+    regenerateMddSection5Pipeline,
+    precisionBreakdown,
+  ]);
+
   const setProjectId = useWorkshopStore((s) => s.setProjectId);
   /* Prevent infinite fetch loop */
   const hasFetchedProject = useRef<string | null>(null);
@@ -2388,6 +2408,10 @@ export default function WorkshopView({
     clearMddJustGeneratedFromBenchmark,
     requestGenerateMdd,
     reapplyMddFormat,
+    canRegenerateMddSection,
+    mddSectionRegenDisabledReason,
+    onRegenerateMddSection: handleRegenerateMddSectionFromQuality,
+    onRegenerateMddSection5Pipeline: handleRegenerateMddSection5Pipeline,
     openSuggestMddPatterns,
     openEditMddPatterns,
     setClearMddConfirmOpen,
@@ -2687,7 +2711,12 @@ export default function WorkshopView({
             mobileWorkshopColumn={mobileWorkshopColumn}
             isLgLayout={isLgLayout}
             metricsSectionRef={metricsSectionRef}
-            onOpenAuditModal={() => setShowAuditModal(true)}
+            onOpenAuditModal={() => {
+              setShowAuditModal(true);
+              if (projectId?.trim()) {
+                void useWorkshopStore.getState().fetchEstimation(projectId.trim());
+              }
+            }}
           />
         }
         mobileOverlays={

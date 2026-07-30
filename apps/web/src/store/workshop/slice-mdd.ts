@@ -2,6 +2,7 @@ import type { StateCreator } from "zustand";
 import {
   buildUpstreamChangeSummaryForPipeline,
   mddMarkdownHasKnownFormatCorruption,
+  type MddUpstreamSyncStatus,
 } from "@theforge/shared-types";
 import {
   governancePatternSelectionDiffers,
@@ -26,7 +27,12 @@ import {
   isSsotPatternsNotice,
   SSOT_PATTERNS_RESTORED_NOTICE,
 } from "../../utils/workshopSyncStatus";
+import {
+  buildMddSection5PipelineRegenNotice,
+  mddHasSection5Heading,
+} from "../../utils/mddSectionRegen";
 import { patchAgentProgressFromMddEvent } from "./helpers/agent-progress-patch";
+import { mergeGenerationStatusWithMddUpstreamSync } from "./helpers/generation-status";
 import {
   applyMddEditorBaselineToWorkshop,
   applyMddFromFetchedProject,
@@ -35,8 +41,9 @@ import {
   normalizedMddForPersistCompare,
   selectRawMddFromStage,
 } from "./helpers/mdd-editor";
-import { projectWithUxAfterStream } from "./helpers/stage-focus";
-import { errorStateFromCaught, friendlyFetchError } from "./helpers/store-errors";
+import { projectWithUxAfterStream, effectiveMddContentForSectionRegen } from "./helpers/stage-focus";
+import { errorStateFromCaught, friendlyFetchError, streamErrorPatch } from "./helpers/store-errors";
+import { shouldApplyWorkshopUpdate } from "./helpers/workshop-scope";
 import {
   generationStatusWithoutSddGraph,
   resetWorkshopSemaphoreSnapshot,
@@ -57,6 +64,7 @@ type MddSliceActions = Pick<
   | "clearMddContentCompletely"
   | "persistAndReviewMdd"
   | "reapplyMddFormat"
+  | "regenerateMddSection5Pipeline"
 >;
 
 export const createMddSlice: StateCreator<WorkshopState, [], [], MddSliceActions> = (set, get) => ({
@@ -482,6 +490,131 @@ export const createMddSlice: StateCreator<WorkshopState, [], [], MddSliceActions
       });
     } finally {
       set({ mddReapplyingFormat: false });
+    }
+  },
+
+  regenerateMddSection5Pipeline: async (projectId, options) => {
+    const pid = projectId?.trim();
+    if (!pid) return;
+    const mddContent = effectiveMddContentForSectionRegen(get);
+    if (!mddContent.trim()) {
+      set({ error: "Necesitas MDD guardado para regenerar §5." });
+      return;
+    }
+    const regStage = get().activeStageId;
+    const gapReasons = options?.gapReasons?.filter((g) => g?.trim()) ?? [];
+    set({
+      loading: true,
+      loadingReason: "mdd-section",
+      notice: buildMddSection5PipelineRegenNotice(),
+      error: null,
+      synced: false,
+      agentProgress: [],
+    });
+    void get().fetchGenerationStatus(pid);
+    try {
+      const pollResult = await enqueueAndPollMddJob(
+        {
+          mode: "section-pipeline",
+          projectId: pid,
+          section: 5,
+          mddContent: mddContent || undefined,
+          ...(gapReasons.length ? { gapReasons } : {}),
+          ...(regStage ? { stageId: regStage } : {}),
+        },
+        pid,
+        {
+          onProgress: (p) => {
+            patchAgentProgressFromMddEvent(set, p);
+          },
+          onEnqueued: () => {
+            void get().fetchGenerationStatus(pid);
+          },
+        },
+      );
+      if (!shouldApplyWorkshopUpdate(get, pid)) return;
+      const { fetchProject, fetchEstimation, fetchConformance } = get();
+      await fetchProject(pid);
+      const merged = selectPersistedMddBaseline(get()) || get().mddContent || "";
+      if (merged.trim().length <= 80) {
+        set({
+          error:
+            merged.trim().length > 0
+              ? "La regeneración devolvió un documento demasiado corto; §5 no se aplicó al MDD."
+              : "La regeneración terminó sin markdown actualizado.",
+          loading: false,
+          loadingReason: null,
+          notice: null,
+          agentProgress: [],
+          evaluatorCritique: null,
+        });
+        return;
+      }
+      if (!mddHasSection5Heading(merged)) {
+        set({
+          error:
+            "El servidor respondió OK pero el MDD no incluye ## 5. Lógica y Edge Cases. Reintenta o usa «Regenerar MDD» completo.",
+          loading: false,
+          loadingReason: null,
+          notice: null,
+          agentProgress: [],
+          evaluatorCritique: null,
+        });
+        return;
+      }
+      await fetchEstimation(pid, merged).catch(() => {});
+      fetchConformance(pid).catch(() => {});
+      await get().fetchGenerationStatus(pid, regStage ?? undefined);
+      const syncFromJob = (pollResult.result as { mddUpstreamSync?: MddUpstreamSyncStatus } | undefined)
+        ?.mddUpstreamSync;
+      if (syncFromJob) {
+        set((s) => ({
+          generationStatus: mergeGenerationStatusWithMddUpstreamSync(s.generationStatus, syncFromJob),
+        }));
+      }
+      const editorMerged = mddContentForEditor(merged);
+      const stateAfterFetch = get();
+      const mddPatch =
+        stateAfterFetch.project != null
+          ? applyMddEditorBaselineToWorkshop(
+              stateAfterFetch.project,
+              stateAfterFetch.workshopStages,
+              stateAfterFetch.activeStageId,
+              editorMerged,
+            )
+          : {
+              mddContent: editorMerged,
+              mddPersistedBaseline: editorMerged,
+              workshopStages: stateAfterFetch.workshopStages,
+              project: stateAfterFetch.project,
+            };
+      set({
+        ...(stateAfterFetch.project != null
+          ? { project: mddPatch.project, workshopStages: mddPatch.workshopStages }
+          : {}),
+        mddContent: mddPatch.mddContent,
+        mddPersistedBaseline: mddPatch.mddPersistedBaseline,
+        loading: false,
+        loadingReason: null,
+        notice: null,
+        agentProgress: [],
+        evaluatorCritique: null,
+        error: null,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? friendlyFetchError(e) : "Error al regenerar §5 (pipeline)";
+      const code =
+        e instanceof Error && "code" in e && typeof (e as { code?: string }).code === "string"
+          ? (e as { code?: string }).code
+          : undefined;
+      set({
+        ...streamErrorPatch({ message: msg, code }),
+        loading: false,
+        loadingReason: null,
+        notice: null,
+        agentProgress: [],
+        evaluatorCritique: null,
+      });
     }
   },
 });

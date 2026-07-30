@@ -35,6 +35,10 @@ export interface WorkshopMddPanelProps {
   onClearMddJustGeneratedFromBenchmark: () => void;
   onRequestGenerateMdd: () => void;
   onReapplyMddFormat: () => void;
+  canRegenerateMddSection: boolean;
+  mddSectionRegenDisabledReason: string;
+  onRegenerateMddSection: (section: number) => void | Promise<void>;
+  onRegenerateMddSection5Pipeline: () => void | Promise<void>;
   onOpenSuggestMddPatterns: () => void;
   onOpenEditMddPatterns: () => void;
   onOpenClearMddConfirm: () => void;

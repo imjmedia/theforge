@@ -48,6 +48,7 @@ export type MddQualityReasonKey =
   | "contexto"
   | "modeloDatos"
   | "apiContracts"
+  | "logicaEdgeCases"
   | "seguridad"
   | "integracion";
 
@@ -56,6 +57,7 @@ export const MDD_QUALITY_TABLE_ROWS = [
   { label: "Contexto y alcance", agent: "Clarificador", reasonKey: "contexto" as MddQualityReasonKey, section: 1 },
   { label: "Modelo de datos", agent: "Arquitecto de Software", reasonKey: "modeloDatos" as MddQualityReasonKey, section: 3 },
   { label: "Contratos API", agent: "Arquitecto de Software", reasonKey: "apiContracts" as MddQualityReasonKey, section: 4 },
+  { label: "Lógica y edge cases", agent: "Arquitecto (§5 dedicado)", reasonKey: "logicaEdgeCases" as MddQualityReasonKey, section: 5 },
   { label: "Seguridad", agent: "Arquitecto de Seguridad", reasonKey: "seguridad" as MddQualityReasonKey, section: 6 },
   { label: "Integración", agent: "Ingeniero de Integración", reasonKey: "integracion" as MddQualityReasonKey, section: 7 },
 ] as const;
@@ -131,6 +133,11 @@ export function buildMddSectionRegenNotice(section: number): string {
   return `Regenerando §${section} (${label})…`;
 }
 
+/** Aviso mientras corre section-pipeline §5 (paridad post-critic del MDD completo). */
+export function buildMddSection5PipelineRegenNotice(): string {
+  return "Regenerando §5 (Lógica) con pipeline MDD (section5 + Formatter + prepare)…";
+}
+
 export type MddReadinessHintAction =
   | { kind: "regenerate"; section: number; label: string }
   | { kind: "reapply-format"; label: string };
@@ -145,6 +152,8 @@ export function resolveMddReadinessHintActions(hint: string): MddReadinessHintAc
     actions.push({ kind: "regenerate", section: 3, label: "Regenerar §3" });
   } else if (/contratos api|endpoints|payloads/i.test(hint)) {
     actions.push({ kind: "regenerate", section: 4, label: "Regenerar §4" });
+  } else if (/§5|l[oó]gica|edge cases|bdd|aaa/i.test(hint)) {
+    actions.push({ kind: "regenerate", section: 5, label: "Regenerar §5" });
   } else if (/seguridad|authn|authz/i.test(hint)) {
     actions.push({ kind: "regenerate", section: 6, label: "Regenerar §6" });
   }

@@ -72,7 +72,7 @@ export function WorkshopAuditModal({
             Componente calidad MDD (45% del total)
           </p>
           <p className="text-xs text-[var(--foreground-subtle)] mb-3">
-            Evalúa §1 Contexto, §3 Modelo, §4 API, §6 Seguridad y §7 Integración del Master Design Document.
+            Evalúa §1 Contexto, §3 Modelo, §4 API, §5 Lógica, §6 Seguridad y §7 Integración del Master Design Document.
           </p>
           {precisionBreakdown ? (
             <div className="overflow-x-auto -mx-2 px-2 sm:mx-0 sm:px-0 rounded-lg border border-[var(--border)]">
