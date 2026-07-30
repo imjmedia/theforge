@@ -1,7 +1,6 @@
 import { apiFetch, API_BASE, fetchWithRetry } from "./apiClient";
 
 const POLL_MAX_ATTEMPTS = 10_800;
-const POLL_INTERVAL_MS = 2_000;
 /** Poll MDD job cada 5s (F5: menos ruido mientras stream/job activo). */
 const POLL_INTERVAL_MDD_ACTIVE_MS = 5_000;
 /** Tras N fallos de red seguidos al hacer poll, avisamos (≈75 s con intervalo 5 s). */
