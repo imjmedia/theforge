@@ -11,6 +11,8 @@ Utilidades del Workshop y plugins.
 | `pluginApi.ts` | HTTP: artifacts, plugin-data, generación encolada, polling |
 | `pluginArtifactContent.ts` | Serialización editor ↔ payload según `contentType` |
 | `triggerBrowserBlobDownload.ts` | Descarga de blobs/ZIP: mantiene el object URL ~60s antes de revocarlo (ZIPs grandes del Workshop). |
+| `stageWorkflowStatusLabel.ts` | Etiquetas en español para `StageStatus` en el selector del Workshop. |
+| `stageTransitionLabels.ts` | Etiquetas y descripciones de acciones `activate` / `complete` / `archive` / `reopen` en el modal de ciclo de vida de etapa. |
 | `readApiErrorMessage.ts` | Mensajes legibles desde respuestas API fallidas (export SDD/handoff). |
 | `downloadSpecKitBundle.ts` / `downloadRepoHandoff.ts` | Export spec-kit y handoff (API + fallback cliente). |
 

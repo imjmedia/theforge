@@ -17,6 +17,7 @@ export const WORKSHOP_STORE_CONTRACT_ACTIONS = [
   "fetchEstimation",
   "setActiveStageId",
   "patchWorkshopStage",
+  "transitionWorkshopStage",
   "createWorkshopStage",
   "startPhase0Assisted",
   "stopPhase0Assisted",

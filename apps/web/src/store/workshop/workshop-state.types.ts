@@ -10,6 +10,7 @@ import type {
   ProjectGenerationStatus,
   TraceabilitySuggestFixResponse,
   WorkshopChatScope,
+  StageTransitionAction,
 } from "@theforge/shared-types";
 import type { ClarifyableDocumentField } from "@theforge/shared-types";
 import type { AgentProgressItem } from "../../utils/agentProgress";
@@ -189,6 +190,12 @@ export interface WorkshopState {
   patchWorkshopStage: (
     stageId: string,
     body: Record<string, string | boolean | undefined>,
+  ) => Promise<boolean>;
+  /** `POST /projects/:id/stages/:stageId/transition` — activate, complete, archive, reopen. */
+  transitionWorkshopStage: (
+    stageId: string,
+    action: StageTransitionAction,
+    reason?: string,
   ) => Promise<boolean>;
   /** `PATCH /projects/:id` con `{ requireBrdTobeGate }` — control usuario (no env). */
   setProjectRequireBrdTobeGate: (projectId: string, requireBrdTobeGate: boolean) => Promise<boolean>;

@@ -7,11 +7,15 @@ import {
   HelpCircle,
   Layers,
   Lock,
+  MoreHorizontal,
   Pencil,
   Plus,
 } from "lucide-react";
+import { useMemo, useState } from "react";
 import type { StageDeliverablesResponse } from "@theforge/shared-types";
+import { getAllowedStageTransitions } from "@theforge/shared-types";
 import { cn } from "@/lib/utils";
+import { WorkshopStageTransitionDialog } from "@/components/WorkshopStageTransitionDialog";
 import {
   WORKSHOP_HEADER_CTL,
   WORKSHOP_HEADER_CTL_HOVER,
@@ -112,6 +116,15 @@ export function WorkshopHeaderBar({
   onOpenHelp,
 }: WorkshopHeaderBarProps) {
   const displayName = projectName ?? project?.name ?? "Workshop";
+  const [stageTransitionOpen, setStageTransitionOpen] = useState(false);
+
+  const activeStage = useMemo(
+    () => workshopStagesList.find((st) => st.id === activeStageId) ?? workshopStagesList[0] ?? null,
+    [workshopStagesList, activeStageId],
+  );
+  const activeStageHasTransitions = activeStage
+    ? getAllowedStageTransitions(activeStage.workflowStatus).length > 0
+    : false;
 
   const toggleVisibility = async () => {
     if (!project) return;
@@ -290,6 +303,21 @@ export function WorkshopHeaderBar({
                 </div>
               ) : null}
 
+              {activeStageHasTransitions ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <WorkshopHeaderIconButton
+                      onClick={() => setStageTransitionOpen(true)}
+                      aria-label="Gestionar estado de la etapa"
+                      title="Gestionar etapa"
+                    >
+                      <MoreHorizontal className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
+                    </WorkshopHeaderIconButton>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Archivar, completar o reabrir etapa</TooltipContent>
+                </Tooltip>
+              ) : null}
+
               <Tooltip>
                 <TooltipTrigger asChild>
                   <WorkshopHeaderIconButton onClick={onNewStage} aria-label="Nueva etapa">
@@ -339,6 +367,12 @@ export function WorkshopHeaderBar({
           </span>
         </div>
       ) : null}
+
+      <WorkshopStageTransitionDialog
+        open={stageTransitionOpen}
+        onOpenChange={setStageTransitionOpen}
+        stage={activeStage}
+      />
     </header>
   );
 }

@@ -47,4 +47,5 @@
 | **MddRegenerateDialog** | Al pulsar «Regenerar MDD» (greenfield con MDD existente): pipeline completo vs `upstream-sync` con checkboxes §1–§7 y diff de Fase 0/BRD/Benchmark. |
 | **MddUpstreamSyncBanner** | Banner cuando `generation-status.mddUpstreamSync.pendingSync` y no hay job MDD `pipeline`/`manager`/`upstream-sync` en curso; abre el diálogo en modo sincronización. |
 | **WorkshopDbgaRestoreDialog** | Modal **Versiones anteriores del DBGA** (Fase 0): lista snapshots (`GET …/document-snapshots?field=dbgaContent`) y restauración (`POST …/document-snapshots/:id/restore`). Botón en toolbar y acciones del panel benchmark. |
-| **IntegrationPanel** | Pestaña **Integración**: enlace NEW↔LEGACY, handoff NEW-LEG, import en etapa 2+, matriz trazabilidad. |
+| **IntegrationPanel** | Pestaña **Integración**: enlace NEW↔LEGACY, handoff NEW-LEG, import en etapa 2+, matriz trazabilidad. **Revertir promoción** archiva la etapa legacy mal promovida (flujo handoff, distinto del modal general de etapas). |
+| **WorkshopStageTransitionDialog** | Modal **Estado de la etapa** (header Workshop, botón ⋯): activar, completar, archivar o reabrir la etapa seleccionada vía `POST …/stages/:stageId/transition`. |
