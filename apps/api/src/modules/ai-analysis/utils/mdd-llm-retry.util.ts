@@ -25,7 +25,12 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import type { Runnable } from "@langchain/core/runnables";
 import type { BaseMessage } from "@langchain/core/messages";
 import { recordTokenUsageFromContext } from "../../ai/utils/token-usage-recorder.js";
-import { resolveLlmTimeoutMs } from "./mdd-llm-timeout.util.js";
+import { isLlmStreamingEnabled, resolveLlmTimeoutMs } from "./mdd-llm-timeout.util.js";
+import {
+  invokeLlmStreamingWithIdleTimeout,
+  supportsStreaming,
+  type StreamableLlmLike,
+} from "./mdd-llm-stream-invoke.util.js";
 
 const DEFAULT_BACKOFF_MS = [0, 1500, 4000];
 const DEFAULT_INVOKE_TIMEOUT_MS = resolveLlmTimeoutMs();
@@ -130,6 +135,16 @@ export type InvokeWithRetryOptions = {
   acceptToolCallsWithoutContent?: boolean;
   /** Timeout por llamada LLM (ms). Si se excede, aborta y reintenta. Default 120_000 (2 min). */
   timeoutMs?: number;
+  /**
+   * Fuerza el modo no-streaming (wall-clock `timeoutMs`) para esta llamada.
+   * Por defecto se usa streaming con timeout de inactividad cuando el runnable
+   * expone `.stream()` — ver `mdd-llm-stream-invoke.util.ts`.
+   */
+  disableStreaming?: boolean;
+  /** Ms sin recibir chunk antes de abortar (streaming). Default `LANGGRAPH_LLM_IDLE_TIMEOUT_MS`. */
+  idleTimeoutMs?: number;
+  /** Tope duro por invocación en streaming. Default `LANGGRAPH_LLM_HARD_TIMEOUT_MS`. */
+  hardTimeoutMs?: number;
 };
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -165,18 +180,58 @@ export async function invokeLlmWithRetry(
     return acc;
   }, 0);
 
+  // Se degrada a no-streaming si el proveedor rechaza `.stream()` (algunos endpoints
+  // OpenAI-compat no lo soportan): reintentar en streaming fallaría igual.
+  let streamingDegraded = false;
+  // La degradación a no-streaming no debe consumir un intento (el fallo es de
+  // transporte, no del modelo); se devuelve el intento una única vez.
+  let degradeRefundUsed = false;
+
   for (let attempt = 1; attempt <= max; attempt += 1) {
     const wait = backoff[Math.min(attempt - 1, backoff.length - 1)] ?? 0;
     if (wait > 0) await sleep(wait);
     try {
-      const timeoutMs = options?.timeoutMs ?? DEFAULT_INVOKE_TIMEOUT_MS;
-      const abortController = new AbortController();
-      const timeoutId = setTimeout(() => abortController.abort(), timeoutMs);
+      const useStreaming =
+        !options.disableStreaming &&
+        !streamingDegraded &&
+        isLlmStreamingEnabled() &&
+        supportsStreaming(llm);
+
       let response: unknown;
-      try {
-        response = await (llm as { invoke: (m: BaseMessage[], opts?: { signal?: AbortSignal }) => Promise<unknown> }).invoke(messages, { signal: abortController.signal });
-      } finally {
-        clearTimeout(timeoutId);
+      if (useStreaming) {
+        let result: Awaited<ReturnType<typeof invokeLlmStreamingWithIdleTimeout>>;
+        try {
+          result = await invokeLlmStreamingWithIdleTimeout(llm as StreamableLlmLike, messages, {
+            tag,
+            ...(options.idleTimeoutMs != null ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
+            ...(options.hardTimeoutMs != null ? { hardTimeoutMs: options.hardTimeoutMs } : {}),
+          });
+        } catch (streamErr) {
+          const streamMsg = streamErr instanceof Error ? streamErr.message : String(streamErr);
+          if (!/abortado por (inactividad|tope duro)/.test(streamMsg)) {
+            streamingDegraded = true;
+            console.warn(`[${tag}] streaming no disponible (${streamMsg}); usando invoke no-streaming`);
+          }
+          throw streamErr;
+        }
+        if (result.chunks === 0) {
+          streamingDegraded = true;
+          console.warn(`[${tag}] stream sin chunks; reintentando con invoke no-streaming`);
+          throw new Error(`[${tag}] stream vacío`);
+        }
+        response = result.response;
+        console.log(
+          `[${tag}] stream chunks=${result.chunks} firstChunkMs=${result.firstChunkMs} totalMs=${result.totalMs}`,
+        );
+      } else {
+        const timeoutMs = options?.timeoutMs ?? DEFAULT_INVOKE_TIMEOUT_MS;
+        const abortController = new AbortController();
+        const timeoutId = setTimeout(() => abortController.abort(), timeoutMs);
+        try {
+          response = await (llm as { invoke: (m: BaseMessage[], opts?: { signal?: AbortSignal }) => Promise<unknown> }).invoke(messages, { signal: abortController.signal });
+        } finally {
+          clearTimeout(timeoutId);
+        }
       }
       recordLlmUsageFromMessage(llm, response, tag);
       const text = extractLlmText(response);
@@ -199,6 +254,12 @@ export async function invokeLlmWithRetry(
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      if (streamingDegraded && !degradeRefundUsed) {
+        degradeRefundUsed = true;
+        attempt -= 1;
+        console.warn(`[${tag}] reintento inmediato sin streaming tras: ${msg}`);
+        continue;
+      }
       console.warn(
         `[${tag}] error en LLM.invoke (attempt ${attempt}/${max}): ${msg}, reintentando...`,
       );

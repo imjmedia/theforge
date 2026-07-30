@@ -8,6 +8,8 @@ import type { AuditorGapsState } from "../state/mdd-state.schema.js";
 import {
   draftHasSubstantialSection6 as draftHasSubstantialSection6Preserve,
   draftHasSubstantialSection7 as draftHasSubstantialSection7Preserve,
+  isScopedSectionSealed,
+  type ScopedSectionSealSource,
 } from "./mdd-section-preserve.util.js";
 
 /** Máximo de reintentos automáticos del gate de entrega (Fase 4). */
@@ -37,6 +39,8 @@ export type ResolveDeliveryGateFixTargetOptions = {
   previousPlaceholderFingerprint?: string;
   /** Intento actual del auto-loop (1-based tras incremento en prepare_output). */
   deliveryGateAttempt?: number;
+  /** Snapshots scoped HIGH — no re-enrutar a nodos que ya sellaron §2–§4. */
+  sealedSections?: ScopedSectionSealSource;
 };
 
 const PLACEHOLDER_BLOCKER_RE =
@@ -169,6 +173,34 @@ export function guardFixTargetAgainstSection5Blockers(
   return target;
 }
 
+/** No re-enruta a nodos scoped que ya sellaron §2–§4 (snapshots + sustancia en draft). */
+export function guardFixTargetAgainstSealedScopedSections(
+  target: DeliveryGateFixTarget,
+  blockers: string[],
+  sealed?: ScopedSectionSealSource,
+): DeliveryGateFixTarget {
+  if (!sealed) return target;
+  const onlyScopedArchitectBlockers = blockers.every(
+    (b) =>
+      SECTION2_BLOCKER_RE.test(b) ||
+      SECTION3_BLOCKER_RE.test(b) ||
+      SECTION4_BLOCKER_RE.test(b) ||
+      PLACEHOLDER_BLOCKER_RE.test(b),
+  );
+  if (!onlyScopedArchitectBlockers) return target;
+
+  if (target === "stack_architect" && isScopedSectionSealed(2, sealed)) {
+    return gateHasSection5SubstanceBlocker(blockers) ? "section5" : "integration";
+  }
+  if (target === "data_model" && isScopedSectionSealed(3, sealed)) {
+    return gateHasSection5SubstanceBlocker(blockers) ? "section5" : "api_contracts";
+  }
+  if (target === "api_contracts" && isScopedSectionSealed(4, sealed)) {
+    return gateHasSection5SubstanceBlocker(blockers) ? "section5" : "integration";
+  }
+  return target;
+}
+
 /** Resuelve fixTarget: blockers de sustancia primero; warnings solo si no hay blockers. */
 export function resolveDeliveryGateFixTargetFromGate(
   blockers: string[],
@@ -176,10 +208,11 @@ export function resolveDeliveryGateFixTargetFromGate(
   options?: ResolveDeliveryGateFixTargetOptions,
 ): DeliveryGateFixTarget {
   if (blockers.length > 0) {
-    return guardFixTargetAgainstSection5Blockers(
+    const target = guardFixTargetAgainstSection5Blockers(
       blockers,
       resolveDeliveryGateFixTarget(blockers, options),
     );
+    return guardFixTargetAgainstSealedScopedSections(target, blockers, options?.sealedSections);
   }
   const autoWarnings = warnings.filter((w) => isAutoRepairableDeliveryGateWarning(w));
   if (autoWarnings.length > 0) {

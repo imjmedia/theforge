@@ -473,4 +473,156 @@ describe("validateMddForDelivery — substance check (CHANGELOG [Unreleased])", 
     const substanceBlockers = result.blockers.filter((b) => /Pendiente|insuficiente/.test(b));
     assert.ok(substanceBlockers.length >= 3, `esperaba ≥3 substance blockers, obtuve ${substanceBlockers.length}`);
   });
+
+  describe("checks de contenido (auditoría KMS: gate de forma no detectaba estos gaps)", () => {
+    const buildDraft = (overrides: { s1?: string; s4?: string; s5?: string; s6?: string; s7?: string }) => {
+      const s1 =
+        overrides.s1 ??
+        `KMS corporativo para gestión de claves y certificados. ${"Centraliza el ciclo de vida de material criptográfico y certificados SAT del grupo. ".repeat(3)}`;
+      const s4 =
+        overrides.s4 ??
+        [
+          "### GET /v1/keys",
+          "",
+          "**Response 200:**",
+          "",
+          "```json",
+          '{ "id": "uuid", "alias": "string", "status": "active", "createdAt": "2026-01-01T00:00:00Z" }',
+          "```",
+          "",
+          "### GET /v1/certificates",
+          "",
+          "**Response 200:**",
+          "",
+          "```json",
+          '{ "id": "uuid", "serialNumber": "string", "expiresAt": "2026-12-31T00:00:00Z" }',
+          "```",
+        ].join("\n");
+      const s5 = overrides.s5 ?? `### 5.1 Reglas\n\n${"Regla de negocio con detalle suficiente. ".repeat(10)}`;
+      const s6 = overrides.s6 ?? `${"Control de acceso granular por rol. ".repeat(10)}`;
+      const s7 = overrides.s7 ?? `${"Kubernetes con despliegue blue/green. ".repeat(10)}`;
+      return [
+        "# Master Design Document",
+        "",
+        "## 1. Contexto",
+        "",
+        s1,
+        "",
+        "## 2. Arquitectura y Stack",
+        "",
+        `${"NestJS con PostgreSQL. ".repeat(20)}`,
+        "",
+        "## 3. Modelo de Datos",
+        "",
+        "```sql",
+        "CREATE TABLE keys (",
+        "  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),",
+        "  alias VARCHAR(255) NOT NULL,",
+        "  status VARCHAR(50) NOT NULL DEFAULT 'active',",
+        "  created_at TIMESTAMPTZ NOT NULL DEFAULT now()",
+        ");",
+        "```",
+        "",
+        "```TechnicalMetadata",
+        "[high_security]",
+        "```",
+        "",
+        "## 4. Contratos de API",
+        "",
+        s4,
+        "",
+        "## 5. Lógica y Edge Cases",
+        "",
+        s5,
+        "",
+        "## 6. Seguridad",
+        "",
+        s6,
+        "",
+        "## 7. Infraestructura",
+        "",
+        s7,
+      ].join("\n");
+    };
+
+    it("§1 sin bloque NFR cuantificado → warning, no bloquea (complexity no HIGH)", () => {
+      const result = validateMddForDelivery(buildDraft({}));
+      assert.ok(result.warnings.some((w) => /Requisitos No Funcionales|no declara un bloque/.test(w)));
+      assert.equal(result.ok, true);
+    });
+
+    it("§1 con NFRs cuantificados no genera el warning", () => {
+      const s1WithNfr = [
+        `KMS corporativo para gestión de claves y certificados. ${"Centraliza el ciclo de vida de material criptográfico y certificados SAT del grupo. ".repeat(3)}`,
+        "",
+        "### Requisitos No Funcionales",
+        "",
+        "- Latencia p99 < 300ms para operaciones criptográficas del sistema.",
+        "- Disponibilidad 99.9% mensual del servicio de gestión de claves.",
+      ].join("\n");
+      const result = validateMddForDelivery(buildDraft({ s1: s1WithNfr }));
+      assert.ok(!result.warnings.some((w) => /no declara un bloque/.test(w)));
+    });
+
+    it("§4 catálogo sin schemas (ratio bajo) → warning en complejidad normal", () => {
+      const s4Catalog = Array.from({ length: 8 }, (_, i) =>
+        i === 0
+          ? `### GET /v1/resource-${i}\n\n\`\`\`json\n{ "id": "uuid" }\n\`\`\``
+          : `### GET /v1/resource-${i}\n\nDescripción sin schema, solo fila de tabla-resumen.`,
+      ).join("\n\n");
+      const result = validateMddForDelivery(buildDraft({ s4: s4Catalog }));
+      assert.ok(result.warnings.some((w) => /Contratos de API: solo/.test(w)));
+      assert.equal(result.ok, true, "no bloquea fuera de HIGH");
+    });
+
+    it("§4 catálogo sin schemas (ratio bajo) → BLOQUEA en HIGH (más grave que solo catálogo)", () => {
+      const s4Catalog = Array.from({ length: 8 }, (_, i) =>
+        i === 0
+          ? `### GET /v1/resource-${i}\n\n\`\`\`json\n{ "id": "uuid" }\n\`\`\``
+          : `### GET /v1/resource-${i}\n\nDescripción sin schema, solo fila de tabla-resumen.`,
+      ).join("\n\n");
+      const result = validateMddForDelivery(buildDraft({ s4: s4Catalog }), { mddComplexity: "HIGH" });
+      assert.equal(result.ok, false);
+      assert.ok(result.blockers.some((b) => /Contratos de API: solo/.test(b)));
+    });
+
+    it("§5 con subsección final truncada (heading sin desarrollo) → warning", () => {
+      const s5Truncated = `### 5.1 Reglas\n\n${"Regla de negocio con detalle suficiente. ".repeat(10)}\n\n### 5.2 Operativa\n\nCorto.`;
+      const result = validateMddForDelivery(buildDraft({ s5: s5Truncated }));
+      assert.ok(result.warnings.some((w) => /5\.2/.test(w) && /cortada/.test(w)));
+    });
+
+    it("§6/§7 con controles repetidos literalmente → warning de redundancia", () => {
+      const s6 = "TLS 1.3, RBAC granular, auditoría completa, rate limiting estricto por IP.";
+      const s7 = "Despliegue con TLS 1.3, RBAC por servicio, auditoría en cada nodo, rate limiting en el gateway.";
+      const result = validateMddForDelivery(buildDraft({ s6, s7 }));
+      assert.ok(result.warnings.some((w) => /repiten.*controles/.test(w)));
+    });
+
+    const LLM_CONFIGS_TABLE =
+      "CREATE TABLE llm_configs (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  provider VARCHAR(50) NOT NULL,\n  model VARCHAR(100) NOT NULL,\n  api_key_encrypted TEXT NOT NULL\n);";
+    const SCHEDULED_TASKS_TABLE =
+      "CREATE TABLE scheduled_tasks (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  cron_expression VARCHAR(100) NOT NULL,\n  last_run_at TIMESTAMPTZ,\n  status VARCHAR(50) NOT NULL DEFAULT 'pending'\n);";
+
+    // `skipDeterministicRepair: true` aísla el check nuevo: sin él, el pipeline de reparación
+    // determinista (domain-inventory-conformance) ya borra en silencio tablas sin ancla cuando
+    // hay BRD — lo cual tapa exactamente el caso que este test quiere ejercitar.
+    it("§3 con tabla del ejemplo del prompt sin ancla en BRD/DBGA → warning", () => {
+      const draft = buildDraft({}).replace("```sql", `\`\`\`sql\n${LLM_CONFIGS_TABLE}`);
+      const result = validateMddForDelivery(draft, {
+        brdMarkdown: "KMS corporativo para rotación de claves y certificados SAT.",
+        skipDeterministicRepair: true,
+      });
+      assert.ok(result.warnings.some((w) => /llm_configs/.test(w)));
+    });
+
+    it("no señala tabla si el BRD sí menciona ese dominio (orquestación real, no leak)", () => {
+      const draft = buildDraft({}).replace("```sql", `\`\`\`sql\n${SCHEDULED_TASKS_TABLE}`);
+      const result = validateMddForDelivery(draft, {
+        brdMarkdown: "Sistema con scheduled_tasks para rotación automática de claves.",
+        skipDeterministicRepair: true,
+      });
+      assert.ok(!result.warnings.some((w) => /scheduled_tasks/.test(w)));
+    });
+  });
 });
