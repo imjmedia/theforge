@@ -2,8 +2,10 @@ import { describe, it } from "node:test";
 import assert from "node:assert";
 import {
   appendSqlTablesToSection3Body,
+  canonicalizeTableName,
   extractCreateTableNamesFromSql,
   extractSqlLikeTableNames,
+  filterActuallyMissingTables,
   isTableOnlyCriticGap,
   isUsableDataModelPatchSql,
   isValidSqlTableName,
@@ -49,5 +51,55 @@ describe("mdd-data-model-patch.util", () => {
     const out = appendSqlTablesToSection3Body(body, "CREATE TABLE orders (id UUID PRIMARY KEY);");
     assert.ok(out.includes("CREATE TABLE users"));
     assert.ok(out.includes("CREATE TABLE orders"));
+  });
+
+  it("appendSqlTablesToSection3Body no duplica tablas existentes", () => {
+    const body = "```sql\nCREATE TABLE audit_log (id UUID PRIMARY KEY);\n```";
+    const out = appendSqlTablesToSection3Body(
+      body,
+      "CREATE TABLE audit_log (id UUID PRIMARY KEY, action TEXT);\nCREATE TABLE events (id UUID PRIMARY KEY);",
+    );
+    assert.strictEqual((out.match(/CREATE TABLE audit_log/gi) ?? []).length, 1);
+    assert.ok(out.includes("CREATE TABLE events"));
+  });
+
+  describe("canonicalizeTableName — falso positivo singular/plural del Critic", () => {
+    it("normaliza plural simple", () => {
+      assert.strictEqual(canonicalizeTableName("audit_logs"), "audit_log");
+      assert.strictEqual(canonicalizeTableName("audit_log"), "audit_log");
+    });
+
+    it("no toca palabras terminadas en doble s", () => {
+      assert.strictEqual(canonicalizeTableName("access"), "access");
+    });
+
+    it("normaliza -ies → -y y -ses (doble s) → -s", () => {
+      assert.strictEqual(canonicalizeTableName("categories"), "category");
+      assert.strictEqual(canonicalizeTableName("addresses"), "address");
+      assert.strictEqual(canonicalizeTableName("classes"), "class");
+    });
+  });
+
+  describe("filterActuallyMissingTables — job KMS: Critic dice «falta audit_logs», ya existe audit_log", () => {
+    const sql = "CREATE TABLE audit_log (id UUID PRIMARY KEY);\nCREATE TABLE keys (id UUID PRIMARY KEY);";
+
+    it("filtra la tabla ya presente aunque el Critic la nombre en plural", () => {
+      assert.deepStrictEqual(filterActuallyMissingTables(["audit_logs"], sql), []);
+    });
+
+    it("mantiene tablas que de verdad faltan", () => {
+      assert.deepStrictEqual(filterActuallyMissingTables(["audit_logs", "certificates"], sql), ["certificates"]);
+    });
+
+    it("appendSqlTablesToSection3Body también dedupe plural/singular al fusionar", () => {
+      const body = "```sql\nCREATE TABLE audit_log (id UUID PRIMARY KEY);\n```";
+      const out = appendSqlTablesToSection3Body(
+        body,
+        "CREATE TABLE audit_logs (id UUID PRIMARY KEY, action TEXT);\nCREATE TABLE events (id UUID PRIMARY KEY);",
+      );
+      assert.strictEqual((out.match(/CREATE TABLE audit_log/gi) ?? []).length, 1);
+      assert.ok(!out.includes("CREATE TABLE audit_logs"));
+      assert.ok(out.includes("CREATE TABLE events"));
+    });
   });
 });

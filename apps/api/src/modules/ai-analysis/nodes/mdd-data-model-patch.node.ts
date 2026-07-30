@@ -9,6 +9,7 @@ import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.
 import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
 import {
   applyDataModelPatchToDraft,
+  filterActuallyMissingTables,
   isUsableDataModelPatchSql,
   parseMissingTablesFromCriticFeedback,
 } from "../utils/mdd-data-model-patch.util.js";
@@ -36,25 +37,35 @@ export function createMddDataModelPatchNode(llm: BaseChatModel) {
     const sqlMatch = section3.match(/```sql\s*([\s\S]*?)```/i);
     const currentSql = sqlMatch?.[1]?.trim() ?? "";
 
-    const prompt = `${PATCH_PROMPT}\n\n---\n**Tablas faltantes:** ${missing.join(", ")}\n\n**SQL actual:**\n\`\`\`sql\n${currentSql}\n\`\`\``;
+    // El Critic reporta gaps en prosa libre y puede nombrar una tabla que ya existe con
+    // singular/plural distinto (ej. "falta audit_logs" cuando el SQL ya tiene `audit_log`):
+    // false positive detectado por comparación canónica antes de gastar una llamada LLM
+    // que arriesgaría crear la tabla duplicada.
+    const actuallyMissing = filterActuallyMissingTables(missing, currentSql);
+    if (!actuallyMissing.length) {
+      LOG("gap del Critic ya resuelto (tablas ya presentes tras normalizar singular/plural): %s", missing.join(","));
+      return { architectCriticFeedback: undefined, architectCriticPhase: "after_section3" as const };
+    }
+
+    const prompt = `${PATCH_PROMPT}\n\n---\n**Tablas faltantes:** ${actuallyMissing.join(", ")}\n\n**SQL actual:**\n\`\`\`sql\n${currentSql}\n\`\`\``;
     const startedAt = Date.now();
     const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], {
       tag: "DataModelPatch",
     });
     const raw = stripThinkingTags(response ? extractLlmText(response) : "");
     logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, raw.length), {
-      tables: missing.join(","),
+      tables: actuallyMissing.join(","),
     });
 
     const appendedSql = raw.replace(/^```sql\s*|\s*```$/gi, "").trim();
-    if (!appendedSql || !/CREATE\s+TABLE/i.test(appendedSql) || !isUsableDataModelPatchSql(appendedSql, missing)) {
+    if (!appendedSql || !/CREATE\s+TABLE/i.test(appendedSql) || !isUsableDataModelPatchSql(appendedSql, actuallyMissing)) {
       LOG("LLM sin DDL usable, noop");
       return {};
     }
 
     const mddDraft = applyDataModelPatchToDraft(draft, appendedSql);
     const sum = getMddDraftSummary(mddDraft);
-    LOG("ok patch tablas=%s draftLen=%s section3=%s", missing.join(","), sum.length, sum.section3);
+    LOG("ok patch tablas=%s draftLen=%s section3=%s", actuallyMissing.join(","), sum.length, sum.section3);
     logMddNodeOutput("DataModelPatch", mddDraft);
     return {
       mddDraft,

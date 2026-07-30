@@ -2,10 +2,8 @@
  * @fileoverview F2 — §4 en chunks paralelos por tablas §3.
  */
 
-import { processScopedArchitectResponse } from "./mdd-architect-pipeline.util.js";
 import {
   extractSection3Body,
-  tryMergeSingleArchitectSectionIntoDraft,
 } from "./mdd-sanitize/section-merge.js";
 import { parseModeloDatosFromSection3Markdown } from "./mdd-sanitize/section-structured.js";
 
@@ -16,10 +14,33 @@ const ENDPOINT_HEADING_RE = /^###\s+(GET|POST|PUT|DELETE|PATCH)\s+(\S+)/gim;
 
 const COMMON_ROUTE_RE = /\/(health|status|auth\/|login|register|refresh)/i;
 
-/** K = min(4, ceil(tables / 7)). */
+/**
+ * Meta-comentario del LLM sobre el propio chunking (ej. «Los siguientes chunks
+ * documentarán…», «continuará en la siguiente parte»). Sobrevive pegado al cuerpo
+ * del último endpoint del chunk porque `mergeApiContractsChunkBodies` solo separa
+ * por heading `### MÉTODO /ruta`, no limpia el texto final de cada bloque — y como
+ * la tabla resumen ya sale completa (construida en código desde todos los chunks),
+ * la nota queda contradiciendo lo que el propio documento ya muestra.
+ */
+const CHUNK_META_COMMENTARY_RE =
+  /\n{1,2}(?:[-*]\s*)?(?:los?\s+(?:siguientes|próximos|demás)\s+chunks?|(?:the\s+)?(?:following|next|remaining)\s+chunks?|continuar[áa]\s+en\s+(?:la\s+)?siguiente\s+(?:parte|chunk)|se\s+document(?:ar[áa]n?|a)\s+en\s+(?:el\s+)?(?:siguiente|próximo)s?\s+chunks?)[^\n]*$/gi;
+
+/** Quita meta-comentario sobre el chunking pegado al final de un bloque de endpoint. */
+export function stripChunkMetaCommentary(block: string): string {
+  return block.replace(CHUNK_META_COMMENTARY_RE, "").trimEnd();
+}
+
+/**
+ * K = min(4, ceil(tables / 4)).
+ *
+ * Con divisor 7, 16 tablas → 3 chunks (~5-6 tablas y ~16 endpoints por llamada);
+ * con modelos flash el presupuesto de salida se agota y el LLM degrada a tabla-resumen
+ * sin request/response por endpoint (auditoría KMS job: catálogo 8/10, specs 4/10).
+ * Divisor 4 fuerza más chunks con menos tablas cada uno → más profundidad por endpoint.
+ */
 export function computeApiContractsChunkCount(tableCount: number): number {
   if (tableCount <= 0) return 1;
-  return Math.min(4, Math.ceil(tableCount / 7));
+  return Math.min(4, Math.ceil(tableCount / 4));
 }
 
 /** Nombres de tabla en orden de aparición (dedupe). */
@@ -138,7 +159,7 @@ export function mergeApiContractsChunkBodies(chunkBodies: string[]): string {
       const route = m[2].replace(/[),.;]+$/, "");
       const routeKey = route.toLowerCase();
       if (routeToBlock.has(routeKey)) continue;
-      routeToBlock.set(routeKey, t);
+      routeToBlock.set(routeKey, stripChunkMetaCommentary(t));
       headings.push({ method, route });
     }
   }
@@ -163,12 +184,7 @@ export function apiContractsChunkPromptBlock(chunk: ApiContractsTableChunk, tota
   );
 }
 
-/** Fusiona cuerpo §4 merged en el draft baseline. */
-export function mergeApiContractsBodyIntoDraft(baseline: string, mergedSection4: string): string {
-  const { fragment } = processScopedArchitectResponse(mergedSection4, "api_contracts");
-  const merge = tryMergeSingleArchitectSectionIntoDraft(baseline, fragment, 4);
-  return merge.merged ? merge.draft : baseline;
-}
+export { mergeApiContractsBodyIntoDraft, repairMergeBaselineBeforeApiContractsMerge } from "./mdd-api-contracts-merge.util.js";
 
 /** Planifica chunks desde el draft actual (§3). */
 export function planApiContractsChunksFromDraft(draft: string): {

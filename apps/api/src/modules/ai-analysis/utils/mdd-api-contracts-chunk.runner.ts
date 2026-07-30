@@ -6,12 +6,25 @@ import type { MDDStateType } from "../state/index.js";
 import { mergeMddStructured } from "./mdd-merge-structured.js";
 import {
   apiContractsChunkPromptBlock,
-  mergeApiContractsBodyIntoDraft,
   mergeApiContractsChunkBodies,
   planApiContractsChunksFromDraft,
   shouldUseApiContractsChunkParallel,
 } from "./mdd-api-contracts-chunk.util.js";
 import { extractContratosSectionBody } from "./mdd-sanitize.js";
+import {
+  mergeApiContractsBodyIntoDraft,
+  repairMergeBaselineBeforeApiContractsMerge,
+} from "./mdd-api-contracts-merge.util.js";
+
+const ENDPOINT_CHUNK_BODY_RE = /^###\s+(GET|POST|PUT|DELETE|PATCH)\s+/im;
+
+function extractContratosChunkBody(resultDraft: string): string | null {
+  const fromSection = extractContratosSectionBody(resultDraft);
+  if (fromSection) return fromSection;
+  const trimmed = resultDraft.trim();
+  if (trimmed.length >= 80 && ENDPOINT_CHUNK_BODY_RE.test(trimmed)) return trimmed;
+  return null;
+}
 
 export type ApiContractsArchitectFn = (state: MDDStateType) => Promise<Partial<MDDStateType>>;
 
@@ -28,7 +41,7 @@ export async function runApiContractsArchitectWithChunks(
   baseFn: ApiContractsArchitectFn,
   opts?: { chunkFn?: ApiContractsChunkFn },
 ): Promise<Partial<MDDStateType>> {
-  const draft = (state.mddDraft ?? "").trim();
+  const draft = repairMergeBaselineBeforeApiContractsMerge((state.mddDraft ?? "").trim());
   if (!shouldUseApiContractsChunkParallel(draft)) {
     return baseFn(state);
   }
@@ -43,7 +56,7 @@ export async function runApiContractsArchitectWithChunks(
       const chunkGoal = apiContractsChunkPromptBlock(chunk, chunks.length);
       const priorGoal = state.currentStepGoal?.trim();
       const mergedGoal = priorGoal ? `${priorGoal}\n\n${chunkGoal}` : chunkGoal;
-      return resolveChunkFn(index)({ ...state, currentStepGoal: mergedGoal });
+      return resolveChunkFn(index)({ ...state, mddDraft: draft, currentStepGoal: mergedGoal });
     }),
   );
 
@@ -51,7 +64,7 @@ export async function runApiContractsArchitectWithChunks(
   let mergedStructured = state.mddStructured;
   for (const result of chunkResults) {
     const resultDraft = (result.mddDraft ?? draft).trim();
-    const body = extractContratosSectionBody(resultDraft);
+    const body = extractContratosChunkBody(resultDraft);
     if (body) bodies.push(body);
     if (result.mddStructured) {
       mergedStructured = mergeMddStructured(mergedStructured, result.mddStructured, resultDraft);
