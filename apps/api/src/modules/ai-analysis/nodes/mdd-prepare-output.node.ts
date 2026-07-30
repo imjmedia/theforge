@@ -71,6 +71,12 @@ export function createMddPrepareOutputNode(options?: { uiMcpLibraryLabel?: strin
         splitArchitectPipeline: isHighSplitArchitectPipeline(state),
         previousPlaceholderFingerprint: state.deliveryGatePlaceholderFingerprint,
         deliveryGateAttempt: attempt + 1,
+        sealedSections: {
+          mddDraft: prepared,
+          stackArchitectMddDraftSnapshot: state.stackArchitectMddDraftSnapshot,
+          dataModelArchitectMddDraftSnapshot: state.dataModelArchitectMddDraftSnapshot,
+          apiContractsArchitectMddDraftSnapshot: state.apiContractsArchitectMddDraftSnapshot,
+        },
       });
       const agentFeedback = [
         formatDeliveryGateBlockersFeedback(gate.blockers),

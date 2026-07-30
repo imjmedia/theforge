@@ -18,7 +18,7 @@
  *   - errores con stack trace
  */
 
-export type MddRegenMode = "section" | "upstream-sync" | "pipeline" | "manager";
+export type MddRegenMode = "section" | "section-pipeline" | "upstream-sync" | "pipeline" | "manager";
 
 export interface MddRegenContext {
   jobId?: string;

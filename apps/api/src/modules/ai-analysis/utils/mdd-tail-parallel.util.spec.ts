@@ -1,12 +1,15 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import {
+  buildSection5LlmContext,
   draftThroughSection4ForTailParallelFirstPass,
   ensureSection5TailParallelPlaceholder,
   extractContratosRoutesTableOnly,
   isTailParallelFirstPassDraft,
   mergePostCriticParallelResults,
   mergeTailParallelResults,
+  preflightSanitizeDraftForSection5,
+  truncateSection3SqlForLlmContext,
 } from "./mdd-tail-parallel.util.js";
 import { MDD_SECTION5_TAIL_PLACEHOLDER } from "./mdd-tail-parallel.config.js";
 import { applyDeterministicCrossConsistencyFixes } from "./mdd-sanitize.js";
@@ -213,8 +216,8 @@ describe("mergeTailParallelResults", () => {
         integrationSectionMd: `## 7. Infraestructura\n\n${s7Body}`,
       },
     );
-    expect(merged.mddDraft).toContain("Docker Compose");
-    expect(merged.mddDraft).not.toMatch(/\(Pendiente: Ingeniero de Integración\)/);
+    assert.ok(merged.mddDraft?.includes("Docker Compose"));
+    assert.ok(!merged.mddDraft?.match(/\(Pendiente: Ingeniero de Integración\)/));
   });
 });
 
@@ -271,6 +274,45 @@ describe("draftThroughSection4ForTailParallelFirstPass", () => {
     const out = draftThroughSection4ForTailParallelFirstPass(BASE_DRAFT);
     assert.ok(out.includes("Contratos de API"));
     assert.ok(!out.includes("## 6. Seguridad"));
+  });
+});
+
+describe("preflightSanitizeDraftForSection5", () => {
+  it("cierra fence §4 abierto", () => {
+    const draft = [
+      "## 4. Contratos de API",
+      "",
+      "```json",
+      '{ "x": 1 }',
+      "",
+      "## 5. Lógica y Edge Cases",
+      "",
+      "Reglas BDD.",
+    ].join("\n");
+    const { draft: fixed, closedOpenFences } = preflightSanitizeDraftForSection5(draft);
+    assert.strictEqual(closedOpenFences, true);
+    assert.ok(fixed.includes("Reglas BDD."));
+    assert.equal((fixed.match(/```/g) ?? []).length % 2, 0);
+  });
+});
+
+describe("buildSection5LlmContext", () => {
+  it("excluye §5/§6/§7 e incluye solo §1–§4 estructurado", () => {
+    const ctx = buildSection5LlmContext(BASE_DRAFT);
+    assert.ok(ctx.includes("### §1 Contexto"));
+    assert.ok(ctx.includes("### §4 Contratos"));
+    assert.ok(!ctx.includes("## 6. Seguridad"));
+    assert.ok(!ctx.includes("## 7. Infraestructura"));
+    assert.ok(!ctx.includes("Pendiente: paso dedicado"));
+    assert.ok(!ctx.includes("```json"));
+  });
+
+  it("trunca DDL §3 largo", () => {
+    const longSql = Array.from({ length: 80 }, (_, i) => `CREATE TABLE t${i} (id INT);`).join("\n");
+    const body = `\`\`\`sql\n${longSql}\n\`\`\``;
+    const out = truncateSection3SqlForLlmContext(body);
+    assert.ok(out.includes("líneas omitidas"));
+    assert.ok(!out.includes("CREATE TABLE t79"));
   });
 });
 

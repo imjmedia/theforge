@@ -6,8 +6,13 @@ import type { MddStructured } from "../state/mdd-structured.schema.js";
 import type { MDDStateType } from "../state/index.js";
 import { mergeSection6AvoidingRegression } from "./mdd-credential-storage.util.js";
 import { mergeMddStructured } from "./mdd-merge-structured.js";
+import {
+  recoverMisplacedContratosFromSection3,
+  repairMergeBaselineBeforeApiContractsMerge,
+} from "./mdd-api-contracts-merge.util.js";
 import { isPlaceholderSeguridad, recoverSeguridadItemsFromRawLlmText } from "./mdd-security-parse.js";
 import {
+  draftHasPersistableSection4,
   draftHasSubstantialSection6,
   draftHasSubstantialSection7,
   isSection5SectionRegression,
@@ -26,10 +31,16 @@ import {
   isMddSectionPipelinePlaceholderBody,
   mddHasDuplicateSectionHeadings,
   deduplicateAndReorderMddSections,
+  deduplicateMddDraftSections,
   replaceMddSection5Body,
   replaceSection6Or7InDraft,
   seguridadItemsToSection6Markdown,
 } from "./mdd-sanitize.js";
+import { normalizeGluedSection4HeadingInDraft } from "./mdd-sanitize/contratos-format.js";
+import {
+  closeUnclosedFencesBeforeCanonicalH2,
+  findH2HeadingMatch,
+} from "./mdd-sanitize/section-fence.util.js";
 import { MDD_SECTION5_TAIL_PLACEHOLDER } from "./mdd-tail-parallel.config.js";
 
 export type TailParallelNodeResult = Partial<MDDStateType> & {
@@ -125,6 +136,77 @@ export function extractContratosRoutesTableOnly(section4Body: string | null | un
   return withoutJson.length > 1800 ? `${withoutJson.slice(0, 1800)}\n...(§4 truncado)` : withoutJson;
 }
 
+/** Líneas máximas de DDL §3 incluidas en el contexto LLM de §5. */
+export const SECTION5_SECTION3_SQL_MAX_LINES = 45;
+
+export type Section5PreflightResult = {
+  draft: string;
+  hadDuplicateHeadings: boolean;
+  closedOpenFences: boolean;
+};
+
+/**
+ * Pre-vuelo antes de regenerar §5: cierra fences abiertos y advierte si hay headings duplicados.
+ * El borrador saneado se usa para contexto LLM y merge (evita §4 fence abierto tragándose §5–§7).
+ */
+export function preflightSanitizeDraftForSection5(draft: string): Section5PreflightResult {
+  const trimmed = (draft ?? "").trim();
+  const hadDuplicateHeadings = mddHasDuplicateSectionHeadings(trimmed);
+  if (hadDuplicateHeadings) {
+    console.warn(
+      "[MDD:Section5:preflight] headings duplicados §1–§7 detectados — el merge puede fallar si persisten",
+    );
+  }
+  const sanitized = closeUnclosedFencesBeforeCanonicalH2(trimmed);
+  const closedOpenFences = sanitized !== trimmed;
+  if (closedOpenFences) {
+    console.warn("[MDD:Section5:preflight] cerrado fence abierto antes de H2 canónico (§4→§5)");
+  }
+  return { draft: sanitized, hadDuplicateHeadings, closedOpenFences };
+}
+
+/** Resume §3 para LLM: primeras N líneas del bloque SQL + indicador de truncado. */
+export function truncateSection3SqlForLlmContext(body: string | null | undefined): string {
+  const raw = (body ?? "").trim();
+  if (!raw) return "(§3 pendiente — inferir entidades desde §1–§2)";
+
+  const sqlMatch = raw.match(/```sql\s*\n([\s\S]*?)```/i);
+  if (sqlMatch?.[1]) {
+    const lines = sqlMatch[1].split("\n");
+    if (lines.length <= SECTION5_SECTION3_SQL_MAX_LINES) return raw;
+    const head = lines.slice(0, SECTION5_SECTION3_SQL_MAX_LINES).join("\n");
+    const tableCount = (sqlMatch[1].match(/\bCREATE\s+TABLE\b/gi) ?? []).length;
+    return `\`\`\`sql\n${head}\n-- ... (${lines.length - SECTION5_SECTION3_SQL_MAX_LINES} líneas omitidas; ~${tableCount} tablas)\n\`\`\``;
+  }
+
+  const lines = raw.split("\n");
+  if (lines.length <= SECTION5_SECTION3_SQL_MAX_LINES) return raw;
+  return `${lines.slice(0, SECTION5_SECTION3_SQL_MAX_LINES).join("\n")}\n...(§3 DDL truncado: ${lines.length} líneas totales)`;
+}
+
+/**
+ * Contexto estructurado para el LLM de §5: solo §1–§4 (§5/§6/§7 excluidas).
+ * §3 resumido; §4 solo tabla de rutas / headings (sin bloques ```json```).
+ */
+export function buildSection5LlmContext(draft: string): string {
+  const { draft: sanitized } = preflightSanitizeDraftForSection5(draft);
+  const parts: string[] = [
+    "**Contexto estructurado (solo §1–§4; §5, §6 y §7 excluidas del input):**",
+    "",
+  ];
+  const s1 = extractContextSectionBody(sanitized);
+  const s2 = extractArquitecturaSectionBody(sanitized);
+  const s3 = truncateSection3SqlForLlmContext(extractSection3Body(sanitized));
+  const s4Routes = extractContratosRoutesTableOnly(extractContratosSectionBody(sanitized));
+
+  if (s1) parts.push("### §1 Contexto", "", s1, "");
+  if (s2) parts.push("### §2 Arquitectura y Stack", "", s2, "");
+  parts.push("### §3 Modelo de Datos (DDL resumido)", "", s3, "");
+  parts.push("### §4 Contratos (tabla de rutas; sin payloads JSON)", "", s4Routes, "");
+
+  return parts.join("\n");
+}
+
 /** Contexto acotado para security/integration en post_critic_parallel (F3). */
 export function buildTrimmedTailAgentContext(draft: string): string {
   const trimmed = (draft ?? "").trim();
@@ -161,8 +243,11 @@ export function ensureSection5TailParallelPlaceholder(draft: string): string {
   const trimmed = (draft ?? "").trim();
   if (!trimmed) return trimmed;
 
-  const hasSection5H2 = /(?:^|\n)##\s*5\.\s*Lógica\s+y\s*Edge\s+Cases\b/i.test(trimmed);
-  if (hasSection5H2) {
+  const hasRealSection5H2 = findH2HeadingMatch(
+    trimmed,
+    /##\s*5\.\s*Lógica\s+y\s*Edge\s+Cases/i,
+  );
+  if (hasRealSection5H2) {
     if (mddHasDuplicateSectionHeadings(trimmed)) {
       return deduplicateAndReorderMddSections(trimmed);
     }
@@ -327,7 +412,13 @@ export function mergePostCriticParallelResults(
   secResult: TailParallelNodeResult,
   intResult: TailParallelNodeResult,
 ): Partial<MDDStateType> {
-  let finalDraft = (apiResult.mddDraft ?? state.mddDraft ?? "").trim();
+  let finalDraft = repairMergeBaselineBeforeApiContractsMerge(
+    (apiResult.mddDraft ?? state.mddDraft ?? "").trim(),
+  );
+  finalDraft = normalizeGluedSection4HeadingInDraft(finalDraft);
+  if (!draftHasPersistableSection4(finalDraft)) {
+    finalDraft = recoverMisplacedContratosFromSection3(finalDraft);
+  }
   finalDraft = ensureSection5TailParallelPlaceholder(finalDraft);
 
   const seguridad = secResult.mddStructured?.seguridad;
@@ -395,6 +486,13 @@ export function mergePostCriticParallelResults(
   }
 
   finalDraft = assertPostCriticTailSectionsInDraft(finalDraft, secResult, intResult);
+
+  finalDraft = deduplicateMddDraftSections(closeUnclosedFencesBeforeCanonicalH2(finalDraft));
+  if (mddHasDuplicateSectionHeadings(finalDraft)) {
+    console.warn(
+      "[MDD:PostCriticMerge] headings duplicados §1–§7 persisten tras dedupe+fence",
+    );
+  }
 
   let mergedStructured = mergeMddStructured(
     state.mddStructured ?? undefined,

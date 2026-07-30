@@ -12,6 +12,7 @@ import {
 } from "./mdd-diagram-suggestions.js";
 import {
   extractSection3Body,
+  extractSection4Body,
   extractSection5Body,
   finalizeMddDeliverable,
   getSection6Or7Range,
@@ -36,6 +37,9 @@ import {
   extractContratosSectionBody,
   isContratosSectionRegression,
 } from "./mdd-sanitize/contratos-format.js";
+import { ensureDocumentFenceParity } from "./mdd-sanitize/section-fence.util.js";
+import { extractBestSection5Body } from "./mdd-sanitize/section-merge.js";
+import { logMddPersistFenceDiag } from "./mdd-persist-fence-diag.util.js";
 import {
   enrichMddWithUiUxDesignIntent,
   reconcileUiUxDesignIntent,
@@ -163,12 +167,23 @@ function restoreSectionBodyAfterNormalize(
   extractBody: (draft: string) => string | null,
   replaceBody: (draft: string, body: string) => string,
   hasSubstantial: (draft: string) => boolean,
+  sectionLabel?: string,
 ): string {
-  if (mddHasDuplicateSectionHeadings(source)) return normalized;
+  if (mddHasDuplicateSectionHeadings(source)) {
+    if (sectionLabel === "§5") {
+      console.warn("[MDD:PrepareRestore] §5 skip restore — source tiene headings duplicados");
+    }
+    return normalized;
+  }
   const srcBody = extractBody(source);
   if (!srcBody?.trim() || !hasSubstantial(source)) return normalized;
   if (hasSubstantial(normalized)) return normalized;
-  return replaceBody(normalized, srcBody);
+  const normLen = extractBody(normalized)?.length ?? 0;
+  const restored = replaceBody(normalized, srcBody);
+  if (sectionLabel === "§5" && restored !== normalized) {
+    console.warn(`[MDD:PrepareRestore] §5 ${normLen}→${srcBody.length}`);
+  }
+  return restored;
 }
 
 function restoreSection2AfterNormalize(source: string, normalized: string): string {
@@ -198,6 +213,7 @@ function restoreSection5AfterNormalize(source: string, normalized: string): stri
     extractSection5Body,
     replaceMddSection5Body,
     draftHasSubstantialSection5,
+    "§5",
   );
 }
 
@@ -242,6 +258,13 @@ export type PrepareMddForOutputOptions = {
   formatForPersist?: boolean;
   /** Snapshots §6/§7 (securitySectionMd, post_critic snapshots) para preserve. */
   tailSnapshotSource?: import("./mdd-section-preserve.util.js").TailSectionSnapshotSource | null;
+  /** Secciones a omitir en preserve/guard (p. ej. §5 objetivo + §6/§7 en regen section-pipeline). */
+  preserveExcludeSections?: readonly number[];
+  /**
+   * Vista previa en streaming: omite dedupe reorder, SSOT repair y enriquecimiento UI async.
+   * El gate de entrega sigue evaluándose en la pasada final (`formatForPersist: true`).
+   */
+  streamPreview?: boolean;
 };
 
 export async function prepareMddForOutput(
@@ -251,6 +274,7 @@ export async function prepareMddForOutput(
   const resolver = options?.resolver ?? heuristicUiComponentResolver;
   const inputDraftBaseline =
     typeof input === "string" ? input.trim() : (input.mddDraft ?? "").trim();
+  const streamPreview = options?.streamPreview === true;
   let raw: string;
   if (typeof input === "string") {
     raw = input;
@@ -265,7 +289,18 @@ export async function prepareMddForOutput(
       raw = draft;
     }
   }
-  raw = deduplicateMddDraftSections(raw.trim());
+  raw = streamPreview ? raw.trim() : deduplicateMddDraftSections(raw.trim());
+  if (streamPreview && mddHasDuplicateSectionHeadings(raw)) {
+    raw = deduplicateMddDraftSections(raw);
+  }
+  const formatForPersistEarly = options?.formatForPersist === true;
+  const hasTailSnapshot = !!(
+    options?.tailSnapshotSource &&
+    Object.values(options.tailSnapshotSource).some((v) => typeof v === "string" && v.trim().length > 0)
+  );
+  console.log(
+    `[MDD:PrepareOutput:diag] start formatForPersist=${formatForPersistEarly} hasTailSnapshot=${hasTailSnapshot} §5=${extractSection5Body(raw)?.length ?? 0} draftLen=${raw.length}`,
+  );
   const preserved =
     options?.preservedGovernance?.trim() ||
     extractGovernanceSection(raw) ||
@@ -293,61 +328,69 @@ export async function prepareMddForOutput(
     uiMcpLabel && uiMcpLabel.length > 0
       ? injectUiMcpIntoMddFrontendSection(withComponentDiagram, uiMcpLabel)
       : withComponentDiagram;
-  const enriched = await enrichMddWithUiUxDesignIntent(withUiMcpFrontend, resolver);
+  const enriched = streamPreview
+    ? withUiMcpFrontend
+    : await enrichMddWithUiUxDesignIntent(withUiMcpFrontend, resolver);
   const withGovernance = ensureMddGovernanceSection(enriched, preserved);
-  const reconciled = await reconcileUiUxDesignIntent(
-    finalizeMddDeliverable(withGovernance, {
-      baseline: options?.baselineDraft?.trim() || raw,
-    }),
-    resolver,
-  );
+  const reconciled = streamPreview
+    ? finalizeMddDeliverable(withGovernance, {
+        baseline: options?.baselineDraft?.trim() || raw,
+      })
+    : await reconcileUiUxDesignIntent(
+        finalizeMddDeliverable(withGovernance, {
+          baseline: options?.baselineDraft?.trim() || raw,
+        }),
+        resolver,
+      );
   const markdown = applyPreDeliveryGateFixes(reconciled);
   let finalMarkdown = markdown;
   const formatForPersist = options?.formatForPersist === true;
   try {
-    const { rebuildDomainInventoryPreferringBrd } = await import(
-      "../../engine/domain-inventory-persist.util.js"
-    );
-    const inventory =
-      options?.brdMarkdown?.trim() || options?.dbgaMarkdown?.trim()
-        ? rebuildDomainInventoryPreferringBrd({
-            brdMarkdown: options.brdMarkdown,
-            dbgaMarkdown: options.dbgaMarkdown,
-            mddMarkdown: markdown,
-          })
-        : undefined;
-    if (formatForPersist) {
-      finalMarkdown = prepareMddMarkdownForPersist(finalMarkdown);
-    }
-    const contratosBeforeSsot = extractContratosSectionBody(finalMarkdown);
-    const { reconcileMddSsotBeforeDeliveryGate } = await import(
-      "../../engine/mdd-ssot-repair.util.js"
-    );
-    const repaired = reconcileMddSsotBeforeDeliveryGate(finalMarkdown, {
-      brdMarkdown: options?.brdMarkdown,
-      dbgaMarkdown: options?.dbgaMarkdown,
-      specMarkdown: options?.specMarkdown,
-      inventory,
-    });
-    if (
-      repaired.section3Injected.length > 0 ||
-      repaired.uatInjected.length > 0 ||
-      repaired.section4Injected.length > 0 ||
-      repaired.platformAnnotated.length > 0
-    ) {
-      finalMarkdown = formatForPersist
-        ? prepareMddMarkdownForPersist(repaired.markdown)
-        : applyPreDeliveryGateFixes(repaired.markdown);
-      console.log(
-        `[MDD:DeliveryGate] SSOT repair — §3:${repaired.section3Injected.length} UAT:${repaired.uatInjected.length} §4:${repaired.section4Injected.length} platform:${repaired.platformAnnotated.length}`,
+    if (!streamPreview) {
+      const { rebuildDomainInventoryPreferringBrd } = await import(
+        "../../engine/domain-inventory-persist.util.js"
       );
-    }
-    const contratosAfterSsot = extractContratosSectionBody(finalMarkdown);
-    if (isContratosSectionRegression(contratosBeforeSsot, contratosAfterSsot) && contratosBeforeSsot) {
-      finalMarkdown = replaceMddSection4Body(finalMarkdown, contratosBeforeSsot);
-      console.warn(
-        `[MDD:DeliveryGate] §4 restaurada tras SSOT repair (len ${contratosAfterSsot?.length ?? 0}→${contratosBeforeSsot.length})`,
+      const inventory =
+        options?.brdMarkdown?.trim() || options?.dbgaMarkdown?.trim()
+          ? rebuildDomainInventoryPreferringBrd({
+              brdMarkdown: options.brdMarkdown,
+              dbgaMarkdown: options.dbgaMarkdown,
+              mddMarkdown: markdown,
+            })
+          : undefined;
+      if (formatForPersist) {
+        finalMarkdown = prepareMddMarkdownForPersist(finalMarkdown);
+      }
+      const contratosBeforeSsot = extractContratosSectionBody(finalMarkdown);
+      const { reconcileMddSsotBeforeDeliveryGate } = await import(
+        "../../engine/mdd-ssot-repair.util.js"
       );
+      const repaired = reconcileMddSsotBeforeDeliveryGate(finalMarkdown, {
+        brdMarkdown: options?.brdMarkdown,
+        dbgaMarkdown: options?.dbgaMarkdown,
+        specMarkdown: options?.specMarkdown,
+        inventory,
+      });
+      if (
+        repaired.section3Injected.length > 0 ||
+        repaired.uatInjected.length > 0 ||
+        repaired.section4Injected.length > 0 ||
+        repaired.platformAnnotated.length > 0
+      ) {
+        finalMarkdown = formatForPersist
+          ? prepareMddMarkdownForPersist(repaired.markdown)
+          : applyPreDeliveryGateFixes(repaired.markdown);
+        console.log(
+          `[MDD:DeliveryGate] SSOT repair — §3:${repaired.section3Injected.length} UAT:${repaired.uatInjected.length} §4:${repaired.section4Injected.length} platform:${repaired.platformAnnotated.length}`,
+        );
+      }
+      const contratosAfterSsot = extractContratosSectionBody(finalMarkdown);
+      if (isContratosSectionRegression(contratosBeforeSsot, contratosAfterSsot) && contratosBeforeSsot) {
+        finalMarkdown = replaceMddSection4Body(finalMarkdown, contratosBeforeSsot);
+        console.warn(
+          `[MDD:DeliveryGate] §4 restaurada tras SSOT repair (len ${contratosAfterSsot?.length ?? 0}→${contratosBeforeSsot.length})`,
+        );
+      }
     }
   } catch (err) {
     console.warn(
@@ -359,7 +402,7 @@ export async function prepareMddForOutput(
     options?.tailSnapshotSource,
   );
   let prePreserveMarkdown = finalMarkdown;
-  if (mddHasDuplicateSectionHeadings(prePreserveMarkdown)) {
+  if (!streamPreview && mddHasDuplicateSectionHeadings(prePreserveMarkdown)) {
     const deduped = deduplicateAndReorderMddSections(prePreserveMarkdown);
     if (!mddHasDuplicateSectionHeadings(deduped)) {
       prePreserveMarkdown = restoreSections6And7IfRegressed(prePreserveMarkdown, deduped);
@@ -373,30 +416,46 @@ export async function prepareMddForOutput(
   const preserveBaselineSafe = mddHasDuplicateSectionHeadings(preserveBaseline)
     ? prePreserveMarkdown
     : preserveBaseline;
+  const preserveOpts =
+    options?.preserveExcludeSections?.length
+      ? { excludeSections: options.preserveExcludeSections }
+      : undefined;
   const preservedMarkdown = preserveValidatedSectionsFromSnapshots(
     options?.tailSnapshotSource ?? {},
-    preserveValidatedSectionsIfSubstantial(preserveBaselineSafe, prePreserveMarkdown),
+    preserveValidatedSectionsIfSubstantial(preserveBaselineSafe, prePreserveMarkdown, preserveOpts),
   );
   let gatedMarkdown = preservedMarkdown;
-  if (mddHasDuplicateSectionHeadings(gatedMarkdown)) {
+  if (!streamPreview && mddHasDuplicateSectionHeadings(gatedMarkdown)) {
     const deduped = deduplicateAndReorderMddSections(gatedMarkdown);
     if (!mddHasDuplicateSectionHeadings(deduped)) {
       gatedMarkdown = restoreSections6And7IfRegressed(gatedMarkdown, deduped);
       console.warn("[MDD:PrepareOutput] dedupe post-preserve eliminó headings duplicados");
     }
   }
-  const tailGuard = guardValidatedSectionsForPersist(preserveBaselineSafe, gatedMarkdown, "prepareMddForOutput");
+  const tailGuard = guardValidatedSectionsForPersist(
+    preserveBaselineSafe,
+    gatedMarkdown,
+    "prepareMddForOutput",
+    preserveOpts,
+  );
   gatedMarkdown = tailGuard.markdown;
   // guardValidatedSectionsForPersist puede reinyectar §5/§6/§7 con un heading nuevo
   // cuando el regex no matchea el existente (inserta bloque en vez de reemplazar).
   // Dedupe de nuevo tras el guard para no dejar headings duplicados sin limpiar.
-  if (mddHasDuplicateSectionHeadings(gatedMarkdown)) {
+  if (!streamPreview && mddHasDuplicateSectionHeadings(gatedMarkdown)) {
     const deduped = deduplicateAndReorderMddSections(gatedMarkdown);
     if (!mddHasDuplicateSectionHeadings(deduped)) {
       gatedMarkdown = restoreSections6And7IfRegressed(gatedMarkdown, deduped);
       console.warn("[MDD:PrepareOutput] dedupe post-guard eliminó headings duplicados");
     }
   }
+  // Salida con fences cerrados (incl. EOF): idempotente en 2ª pasada de prepare al persistir;
+  // evita PersistCheck / DeliveryGate «fence sin cerrar al final» (jobs 85, 98).
+  gatedMarkdown = ensureDocumentFenceParity(gatedMarkdown);
+  console.log(
+    `[MDD:PrepareOutput:diag] pre-gate §4=${extractSection4Body(gatedMarkdown)?.length ?? 0} §5=${extractSection5Body(gatedMarkdown)?.length ?? 0} §5best=${extractBestSection5Body(gatedMarkdown)?.length ?? 0}`,
+  );
+  logMddPersistFenceDiag("PrepareOutput:pre-gate", gatedMarkdown);
   const deliveryGate = validateMddForDeliveryMemo(gatedMarkdown, {
     brdMarkdown: options?.brdMarkdown,
     dbgaMarkdown: options?.dbgaMarkdown,
