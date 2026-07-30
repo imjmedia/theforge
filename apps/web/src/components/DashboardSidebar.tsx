@@ -587,7 +587,9 @@ export function DashboardSidebar({
     <div
       className={cn(
         "relative flex w-full shrink-0 flex-col lg:z-40 lg:w-auto lg:shrink-0",
-        inWorkshop ? "h-[100dvh] min-h-[100dvh] max-h-[100dvh] bg-[var(--sidebar)] lg:overflow-hidden" : "h-[100dvh] min-h-[100dvh] max-h-[100dvh] bg-[var(--sidebar)] lg:overflow-hidden",
+        inWorkshop
+          ? "lg:h-full lg:min-h-0"
+          : "h-[100dvh] min-h-[100dvh] max-h-[100dvh] bg-[var(--sidebar)] lg:overflow-hidden",
       )}
     >
       <header
