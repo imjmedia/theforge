@@ -6,6 +6,7 @@ import type { MDDStateType } from "../state/index.js";
 import {
   ensureContratosSection,
   extractSection3Body,
+  extractSection5Body,
   getMddDraftSummary,
   getSection6Or7Range,
   getSectionsToPreserveFromExecutorPlan,
@@ -20,6 +21,7 @@ import {
   deduplicateMddDraftSections,
   mddHasDuplicateSectionHeadings,
 } from "../utils/mdd-sanitize.js";
+import { closeUnclosedFencesBeforeCanonicalH2 } from "../utils/mdd-sanitize/section-fence.util.js";
 import { reconcileUiUxDesignIntent } from "../utils/mdd-enrich-uiux-intent.js";
 import {
   preserveTailSectionsIfSubstantial,
@@ -27,8 +29,10 @@ import {
   preserveSection3FromDataModelSnapshot,
   preserveSection4FromApiContractsSnapshot,
   draftHasPersistableSection4,
+  draftHasSubstantialSection5,
   preserveTailSectionsFromSnapshots,
   preserveValidatedSectionsIfSubstantial,
+  preserveSection5IfSubstantial,
 } from "../utils/mdd-section-preserve.util.js";
 import { shouldPreferDraftOverStructured } from "../utils/mdd-prepare-output.js";
 import { mddStructuredToMarkdown } from "../render/mdd-structured-to-markdown.js";
@@ -53,10 +57,17 @@ function hasStructuredContent(mdd: MDDStateType["mddStructured"]): boolean {
  * si no, normaliza mddDraft (unescape, Contexto a viñetas, tablas, TechnicalMetadata, etc.).
  * Sin LLM ni tools.
  */
-export function createMddFormatterNode(): (state: MDDStateType) => Promise<Partial<MDDStateType>> {
+export function createMddFormatterNode(options?: {
+  /** Regen §5 section-pipeline: omite inflado determinista de §4. */
+  lite?: boolean;
+}): (state: MDDStateType) => Promise<Partial<MDDStateType>> {
   return async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
     const startedAt = Date.now();
     const currentDraft = (state.mddDraft ?? "").trim();
+    const normalizeOpts =
+      options?.lite || draftHasSubstantialSection5(currentDraft)
+        ? { skipContratosInflate: true }
+        : undefined;
     const currentDraftLen = currentDraft.length;
     const section3Body = extractSection3Body(currentDraft);
     const draftHasSubstantialSection3 =
@@ -69,6 +80,14 @@ export function createMddFormatterNode(): (state: MDDStateType) => Promise<Parti
     const draftHasSubstantialSection6 =
       section6Body.length > 200 && !/^\s*\(Pendiente[^)]*\)\s*$/im.test(section6Body);
     const draftHasSubstantialSection4Local = draftHasPersistableSection4(currentDraft);
+    const entrySection5Len = extractSection5Body(currentDraft)?.length ?? 0;
+    LOG(
+      "entry draftLen=%s §5=%s §6=%s dup=%s",
+      currentDraftLen,
+      entrySection5Len,
+      section6Body.length,
+      mddHasDuplicateSectionHeadings(currentDraft),
+    );
     // No reemplazar por mddStructured si: directiva aceptada, §3 sustancial, o §6 sustancial (evitar pisar Seguridad generada por Security node).
     const preserveDraftFromArchitect =
       (state.acceptedProposalDirective ?? "").trim().length > 0 && currentDraftLen > 500;
@@ -90,7 +109,7 @@ export function createMddFormatterNode(): (state: MDDStateType) => Promise<Parti
         const rendered = mddStructuredToMarkdown(hydrated);
         if (rendered.trim().length > 0) {
           let markdown = await reconcileUiUxDesignIntent(
-            finalizeMddDeliverable(normalizeMddFormat(rendered)),
+            finalizeMddDeliverable(normalizeMddFormat(rendered, normalizeOpts)),
           );
           markdown = preserveValidatedSectionsIfSubstantial(currentDraft, markdown);
           if (currentDraftLen > markdown.length * 1.35 || draftHasSubstantialSection3) {
@@ -110,7 +129,7 @@ export function createMddFormatterNode(): (state: MDDStateType) => Promise<Parti
       else if (draftHasSubstantialSection6) LOG("draft con §6 sustancial; no reemplazar por mddStructured, se normaliza draft");
       else LOG("draft con §3 sustancial; no reemplazar por mddStructured, se normaliza draft");
     }
-    const draft = currentDraft;
+    const draft = closeUnclosedFencesBeforeCanonicalH2(currentDraft);
     if (!draft || draft.length < 50) {
       LOG("draft vacío o muy corto, sin cambios");
       return {};
@@ -122,8 +141,14 @@ export function createMddFormatterNode(): (state: MDDStateType) => Promise<Parti
             ensureContratosSection(
               replaceContextWhenOnlyMetadata(sanitizeContextKeyValueAndObject(sanitizeContextSection(draft))),
             ),
+            normalizeOpts,
           ),
         ),
+      );
+      LOG(
+        "post-normalize §5=%s dup=%s",
+        extractSection5Body(formatted)?.length ?? 0,
+        mddHasDuplicateSectionHeadings(formatted),
       );
       if (state.executorControlled === true && state.previousMddDraftForMerge?.trim()) {
         const preserve = getSectionsToPreserveFromExecutorPlan(state.sectionsToRun);
@@ -150,10 +175,19 @@ export function createMddFormatterNode(): (state: MDDStateType) => Promise<Parti
         state.apiContractsArchitectMddDraftSnapshot,
         formatted,
       );
+      const postPreserveSection5Len = extractSection5Body(formatted)?.length ?? 0;
+      LOG(
+        "post-preserveTail §5=%s extract=%s",
+        postPreserveSection5Len,
+        postPreserveSection5Len > 0 ? "ok" : "null",
+      );
       if (mddHasDuplicateSectionHeadings(formatted)) {
+        const s5BeforeDedupe = extractSection5Body(formatted)?.length ?? 0;
         formatted = deduplicateMddDraftSections(formatted);
-        LOG("dedupe post-format eliminó headings duplicados len=%s", formatted.length);
+        const s5AfterDedupe = extractSection5Body(formatted)?.length ?? 0;
+        LOG("post-dedupe §5 %s→%s len=%s", s5BeforeDedupe, s5AfterDedupe, formatted.length);
       }
+      formatted = preserveSection5IfSubstantial(draft, formatted);
       const sum = getMddDraftSummary(formatted);
       logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, 0, formatted.length));
       LOG("formateado len=%s -> %s section2=%s", draft.length, sum.length, sum.section2);

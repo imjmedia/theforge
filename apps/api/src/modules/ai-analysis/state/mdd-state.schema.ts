@@ -188,6 +188,10 @@ export const mddStateSchema = z.object({
   deliveryGatePlaceholderFingerprint: z.string().optional(),
   /** F3: §4∥§6∥§7 ya ejecutados tras critic (omitir tail_parallel en primera pasada). */
   postCriticParallelDone: z.boolean().optional(),
+  /** §5 sin cambios tras nodo section5 — omitir 2ª pasada format_after_architect. */
+  section5FormatSkipped: z.boolean().optional(),
+  /** Reintentos del nodo stack_architect cuando §2 sigue placeholder. */
+  stackArchitectAttempt: z.number().int().min(0).optional(),
   /** True tras primera pasada del Auditor (score/gaps only — no re-enrutar a auditor). */
   auditorRan: z.boolean().optional(),
 });
@@ -249,5 +253,7 @@ export const defaultMDDState: MDDState = {
   deliveryGateFixTarget: undefined,
   deliveryGatePlaceholderFingerprint: undefined,
   postCriticParallelDone: undefined,
+  section5FormatSkipped: undefined,
+  stackArchitectAttempt: undefined,
   auditorRan: undefined,
 };

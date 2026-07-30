@@ -32,10 +32,12 @@ import {
   restoreArquitecturaSectionFromBaselineIfMissing,
   preserveUntouchedMddSectionsFromBaseline,
   replaceContextWhenOnlyMetadata,
+  replaceMddSection4Body,
   sanitizeContextSection,
   tryMergeSingleArchitectSectionIntoDraft,
   deduplicateMddDraftSections,
 } from "../utils/mdd-sanitize.js";
+import { repairMergeBaselineBeforeApiContractsMerge } from "../utils/mdd-api-contracts-merge.util.js";
 import {
   architectScopePromptPrefix,
   architectScopeSectionNumber,
@@ -236,9 +238,6 @@ function insertDiagramSectionIntoDraft(draft: string, diagramSection: string): s
   return draft.trimEnd() + "\n\n" + diagramSection.trim() + "\n";
 }
 
-/** Regex para sección 4 (Contratos de API). */
-const SECTION4_CONTRATOS_HEADING_REGEX = /##\s*4\.\s*Contratos\s+de\s+API|##\s*3\.\s*Contratos\s+de\s+API|##\s*Contratos\s+de\s+API/i;
-
 /** Extrae el cuerpo de la sección 4 (Contratos de API) de un draft. */
 function extractContratosBody(draft: string): string | null {
   return extractContratosSectionBody(draft);
@@ -265,22 +264,7 @@ function extractContratosFromArchitectResponse(text: string): string | null {
 
 /** Reemplaza el cuerpo de la sección 4 (Contratos de API) en draft. */
 function replaceContratosInDraft(draft: string, newContratosBody: string): string {
-  const match = draft.match(SECTION4_CONTRATOS_HEADING_REGEX);
-  if (!match) return draft;
-  const headingStart = draft.indexOf(match[0]);
-  const bodyStart = headingStart + match[0].length;
-  const afterHeadingRaw = draft.slice(bodyStart);
-  const afterHeading = afterHeadingRaw.replace(/^\s*\n+/, "");
-  const nextH2 = afterHeading.search(/\n##\s+/);
-  const bodyEnd =
-    nextH2 !== -1 ? bodyStart + (afterHeadingRaw.length - afterHeading.length) + nextH2 : draft.length;
-  return (
-    draft.slice(0, bodyStart) +
-    "\n\n" +
-    newContratosBody.trim() +
-    "\n\n" +
-    draft.slice(bodyEnd)
-  );
+  return replaceMddSection4Body(draft, newContratosBody);
 }
 
 /**
@@ -534,11 +518,18 @@ export function createMddSoftwareArchitectNode(
     const startedAt = Date.now();
     try {
       const draftTrimmed = (state.mddDraft ?? "").trim();
-      const { baseline: mergeBaseline, source: mergeBaselineSource } = resolveArchitectMergeBaseline(
+      const { baseline: mergeBaselineRaw, source: mergeBaselineSource } = resolveArchitectMergeBaseline(
         state,
         scope,
         draftTrimmed,
       );
+      const mergeBaseline =
+        scope === "api_contracts"
+          ? repairMergeBaselineBeforeApiContractsMerge(mergeBaselineRaw)
+          : mergeBaselineRaw;
+      if (scope === "api_contracts" && mergeBaseline !== mergeBaselineRaw) {
+        LOG("repaired §3 fences in merge baseline before api_contracts (len=%s→%s)", mergeBaselineRaw.length, mergeBaseline.length);
+      }
       LOG(
         "mergeBaseline source=%s len=%s draftTrimmedLen=%s previousLen=%s",
         mergeBaselineSource,
@@ -820,9 +811,22 @@ export function createMddSoftwareArchitectNode(
       }
       text = stripThinkingTags(text);
 
+      if (!text.trim() && scope === "stack") {
+        const stackRetry = await invokeLlmWithRetry(llm, messages, {
+          tag: "SoftwareArchitect:stack-empty-retry",
+        });
+        text = stripThinkingTags(stackRetry ? extractLlmText(stackRetry) : "");
+        if (text.trim()) {
+          LOG("§2 stack: respuesta tras reintento por LLM vacío (len=%s)", text.length);
+        }
+      }
+
       if (!text.trim()) {
         logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, 0), { scope, empty: true });
         LOG("LLM vacío, devolviendo borrador sin transformar");
+        if (scope === "stack") {
+          return { stackArchitectAttempt: (state.stackArchitectAttempt ?? 0) + 1 };
+        }
         return {};
       }
       const contextIntro = ((state.clarifiedScope ?? "").trim() || (draftTrimmed.slice(0, 800) + (draftTrimmed.length > 800 ? "…" : ""))).trim();
@@ -1236,6 +1240,12 @@ export function createMddSoftwareArchitectNode(
         scope === "api_contracts" && draftHasPersistableSection4(mddDraft)
           ? { apiContractsArchitectMddDraftSnapshot: mddDraft }
           : {};
+      const stackAttemptUpdate =
+        scope === "stack"
+          ? draftHasSubstantialSection2(mddDraft)
+            ? { stackArchitectAttempt: 0 }
+            : { stackArchitectAttempt: (state.stackArchitectAttempt ?? 0) + 1 }
+          : {};
 
       if (Object.keys(slice).length > 0) {
         const merged = mergeMddStructured(state.mddStructured ?? undefined, slice, state.mddDraft ?? "");
@@ -1247,6 +1257,7 @@ export function createMddSoftwareArchitectNode(
           ...stackSnapshotUpdate,
           ...dataModelSnapshotUpdate,
           ...apiContractsSnapshotUpdate,
+          ...stackAttemptUpdate,
         };
       }
       return {
@@ -1256,6 +1267,7 @@ export function createMddSoftwareArchitectNode(
         ...stackSnapshotUpdate,
         ...dataModelSnapshotUpdate,
         ...apiContractsSnapshotUpdate,
+        ...stackAttemptUpdate,
       };
     } catch (err) {
       LOG("error: %s", err instanceof Error ? err.message : String(err));

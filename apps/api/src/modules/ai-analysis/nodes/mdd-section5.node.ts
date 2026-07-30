@@ -18,8 +18,8 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage } from "@langchain/core/messages";
 import {
-  draftThroughSection4ForTailParallelFirstPass,
-  isTailParallelFirstPassDraft,
+  buildSection5LlmContext,
+  preflightSanitizeDraftForSection5,
 } from "../utils/mdd-tail-parallel.util.js";
 import { SECTION5_MDD_PROMPT } from "../prompts/load-prompts.js";
 import type { MDDStateType } from "../state/index.js";
@@ -33,7 +33,10 @@ import {
   replaceMddSection5Body,
   sanitizeContextSection,
   stripInstructionAndFeedbackBlocks,
+  deduplicateMddDraftSections,
+  mddHasDuplicateSectionHeadings,
 } from "../utils/mdd-sanitize.js";
+import { closeUnclosedFencesBeforeCanonicalH2 } from "../utils/mdd-sanitize/section-fence.util.js";
 import { isMddSectionPipelinePlaceholderBody } from "../utils/mdd-sanitize/section-merge.js";
 import { stripThinkingTags } from "../utils/mdd-security-parse.js";
 import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
@@ -49,7 +52,8 @@ const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Section5] ${m
  *  no toca el draft (deja que el loop lo marque como loop=true y avise). */
 export function createMddSection5Node(llm: BaseChatModel) {
   return async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
-    const currentDraft = (state.mddDraft ?? "").trim();
+    const preflight = preflightSanitizeDraftForSection5(state.mddDraft ?? "");
+    const currentDraft = preflight.draft;
     const section5Now = extractSection5Body(currentDraft);
     const section5Len = section5Now?.length ?? 0;
     LOG(
@@ -69,18 +73,10 @@ export function createMddSection5Node(llm: BaseChatModel) {
       const dbgaCore = (state.dbgaContent ?? "").trim();
       const dbgaBlock = dbgaCore ? `**Capacidades de negocio (DBGA):**\n${dbgaCore.slice(0, 3000)}\n\n` : "";
 
-      const firstPass = isTailParallelFirstPassDraft(currentDraft);
-      const draftSource = firstPass
-        ? draftThroughSection4ForTailParallelFirstPass(currentDraft)
-        : currentDraft;
-      const draftForLlm =
-        draftSource.length > 8000
-          ? draftSource.slice(0, 4000) + "\n\n...(truncado)...\n\n" + draftSource.slice(draftSource.length - 4000)
-          : draftSource;
-      const firstPassBlock = firstPass
-        ? "**Nota (pasada paralela):** §6 Seguridad y §7 Infraestructura se generan en otro agente en paralelo. Redacta §5 **solo** desde §1–§4, DBGA y alcance; no cites §6/§7 como hechos.\n\n"
-        : "";
-      const draftBlock = `${firstPassBlock}**Borrador actual del MDD (referencia; regenera SOLO ## 5):**\n${draftForLlm}\n\n`;
+      const draftForLlm = buildSection5LlmContext(currentDraft);
+      const draftBlock =
+        "**Borrador de referencia (solo §1–§4 + DBGA + alcance; regenera EXCLUSIVAMENTE ## 5):**\n" +
+        `${draftForLlm}\n\n`;
 
       const directivesBlock = getInternalDirectivesContext(state, "section5");
 
@@ -90,13 +86,13 @@ export function createMddSection5Node(llm: BaseChatModel) {
       const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], { tag: "Section5" });
       if (!response) {
         LOG("LLM sin respuesta tras reintentos — preservando draft actual");
-        return {};
+        return { section5FormatSkipped: true };
       }
       const raw = stripThinkingTags(extractLlmText(response));
       logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, raw.length));
       if (!raw.trim()) {
         LOG("LLM vacío, preservando draft actual");
-        return {};
+        return { section5FormatSkipped: true };
       }
 
       // Limpiar fences markdown que el LLM a veces envuelve la respuesta
@@ -124,12 +120,12 @@ export function createMddSection5Node(llm: BaseChatModel) {
 
       if (!cleaned || isMddSectionPipelinePlaceholderBody(cleaned)) {
         LOG("body regenerado es placeholder — preservando draft actual");
-        return {};
+        return { section5FormatSkipped: true };
       }
 
       if (cleaned.length < 100) {
         LOG("body regenerado demasiado corto (%d chars) — preservando draft actual", cleaned.length);
-        return {};
+        return { section5FormatSkipped: true };
       }
 
       const baselineBody = section5Now?.trim() ?? "";
@@ -143,18 +139,30 @@ export function createMddSection5Node(llm: BaseChatModel) {
           baselineBody.length,
           cleaned.length,
         );
-        return {};
+        return { section5FormatSkipped: true };
       }
 
-      const merged = replaceMddSection5Body(currentDraft, cleaned);
+      const draftForMerge = preflightSanitizeDraftForSection5(currentDraft).draft;
+      let merged = replaceMddSection5Body(draftForMerge, cleaned);
+      merged = deduplicateMddDraftSections(closeUnclosedFencesBeforeCanonicalH2(merged));
+      if (mddHasDuplicateSectionHeadings(merged)) {
+        LOG("headings duplicados persisten tras merge §5 — draftLen=%s", merged.length);
+      }
+      if (merged === draftForMerge && cleaned.length >= 100) {
+        LOG(
+          "merge no-op pese a body sustancial (%d chars) — posible ## 5 dentro de fence §4",
+          cleaned.length,
+        );
+        return { section5FormatSkipped: true };
+      }
       const sum = getMddDraftSummary(merged);
       LOG("ok nueva §5 len=%s totalDraftLen=%s section2=%s", cleaned.length, sum.length, sum.section2);
       logMddNodeOutput("Section5", merged);
-      return { mddDraft: merged };
+      return { mddDraft: merged, section5FormatSkipped: false };
     } catch (err) {
       LOG("error: %s", err instanceof Error ? err.message : String(err));
       // No tirar el draft — preservar el estado y dejar que el loop lo marque.
-      return {};
+      return { section5FormatSkipped: true };
     }
   };
 }

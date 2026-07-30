@@ -7,6 +7,7 @@ import type { MDDStateType } from "../state/index.js";
 import { getMddDraftSummary } from "../utils/mdd-sanitize.js";
 import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
 import { mergePostCriticParallelResults } from "../utils/mdd-tail-parallel.util.js";
+import { draftHasSubstantialSection4 } from "../utils/mdd-section-preserve.util.js";
 import { runApiContractsArchitectWithChunks } from "../utils/mdd-api-contracts-chunk.runner.js";
 import { createMddIntegrationNode } from "./mdd-integration.node.js";
 import { createMddSecurityNode } from "./mdd-security.node.js";
@@ -53,7 +54,7 @@ export function createMddPostCriticParallelNode(
     LOG(
       "ok parallel §4+§6+§7 draftLen=%s §4=%s §6=%s §7=%s",
       sum.length,
-      /##\s*4\.\s*Contratos/i.test(finalDraft) ? "✓" : "✗",
+      draftHasSubstantialSection4(finalDraft) ? "✓" : "✗",
       /##\s+(?:6\.\s*)?Seguridad\b/i.test(finalDraft) ? "✓" : "✗",
       /##\s+(?:7\.\s*)?(?:Infraestructura|Integración)\b/i.test(finalDraft) ? "✓" : "✗",
     );

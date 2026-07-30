@@ -26,6 +26,7 @@ import {
   seguridadItemsToSection6Markdown,
 } from "../utils/mdd-sanitize.js";
 import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
+import { resolveMddTailNodeHardTimeoutMs } from "../utils/mdd-llm-timeout.util.js";
 import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
 import { buildTrimmedTailAgentContext } from "../utils/mdd-tail-parallel.util.js";
 import {
@@ -131,7 +132,11 @@ export function createMddSecurityNode(llm: BaseChatModel, opts?: MddSecurityNode
       const prompt = `${SECURITY_ARCHITECT_MDD_PROMPT}\n\n---\n${context}`;
       const inputDraftLen = (state.mddDraft ?? "").trim().length;
       const startedAt = Date.now();
-      const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], { tag: "Security" });
+      const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], {
+        tag: "Security",
+        hardTimeoutMs: resolveMddTailNodeHardTimeoutMs(),
+        maxAttempts: 2,
+      });
       const rawText = response ? extractLlmText(response) : "";
       const text = stripThinkingTags(rawText);
       logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, rawText.length));

@@ -128,6 +128,10 @@ export const MDDStateAnnotation = Annotation.Root({
   deliveryGatePlaceholderFingerprint: Annotation<string | undefined>(),
   /** F3: post_critic_parallel completó §4∥§6∥§7 (skip tail_parallel). */
   postCriticParallelDone: Annotation<boolean | undefined>(),
+  /** §5 sin cambios: skip format_after_architect redundante. */
+  section5FormatSkipped: Annotation<boolean | undefined>(),
+  /** Reintentos stack_architect cuando §2 sigue placeholder. */
+  stackArchitectAttempt: Annotation<number | undefined>(),
   /** True tras primera pasada del Auditor — evita re-auditoría en gate loop. */
   auditorRan: Annotation<boolean | undefined>(),
 });

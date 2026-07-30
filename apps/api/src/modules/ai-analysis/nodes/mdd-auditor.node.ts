@@ -14,6 +14,7 @@ import { getInternalDirectivesContext } from "../utils/mdd-mesh-topology.js";
 import { auditorConstitutionRigorAppendix } from "../utils/mdd-complexity-rigor.js";
 import { domainInventoryPromptBlock } from "../utils/mdd-domain-prompt.util.js";
 import { extractLlmText, extractLlmToolCalls, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
+import { resolveMddAuditorHardTimeoutMs } from "../utils/mdd-llm-timeout.util.js";
 import {
   buildAuditorFeedbackFromGaps,
   computeDeterministicAuditorScore,
@@ -174,6 +175,11 @@ export function createMddAuditorNode(
     );
 
     try {
+      const auditorHardTimeoutMs = resolveMddAuditorHardTimeoutMs();
+      const auditorStartedAt = Date.now();
+      const auditorRemainingMs = () =>
+        Math.max(0, auditorHardTimeoutMs - (Date.now() - auditorStartedAt));
+
       const draftForLlm = truncateDraftForAuditorLlm(draft);
       let prompt =
         `${AUDITOR_MDD_PROMPT}\n\n---\n**Borrador completo del MDD:**\n${draftForLlm || "(vacío)"}\n\n` +
@@ -199,18 +205,22 @@ export function createMddAuditorNode(
       const MAX_EMPTY_FINAL_ATTEMPTS = 2;
 
       while (loopCount < MAX_TOOL_LOOPS) {
+        const remainingMs = auditorRemainingMs();
+        if (remainingMs <= 0) {
+          LOG("hard timeout %sms — abortando tool-loop", auditorHardTimeoutMs);
+          break;
+        }
         const isFinalIteration = loopCount === MAX_TOOL_LOOPS - 1;
         const useRetry =
           isFinalIteration ||
           (loopCount > 0 && emptyFinalAttempts > 0 && loopCount < MAX_TOOL_LOOPS - 1);
-        const response = useRetry
-          ? await invokeLlmWithRetry(llmWithTools, messages, {
-              tag: "Auditor:tools",
-              maxAttempts: isFinalIteration ? 3 : 2,
-              acceptToolCallsWithoutContent: true,
-              isResponseValid: (text) => text.trim().length > 0,
-            })
-          : await llmWithTools.invoke(messages);
+        const response = await invokeLlmWithRetry(llmWithTools, messages, {
+          tag: "Auditor:tools",
+          maxAttempts: useRetry ? (isFinalIteration ? 3 : 2) : 1,
+          acceptToolCallsWithoutContent: true,
+          isResponseValid: (text) => text.trim().length > 0,
+          hardTimeoutMs: remainingMs,
+        });
         if (!response) {
           LOG("tool-loop LLM sin respuesta tras reintentos (iter=%s); saliendo del loop", loopCount);
           lastContent = "";

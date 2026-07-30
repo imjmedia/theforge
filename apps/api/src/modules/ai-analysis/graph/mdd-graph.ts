@@ -32,7 +32,8 @@ import { createMddFormatSecIntNode } from "../nodes/mdd-format-sec-int.node.js";
 import { createMddPrepareOutputNode } from "../nodes/mdd-prepare-output.node.js";
 import { createMddBlackboardNode } from "../nodes/mdd-blackboard.node.js";
 import { draftHasSubstantialSections6And7 } from "../utils/mdd-delivery-gate-loop.util.js";
-import { draftIsSubstantialForScopedRepair } from "../utils/mdd-section-preserve.util.js";
+import { draftHasSubstantialSection2 } from "../utils/mdd-section-preserve.util.js";
+import { draftIsSubstantialForScopedRepair, isScopedSectionSealed } from "../utils/mdd-section-preserve.util.js";
 import { mddStateHasDomainAuthSkew } from "../utils/mdd-domain-prompt.util.js";
 import { detectSection3CompositionBlockers } from "../utils/schema-owner.util.js";
 import type { UserLLMRuntime } from "../../ai/providers/llm-runtime.types.js";
@@ -381,6 +382,9 @@ export async function createMddGraph(
     if (state.deliveryGateLoopActive === true && state.deliveryGateFixTarget === "section5") {
       return "prepare_output";
     }
+    if (state.section5FormatSkipped === true) {
+      return "format_after_redactor";
+    }
     return "format_after_architect";
   }
 
@@ -444,6 +448,10 @@ export async function createMddGraph(
 
   function routeAfterStackArchitectOneShot(state: MDDStateType): string {
     if (shouldShortCircuitGateLoopFix(state)) return "prepare_output";
+    const attempt = state.stackArchitectAttempt ?? 0;
+    if (!draftHasSubstantialSection2(state.mddDraft ?? "") && attempt < 2) {
+      return "stack_architect";
+    }
     return "data_model";
   }
 
@@ -472,7 +480,7 @@ export async function createMddGraph(
     const hasFeedback = !!(state.architectCriticFeedback?.trim());
     const attempts = state.architectCriticAttempts ?? 0;
     if (state.architectCriticPhase === "after_section3") {
-      if (hasFeedback && attempts <= 1) {
+      if (hasFeedback && attempts <= 1 && !isScopedSectionSealed(3, state)) {
         if (isTableOnlyCriticGap(state.architectCriticFeedback ?? "")) return "data_model_patch";
         return "data_model";
       }
@@ -517,6 +525,7 @@ export async function createMddGraph(
     .addConditionalEdges("stack_architect", routeAfterStackArchitectOneShot, {
       data_model: "data_model",
       prepare_output: "prepare_output",
+      stack_architect: "stack_architect",
     })
     .addConditionalEdges("data_model", routeAfterDataModelOneShot, {
       architect_critic: "architect_critic",
@@ -768,6 +777,9 @@ export async function createMddGraphWithManager(
     if (state.deliveryGateLoopActive === true && state.deliveryGateFixTarget === "section5") {
       return "prepare_output";
     }
+    if (state.section5FormatSkipped === true) {
+      return "format_after_redactor";
+    }
     return "format_after_architect";
   }
 
@@ -816,7 +828,7 @@ export async function createMddGraphWithManager(
     const hasFeedback = !!(state.architectCriticFeedback?.trim());
     const attempts = state.architectCriticAttempts ?? 0;
     if (state.architectCriticPhase === "after_section3") {
-      if (hasFeedback && attempts <= 1) {
+      if (hasFeedback && attempts <= 1 && !isScopedSectionSealed(3, state)) {
         const next = nextInSections(state, "architect_critic");
         if (next) return next;
         if (isTableOnlyCriticGap(state.architectCriticFeedback ?? "")) return "data_model_patch";
@@ -834,6 +846,10 @@ export async function createMddGraphWithManager(
   function routeAfterStackArchitect(state: MDDStateType): string {
     if (state.executorControlled === true) return "executor";
     if (shouldShortCircuitGateLoopFix(state)) return "prepare_output";
+    const attempt = state.stackArchitectAttempt ?? 0;
+    if (!draftHasSubstantialSection2(state.mddDraft ?? "") && attempt < 2) {
+      return "stack_architect";
+    }
     return nextInSections(state, "stack_architect") ?? "data_model";
   }
 
@@ -1040,6 +1056,7 @@ export async function createMddGraphWithManager(
     .addConditionalEdges("stack_architect", routeAfterStackArchitect, {
       data_model: "data_model",
       prepare_output: "prepare_output",
+      stack_architect: "stack_architect",
       executor: "executor",
       manager: "manager",
     })
