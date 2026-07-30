@@ -34,6 +34,8 @@ import {
   deduplicateMddDraftSections,
 } from "./utils/mdd-sanitize.js";
 import { evaluateMddPersistTailGuard } from "./utils/mdd-persist-tail-guard.util.js";
+import { evaluateMddDraftPersistFloor } from "./utils/mdd-draft-persist-floor.util.js";
+import { logMddPersistFenceDiag } from "./utils/mdd-persist-fence-diag.util.js";
 import { ProjectsService } from "../projects/projects.service.js";
 import { pickPrimaryStage } from "../projects/stage-helpers.js";
 import { TheForgeService } from "../theforge/theforge.service.js";
@@ -51,6 +53,8 @@ import { CONTEXT_SYNTHESIZER_PROMPT } from "./prompts/load-prompts.js";
 import { createMddIntegrationNode } from "./nodes/mdd-integration.node.js";
 import { createMddSecurityNode } from "./nodes/mdd-security.node.js";
 import { createMddSection5Node } from "./nodes/mdd-section5.node.js";
+import { createMddFormatterNode } from "./nodes/mdd-formatter.node.js";
+import { preflightSanitizeDraftForSection5 } from "./utils/mdd-tail-parallel.util.js";
 import { createMddSoftwareArchitectNode } from "./nodes/mdd-software-architect.node.js";
 import {
   agentsForArchitectSection,
@@ -299,6 +303,39 @@ export class AiAnalysisService {
         ? options.uiMcpLibraryLabel
         : await this.getUiMcpLibraryLabel();
     return prepareMddForOutputCore(input, { ...options, resolver, uiMcpLibraryLabel });
+  }
+
+  private streamDraftCacheKey(draft: string): string {
+    const trimmed = (draft ?? "").trim();
+    if (trimmed.length < 80) return "";
+    let hash = 5381;
+    for (let i = 0; i < trimmed.length; i += 1) {
+      hash = ((hash << 5) + hash) ^ trimmed.charCodeAt(i);
+    }
+    return `${trimmed.length}:${(hash >>> 0).toString(36)}`;
+  }
+
+  /** Evita re-ejecutar prepare completo en cada tick `values` cuando el borrador no cambió. */
+  private async prepareMddForStreamDraft(
+    cache: { draftKey: string; markdown: string },
+    input: Parameters<typeof prepareMddForOutputCore>[0],
+    options?: PrepareMddForOutputOptions,
+  ): Promise<string> {
+    const draft = typeof input === "string" ? input.trim() : (input.mddDraft ?? "").trim();
+    const key = this.streamDraftCacheKey(draft);
+    if (key && key === cache.draftKey && cache.markdown.length > 80) {
+      return cache.markdown;
+    }
+    const prepared = await this.runPrepareMddForOutput(input, {
+      ...options,
+      formatForPersist: false,
+      streamPreview: true,
+    });
+    if (key && prepared.length > 80) {
+      cache.draftKey = key;
+      cache.markdown = prepared;
+    }
+    return prepared;
   }
 
   /** Evita persistir MDD con §2–§7 borradas por prepare/dedupe tras borrador sustancial. */
@@ -698,6 +735,7 @@ export class AiAnalysisService {
     };
 
     let lastState: MDDState = initialState;
+    const streamPrepareCache = { draftKey: "", markdown: "" };
     const auditTrail: string[] = [];
     const editLogTracker = new MddStreamEditLogTracker(
       initialState.mddDraft ?? "",
@@ -746,7 +784,8 @@ export class AiAnalysisService {
             if (lastState.auditorGaps) {
               this.estimationService.setAuditorGaps(projectId.trim(), lastState.auditorGaps, estimationStage);
             }
-            const prepared = await this.runPrepareMddForOutput(
+            const prepared = await this.prepareMddForStreamDraft(
+              streamPrepareCache,
               { mddStructured: lastState.mddStructured, mddDraft: draft },
               prepareOpts,
             );
@@ -778,6 +817,11 @@ export class AiAnalysisService {
       );
       const tailPersistGuard = this.guardMarkdownTailForPersist(mddDraftRaw, markdown);
       markdown = tailPersistGuard.markdown;
+      console.log(
+        `[MDD:PersistCheck:diag] stream-done preLen=${mddDraftRaw.length} postLen=${markdown.length} err=${tailPersistGuard.errorMessage ? "yes" : "no"}`,
+      );
+      logMddPersistFenceDiag("PersistCheck:stream-done-pre", mddDraftRaw);
+      logMddPersistFenceDiag("PersistCheck:stream-done-post", markdown);
       if (tailPersistGuard.errorMessage) {
         yield { type: "error", message: tailPersistGuard.errorMessage };
         return;
@@ -948,6 +992,7 @@ export class AiAnalysisService {
 
     let lastState: MDDState = initialState;
     let lastNonEmptyDraft = (initialState.mddDraft ?? "").trim() || "";
+    const streamPrepareCache = { draftKey: "", markdown: "" };
     const auditTrail: string[] = [];
     const editLogTracker = new MddStreamEditLogTracker(
       initialState.mddDraft ?? "",
@@ -1055,7 +1100,8 @@ export class AiAnalysisService {
             if (lastState.auditorGaps) {
               this.estimationService.setAuditorGaps(projectId.trim(), lastState.auditorGaps, estimationStageId);
             }
-            const prepared = await this.runPrepareMddForOutput(
+            const prepared = await this.prepareMddForStreamDraft(
+              streamPrepareCache,
               {
                 mddStructured: lastState?.mddStructured,
                 mddDraft: draft,
@@ -1283,6 +1329,7 @@ export class AiAnalysisService {
       recursionLimit: LANGGRAPH_RECURSION_LIMIT,
     };
     const auditTrail: string[] = [];
+    const streamPrepareCache = { draftKey: "", markdown: "" };
     let lastState: MDDState | null = null;
     let lastNonEmptyDraft = "";
 
@@ -1449,7 +1496,8 @@ export class AiAnalysisService {
                 this.estimationService.setAuditorGaps(projectId.trim(), lastState.auditorGaps, estimationStage);
               }
             }
-            const prepared = await this.runPrepareMddForOutput(
+            const prepared = await this.prepareMddForStreamDraft(
+              streamPrepareCache,
               {
                 mddStructured: lastState?.mddStructured,
                 mddDraft: draft,
@@ -1631,6 +1679,7 @@ export class AiAnalysisService {
     stageId?: string | null,
     gapReasons?: string[],
     upstreamContext?: { dbgaContent?: string; changeSummary?: string },
+    regenOptions?: { pipelineParity?: boolean },
   ): AsyncGenerator<StreamMddManagerEvent> {
     const pid = projectId?.trim();
     if (!pid) {
@@ -1641,8 +1690,9 @@ export class AiAnalysisService {
       yield { type: "error", message: "section debe ser 1–7" };
       return;
     }
+    const pipelineParity = regenOptions?.pipelineParity === true && section === 5;
     const tracer = new MddRegenTracer({
-      mode: "section",
+      mode: pipelineParity ? "section-pipeline" : "section",
       projectId: pid,
       section,
       stageId: stageId?.trim() || undefined,
@@ -1899,16 +1949,53 @@ export class AiAnalysisService {
         return;
       }
       if (section === 5) {
+        const preflight = preflightSanitizeDraftForSection5(mddContent);
+        mddContent = preflight.draft;
         // Nodo quirúrgico: SOLO reescribe ## 5. No usar Software Architect aquí —
         // ese agente regenera §2–§5 como bloque y puede borrar contenido bueno en §2–§4.
         const section5Node = createMddSection5Node(llm);
         const result = yield* runRegenWithHeartbeat(
-          section5Node(state as MDDStateType),
+          section5Node({ ...(state as MDDStateType), mddDraft: mddContent } as MDDStateType),
           getAgentLabel("section5"),
-          "Regenerando §5 Lógica y Edge Cases…",
+          pipelineParity
+            ? "Regenerando §5 (pipeline: section5 + Formatter lite)…"
+            : "Regenerando §5 Lógica y Edge Cases…",
           tracer,
         );
-        const finalDraft = (result.mddDraft ?? mddContent).trim();
+        let workingState: MDDStateType = { ...(state as MDDStateType), mddDraft: mddContent, ...result };
+        if (pipelineParity) {
+          if (mddHasDuplicateSectionHeadings(workingState.mddDraft ?? "")) {
+            const deduped = deduplicateMddDraftSections(workingState.mddDraft ?? "");
+            if (!mddHasDuplicateSectionHeadings(deduped)) {
+              this.logger.warn(
+                `[MDD regenerate-section] §5 section-pipeline: dedupe pre-formatter (len ${(workingState.mddDraft ?? "").length}→${deduped.length})`,
+              );
+              workingState = { ...workingState, mddDraft: deduped };
+            }
+          }
+          const formatterNode = createMddFormatterNode({ lite: true });
+          const formatterState: MDDStateType = {
+            ...workingState,
+            securitySectionMd: undefined,
+            integrationSectionMd: undefined,
+            securityArchitectMddDraftSnapshot: undefined,
+            integrationArchitectMddDraftSnapshot: undefined,
+            mddStructured: workingState.mddStructured
+              ? {
+                  ...workingState.mddStructured,
+                  seguridad: undefined,
+                  integracion: undefined,
+                }
+              : undefined,
+          };
+          const formatResult = await tracer.step(
+            "format-after-architect",
+            async () => formatterNode(formatterState),
+            { draftLen: (workingState.mddDraft ?? mddContent).length },
+          );
+          workingState = { ...workingState, ...formatResult };
+        }
+        const finalDraft = (workingState.mddDraft ?? mddContent).trim();
         if (finalDraft === mddContent.trim()) {
           this.logger.warn(
             `[MDD regenerate-section] §5 sin cambios (LLM vacío/placeholder o merge no aplicado) projectId=${pid}`,
@@ -1922,10 +2009,39 @@ export class AiAnalysisService {
           };
           return;
         }
-        const markdown = await tracer.step("prepare-output", async () => this.runPrepareMddForOutput(
-          { mddStructured: result.mddStructured ?? state.mddStructured, mddDraft: finalDraft },
-          regenPrepareOpts,
-        ), { draftLen: finalDraft.length });
+        const prepareOpts: PrepareMddForOutputOptions = pipelineParity
+          ? {
+              ...regenPrepareOpts,
+              baselineDraft: regenBaselineMdd,
+              tailSnapshotSource: undefined,
+              preserveExcludeSections: [5],
+            }
+          : regenPrepareOpts;
+        const markdown = await tracer.step(
+          "prepare-output",
+          async () =>
+            this.runPrepareMddForOutput(
+              {
+                mddStructured: workingState.mddStructured ?? state.mddStructured,
+                mddDraft: finalDraft,
+              },
+              prepareOpts,
+            ),
+          { draftLen: finalDraft.length, pipelineParity },
+        );
+        if (pipelineParity && mddHasDuplicateSectionHeadings(markdown)) {
+          this.logger.error(
+            `[MDD regenerate-section] §5 section-pipeline: headings duplicados tras prepare projectId=${pid}`,
+          );
+          tracer.summary(false, { reason: "section5-pipeline-duplicate-headings" });
+          yield {
+            type: "error",
+            message:
+              "La regeneración de §5 (pipeline) dejó secciones duplicadas §1–§7. " +
+              "No se persistió el borrador corrupto; reintenta o regenera el MDD completo.",
+          };
+          return;
+        }
         const metrics = await tracer.step("metrics", async () => this.estimationService.calculateLiveMetrics(markdown, regenEstOpts));
         const regenGate5 = mddStreamDeliveryGateFields(regenGateRef.current, metrics.status);
         tracer.summary(true, { mddLen: markdown.length, precision: metrics.precision });
@@ -2250,10 +2366,24 @@ export class AiAnalysisService {
       }
     }
 
+    // Suelo anti-wipe entre reintentos de BullMQ: `lastPersistedLen` se reinicia en cada
+    // intento, así que sin este baseline el esqueleto del Clarificador del intento 2 pisa
+    // el MDD bueno del intento 1 (job 92: 70k → 3084).
+    const storedBaselineLen = peelDocumentBodyForPersist(resolvedPatterns.stageMddContent).trim().length;
+
     const persistMarkdown = async (markdown: string, finalize: boolean): Promise<void> => {
       const cleaned = cleanDocumentContent(markdown);
       if (cleaned.trim().length < 48) return;
       if (cleaned.length === lastPersistedLen && !finalize) return;
+      const floor = evaluateMddDraftPersistFloor({
+        candidateLen: cleaned.trim().length,
+        storedBaselineLen,
+        finalize,
+      });
+      if (!floor.allowed) {
+        this.logger.warn(`MDD job ${mode} (${projectId}): ${floor.reason}`);
+        return;
+      }
       lastPersistedLen = cleaned.length;
       await this.projects.persistMddFromBackgroundJob(projectId, markdown, {
         stageId: stageId?.trim() || undefined,
@@ -2303,7 +2433,8 @@ export class AiAnalysisService {
           // full pipeline runs; a single-section regen shouldn't be blocked because other
           // sections are missing/corrupt (that's exactly what the user is trying to fix
           // by regenerating individual sections).
-          const isSectionRegen = mode === "section" || mode === "upstream-sync";
+          const isSectionRegen =
+            mode === "section" || mode === "section-pipeline" || mode === "upstream-sync";
           await persistMarkdown(event.markdown, !isSectionRegen);
           if (projectId?.trim()) {
             this.estimationService.clearLiveDraft(projectId.trim(), stageId ?? undefined);
@@ -2366,6 +2497,32 @@ export class AiAnalysisService {
             data.initialMessage,
             data.mddContent,
             stageId,
+          ),
+        );
+        if (jobResult.ok && jobResult.outcome === "done") {
+          return this.finalizeMddJobUpstreamBaseline(projectId, stageId, jobResult);
+        }
+        return jobResult;
+      }
+      case "section-pipeline": {
+        const rawSection = data.section;
+        if (rawSection !== 5) {
+          throw new Error("section-pipeline only supports section 5");
+        }
+        onProgress({
+          phase: "section-pipeline",
+          section: 5,
+          message: "Regenerando §5 (paridad pipeline)…",
+        });
+        const jobResult = await consume(
+          this.streamMddRegenerateSection(
+            projectId,
+            5,
+            data.mddContent,
+            stageId,
+            data.gapReasons,
+            undefined,
+            { pipelineParity: true },
           ),
         );
         if (jobResult.ok && jobResult.outcome === "done") {

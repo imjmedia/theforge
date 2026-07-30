@@ -187,6 +187,8 @@ export class ProjectMddPersistService {
         brdMarkdown: targetStage.brdContent,
         dbgaMarkdown: existing.dbgaContent,
         domainInventory: targetStage.domainInventory,
+        prevalidatedFromStream: true,
+        baselineDraft: mddForPipeline,
       },
     );
     if (!result.ok) {
@@ -233,7 +235,7 @@ export class ProjectMddPersistService {
     await this.prisma.stage.update({
       where: { id: targetStage.id },
       data: {
-        mddContent: storeMddMarkdownForPersist(finalMdd),
+        mddContent: result.persistFormatted ? finalMdd : storeMddMarkdownForPersist(finalMdd),
         shortTermContext: nextCtx as Prisma.InputJsonValue,
       },
     });

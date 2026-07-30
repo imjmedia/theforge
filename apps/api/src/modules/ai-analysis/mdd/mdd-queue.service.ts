@@ -52,7 +52,13 @@ const MDD_MAX_STALLED_COUNT = 0;
 const MDD_JOB_STALLED_REASON =
   "Job MDD bloqueado tras caída del worker; vuelve a generar";
 
-export type MddJobMode = "pipeline" | "manager" | "section" | "legacy" | "upstream-sync";
+export type MddJobMode =
+  | "pipeline"
+  | "manager"
+  | "section"
+  | "section-pipeline"
+  | "legacy"
+  | "upstream-sync";
 
 export interface MddJobData {
   mode: MddJobMode;
