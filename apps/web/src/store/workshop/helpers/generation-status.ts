@@ -45,6 +45,14 @@ export function clearCancelledJobFromGenerationStatus(
   };
 }
 
+/** Si el job de entregables ya terminó pero generation-status sigue busy, libera el banner. */
+export function reconcileFinishedDeliverablesJobInGenerationStatus(
+  status: ProjectGenerationStatus,
+  finishedJobId: string,
+): ProjectGenerationStatus {
+  return clearCancelledJobFromGenerationStatus(status, finishedJobId) ?? status;
+}
+
 export const generationStatusPoll = {
   timer: null as ReturnType<typeof setInterval> | null,
   projectId: null as string | null,

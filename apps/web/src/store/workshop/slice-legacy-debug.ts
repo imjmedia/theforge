@@ -20,6 +20,7 @@ import { friendlyFetchError } from "./helpers/store-errors";
 import {
   clearCancelledJobFromGenerationStatus,
   generationStatusPoll,
+  reconcileFinishedDeliverablesJobInGenerationStatus,
   stopGenerationStatusPolling,
 } from "./helpers/generation-status";
 import { applyMddFromFetchedProject } from "./helpers/mdd-editor";
@@ -66,9 +67,24 @@ export const createLegacyDebugSlice: StateCreator<
       const r = await apiFetch(`${API_BASE}/projects/${requestedId}/generation-status${qs}`);
       if (!r.ok) return null;
       const raw = (await r.json()) as ProjectGenerationStatus;
-      const status: ProjectGenerationStatus = { ...raw, mddJobs: raw.mddJobs ?? [] };
+      let status: ProjectGenerationStatus = { ...raw, mddJobs: raw.mddJobs ?? [] };
+      const activeJobId = status.activeJob?.jobId?.trim();
+      if (status.busy && activeJobId) {
+        const jobRes = await apiFetch(`${API_BASE}/projects/${requestedId}/deliverables-jobs/${activeJobId}`);
+        if (jobRes.ok) {
+          const job = (await jobRes.json()) as { status?: string };
+          if (job.status === "completed" || job.status === "failed" || job.status === "unknown") {
+            status = reconcileFinishedDeliverablesJobInGenerationStatus(status, activeJobId);
+          }
+        }
+      }
       if (!shouldApplyWorkshopUpdate(get, requestedId)) return status;
       const wasBusy = get().generationStatus?.busy === true;
+      const releaseDeliverablesBusyUi =
+        !status.busy &&
+        (get().loadingReason === "deliverables-cascade" ||
+          get().loadingReason === "legacy-deliverables" ||
+          Boolean(get().activeDeliverablesJobId));
       set((s) => ({
         generationStatus: {
           ...status,
@@ -81,6 +97,9 @@ export const createLegacyDebugSlice: StateCreator<
             ? (status.sddGraph ?? s.generationStatus?.sddGraph ?? null)
             : (status.sddGraph ?? null),
         },
+        ...(releaseDeliverablesBusyUi
+          ? { loading: false, loadingReason: null, activeDeliverablesJobId: null, agentProgress: [] }
+          : {}),
       }));
       const mddJob = primaryMddJob(status);
       if (

@@ -258,7 +258,8 @@ export class ProjectGenerationGuardService {
       (await this.mddQueue.isProjectBlocking(projectId)) ||
       mddJobs.some((job) => job.status === "active" || job.status === "queued");
 
-    const queueJobs = await this.deliverablesQueue.listActiveJobsForProject(projectId);
+    const queueJobsRaw = await this.deliverablesQueue.listActiveJobsForProject(projectId);
+    const queueJobs = await this.deliverablesQueue.filterVerifiedActiveJobRefs(queueJobsRaw);
     const bgSnapshots: GenerationJobSnapshot[] = [];
     for (const [jobId, job] of this.bgJobs) {
       if (job.projectId !== projectId) continue;

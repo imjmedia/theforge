@@ -19,6 +19,7 @@ import { isWorkshopSemaphoreGreen } from "@/utils/workshopSemaphoreStatus";
 import { apiFetch, API_BASE, getOfflineQueue } from "../utils/apiClient";
 import { isWorkshopConnectionError, isSsotPatternsNotice } from "../utils/workshopSyncStatus";
 import { activeGenerationLabel, generationJobAllowed, primaryMddJob } from "../utils/projectGenerationGate";
+import { projectCascadeWaveDeliverablesReady } from "../utils/cascadeDeliverablesReady";
 import { MDD_JOB_MODE_LABELS } from "@theforge/shared-types";
 import type { ArtifactTypeDefinition, ClarifyableDocumentField, GenerationJobType, AemMarketScope } from "@theforge/shared-types";
 import ChatContainer from "../components/ChatContainer";
@@ -451,6 +452,25 @@ export default function WorkshopView({
   const backgroundGenerationLabel = activeGenerationLabel(generationStatus);
   const activeMddJob = primaryMddJob(generationStatus);
   const activeDeliverablesJob = generationStatus?.activeJob ?? generationStatus?.queuedJobs?.[0] ?? null;
+  const cascadeWaveDocsReady = useMemo(
+    () => (project ? projectCascadeWaveDeliverablesReady(project as Record<string, unknown>) : false),
+    [project],
+  );
+  const cascadeJobPostProcessing =
+    cascadeWaveDocsReady &&
+    (cascadeRunning ||
+      cascadePostPassRunning ||
+      activeDeliverablesJob?.type === "cascade" ||
+      activeDeliverablesJob?.type === "cascade-delta" ||
+      generationStatus?.activeJob?.type === "cascade" ||
+      generationStatus?.activeJob?.type === "cascade-delta");
+  const backgroundBannerLabel = cascadeJobPostProcessing
+    ? "Finalizando post-proceso (precisión y conformidad)… Puedes cerrar el navegador; al volver, recarga el proyecto para ver el resultado."
+    : cascadeRunning
+      ? "Generación de entregables en curso… Puedes cerrar el navegador; al volver, recarga el proyecto para ver el resultado."
+      : backgroundGenerationLabel
+        ? `${backgroundGenerationLabel} Puedes cerrar el navegador; al volver, recarga el proyecto para ver el resultado.`
+        : null;
   const cancellableJobId =
     activeMddJob?.jobId ??
     activeDeliverablesJob?.jobId ??
@@ -2517,19 +2537,17 @@ export default function WorkshopView({
         onOpenHelp={() => setShowHelpModal(true)}
       />
 
-      {(backgroundGenerationLabel || cascadeRunning || mddBackgroundJob) && (
+      {(backgroundBannerLabel || cascadeRunning || mddBackgroundJob) && (
         <div className="shrink-0 border-b border-[color-mix(in_oklch,var(--primary)_35%,var(--border))] bg-[color-mix(in_oklch,var(--primary)_10%,transparent)] px-4 py-2">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0 flex-1 space-y-1">
               <p className="text-sm text-[color-mix(in_oklch,var(--primary)_80%,white)]">
-                {cascadeRunning
-                  ? "Generación de entregables en curso…"
-                  : `${backgroundGenerationLabel ??
-                      (loadingReason === "mdd-section"
-                        ? "Regeneración de sección MDD en curso…"
-                        : loadingReason === "legacy-mdd" || loadingReason === "mdd"
-                          ? "Regeneración MDD en curso…"
-                          : "Generación en curso…")} Puedes cerrar el navegador; al volver, recarga el proyecto para ver el resultado.`}
+                {backgroundBannerLabel ??
+                  (loadingReason === "mdd-section"
+                    ? "Regeneración de sección MDD en curso…"
+                    : loadingReason === "legacy-mdd" || loadingReason === "mdd"
+                      ? "Regeneración MDD en curso…"
+                      : "Generación en curso…")}
               </p>
               {activeMddJob ? (
                 <p className="text-xs text-[color-mix(in_oklch,var(--primary)_65%,white)]">

@@ -765,6 +765,27 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
     return out;
   }
 
+  /**
+   * Descarta refs huérfanas: BullMQ puede listar `active` mientras `getJobStatus` ya es `completed`.
+   * Evita banners de cascada colgados tras terminar el job.
+   */
+  async filterVerifiedActiveJobRefs(refs: DeliverablesActiveJobRef[]): Promise<DeliverablesActiveJobRef[]> {
+    const checks = await Promise.all(
+      refs.map(async (ref) => {
+        const st = await this.getJobStatus(ref.jobId);
+        if (st.status !== "active" && st.status !== "queued" && st.status !== "retrying") {
+          return null;
+        }
+        return {
+          jobId: ref.jobId,
+          type: ref.type,
+          status: st.status === "retrying" ? ("retrying" as const) : ref.status,
+        };
+      }),
+    );
+    return checks.filter((entry): entry is DeliverablesActiveJobRef => entry != null);
+  }
+
   /** Encola cualquier tipo de job de generación. Retorna jobId. */
   async enqueue(data: GenerateJobData): Promise<string> {
     await this.generationGuard.assertCanEnqueue(data.projectId, data.type);
