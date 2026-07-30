@@ -66,6 +66,8 @@ En el **Workshop**, el **selector de etapa** (cuando hay más de una) define el 
 
 **Nueva etapa:** botón **Nueva etapa** junto al selector → modal y `POST /projects/:projectId/stages` (respuesta `{ stage }`). En el modal, **Copiar MDD desde** permite elegir cualquier etapa existente o dejar el MDD vacío. El selector del header cambia la **vista en vivo** (MDD/semáforo de la etapa activa).
 
+**Ciclo de vida:** botón **⋯** junto al selector (cuando hay transiciones permitidas) → archivar, completar, activar o reabrir la etapa seleccionada (`POST …/stages/:stageId/transition`). Al archivar o completar se congela un snapshot de entregables si faltaba. La etapa archivada sigue en el selector. Para revertir una promoción de handoff en integración NEW↔LEGACY, usa **Integración → Revertir promoción** (flujo distinto).
+
 ### Checklist manual (multi-etapa)
 
 1. Crear o seleccionar proyecto con al menos dos etapas.
