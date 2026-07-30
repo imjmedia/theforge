@@ -482,6 +482,17 @@ export function normalizeMddFormat(draft: string): string {
   // Eliminar sección errónea "## 4. Arquitectura Frontend" (estructura canónica: la 4 es Contratos de API)
   out = stripStandaloneArquitecturaFrontendSection(out);
 
+  // Reparar bloques mermaid: quitar nodos con "text" extraviado al final del nombre
+  out = out.replace(/\[([^\]]+)]text/gi, "[" + "$1" + "]");
+  out = out.replace(/```mermaid\n```\s*\n/g, "");
+  // Reparar JSON con comas sueltas "[," → "["
+  out = out.replace(/\[,\s*\n/g, "[\n");
+  out = out.replace(/\],\s*\]/g, "]");
+  out = out.replace(/\{\s*,/g, "{");
+  out = out.replace(/,\s*\}/g, "}");
+  // Reparar JSON con comma trailing en último elemento de array
+  out = out.replace(/\},\s*\]/g, "}]");
+
   out = fixDeterministicMddCoherence(out);
   out = repairGluedClosingFenceToHeading(out);
   out = sanitizeAllSqlBlocksInDraft(out);
