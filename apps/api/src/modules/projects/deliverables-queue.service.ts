@@ -831,7 +831,13 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
     }
 
     const data = job.data as GenerateJobData | undefined;
-    const state = await job.getState();
+    let state = await job.getState();
+    if (state === "active") {
+      const reconciled = await this.reconcileOrphanDeliverablesJob(job);
+      if (reconciled) {
+        state = await job.getState();
+      }
+    }
 
     let status: GenerateJobStatus["status"];
     if (state === "completed") status = "completed";

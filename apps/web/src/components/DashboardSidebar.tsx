@@ -587,7 +587,7 @@ export function DashboardSidebar({
     <div
       className={cn(
         "relative flex w-full shrink-0 flex-col lg:z-40 lg:w-auto lg:shrink-0",
-        inWorkshop ? "lg:h-full lg:min-h-0" : "h-[100dvh] min-h-[100dvh] max-h-[100dvh] bg-[var(--sidebar)] lg:overflow-hidden",
+        inWorkshop ? "h-[100dvh] min-h-[100dvh] max-h-[100dvh] bg-[var(--sidebar)] lg:overflow-hidden" : "h-[100dvh] min-h-[100dvh] max-h-[100dvh] bg-[var(--sidebar)] lg:overflow-hidden",
       )}
     >
       <header
@@ -655,7 +655,7 @@ export function DashboardSidebar({
         !inWorkshop && "h-full min-h-0 max-h-[100dvh] lg:flex lg:flex-col",
         inWorkshop &&
           cn(
-            "min-h-0 lg:h-full lg:max-h-[min(100dvh,100svh)] lg:min-h-0",
+            "h-full min-h-0 max-h-[100dvh] lg:flex lg:flex-col",
             rail ? "overflow-hidden lg:overflow-visible" : "overflow-hidden",
           ),
         // Expanded: 16rem / 256px (common nav width); rail stays 4rem.
