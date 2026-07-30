@@ -86,4 +86,5 @@ export interface UseWorkshopModalsPropsArgs {
   aemGenerateDialogOpen: boolean;
   setAemGenerateDialogOpen: (open: boolean) => void;
   handleGenerateAem: (scope: AemMarketScope) => void | Promise<void>;
+  error: string | null;
 }

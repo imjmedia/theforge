@@ -1,5 +1,6 @@
 const GENERATE_URL_FIELD: Record<string, string> = {
   "generate-spec": "specContent",
+  "generate-aem": "aemContent",
   "generate-blueprint": "blueprintContent",
   "generate-api-contracts": "apiContractsContent",
   "generate-logic-flows": "logicFlowsContent",

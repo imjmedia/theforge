@@ -307,32 +307,16 @@ export const createDeliverablesSlice: StateCreator<
     if (!projectId?.trim()) return null;
     set({ loading: true, loadingReason: "aem", error: null });
     try {
-      const r = await apiFetch(`${API_BASE}/projects/${projectId}/generate-aem`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ marketScope: opts.marketScope }),
-      });
-      const raw = await r.text();
-      if (!r.ok) {
-        let errMessage = "Error al generar AEM";
-        try {
-          const err = JSON.parse(raw) as { message?: string };
-          if (err?.message) errMessage = err.message;
-        } catch {
-          if (raw.trim().length > 0 && raw.length < 500) errMessage = raw;
-        }
-        throw new Error(errMessage);
-      }
-      let data: Project;
-      try {
-        data = JSON.parse(raw) as Project;
-      } catch {
-        throw new Error("El servidor devolvió una respuesta inválida al generar AEM.");
-      }
+      const data = await queueAndPoll<Project>(
+        `${API_BASE}/projects/${projectId}/generate-aem`,
+        { marketScope: opts.marketScope },
+      );
       set({ project: data, aemContent: data.aemContent ?? null, error: null });
+      void get().fetchGenerationStatus(projectId);
       return data;
     } catch (e) {
-      set({ error: e instanceof Error ? e.message : "Error al generar AEM" });
+      const message = e instanceof Error ? e.message : "Error al generar AEM";
+      set({ error: message });
       return null;
     } finally {
       set({ loading: false, loadingReason: null });

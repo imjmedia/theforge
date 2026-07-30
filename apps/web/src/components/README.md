@@ -22,7 +22,7 @@
 | **PluginDocPanel** | Panel dinámico de artifact de plugin (`pluginData`, Generar vía cola + polling `generateAndPollPluginArtifact`, guards `requires` y `generationStatus.busy`). |
 | **ClarifyDocumentPanel** | (Legacy) Diálogo para marcar nuevas ambigüedades vía IA (`clarify-document`). No se usa en el flujo principal del Workshop. |
 | **ProjectMergeDialog** | Fusión de 2+ carpetas en Paso 0: config (destino, benchmark, suite, archivado), preview con conflictos, `POST /projects/merge`. |
-| **AemGenerateDialog** | Modal **Generar AEM**: elige alcance geográfico (Global / México / LATAM) y llama `POST /projects/:id/generate-aem` (Benchmark + Fase 0 + BRD + dictamen de inversión digital). |
+| **AemGenerateDialog** | Modal **Generar AEM**: elige alcance geográfico (Global / México / LATAM) y encola `POST /projects/:id/generate-aem?queue=true` con polling hasta completar (Benchmark + Fase 0 + BRD + dictamen de inversión digital). Muestra errores en el modal. |
 | **ProjectFolderTile** | Carpeta del dashboard: semáforo + precisión de la etapa activa (`Stage.status` / `precisionScore`). Si hay job MDD o entregables en cola, muestra badge «Regenerando» con la etapa (`GET /projects/generation-summary` vía `useDashboardGenerationSummary`). Tras abrir el Workshop, esos campos se sincronizan con la métrica integral del panel Semáforo (misma fuente que `GET/POST …/estimation`). |
 | **RenameProjectDialog** | Renombrar proyecto (`PATCH /projects/:id` con `{ name }`). Lápiz en carpeta del dashboard, barra de selección (1 carpeta) y header del Workshop. |
 | **CloneProjectDialog** | Clonar proyecto (`POST /projects/:id/clone`). Barra de selección con una carpeta: «Clonar» → nombre por defecto «Copia de …»; abre el Workshop en el clon. |

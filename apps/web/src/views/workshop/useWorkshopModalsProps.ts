@@ -67,6 +67,7 @@ export function useWorkshopModalsProps(args: UseWorkshopModalsPropsArgs): Worksh
     aemGenerateDialogOpen,
     setAemGenerateDialogOpen,
     handleGenerateAem,
+    error,
   } = args;
 
   return useMemo((): WorkshopModalsProps => ({
@@ -145,6 +146,7 @@ export function useWorkshopModalsProps(args: UseWorkshopModalsPropsArgs): Worksh
       aemGenerateDialogOpen,
       setAemGenerateDialogOpen,
       aemGenerateLoading: loading && loadingReason === "aem",
+      aemGenerateError: aemGenerateDialogOpen ? error : null,
       onGenerateAem: handleGenerateAem,
     }),
     [
@@ -200,6 +202,7 @@ export function useWorkshopModalsProps(args: UseWorkshopModalsPropsArgs): Worksh
       executePendingMddAfterPatternCompat,
       aemGenerateDialogOpen,
       handleGenerateAem,
+      error,
     ],
   );
 }

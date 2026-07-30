@@ -2225,6 +2225,7 @@ export default function WorkshopView({
     aemGenerateDialogOpen,
     setAemGenerateDialogOpen,
     handleGenerateAem,
+    error,
   });
 
   const workshopDocPanelContentProps = useWorkshopDocPanelProps({

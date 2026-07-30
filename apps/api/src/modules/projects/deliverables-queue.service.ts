@@ -11,7 +11,7 @@ import {
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { Queue, Worker, type Job } from "bullmq";
-import type { AffectedArtifact } from "@theforge/shared-types";
+import type { AffectedArtifact, AemMarketScope } from "@theforge/shared-types";
 import { tasksPipelineProgressPercent } from "@theforge/shared-types";
 import { getRequestUserId, runWithRequestUserAsync } from "../../common/request-user.store.js";
 import {
@@ -51,6 +51,7 @@ export type GenerateJobType =
   | "cascade-delta"
   | "repair-sdd-gaps"
   | "spec"
+  | "aem"
   | "blueprint"
   | "api-contracts"
   | "logic-flows"
@@ -81,6 +82,8 @@ export interface GenerateJobData {
   pluginId?: string;
   /** Solo type=plugin-artifact */
   artifactId?: string;
+  /** Solo type=aem */
+  marketScope?: AemMarketScope;
 }
 
 /** Estado público de un job para polling del frontend. */
@@ -490,7 +493,7 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
       acknowledgeGaps,
     } = data;
 
-    if (!preview && type !== "doc-reconcile-partial") {
+    if (!preview && type !== "doc-reconcile-partial" && type !== "aem") {
       await this.projects.assertDeliverablesAllowed(projectId, { acknowledgeGaps });
     }
 
@@ -577,6 +580,14 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
       case "spec":
         result = await this.projects.generateSpec(projectId);
         break;
+      case "aem": {
+        const marketScope = data.marketScope;
+        if (!marketScope) {
+          throw new Error("Job aem requiere marketScope");
+        }
+        result = await this.projects.generateAem(projectId, { marketScope });
+        break;
+      }
       case "use-cases":
         if (preview) {
           result = await this.projects.generateUseCasesPreview(projectId);
@@ -626,6 +637,7 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
       type !== "repair-sdd-gaps" &&
       type !== "doc-reconcile-partial" &&
       type !== "agent-governance" &&
+      type !== "aem" &&
       !preview
     ) {
       await this.projects.runPostRegenSddConflictSurfacing(projectId).catch((err) => {

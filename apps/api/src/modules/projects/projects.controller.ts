@@ -28,6 +28,7 @@ import {
   updateProjectSchema,
   phase0DeepResearchBodySchema,
   generateAemBodySchema,
+  type AemMarketScope,
   convergeBodySchema,
   convergeTriggerBodySchema,
   clarifySpecBodySchema,
@@ -474,9 +475,13 @@ export class ProjectsController {
 
   /** Genera AEM (Análisis y Estudio de Mercado) desde Benchmark, Fase 0 y BRD. */
   @Post(":id/generate-aem")
-  generateAem(@Param("id") id: string, @Body() body: unknown) {
+  generateAem(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Query("queue") queue?: string,
+  ) {
     const parsed = generateAemBodySchema.parse(body ?? {});
-    return this.projects.generateAem(id, parsed);
+    return this.queueOrSync(id, "aem", { marketScope: parsed.marketScope }, queue);
   }
 
   /**
@@ -768,7 +773,7 @@ export class ProjectsController {
   ): Promise<unknown> {
     const acknowledgeGaps = acknowledgeGapsParam === "true";
     const isPreview = (extra.preview as boolean) ?? false;
-    if (!isPreview && type !== "doc-reconcile-partial") {
+    if (!isPreview && type !== "doc-reconcile-partial" && type !== "aem") {
       await this.projects.assertDeliverablesAllowed(projectId, { acknowledgeGaps });
     }
     const wantQueue = queueParam !== "false";
@@ -782,6 +787,7 @@ export class ProjectsController {
         target: (extra.target as string | undefined) ?? undefined,
         forceRegenerate: extra.forceRegenerate !== false,
         acknowledgeGaps,
+        marketScope: extra.marketScope as AemMarketScope | undefined,
       });
       return { queued: true, jobId, statusPath: `/projects/jobs/${jobId}` };
     }
@@ -862,6 +868,13 @@ export class ProjectsController {
         return this.projects.generateUserStories(projectId);
       case "spec":
         return this.projects.generateSpec(projectId);
+      case "aem": {
+        const marketScope = extra.marketScope;
+        if (marketScope !== "global" && marketScope !== "mexico" && marketScope !== "latam") {
+          throw new Error("generate-aem requiere marketScope");
+        }
+        return this.projects.generateAem(projectId, { marketScope });
+      }
       case "repair-sdd-gaps":
         return this.projects.repairReadinessGaps(projectId);
       case "cascade":
@@ -881,7 +894,7 @@ export class ProjectsController {
     bgJobId?: string,
   ): Promise<void> {
     if (bgJobId) this.generationGuard.markBackgroundJobActive(bgJobId);
-    if (!((extra.preview as boolean) ?? false) && type !== "doc-reconcile-partial") {
+    if (!((extra.preview as boolean) ?? false) && type !== "doc-reconcile-partial" && type !== "aem") {
       await this.projects.assertDeliverablesAllowed(projectId, { acknowledgeGaps });
     }
     try {
