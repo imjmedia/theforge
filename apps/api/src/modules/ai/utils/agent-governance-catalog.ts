@@ -169,8 +169,12 @@ export const RULE_CATALOG: RuleCatalogEntry[] = [
       }) +
       "# Stack frontend\n\n" +
       enrichStackBody(ctx, "frontend") +
-      "\n" +
-      "- Usa design system y tokens del MDD; no valores ad-hoc.\n" +
+      "\n\n" +
+      "## Design System (obligatorio)\n\n" +
+      "- **Toda creación de frontend** (componentes, vistas, layouts, estilos) debe seguir los **tokens** (colores, tipografía, spacing, radii, elevation) y **estilos** definidos en **`design-system.md`** (primario spec-kit; espejo `docs/sdd/ux-ui-guide.md`).\n" +
+      "- **Antes de codificar UI**, lee ese documento; no valores ad-hoc (hex/rgb sueltos, `px`/`rem` arbitrarios, sombras o fuentes no documentadas).\n" +
+      "- Si falta un token o variante, **extiende primero** `design-system.md` y luego implementa.\n\n" +
+      "## Gates\n\n" +
       "- lint + typecheck del paquete UI/SPA antes de merge.\n" +
       "- Si existe `pantallas.md` (spec-kit) o `docs/sdd/pantallas.md`, léelo antes de crear vistas.\n",
   },
@@ -200,6 +204,7 @@ export const RULE_CATALOG: RuleCatalogEntry[] = [
       "## Reglas\n\n" +
       "- Usa **solo** los componentes listados (nombre + paquete@versión); no sustituyas por genéricos sin justificar en MDD.\n" +
       "- Respeta la tabla **Props / Binding** (endpoints, entidades).\n" +
+      "- **Tokens y estilos:** aplica exclusivamente los definidos en **`design-system.md`** (Design System); no valores ad-hoc.\n" +
       "- Una fila del doc ≈ una vista o flujo; no mezcles pantallas.\n" +
       "- Si **no** hay `pantallas.md`, usa Blueprint §8 + `design-system.md`; no inventes componentes MCP.\n" +
       "- Ante conflicto con Blueprint §8 heurístico, **gana pantallas.md** cuando exista.\n",
@@ -382,7 +387,8 @@ export const SKILL_CATALOG: SkillCatalogEntry[] = [
       "- Nuevo componente, variante o token.\n" +
       "- Auditoría de módulo UI.\n\n" +
       "## Checklist\n\n" +
-      "- Tokens del DS; sin colores/tamaños ad-hoc.\n" +
+      "- Lee **`design-system.md`** (espejo `docs/sdd/ux-ui-guide.md`) antes de crear o modificar UI.\n" +
+      "- Usa **solo** tokens y estilos del Design System; sin colores/tamaños ad-hoc.\n" +
       "- JSDoc en exports públicos.\n" +
       "- Publicar paquete solo con petición explícita + QA.\n",
   },
@@ -411,11 +417,12 @@ export const SKILL_CATALOG: SkillCatalogEntry[] = [
       "- Implementar listados, formularios, dashboards o rutas del front.\n" +
       "- Existe `specs/NNN-slug/pantallas.md` o `docs/sdd/pantallas.md`.\n\n" +
       "## Checklist\n\n" +
-      "1. Abrir pantallas.md y localizar la pantalla de la tarea actual.\n" +
-      "2. Importar componentes con el paquete/versión indicados.\n" +
-      "3. Cablear props según binding (API contracts + MDD §3).\n" +
-      "4. Mobile responsive según design-system.md / MDD.\n" +
-      "5. No cerrar la tarea UI sin revisar que la vista coincide con el doc.\n",
+      "1. Leer **`design-system.md`** (Design System) y aplicar sus tokens y estilos.\n" +
+      "2. Abrir pantallas.md y localizar la pantalla de la tarea actual.\n" +
+      "3. Importar componentes con el paquete/versión indicados.\n" +
+      "4. Cablear props según binding (API contracts + MDD §3).\n" +
+      "5. Mobile responsive según design-system.md / MDD.\n" +
+      "6. No cerrar la tarea UI sin revisar que la vista coincide con el doc.\n",
   },
   {
     id: "deploy-docker",

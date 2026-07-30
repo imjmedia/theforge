@@ -33,6 +33,7 @@ import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.
 import { resolveMddClarifierHardTimeoutMs } from "../utils/mdd-llm-timeout.util.js";
 import {
   dbgaSnippetForClarifierFallback,
+  resolveClarifierWorkingDraft,
   shouldPreserveClarifierDraftOnLlmFailure,
 } from "../utils/mdd-clarifier-llm-fallback.util.js";
 import {
@@ -174,7 +175,13 @@ export function createMddClarifierNode(llm: BaseChatModel) {
     try {
       const startedAt = Date.now();
       const brief = getUserBrief(state);
-      const draftTrimmed = (state.mddDraft ?? "").trim();
+      const draftTrimmed = resolveClarifierWorkingDraft(state);
+      const preserveBaseline =
+        state.deliveryGateLoopActive === true &&
+        state.deliveryGateFixTarget === "clarifier" &&
+        (state.previousMddDraftForMerge ?? "").trim().length > 200
+          ? (state.previousMddDraftForMerge ?? "").trim()
+          : draftTrimmed;
       const dbgaRaw = state.dbgaContent ?? "";
       const { brief: dbgaBrief, briefChars: dbgaBriefChars, usedFullDbga } = buildClarifierDbgaBrief({
         dbgaContent: dbgaRaw,
@@ -430,9 +437,9 @@ export function createMddClarifierNode(llm: BaseChatModel) {
         log: LOG,
       });
       let mergedDraft = finalizedDraft;
-      if (hasSubstantialDraft && draftTrimmed.length > 200) {
-        mergedDraft = preserveValidatedSectionsIfSubstantial(draftTrimmed, finalizedDraft);
-        const safeBaseline = deduplicateMddDraftSections(draftTrimmed);
+      if ((hasSubstantialDraft || preserveBaseline !== draftTrimmed) && preserveBaseline.length > 200) {
+        mergedDraft = preserveValidatedSectionsIfSubstantial(preserveBaseline, finalizedDraft);
+        const safeBaseline = deduplicateMddDraftSections(preserveBaseline);
         const canMergeSection1 =
           isSafeClarifierMergeBaseline(safeBaseline, finalizedDraft) &&
           finalizedDraft !== safeBaseline &&

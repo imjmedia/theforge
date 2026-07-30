@@ -5,6 +5,7 @@
 import type { MDDStateType } from "../state/index.js";
 import { prepareMddForOutput } from "../utils/mdd-prepare-output.js";
 import { validateMddForDelivery } from "../utils/mdd-delivery-gate.util.js";
+import { preserveValidatedSectionsIfSubstantial } from "../utils/mdd-section-preserve.util.js";
 import {
   formatDeliveryGateBlockersFeedback,
   formatDeliveryGateQualityWarningsFeedback,
@@ -84,9 +85,10 @@ export function createMddPrepareOutputNode(options?: { uiMcpLibraryLabel?: strin
       ]
         .filter(Boolean)
         .join("\n\n");
+      const safeDraft = preserveValidatedSectionsIfSubstantial(baselineDraft ?? "", prepared);
       return {
-        mddDraft: prepared,
-        previousMddDraftForMerge: state.mddDraft,
+        mddDraft: safeDraft,
+        previousMddDraftForMerge: baselineDraft ?? state.mddDraft,
         deliveryGate: gate,
         deliveryGateAttempt: attempt + 1,
         deliveryGateLoopActive: true,

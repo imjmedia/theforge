@@ -9,6 +9,7 @@ import {
   needsFullArchitectPipelineRegeneration,
   resolveDeliveryGateFixTarget,
   resolveDeliveryGateFixTargetFromGate,
+  shouldClarifierRevisionSkipArchitectPipeline,
   shouldContinueDeliveryGateLoop,
   shouldContinueDeliveryGateQualityLoop,
 } from "./mdd-delivery-gate-loop.util.js";
@@ -273,5 +274,80 @@ describe("shouldContinueDeliveryGateLoop / shouldContinueDeliveryGateQualityLoop
     };
     assert.equal(shouldContinueDeliveryGateLoop(gate, 0), true);
     assert.equal(shouldContinueDeliveryGateQualityLoop(gate, 0), true);
+  });
+});
+
+describe("shouldClarifierRevisionSkipArchitectPipeline", () => {
+  const goodTail =
+    "## 2. Arquitectura y Stack\n\n" +
+    `${"NestJS PostgreSQL Docker despliegue. ".repeat(20)}\n\n` +
+    "## 3. Modelo de Datos\n\n" +
+    `${"CREATE TABLE users (id uuid primary key); ".repeat(12)}`;
+
+  it("true en revisión gate con §2–§3 sustanciales", () => {
+    assert.equal(
+      shouldClarifierRevisionSkipArchitectPipeline({
+        deliveryGateLoopActive: true,
+        deliveryGateFixTarget: "clarifier",
+        mddDraft: `## 1. Contexto\n\n(Pendiente)\n\n${goodTail}`,
+        previousMddDraftForMerge: undefined,
+      } as never),
+      true,
+    );
+  });
+
+  it("false en primera pasada (sin delivery gate)", () => {
+    assert.equal(
+      shouldClarifierRevisionSkipArchitectPipeline({
+        deliveryGateLoopActive: false,
+        deliveryGateFixTarget: undefined,
+        mddDraft: goodTail,
+      } as never),
+      false,
+    );
+  });
+});
+
+describe("shouldContinueDeliveryGateLoop", () => {
+  it("no continúa cuando gate.ok=true aunque haya warnings auto-reparables", () => {
+    assert.equal(
+      shouldContinueDeliveryGateLoop(
+        {
+          ok: true,
+          score: 100,
+          blockers: [],
+          warnings: ["Contratos §4: fences JSON desbalanceados"],
+        },
+        2,
+      ),
+      false,
+    );
+  });
+
+  it("continúa solo cuando gate.ok=false y quedan intentos", () => {
+    assert.equal(
+      shouldContinueDeliveryGateLoop(
+        {
+          ok: false,
+          score: 84,
+          blockers: ["Sección 2 placeholder"],
+          warnings: [],
+        },
+        1,
+      ),
+      true,
+    );
+    assert.equal(
+      shouldContinueDeliveryGateLoop(
+        {
+          ok: false,
+          score: 84,
+          blockers: ["Sección 2 placeholder"],
+          warnings: [],
+        },
+        3,
+      ),
+      false,
+    );
   });
 });

@@ -888,7 +888,7 @@ export default function App() {
   ) : null;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div className="flex h-[100dvh] min-h-0 max-h-[100dvh] flex-1 flex-col overflow-hidden">
     <ErrorBoundary>
       <CreateProjectWizardDialog
         open={showCreateWizard}
@@ -1237,7 +1237,7 @@ export default function App() {
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {workshopProject ? (
-        <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)] lg:flex-row lg:items-stretch">
+        <div className="flex h-[100dvh] min-h-0 max-h-[100dvh] min-w-0 w-full flex-1 flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)] lg:flex-row lg:items-stretch">
           <DashboardSidebar
             projectSearchQuery={projectSearchQuery}
             onProjectSearchChange={setProjectSearchQuery}
@@ -1281,7 +1281,7 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)] lg:flex-row lg:items-stretch">
+        <div className="flex h-[100dvh] min-h-0 max-h-[100dvh] min-w-0 w-full flex-1 flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)] lg:flex-row lg:items-stretch">
           <DashboardSidebar
             projectSearchQuery={projectSearchQuery}
             onProjectSearchChange={setProjectSearchQuery}

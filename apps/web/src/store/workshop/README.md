@@ -15,7 +15,7 @@ Extracción incremental de `workshopStore.ts` (Fase 5a del [GOD-REFACTOR](../../
 | **slice-session-chat.ts** | `createSessionChatSlice` — sesión, chat, `/formatear`, `sendMessage` (intercepta modo asistido en tab benchmark). |
 | **slice-mdd.ts** | `createMddSlice` — editor MDD, persist, jobs benchmark/upstream, review/format. |
 | **slice-deliverables.ts** | `createDeliverablesSlice` — entregables (UX, Blueprint, API, …), cascada, conformance, Phase 0, **modo asistido** (`startPhase0Assisted` / `stopPhase0Assisted`), estimación. |
-| **slice-legacy-debug.ts** | `createLegacyDebugSlice` — generation-status, plan validation, flujos legacy MCP y cascada legacy. |
+| **slice-legacy-debug.ts** | `createLegacyDebugSlice` — generation-status (reconcilia jobs ya terminados para evitar banner colgado), plan validation, flujos legacy MCP y cascada legacy. |
 | **slice-clarify.ts** | `createClarifySlice` — ADRs, governance, traceability, clarify/resolve, converge/tasks, `reset`. |
 | **helpers/persist-field.ts** | `persistField` — PATCH genérico de entregables (usado por chat y store). |
 | **helpers/agent-progress-patch.ts** | `patchAgentProgressFromMddEvent` — progreso MDD en stream. |
@@ -32,7 +32,7 @@ Extracción incremental de `workshopStore.ts` (Fase 5a del [GOD-REFACTOR](../../
 | **store-errors.ts** | Errores de fetch/stream amigables (`friendlyFetchError`, `streamErrorPatch`, …). |
 | **delivery-gate.ts** | Gate MDD ≥9/10 desde eventos SSE. |
 | **semaphore-snapshot.ts** | `resetWorkshopSemaphoreSnapshot` — limpia métricas del panel Semáforo al borrar MDD o recargar proyecto; evita flash de coherencia §3/§4 o gate obsoletos. |
-| **helpers/generation-status.ts** | Polling de `generation-status` + merge upstream sync; `clearCancelledJobFromGenerationStatus` libera el banner al cancelar. |
+| **helpers/generation-status.ts** | Polling de `generation-status` + merge upstream sync; `clearCancelledJobFromGenerationStatus` libera el banner al cancelar; `reconcileFinishedDeliverablesJobInGenerationStatus` cuando el job BullMQ ya terminó pero la API seguía `busy`. |
 | **mdd-editor.ts** | Baseline MDD, persist desde stream, cola `enqueueMddPersist`. |
 | **stage-focus.ts** | Alinear store con etapa activa (`workshopStateFromProjectStage`, …). |
 | **session-message.ts** | `sessionMessageBody`, helpers de chat MDD. |

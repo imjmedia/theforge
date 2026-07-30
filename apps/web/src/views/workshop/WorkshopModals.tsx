@@ -71,6 +71,7 @@ export function WorkshopModals({
   aemGenerateDialogOpen,
   setAemGenerateDialogOpen,
   aemGenerateLoading,
+  aemGenerateError,
   onGenerateAem,
 }: WorkshopModalsProps) {
   return (
@@ -182,6 +183,7 @@ export function WorkshopModals({
         open={aemGenerateDialogOpen}
         onOpenChange={setAemGenerateDialogOpen}
         loading={aemGenerateLoading}
+        error={aemGenerateError}
         onGenerate={onGenerateAem}
       />
     </>

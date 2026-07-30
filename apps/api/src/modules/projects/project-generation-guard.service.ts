@@ -218,11 +218,7 @@ export class ProjectGenerationGuardService {
 
     await Promise.all(
       [...candidateIds].map(async (projectId) => {
-        result[projectId] = await this.summarizeDashboardProject(
-          projectId,
-          mddByProject.get(projectId) ?? [],
-          deliverablesByProject.get(projectId) ?? [],
-        );
+        result[projectId] = await this.summarizeDashboardProject(projectId);
       }),
     );
     return result;
@@ -230,37 +226,9 @@ export class ProjectGenerationGuardService {
 
   private async summarizeDashboardProject(
     projectId: string,
-    mddRefs: Awaited<ReturnType<MddQueueService["listActiveJobsForProject"]>>,
-    deliverableRefs: Awaited<ReturnType<DeliverablesQueueService["listActiveJobsForProject"]>>,
   ): Promise<ProjectGenerationDashboardSummary> {
-    const bgSnapshots: GenerationJobSnapshot[] = [];
-    for (const [jobId, job] of this.bgJobs) {
-      if (job.projectId !== projectId) continue;
-      if (job.status === "queued" || job.status === "active" || job.status === "retrying") {
-        bgSnapshots.push({ jobId, type: job.type, status: job.status });
-      }
-    }
-
-    const mddJobs = await this.mddQueue.buildJobSnapshotsForLabel(mddRefs);
-    const mddStreamActive = await this.mddQueue.isProjectBlocking(projectId);
-
-    const merged = [...deliverableRefs, ...bgSnapshots];
-    const activeJob =
-      merged.find((j) => j.status === "active") ??
-      merged.find((j) => j.status === "retrying") ??
-      null;
-    const queuedJobs = merged.filter((j) => j.status === "queued");
-    const busy = mddStreamActive || merged.length > 0;
-
-    const status: ProjectGenerationStatus = {
-      busy,
-      mddStreamActive,
-      mddJobs,
-      activeJob,
-      queuedJobs,
-      gates: {},
-    };
-    return { busy, label: activeGenerationLabel(status) };
+    const status = await this.getLightStatus(projectId);
+    return { busy: status.busy, label: activeGenerationLabel(status) };
   }
 
   private async buildLightStatus(
@@ -280,7 +248,8 @@ export class ProjectGenerationGuardService {
       (await this.mddQueue.isProjectBlocking(projectId)) ||
       mddJobs.some((job) => job.status === "active" || job.status === "queued");
 
-    const queueJobs = await this.deliverablesQueue.listActiveJobsForProject(projectId);
+    const queueJobsRaw = await this.deliverablesQueue.listActiveJobsForProject(projectId);
+    const queueJobs = await this.deliverablesQueue.filterVerifiedActiveJobRefs(queueJobsRaw);
     const bgSnapshots: GenerationJobSnapshot[] = [];
     for (const [jobId, job] of this.bgJobs) {
       if (job.projectId !== projectId) continue;

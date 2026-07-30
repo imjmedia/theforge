@@ -22,6 +22,7 @@ export interface AemGenerateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   loading?: boolean;
+  error?: string | null;
   onGenerate: (marketScope: AemMarketScope) => void | Promise<void>;
 }
 
@@ -29,12 +30,17 @@ export function AemGenerateDialog({
   open,
   onOpenChange,
   loading,
+  error,
   onGenerate,
 }: AemGenerateDialogProps) {
   const [marketScope, setMarketScope] = useState<AemMarketScope>("mexico");
 
+  const handleOpenChange = (next: boolean) => {
+    onOpenChange(next);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Generar Análisis y Estudio de Mercado</DialogTitle>
@@ -44,6 +50,15 @@ export function AemGenerateDialog({
             CONDICIONES) que analiza el AEM.
           </DialogDescription>
         </DialogHeader>
+
+        {error ? (
+          <p
+            role="alert"
+            className="rounded-md border border-[color-mix(in_oklch,var(--destructive)_35%,var(--border))] bg-[color-mix(in_oklch,var(--destructive)_10%,transparent)] px-3 py-2 text-sm text-[color-mix(in_oklch,var(--destructive)_75%,var(--foreground))]"
+          >
+            {error}
+          </p>
+        ) : null}
 
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-1 text-sm font-medium text-[var(--foreground)]">Alcance geográfico</legend>
@@ -65,8 +80,14 @@ export function AemGenerateDialog({
           ))}
         </fieldset>
 
+        {loading ? (
+          <p className="text-sm text-[var(--foreground-muted)]">
+            Generando AEM en segundo plano… Puedes cerrar este modal; el documento aparecerá al terminar.
+          </p>
+        ) : null}
+
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+          <Button type="button" variant="outline" onClick={() => handleOpenChange(false)} disabled={loading}>
             Cancelar
           </Button>
           <Button

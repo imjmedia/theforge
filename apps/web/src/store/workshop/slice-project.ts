@@ -18,7 +18,7 @@ import {
 import { shouldApplyWorkshopUpdate, workshopScopeProjectId } from "./helpers/workshop-scope";
 import { resetWorkshopSemaphoreSnapshot } from "./helpers/semaphore-snapshot";
 import { selectPersistedMddBaseline } from "./selectors";
-import type { WorkshopChatScope } from "@theforge/shared-types";
+import type { StageTransitionAction, WorkshopChatScope } from "@theforge/shared-types";
 import type { Project, Session, WorkshopStage } from "./types";
 import type { WorkshopState } from "./workshop-state.types";
 
@@ -31,6 +31,7 @@ type ProjectSliceActions = Pick<
   | "setChatScope"
   | "createWorkshopStage"
   | "patchWorkshopStage"
+  | "transitionWorkshopStage"
   | "setProjectRequireBrdTobeGate"
   | "fetchProject"
 >;
@@ -203,6 +204,44 @@ export const createProjectSlice: StateCreator<WorkshopState, [], [], ProjectSlic
     } catch (e) {
       set({ error: e instanceof Error ? e.message : "Error al crear etapa" });
       return null;
+    }
+  },
+
+  transitionWorkshopStage: async (stageId, action, reason) => {
+    const { projectId } = get();
+    if (!projectId?.trim() || !stageId?.trim()) {
+      set({ error: "Falta proyecto o etapa" });
+      return false;
+    }
+    try {
+      const body: { action: StageTransitionAction; reason?: string } = { action };
+      const trimmedReason = reason?.trim();
+      if (trimmedReason) body.reason = trimmedReason;
+      const r = await apiFetch(
+        `${API_BASE}/projects/${projectId.trim()}/stages/${stageId.trim()}/transition`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      if (!r.ok) {
+        const err = (await r.json().catch(() => ({}))) as {
+          message?: string | string[];
+          allowedTransitions?: string[];
+        };
+        const msg = Array.isArray(err.message) ? err.message.join("; ") : err.message;
+        throw new Error(msg ?? "Transición de etapa falló");
+      }
+      if (action === "activate") {
+        get().setActiveStageId(stageId.trim());
+      }
+      await get().fetchProject(projectId.trim());
+      set({ error: null });
+      return true;
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : "Error al cambiar el estado de la etapa" });
+      return false;
     }
   },
 

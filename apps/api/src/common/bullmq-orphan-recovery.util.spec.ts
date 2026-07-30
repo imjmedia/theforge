@@ -6,6 +6,7 @@ import {
   BULLMQ_WORKER_RESTARTED_REASON,
   forceFailBullMqActiveJob,
   isBullMqJobLockHeld,
+  isBullMqLockRenewalError,
   reconcileOrphanBullMqActiveJob,
   recoverBullMqJobsAfterWorkerRestart,
 } from "./bullmq-orphan-recovery.util.js";
@@ -47,6 +48,14 @@ function mockQueue(jobsByState: Record<string, Job[]>, lockHeld = false): Queue 
   } as unknown as Queue & { _deletedLocks: string[] };
 }
 
+describe("isBullMqLockRenewalError", () => {
+  it("detects lock renewal failures", () => {
+    assert.equal(isBullMqLockRenewalError(new Error("could not renew lock for job 172")), true);
+    assert.equal(isBullMqLockRenewalError("Error: Could not renew lock"), true);
+    assert.equal(isBullMqLockRenewalError(new Error("connection refused")), false);
+  });
+});
+
 describe("forceFailBullMqActiveJob", () => {
   it("skips non-active jobs", async () => {
     const queue = mockQueue({});
@@ -76,6 +85,19 @@ describe("recoverBullMqJobsAfterWorkerRestart", () => {
     const result = await recoverBullMqJobsAfterWorkerRestart(queue);
     assert.equal(result.failedActive, 1);
     assert.equal(result.removedQueued, 2);
+    assert.equal(result.skippedLocked, 0);
+  });
+
+  it("skips active jobs that still hold a Redis lock", async () => {
+    const queue = mockQueue(
+      {
+        active: [mockJob("active", "1"), mockJob("active", "2")],
+      },
+      true,
+    );
+    const result = await recoverBullMqJobsAfterWorkerRestart(queue);
+    assert.equal(result.failedActive, 0);
+    assert.equal(result.skippedLocked, 2);
   });
 });
 

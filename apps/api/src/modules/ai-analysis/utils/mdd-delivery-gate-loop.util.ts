@@ -5,9 +5,14 @@
 import type { MddDeliveryGateResult } from "@theforge/shared-types";
 import { isAutoRepairableDeliveryGateWarning } from "../../engine/mdd-quality-audit.util.js";
 import type { AuditorGapsState } from "../state/mdd-state.schema.js";
+import type { MDDStateType } from "../state/index.js";
 import {
+  draftHasPersistableSection4,
+  draftHasSubstantialSection2,
+  draftHasSubstantialSection3,
   draftHasSubstantialSection6 as draftHasSubstantialSection6Preserve,
   draftHasSubstantialSection7 as draftHasSubstantialSection7Preserve,
+  draftIsSubstantialForScopedRepair,
   isScopedSectionSealed,
   type ScopedSectionSealSource,
 } from "./mdd-section-preserve.util.js";
@@ -384,6 +389,24 @@ export function blockersAreOnlyDuplicateHeadings(blockers: string[]): boolean {
   const items = blockers.filter((b) => b.trim().length > 0);
   if (items.length === 0) return false;
   return items.every((b) => DUPLICATE_SECTION_BLOCKER_RE.test(b));
+}
+
+/**
+ * Revisión Clarifier tras delivery gate: si §2–§7 ya eran sustanciales,
+ * no relanzar stack→critic→api (evita borrar 20+ pasos del pipeline).
+ */
+export function shouldClarifierRevisionSkipArchitectPipeline(state: MDDStateType): boolean {
+  if (state.deliveryGateLoopActive !== true || state.deliveryGateFixTarget !== "clarifier") {
+    return false;
+  }
+  const draft = (state.mddDraft ?? "").trim();
+  const previous = (state.previousMddDraftForMerge ?? "").trim();
+  if (draftIsSubstantialForScopedRepair(draft)) return true;
+  if (draftIsSubstantialForScopedRepair(previous)) return true;
+  return (
+    draftHasSubstantialSection2(draft) &&
+    (draftHasSubstantialSection3(draft) || draftHasPersistableSection4(draft))
+  );
 }
 
 export function shouldContinueDeliveryGateLoop(

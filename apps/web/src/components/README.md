@@ -7,7 +7,7 @@
 | **Phase0InterviewPanel** | Entrevistador interactivo Paso 0 (`start` → preguntas → `answer`). Incluye auditoría manual al completar. |
 | **MddViewer** | Preview markdown (Fase 0, MDD, BRD, Blueprint): quita el stamp API del cuerpo con `peelDocumentBodyForPersist` (repara §1–§2 pegados en zona de fechas) y muestra **una sola** `WorkshopDocumentStampBar` (prop `documentTimestamps` o extracción del markdown). **KaTeX** para fórmulas `$…$` / `$$…$$` (`remark-math` + `rehype-katex`). `repairDirectoryTreeBlocks` + detección `((Root))`/`— apps/`; párrafos colapsados → `<pre>` monoespaciado. Diagramas Mermaid vía `MermaidDiagramBlock`. |
 | **WorkshopDocumentStampBar** | Cabecera visible **Creado / Última modificación** (stamp API). Fechas en zona horaria del navegador. El editor y el preview quitan el stamp del markdown; las fechas viven en la barra / `workshopStore.documentTimestamps`. El MDD usa `normalizeWorkshopDocumentForEditor` al cargar (igual que DBGA/Spec). |
-| **DashboardSidebar** | En Workshop, «Panel de proyectos» queda `disabled` mientras `selectWorkshopAgentsBusy` (trabajo en primer plano; no aplica a jobs MDD/cascadas ya encolados en servidor). |
+| **DashboardSidebar** | Barra lateral del panel de proyectos y del Workshop. En desktop (`lg+`), el panel de proyectos ocupa `100dvh` con fondo continuo. En móvil/tablet (`<lg`) solo reserva la barra superior; el drawer es overlay `absolute` y el `<main>` del dashboard o el Workshop ocupa el resto del viewport. En Workshop desktop, columna lateral `lg:h-full`. |
 | **DashboardPanelHeader** | Panel de proyectos: Crear / Importar / Importar NEW+LEG / Tutorial / Refrescar. |
 | **ProjectPortabilityDialog** | Export/import ZIP Markdown & CSV (formato Notion): export desde configuración del proyecto o desde la barra de selección (1 proyecto); import e import pareja desde el dashboard. |
 | **ProjectSettingsDialog** | Configuración (nombre, grupo) + botón **Exportar proyecto** (Notion ZIP). |
@@ -22,7 +22,7 @@
 | **PluginDocPanel** | Panel dinámico de artifact de plugin (`pluginData`, Generar vía cola + polling `generateAndPollPluginArtifact`, guards `requires` y `generationStatus.busy`). |
 | **ClarifyDocumentPanel** | (Legacy) Diálogo para marcar nuevas ambigüedades vía IA (`clarify-document`). No se usa en el flujo principal del Workshop. |
 | **ProjectMergeDialog** | Fusión de 2+ carpetas en Paso 0: config (destino, benchmark, suite, archivado), preview con conflictos, `POST /projects/merge`. |
-| **AemGenerateDialog** | Modal **Generar AEM**: elige alcance geográfico (Global / México / LATAM) y llama `POST /projects/:id/generate-aem` (Benchmark + Fase 0 + BRD + dictamen de inversión digital). |
+| **AemGenerateDialog** | Modal **Generar AEM**: elige alcance geográfico (Global / México / LATAM) y encola `POST /projects/:id/generate-aem?queue=true` con polling hasta completar (Benchmark + Fase 0 + BRD + dictamen de inversión digital). Muestra errores en el modal. |
 | **ProjectFolderTile** | Carpeta del dashboard: semáforo + precisión de la etapa activa (`Stage.status` / `precisionScore`). Si hay job MDD o entregables en cola, muestra badge «Regenerando» con la etapa (`GET /projects/generation-summary` vía `useDashboardGenerationSummary`). Tras abrir el Workshop, esos campos se sincronizan con la métrica integral del panel Semáforo (misma fuente que `GET/POST …/estimation`). |
 | **RenameProjectDialog** | Renombrar proyecto (`PATCH /projects/:id` con `{ name }`). Lápiz en carpeta del dashboard, barra de selección (1 carpeta) y header del Workshop. |
 | **CloneProjectDialog** | Clonar proyecto (`POST /projects/:id/clone`). Barra de selección con una carpeta: «Clonar» → nombre por defecto «Copia de …»; abre el Workshop en el clon. |
@@ -47,4 +47,5 @@
 | **MddRegenerateDialog** | Al pulsar «Regenerar MDD» (greenfield con MDD existente): pipeline completo vs `upstream-sync` con checkboxes §1–§7 y diff de Fase 0/BRD/Benchmark. |
 | **MddUpstreamSyncBanner** | Banner cuando `generation-status.mddUpstreamSync.pendingSync` y no hay job MDD `pipeline`/`manager`/`upstream-sync` en curso; abre el diálogo en modo sincronización. |
 | **WorkshopDbgaRestoreDialog** | Modal **Versiones anteriores del DBGA** (Fase 0): lista snapshots (`GET …/document-snapshots?field=dbgaContent`) y restauración (`POST …/document-snapshots/:id/restore`). Botón en toolbar y acciones del panel benchmark. |
-| **IntegrationPanel** | Pestaña **Integración**: enlace NEW↔LEGACY, handoff NEW-LEG, import en etapa 2+, matriz trazabilidad. |
+| **IntegrationPanel** | Pestaña **Integración**: enlace NEW↔LEGACY, handoff NEW-LEG, import en etapa 2+, matriz trazabilidad. **Revertir promoción** archiva la etapa legacy mal promovida (flujo handoff, distinto del modal general de etapas). |
+| **WorkshopStageTransitionDialog** | Modal **Estado de la etapa** (header Workshop, botón ⋯): activar, completar, archivar o reabrir la etapa seleccionada vía `POST …/stages/:stageId/transition`. |

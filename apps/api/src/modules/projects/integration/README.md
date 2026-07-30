@@ -18,6 +18,13 @@ Cross-project handoff, trace matrix, and stage promotion for brownfield SDD.
 
 Bridge Ariadne (también vía `TheForgeController` + MCP): `POST /theforge/create-stage-from-ariadne-change-pack` — ver sección **Ariadne change pack** en `apps/api/src/modules/theforge/README.md`.
 
+### MCP (`@theforge/mcp-server`)
+
+| Tool | Endpoint |
+|------|----------|
+| `get_integration_status` | `GET …/integration` |
+| `get_integration_traces` | `GET …/integration/traces` |
+
 ## Ariadne change pack (MCP `create_stage_from_ariadne_change_pack`)
 
 Body (`createStageFromAriadneChangePackInputSchema`):

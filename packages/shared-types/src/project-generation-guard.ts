@@ -65,6 +65,7 @@ export type GenerationJobType =
   | "cascade-delta"
   | "repair-sdd-gaps"
   | "spec"
+  | "aem"
   | "blueprint"
   | "api-contracts"
   | "logic-flows"
@@ -83,6 +84,7 @@ export const GENERATION_JOB_TYPE_LABELS: Record<GenerationJobType, string> = {
   "cascade-delta": "Cascada delta (MDD)",
   "repair-sdd-gaps": "Corregir brechas SDD",
   spec: "Spec",
+  aem: "Análisis y Estudio de Mercado (AEM)",
   blueprint: "Blueprint",
   "api-contracts": "Contratos API",
   "logic-flows": "Flujos de lógica",

@@ -99,7 +99,8 @@ export function buildAgentsCriticalRulesSection(): string {
     "2. **Stack:** respeta el MDD §2 y Blueprint; no introduzcas frameworks no documentados.\n" +
     "3. **Seguridad:** auth, secretos y contratos API según MDD §6 y `api-contracts.md`.\n" +
     "4. **SDD:** ante conflicto entre artefactos, **gana el MDD**; reporta gaps vía MCP `report_documentation_gap` si aplica.\n" +
-    "5. **Alcance:** implementa solo la tarea abierta; no expandas scope sin aprobación.\n"
+    "5. **Alcance:** implementa solo la tarea abierta; no expandas scope sin aprobación.\n" +
+    "6. **Frontend / Design System:** toda creación de UI debe seguir los **tokens y estilos** de **`design-system.md`** (espejo `docs/sdd/ux-ui-guide.md`); sin valores ad-hoc.\n"
   );
 }
 
@@ -149,8 +150,15 @@ export function buildDynamicCursorAgents(facts: ProjectGovernanceFacts): Record<
     const stack = facts.frontendStack ?? facts.mobileStack ?? "UI";
     out[`${GOVERNANCE_DOCS_PREFIX}agents/frontend-implementer.md`] = buildCursorAgentMd(
       "Frontend",
-      `UI ${stack} alineada a UX/UI guide y design system del MDD.`,
-      ["AGENTS.md", "docs/sdd/mdd.md", "docs/sdd/ux-ui-guide.md", "docs/sdd/blueprint.md"],
+      `UI ${stack}: toda creación de frontend debe usar tokens y estilos de **design-system.md** (Design System).`,
+      [
+        "AGENTS.md",
+        "docs/sdd/mdd.md",
+        "docs/sdd/ux-ui-guide.md",
+        "specs/NNN-slug/design-system.md",
+        "docs/sdd/pantallas.md",
+        "docs/sdd/blueprint.md",
+      ],
     );
   }
   return out;

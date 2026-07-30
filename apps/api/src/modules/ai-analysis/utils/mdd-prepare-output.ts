@@ -3,6 +3,7 @@
  */
 
 import type { MddStructured } from "../state/mdd-structured.schema.js";
+import { repairInlineHorizontalRuleSectionBreaks } from "@theforge/shared-types";
 import { mddStructuredToMarkdown } from "../render/mdd-structured-to-markdown.js";
 import { injectProposedComponentDiagramIntoSection2 } from "./mdd-component-diagram.util.js";
 import {
@@ -32,6 +33,8 @@ import {
   detectCrossConsistencyIssues,
   prepareMddMarkdownForPersist,
   deduplicateAndReorderMddSections,
+  restoreMddSectionsFromBaselineStrict,
+  replaceSection6Or7InDraft,
 } from "./mdd-sanitize.js";
 import {
   extractContratosSectionBody,
@@ -137,25 +140,42 @@ export function draftHasSection6Heading(draft: string): boolean {
   return getSection6Or7Range((draft ?? "").trim(), 6) != null;
 }
 
+/** Fuente para restore post-normalize: dedupe antes de comparar (duplicados no deben saltar restore). */
+function resolveSectionRestoreSource(source: string): string {
+  const trimmed = (source ?? "").trim();
+  if (!trimmed) return trimmed;
+  return mddHasDuplicateSectionHeadings(trimmed)
+    ? deduplicateMddDraftSections(trimmed)
+    : trimmed;
+}
+
 /**
  * normalizeMddFormat (deduplicateAndReorderMddSections) puede eliminar §6/§7 recién insertadas.
  * Restaura desde el borrador pre-normalize si desaparecieron.
  */
 function restoreSections6And7AfterNormalize(source: string, normalized: string): string {
-  if (mddHasDuplicateSectionHeadings(source)) return normalized;
-  return restoreSections6And7IfRegressed(source, normalized);
+  const sourceRepaired = repairInlineHorizontalRuleSectionBreaks(resolveSectionRestoreSource(source));
+  let out = normalized;
+  for (const section of [6, 7] as const) {
+    const srcRange = getSection6Or7Range(sourceRepaired, section);
+    if (!srcRange) continue;
+    if (getSection6Or7Range(out, section)) continue;
+    const sectionMd = sourceRepaired.slice(srcRange.start, srcRange.end).trim();
+    if (sectionMd.length > 0) out = replaceSection6Or7InDraft(out, section, sectionMd);
+  }
+  return out;
 }
 
 /** Evita que normalizeMddFormat/dedupe dejen §4 en stub tras api_contracts. */
 function restoreSection4AfterNormalize(source: string, normalized: string): string {
-  if (mddHasDuplicateSectionHeadings(source)) return normalized;
-  const srcBody = extractContratosSectionBody(source);
+  const restoreSource = resolveSectionRestoreSource(source);
+  const srcBody = extractContratosSectionBody(restoreSource);
   const normBody = extractContratosSectionBody(normalized);
   if (!srcBody?.trim()) return normalized;
   if (isContratosSectionRegression(srcBody, normBody) && srcBody) {
     return replaceMddSection4Body(normalized, srcBody);
   }
-  if (draftHasPersistableSection4(source) && !draftHasPersistableSection4(normalized)) {
+  if (draftHasPersistableSection4(restoreSource) && !draftHasPersistableSection4(normalized)) {
     return replaceMddSection4Body(normalized, srcBody);
   }
   return normalized;
@@ -169,14 +189,13 @@ function restoreSectionBodyAfterNormalize(
   hasSubstantial: (draft: string) => boolean,
   sectionLabel?: string,
 ): string {
-  if (mddHasDuplicateSectionHeadings(source)) {
-    if (sectionLabel === "§5") {
-      console.warn("[MDD:PrepareRestore] §5 skip restore — source tiene headings duplicados");
-    }
+  const restoreSource = resolveSectionRestoreSource(source);
+  if (sectionLabel === "§5" && mddHasDuplicateSectionHeadings(source)) {
+    console.warn("[MDD:PrepareRestore] §5 skip restore — source tiene headings duplicados");
     return normalized;
   }
-  const srcBody = extractBody(source);
-  if (!srcBody?.trim() || !hasSubstantial(source)) return normalized;
+  const srcBody = extractBody(restoreSource);
+  if (!srcBody?.trim() || !hasSubstantial(restoreSource)) return normalized;
   if (hasSubstantial(normalized)) return normalized;
   const normLen = extractBody(normalized)?.length ?? 0;
   const restored = replaceBody(normalized, srcBody);
@@ -184,6 +203,27 @@ function restoreSectionBodyAfterNormalize(
     console.warn(`[MDD:PrepareRestore] §5 ${normLen}→${srcBody.length}`);
   }
   return restored;
+}
+
+function baselineHasSubstantialCoreSections(draft: string): boolean {
+  return (
+    draftHasSubstantialSection2(draft) ||
+    draftHasSubstantialSection3(draft) ||
+    draftHasPersistableSection4(draft)
+  );
+}
+
+/** Fallback conservador cuando sanitize/dedupe colapsa §2–§4: re-normaliza desde baseline sin pipeline pesado. */
+function applyConservativePrepareFromBaseline(baseline: string): string {
+  const restoreSource = resolveSectionRestoreSource(baseline);
+  const sanitized = replaceContextWhenOnlyMetadata(
+    sanitizeContextKeyValueAndObject(sanitizeContextSection(restoreSource)),
+  );
+  const normalized = restoreCoreSectionsAfterNormalize(
+    restoreSource,
+    normalizeMddFormat(sanitized),
+  );
+  return preserveValidatedSectionsIfSubstantial(baseline, applyPreDeliveryGateFixes(normalized));
 }
 
 function restoreSection2AfterNormalize(source: string, normalized: string): string {
@@ -275,6 +315,9 @@ export async function prepareMddForOutput(
   const inputDraftBaseline =
     typeof input === "string" ? input.trim() : (input.mddDraft ?? "").trim();
   const streamPreview = options?.streamPreview === true;
+  const authoritativeBaseline = deduplicateMddDraftSections(
+    (options?.baselineDraft?.trim() || inputDraftBaseline).trim(),
+  );
   let raw: string;
   if (typeof input === "string") {
     raw = input;
@@ -398,7 +441,7 @@ export async function prepareMddForOutput(
     );
   }
   const preserveBaseline = resolveTailPreserveBaseline(
-    (options?.baselineDraft?.trim() || inputDraftBaseline || raw).trim(),
+    (authoritativeBaseline || options?.baselineDraft?.trim() || inputDraftBaseline || raw).trim(),
     options?.tailSnapshotSource,
   );
   let prePreserveMarkdown = finalMarkdown;
@@ -439,9 +482,31 @@ export async function prepareMddForOutput(
     preserveOpts,
   );
   gatedMarkdown = tailGuard.markdown;
-  // guardValidatedSectionsForPersist puede reinyectar §5/§6/§7 con un heading nuevo
-  // cuando el regex no matchea el existente (inserta bloque en vez de reemplazar).
-  // Dedupe de nuevo tras el guard para no dejar headings duplicados sin limpiar.
+  if (tailGuard.failedSections.length > 0) {
+    gatedMarkdown = restoreMddSectionsFromBaselineStrict(
+      gatedMarkdown,
+      preserveBaselineSafe,
+      tailGuard.failedSections,
+    );
+    const retryGuard = guardValidatedSectionsForPersist(
+      preserveBaselineSafe,
+      gatedMarkdown,
+      "prepareMddForOutput:strict-restore",
+      preserveOpts,
+    );
+    gatedMarkdown = retryGuard.markdown;
+    if (
+      retryGuard.failedSections.length > 0 &&
+      preserveBaselineSafe.length > 0 &&
+      gatedMarkdown.length < preserveBaselineSafe.length * 0.75 &&
+      baselineHasSubstantialCoreSections(preserveBaselineSafe)
+    ) {
+      console.warn(
+        `[MDD:PrepareOutput] regresión masiva tras sanitize — conservando baseline sustancial (§${retryGuard.failedSections.join("/§")})`,
+      );
+      gatedMarkdown = applyConservativePrepareFromBaseline(preserveBaselineSafe);
+    }
+  }
   if (!streamPreview && mddHasDuplicateSectionHeadings(gatedMarkdown)) {
     const deduped = deduplicateAndReorderMddSections(gatedMarkdown);
     if (!mddHasDuplicateSectionHeadings(deduped)) {
@@ -449,8 +514,6 @@ export async function prepareMddForOutput(
       console.warn("[MDD:PrepareOutput] dedupe post-guard eliminó headings duplicados");
     }
   }
-  // Salida con fences cerrados (incl. EOF): idempotente en 2ª pasada de prepare al persistir;
-  // evita PersistCheck / DeliveryGate «fence sin cerrar al final» (jobs 85, 98).
   gatedMarkdown = ensureDocumentFenceParity(gatedMarkdown);
   console.log(
     `[MDD:PrepareOutput:diag] pre-gate §4=${extractSection4Body(gatedMarkdown)?.length ?? 0} §5=${extractSection5Body(gatedMarkdown)?.length ?? 0} §5best=${extractBestSection5Body(gatedMarkdown)?.length ?? 0}`,

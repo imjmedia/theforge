@@ -21,6 +21,8 @@ Cola de generación/regeneración del MDD desacoplada del SSE del navegador.
 
 Un solo job MDD activo o en cola por proyecto (`assertCanEnqueue` → 409 si busy).
 
+**Encolar sustituye jobs activos:** al `POST …/mdd/jobs`, `preemptActiveMddJobsForProject` aborta y marca **failed** cualquier job `active` del mismo proyecto (`Reemplazado por un job MDD más reciente`). Evita el error BullMQ `could not renew lock` cuando se cancela y se relanza sin esperar al worker anterior.
+
 ## Persistencia
 
 `AiAnalysisService.runMddGenerationJob` persiste borradores (`draft`) y resultado final (`done`) en BD vía `projects.persistMddFromBackgroundJob`:
@@ -41,7 +43,7 @@ El Workshop ya no depende de `persistMddContent` tras encolar.
 | `GET` | `/projects/:id/mdd-jobs/:jobId` | Alias polling (web) |
 | `DELETE` | `/projects/:id/mdd-jobs/:jobId` | Cancela job encolado o aborta pipeline activo (flag Redis + `AbortSignal` entre nodos; poll 500 ms) |
 
-Al cancelar un job **activo**: el banner y `generation-status.busy` se liberan de inmediato (job en estado «cancelling»); el worker termina el paso LLM en curso y aborta entre nodos. Tras abort, `assertCanEnqueue` permite una nueva generación.
+Al cancelar un job **activo**: el banner y `generation-status.busy` se liberan de inmediato (job en estado «cancelling»); el worker termina el paso LLM en curso y aborta entre nodos. Tras abort, `assertCanEnqueue` permite una nueva generación. Si encolas de inmediato sin esperar, el nuevo job **preempt** al anterior (ver arriba).
 | `GET` | `/projects/:id/generation-status` | Incluye `mddJobs[]` y `mddUpstreamSync` (banner Workshop) |
 | `POST` | `/projects/:id/legacy/generate-mdd` | Encola legacy por defecto (`?queue=false` sync) |
 | `GET` | `/projects/:id/legacy/mdd-jobs/:jobId` | Polling legacy |
@@ -84,8 +86,16 @@ Progreso del job: `phase: "cache"`. Requiere haber completado al menos una gener
 
 ## Reinicio del API / jobs huérfanos
 
-BullMQ persiste jobs en Redis. Si el proceso API/worker muere con un job `active`, el lock puede vivir hasta `lockDuration` (15 min) y la UI sigue mostrando «en ejecución».
+BullMQ persiste jobs en Redis. Si el proceso **worker** muere con un job `active`, el lock puede vivir hasta `lockDuration` (15 min) y la UI sigue mostrando «en ejecución».
 
-En `onModuleInit`, `recoverBullMqJobsAfterWorkerRestart` marca `active` como **failed** (`Proceso API reiniciado; vuelve a generar el MDD`) y elimina `waiting`/`delayed` obsoletos. El worker MDD usa `maxStalledCount=0` y en `stalled` no reencola el pipeline.
+En `onModuleInit` del **worker** (`THEFORGE_RUNTIME_ROLE=worker|all`), `recoverBullMqJobsAfterWorkerRestart` marca **failed** solo jobs `active` **sin lock Redis** (huérfanos reales) y elimina `waiting`/`delayed` obsoletos. El contenedor **HTTP** no ejecuta recuperación (no mata jobs que el worker sigue procesando). El worker MDD usa `maxStalledCount=0` y en `stalled` no reencola el pipeline.
 
-**Ahora mismo (estado atascado):** reinicia el API con este fix o pulsa **Cancelar generación** en el banner (jobs huérfanos `active` sin worker local se fallan al instante). No hace falta `redis-cli FLUSHDB`.
+**Cancelación desde HTTP:** jobs `active` en el worker reciben flag Redis + abort cooperativo (igual que entregables), no `forceFail` mientras el worker mantiene el lock.
+
+**Shutdown graceful (redeploy worker):** en `onModuleDestroy` (SIGTERM) se abortan jobs locales, se fuerza `failed` en Redis (`Worker detenido…`) y se cierra el worker con `close(true)`.
+
+**Polling:** `GET …/mdd-jobs/:jobId` reconcilia jobs `active` huérfanos (sin lock Redis ni worker local) vía `reconcileOrphanBullMqActiveJob`.
+
+**Lock renewal:** si el worker pierde el lock (redeploy solapado, preempt), BullMQ emite `could not renew lock for job N`; el worker lo registra como `warn` (no `error`).
+
+**Estado atascado:** reinicia el worker o pulsa **Cancelar generación**; jobs huérfanos `active` sin lock se fallan al instante en poll/cancel.

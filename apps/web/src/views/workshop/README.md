@@ -5,7 +5,7 @@ Subcomponentes extraídos de `WorkshopView.tsx` (Fase 5b del [GOD-REFACTOR](../.
 | Archivo | Uso |
 | ------- | --- |
 | **WorkshopDocToolbarHint.tsx** | Hint de orden de pestañas según complejidad (LOW / MEDIUM / HIGH) y tipo de proyecto (legacy vs greenfield). En HIGH muestra resumen compacto; el flujo completo se abre desde el modal del toolbar. |
-| **WorkshopHeaderBar.tsx** | Header global: título, badge Legacy, visibilidad privado/compartido, estado de sync, selector de etapa, nueva etapa, descarga ZIP, export SDD spec-kit, ayuda y línea MCP en proyectos legacy. |
+| **WorkshopHeaderBar.tsx** | Header global: título, badge Legacy, visibilidad privado/compartido, estado de sync, selector de etapa, **gestión de ciclo de vida** (⋯ → archivar/completar/activar/reabrir), nueva etapa, descarga ZIP, export SDD spec-kit, ayuda y línea MCP en proyectos legacy. |
 | **WorkshopDocPanel.tsx** | Columna B: envuelve toolbar + área scrollable + bubble menu (desktop). |
 | **WorkshopDocToolbar.tsx** | Toolbar del documento (preview/source, regen, imprimir, acciones móvil). Tipos en `workshopDocToolbar.types.ts`. |
 | **WorkshopAuditModal.tsx** | Modal inline de auditoría MDD (calidad, gaps, regeneración por sección). |
@@ -15,7 +15,7 @@ Subcomponentes extraídos de `WorkshopView.tsx` (Fase 5b del [GOD-REFACTOR](../.
 | **WorkshopBenchmarkPanel.tsx** | Pestaña Benchmark (Fase 0 + Deep Research). Toggle **Modo asistido**: al activar analiza DBGA existente, detecta plantilla A/B/C, lista gaps y lanza primera pregunta en el chat (visible aunque solo haya respuesta del asistente). Tipos en `workshopBenchmarkPanel.types.ts`. |
 | **WorkshopMddPanel.tsx** | Panel MDD: gates legacy, acciones (generar, formato, patrones, cascade), auditoría manual y editor. Tipos en `workshopMddPanel.types.ts`. |
 | **WorkshopSpecBrdAemPanels.tsx** | Spec, AEM, UI Screens y BRD de etapa. Tipos en `workshopSpecBrdAemPanels.types.ts`. |
-| **WorkshopAgentPanels.tsx** | Gobernanza de agentes, gaps pendientes y log de sesión. Tipos en `workshopAgentPanels.types.ts`. |
+| **WorkshopAgentPanels.tsx** | Gobernanza de agentes, gaps pendientes y log de sesión. Tipos en `workshopAgentPanels.types.ts`. La vista previa usa `agentGovernanceContent` persistido; el export ZIP (`agent-governance-export`) solo al pulsar descarga en el header. |
 | **WorkshopUxGuidePanel.tsx** | Design System / UX guide (preview, design, source). Tipos en `workshopUxGuidePanel.types.ts`. |
 | **WorkshopAdrsPluginPanels.tsx** | ADRs del grafo y paneles plugin dinámicos. Tipos en `workshopAdrsPluginPanels.types.ts`. |
 | **WorkshopDocPanelContent.tsx** | Compositor del área scroll: encadena todos los subpaneles anteriores. Tipos en `workshopDocPanelContent.types.ts`. |

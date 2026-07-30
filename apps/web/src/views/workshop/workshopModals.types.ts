@@ -91,5 +91,6 @@ export type WorkshopModalsProps = {
   aemGenerateDialogOpen: boolean;
   setAemGenerateDialogOpen: (open: boolean) => void;
   aemGenerateLoading: boolean;
+  aemGenerateError?: string | null;
   onGenerateAem: (marketScope: AemMarketScope) => void | Promise<void>;
 };
