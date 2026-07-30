@@ -79,12 +79,25 @@ export interface PrecisionBreakdown {
   modeloDatos: number;
   apiContracts: number;
   frontend: number;
+  /** §5 Lógica y Edge Cases. */
+  logicaEdgeCases: number;
   seguridad: number;
   integracion: number;
   /** Si una sección está en "Estado Inconsistente" por trazabilidad, aparece aquí. */
   sectionStatus?: Partial<Record<"contexto" | "modeloDatos" | "apiContracts" | "seguridad" | "integracion", SectionStatus>>;
   /** Motivo de la calificación por sección (por qué se obtuvo ese %). */
-  sectionReasons?: Partial<Record<"contexto" | "modeloDatos" | "apiContracts" | "frontend" | "seguridad" | "integracion", string>>;
+  sectionReasons?: Partial<
+    Record<
+      | "contexto"
+      | "modeloDatos"
+      | "apiContracts"
+      | "frontend"
+      | "logicaEdgeCases"
+      | "seguridad"
+      | "integracion",
+      string
+    >
+  >;
 }
 
 /** Salida exacta para la UI: Semáforo + Estimación (nómina interna y precio mercado). */
