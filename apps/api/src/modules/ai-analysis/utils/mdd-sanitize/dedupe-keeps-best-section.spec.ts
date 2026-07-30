@@ -108,4 +108,50 @@ describe("dedupe conserva la mejor versión de una sección, no la primera", () 
     assert.match(out, /Controles de seguridad/);
     assert.match(out, /Despliegue y observabilidad/);
   });
+
+  it("§5 stub con heading BDD/AAA pierde frente al cuerpo sustancial (misma posición)", () => {
+    const raw = `# Master Design Document
+
+## 1. Contexto y alcance
+
+${"Alcance del KMS corporativo. ".repeat(30)}
+
+## 2. Arquitectura y Stack
+
+${"Stack tecnologico. ".repeat(30)}
+
+## 3. Modelo de Datos
+
+\`\`\`sql
+CREATE TABLE keys (id UUID PRIMARY KEY);
+\`\`\`
+
+## 4. Contratos de API
+
+### GET /api/v1/keys
+
+${"Contrato del endpoint. ".repeat(30)}
+
+## 5. Lógica y Edge Cases
+
+${STUB_SECTION5_BODY}
+
+## 6. Seguridad
+
+${"Controles de seguridad. ".repeat(30)}
+
+## 7. Infraestructura
+
+${"Despliegue y observabilidad. ".repeat(30)}
+
+## 5. Lógica y Edge Cases
+
+${GOOD_SECTION5_BODY}
+`;
+    const out = deduplicateAndReorderMddSections(raw);
+    const body = extractSection5Body(out);
+    assert.ok(body != null);
+    assert.ok(body!.length >= 200, `stub BDD no debe ganar (len=${body!.length})`);
+    assert.match(body!, /RN-01/);
+  });
 });

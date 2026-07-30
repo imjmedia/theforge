@@ -14,20 +14,23 @@ import {
   extractArquitecturaSectionBody,
   extractContextSectionBody,
   extractSection3Body,
+  extractSection4Body,
   extractSection5Body,
+  extractBestSection5Body,
   extractSection6Body,
   extractSection7Body,
   isMddSectionPipelinePlaceholderBody,
+  mddHasDuplicateSectionHeadings,
   replaceArquitecturaSectionBody,
   replaceMddSection3Body,
   replaceMddSection4Body,
   replaceMddSection5Body,
   replaceSection1BodyFromAnyHeading,
   replaceSection6Or7InDraft,
-  mddHasDuplicateSectionHeadings,
 } from "./mdd-sanitize/section-merge.js";
 import { MDD_SECTION5_TAIL_PLACEHOLDER } from "./mdd-tail-parallel.config.js";
 import { isPlaceholderSeguridad } from "./mdd-security-parse.js";
+import { closeUnclosedFencesBeforeCanonicalH2 } from "./mdd-sanitize/section-fence.util.js";
 import {
   integracionToSection7Markdown,
   seguridadItemsToSection6Markdown,
@@ -58,6 +61,41 @@ function section5BodyIsPreserveBaseline(body: string | null | undefined): boolea
 
 /** Ratio mínimo (nuevo/baseline) para aceptar merge de §5. */
 export const SECTION5_REGRESSION_LENGTH_RATIO = 0.75;
+
+/** §5 duplicada hinchada (cola >> núcleo): no usar como baseline de preserve. */
+const SECTION5_INFLATED_DUP_RATIO = 3;
+
+/** Extrae §5 para preserve: tolera baselineDup salvo hinchamiento extremo entre candidatos. */
+function resolveSection5PreserveBaselineBody(baseline: string): string | null {
+  const trimmed = (baseline ?? "").trim();
+  if (!trimmed) return null;
+  if (!mddHasDuplicateSectionHeadings(trimmed)) {
+    return extractSection5Body(trimmed);
+  }
+
+  const re = /\n(##\s+5\.\s*Lógica\s+y\s*Edge\s+Cases[^\n]*)/gi;
+  const withNewline = trimmed.startsWith("#") ? `\n${trimmed}` : trimmed;
+  const bodies: string[] = [];
+  let match: RegExpExecArray | null = null;
+  while ((match = re.exec(withNewline)) !== null) {
+    const start = match.index + match[0].length;
+    const rest = withNewline.slice(start);
+    const next = rest.search(/\n##\s+/);
+    const body = (next >= 0 ? rest.slice(0, next) : rest).replace(/^\s*\n+/, "").trim();
+    if (body) bodies.push(body);
+  }
+
+  const substantial = bodies.filter((b) => section5BodyIsPreserveBaseline(b));
+  if (substantial.length === 0) return extractBestSection5Body(trimmed);
+
+  const minLen = Math.min(...substantial.map((b) => b.length));
+  const maxLen = Math.max(...substantial.map((b) => b.length));
+  if (substantial.length > 1 && maxLen > minLen * SECTION5_INFLATED_DUP_RATIO) {
+    return null;
+  }
+
+  return extractBestSection5Body(trimmed);
+}
 
 /** Baseline sustancial cuya longitud activa protección anti-regresión §5. */
 export const MIN_SECTION5_BASELINE_FOR_REGRESSION_GUARD = 1_200;
@@ -421,6 +459,61 @@ export function draftIsSubstantialForScopedRepair(draft: string): boolean {
   );
 }
 
+export type ScopedSectionSealSource = {
+  mddDraft?: string | null;
+  stackArchitectMddDraftSnapshot?: string | null;
+  dataModelArchitectMddDraftSnapshot?: string | null;
+  apiContractsArchitectMddDraftSnapshot?: string | null;
+};
+
+/** True si una pasada scoped (stack/data_model/api_contracts) ya selló la sección con snapshot + sustancia. */
+export function isScopedSectionSealed(
+  section: 2 | 3 | 4,
+  source: ScopedSectionSealSource,
+): boolean {
+  const draft = (source.mddDraft ?? "").trim();
+  switch (section) {
+    case 2:
+      return !!(
+        source.stackArchitectMddDraftSnapshot?.trim() && draftHasSubstantialSection2(draft)
+      );
+    case 3:
+      return !!(
+        source.dataModelArchitectMddDraftSnapshot?.trim() && draftHasSubstantialSection3(draft)
+      );
+    case 4:
+      return !!(
+        source.apiContractsArchitectMddDraftSnapshot?.trim() && draftHasPersistableSection4(draft)
+      );
+    default:
+      return false;
+  }
+}
+
+function logSection5ExtractZeroDiag(restored: string, baselineLen: number, context: string): void {
+  const s4Len = extractSection4Body(restored)?.length ?? 0;
+  const fenceCount = (restored.match(/```/g) ?? []).length;
+  console.warn(
+    `[MDD:SectionPreserve:diag] §5 ${context} extract=0 baseline=${baselineLen} §4len=${s4Len} fences=${fenceCount}${fenceCount % 2 === 1 ? " IMPAR" : ""}`,
+  );
+}
+
+function logSection5PreserveSkip(
+  reason: string,
+  ctx: {
+    curSubstantial: boolean;
+    curShorter: boolean;
+    baselineDup: boolean;
+    currentDup: boolean;
+    baselineLen: number;
+    curLen: number;
+  },
+): void {
+  console.warn(
+    `[MDD:SectionPreserve] §5 restore omitido (${reason}) curSubstantial=${ctx.curSubstantial} curShorter=${ctx.curShorter} baselineDup=${ctx.baselineDup} currentDup=${ctx.currentDup} lens=${ctx.curLen}/${ctx.baselineLen}`,
+  );
+}
+
 function preserveSectionBodyIfSubstantial(
   baselineDraft: string,
   currentDraft: string,
@@ -433,28 +526,46 @@ function preserveSectionBodyIfSubstantial(
   const current = (currentDraft ?? "").trim();
   if (!baseline || !current) return current || baseline;
 
-  if (mddHasDuplicateSectionHeadings(baseline)) {
+  const isSection5 = sectionLabel === "§5";
+  const baselineDup = mddHasDuplicateSectionHeadings(baseline);
+  if (baselineDup && !isSection5) {
     return current;
   }
+  if (baselineDup && isSection5) {
+    console.warn(
+      `[MDD:SectionPreserve] §5 baseline con headings duplicados — resolveSection5PreserveBaselineBody (lens=${resolveSection5PreserveBaselineBody(baseline)?.length ?? 0})`,
+    );
+  }
 
-  const prevBody = extractBody(baseline);
+  const prevBody = isSection5 ? resolveSection5PreserveBaselineBody(baseline) : extractBody(baseline);
   if (!sectionBodyIsSubstantial(prevBody, minLen)) return current;
 
   const curBody = extractBody(current);
   const curSubstantial = sectionBodyIsSubstantial(curBody, minLen);
   const curShorter = (curBody?.length ?? 0) < (prevBody?.length ?? 0) * 0.5;
-  if (curSubstantial && !curShorter) return current;
-
   const baselineLen = prevBody?.length ?? 0;
   const curLen = curBody?.length ?? 0;
-  if (curSubstantial && baselineLen > curLen * 3) {
+  const currentDup = mddHasDuplicateSectionHeadings(current);
+  const skipCtx = {
+    curSubstantial,
+    curShorter,
+    baselineDup: false,
+    currentDup,
+    baselineLen,
+    curLen,
+  };
+
+  if (curSubstantial && !curShorter) {
+    if (isSection5) logSection5PreserveSkip("current sustancial y no <50% baseline", skipCtx);
     return current;
   }
-  if (
-    mddHasDuplicateSectionHeadings(current) &&
-    baselineLen > 0 &&
-    baselineLen >= curLen * 2.5
-  ) {
+
+  if (curSubstantial && baselineLen > curLen * 3) {
+    if (isSection5) logSection5PreserveSkip("current sustancial pero baseline >3× current", skipCtx);
+    return current;
+  }
+  if (currentDup && baselineLen > 0 && baselineLen >= curLen * 2.5) {
+    if (isSection5) logSection5PreserveSkip("current headings duplicados y baseline ≥2.5× current", skipCtx);
     return current;
   }
 
@@ -463,6 +574,12 @@ function preserveSectionBodyIfSubstantial(
     console.warn(
       `[MDD:SectionPreserve] ${sectionLabel} restaurada (${curLen}→${baselineLen} chars)`,
     );
+    if (isSection5) {
+      const extractedLen = extractSection5Body(restored)?.length ?? 0;
+      if (extractedLen === 0 && baselineLen > 200) {
+        logSection5ExtractZeroDiag(restored, baselineLen, "restore merge OK");
+      }
+    }
   }
   return restored;
 }
@@ -617,22 +734,37 @@ export function preserveSection4IfSubstantial(baselineDraft: string, currentDraf
  */
 export function preserveSection5IfSubstantial(baselineDraft: string, currentDraft: string): string {
   const baseline = (baselineDraft ?? "").trim();
-  const prevBody = extractSection5Body(baseline) ?? baseline.match(/##\s*5\.[\s\S]*?\n([\s\S]*?)(?=\n##\s|$)/i)?.[1]?.trim();
+  const baselineDup = mddHasDuplicateSectionHeadings(baseline);
+  let prevBody = resolveSection5PreserveBaselineBody(baseline);
+  if (prevBody == null && baselineDup) {
+    return currentDraft;
+  }
+  if (prevBody == null && !baselineDup) {
+    prevBody =
+      baseline.match(/##\s*5\.[\s\S]*?\n([\s\S]*?)(?=\n##\s|$)/i)?.[1]?.trim() ?? null;
+  }
   if (!section5BodyIsPreserveBaseline(prevBody)) return currentDraft;
 
   const curBody = extractSection5Body(currentDraft);
   if (
     prevBody &&
     curBody &&
-    !mddHasDuplicateSectionHeadings(baseline) &&
     isSection5SectionRegression(prevBody, curBody) &&
     sectionBodyIsSubstantial(prevBody, MIN_SUBSTANTIAL_SECTION5_BODY_LEN)
   ) {
     const restored = replaceMddSection5Body(currentDraft, prevBody);
     if (restored !== currentDraft) {
       console.warn(
-        `[MDD:SectionPreserve] §5 restaurada por regresión (${curBody.length}→${prevBody.length} chars)`,
+        `[MDD:SectionPreserve] §5 restaurada por regresión (${curBody.length}→${prevBody.length} chars) baselineDup=${mddHasDuplicateSectionHeadings(baseline)}`,
       );
+      const extractedLen = extractSection5Body(restored)?.length ?? 0;
+      if (extractedLen === 0 && prevBody.length > 200) {
+        logSection5ExtractZeroDiag(restored, prevBody.length, "regresión restore OK");
+      } else {
+        console.log(
+          `[MDD:SectionPreserve] §5 regresión verify extract=${extractedLen} (baseline=${prevBody.length})`,
+        );
+      }
     }
     return restored;
   }
@@ -801,8 +933,10 @@ export function guardValidatedSectionsForPersist(
   stepLabel = "persist",
   options?: Pick<PreserveValidatedSectionsOptions, "sections" | "excludeSections">,
 ): ValidatedSectionPersistGuardResult {
-  const baseline = (prePrepareDraft ?? "").trim();
-  const before = (postPrepareMarkdown ?? "").trim();
+  // Fence abierto (§3 ```sql, §4 ```json) sepulta las secciones siguientes: los extractores
+  // fence-aware las miden 0 y el guard tumba el job aunque el contenido siga ahí (job 85, §5).
+  const baseline = closeUnclosedFencesBeforeCanonicalH2((prePrepareDraft ?? "").trim());
+  const before = closeUnclosedFencesBeforeCanonicalH2((postPrepareMarkdown ?? "").trim());
   if (!baseline) return { markdown: before, restored: false, failedSections: [] };
 
   if (

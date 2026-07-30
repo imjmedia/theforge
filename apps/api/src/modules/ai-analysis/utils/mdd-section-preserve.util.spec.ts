@@ -223,6 +223,18 @@ describe("preserveSection5IfSubstantial", () => {
     assert.ok(!out.includes("Duplicado regresión"));
     assert.equal(out, wiped);
   });
+
+  it("restaura §5 aunque baseline tenga headings duplicados (stub + sustancial)", () => {
+    const stubThenGood =
+      BASE.replace(
+        `## 5. Lógica y Edge Cases\n${S5_BODY}`,
+        `## 5. Lógica y Edge Cases\n(Pendiente: paso dedicado Lógica y Edge Cases)\n\n## 5. Lógica y Edge Cases\n${S5_BODY}`,
+      );
+    const wiped = BASE.replace(S5_BODY, "(Pendiente)");
+    const out = preserveSection5IfSubstantial(stubThenGood, wiped);
+    assert.ok(out.includes("JWT tras credenciales"));
+    assert.equal(draftHasSubstantialSection5(out), true);
+  });
 });
 
 describe("preserveTailSectionsIfSubstantial (simula wipe Cross/Diagram)", () => {
