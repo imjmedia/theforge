@@ -587,7 +587,7 @@ export function DashboardSidebar({
     <div
       className={cn(
         "relative flex w-full shrink-0 flex-col lg:z-40 lg:w-auto lg:shrink-0",
-        inWorkshop ? "lg:h-full lg:min-h-0" : "lg:h-[100dvh] lg:min-h-[100dvh]",
+        inWorkshop ? "lg:h-full lg:min-h-0" : "h-[100dvh] min-h-[100dvh] max-h-[100dvh] bg-[var(--sidebar)] lg:overflow-hidden",
       )}
     >
       <header
@@ -652,7 +652,7 @@ export function DashboardSidebar({
         mobileNavOpen
           ? "max-lg:translate-x-0 max-lg:pointer-events-auto"
           : "max-lg:-translate-x-full max-lg:pointer-events-none",
-        !inWorkshop && "lg:h-[100dvh] lg:max-h-[100dvh] lg:min-h-[100dvh]",
+        !inWorkshop && "h-full min-h-0 max-h-[100dvh] lg:flex lg:flex-col",
         inWorkshop &&
           cn(
             "min-h-0 lg:h-full lg:max-h-[min(100dvh,100svh)] lg:min-h-0",
@@ -668,7 +668,7 @@ export function DashboardSidebar({
           "flex min-h-0 w-full min-w-0 flex-col",
           inWorkshop
             ? cn("min-h-0 flex-1", rail ? "gap-2 overflow-visible" : "gap-4 overflow-hidden")
-            : "min-h-0 flex-1 gap-4 lg:overflow-hidden",
+            : "flex h-full min-h-0 flex-1 flex-col gap-4 overflow-hidden",
           rail ? "p-3 lg:px-2 lg:py-3" : "px-3 py-3 lg:px-3 lg:py-3",
         )}
       >
@@ -756,7 +756,7 @@ export function DashboardSidebar({
         <nav
           className={cn(
             "flex min-w-0 flex-col gap-1",
-            inWorkshop && "min-h-0 flex-1",
+            "min-h-0 flex-1",
             inWorkshop && !rail && "overflow-hidden",
           )}
           aria-label="Secciones"
@@ -1021,7 +1021,7 @@ export function DashboardSidebar({
             </div>
           ) : (
             <div
-              className={cn("group/projects flex min-h-0 min-w-0 flex-col", !rail && "max-h-[min(50vh,22rem)]")}
+              className={cn("group/projects flex min-h-0 min-w-0 flex-1 flex-col", !rail && "overflow-hidden")}
               role="group"
               aria-label="Proyectos"
             >
@@ -1079,7 +1079,7 @@ export function DashboardSidebar({
                       "relative min-h-0 flex-1 overscroll-y-contain pb-1 [-webkit-overflow-scrolling:touch]",
                       rail
                         ? "scrollbar-rail flex flex-col items-center gap-1 overflow-y-auto overflow-x-visible py-0.5"
-                        : "max-h-[min(42vh,18rem)] overflow-x-hidden overflow-y-auto px-0.5 [scrollbar-gutter:stable] [&::-webkit-scrollbar]:w-1.5",
+                        : "min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-0.5 [scrollbar-gutter:stable] [&::-webkit-scrollbar]:w-1.5",
                     )}
                     role="list"
                     aria-label="Lista de proyectos"
