@@ -61,6 +61,36 @@ export const INTEGRATION_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "get_integration_status",
+    description:
+      "Estado de integración NEW ↔ LEGACY: enlaces, handoff NEW-LEG (ítems, status), matriz traces, warnings, handoffImportedAt y promotableItemIds (LEGACY). En LEGACY incluye linkedNewHandoff del proyecto NEW vinculado.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: {
+          type: "string",
+          description: "ID del proyecto NEW o LEGACY (Workshop)",
+        },
+      },
+      required: ["projectId"],
+    },
+  },
+  {
+    name: "get_integration_traces",
+    description:
+      "Matriz de trazabilidad NEW-LEG ↔ LEG (filas IntegrationTrace): newLegId, legacyStoryId, legacyStageId, status, title, description, actor, acceptanceCriteria. Equivalente a la tabla «Trazabilidad» en Integración.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: {
+          type: "string",
+          description: "ID del proyecto NEW o LEGACY (Workshop)",
+        },
+      },
+      required: ["projectId"],
+    },
+  },
+  {
     name: "report_documentation_gap",
     description:
       "Reporta un gap de documentación SDD (doc incorrecta/incompleta). Por defecto queda pendiente de aprobación humana en Workshop (`pendingApproval` en la respuesta); con DOC_GAP_AUTO_APPLY=1 reconcilia al instante.",
@@ -267,6 +297,16 @@ export function createIntegrationHandlers(api: McpApiClient): Record<string, Mcp
     let path = `/projects/${projectId}/change-log`;
     if (limit != null) path += `?limit=${limit}`;
     return JSON.stringify(await apiGet(path));
+  },
+  async get_integration_status(args) {
+    const projectId = (args.projectId as string | undefined)?.trim();
+    if (!projectId) throw new Error("get_integration_status requiere projectId");
+    return JSON.stringify(await apiGet(`/projects/${projectId}/integration`));
+  },
+  async get_integration_traces(args) {
+    const projectId = (args.projectId as string | undefined)?.trim();
+    if (!projectId) throw new Error("get_integration_traces requiere projectId");
+    return JSON.stringify(await apiGet(`/projects/${projectId}/integration/traces`));
   },
   async report_documentation_gap(args) {
     const { projectId, stageId, description, evidence, affectedArtifacts } = args as {
