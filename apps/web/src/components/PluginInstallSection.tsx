@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CheckCircle2,
   Circle,
@@ -25,6 +25,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui";
+import { cn } from "@/lib/utils";
+
+function isValidPluginFile(file: File): boolean {
+  const name = file.name.toLowerCase();
+  return name.endsWith(".tfplugin") || name.endsWith(".zip");
+}
 
 function canManagePlugins(role: string | undefined): boolean {
   return role === "admin" || role === "super_admin";
@@ -43,6 +49,8 @@ export function PluginInstallSection({ onChanged }: PluginInstallSectionProps) {
   const [status, setStatus] = useState<PluginInstalledListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const dragDepthRef = useRef(0);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -93,6 +101,42 @@ export function PluginInstallSection({ onChanged }: PluginInstallSectionProps) {
     }
   };
 
+  const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isManager || busy) return;
+    dragDepthRef.current += 1;
+    if (dragDepthRef.current === 1) setDragActive(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isManager || busy) return;
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setDragActive(false);
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current = 0;
+    setDragActive(false);
+    if (!isManager || busy) return;
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    if (!isValidPluginFile(file)) {
+      setError("Solo se aceptan archivos .tfplugin o .zip");
+      return;
+    }
+    void handleFile(file);
+  };
+
   const handleReload = async () => {
     if (!isManager) return;
     setBusy(true);
@@ -140,6 +184,18 @@ export function PluginInstallSection({ onChanged }: PluginInstallSectionProps) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        <div
+          className={cn(
+            "space-y-6 transition-colors",
+            isManager &&
+              dragActive &&
+              "rounded-lg bg-[color-mix(in_oklch,var(--primary)_6%,var(--card))] ring-2 ring-inset ring-[var(--primary)]",
+          )}
+          onDragEnter={isManager ? handleDragEnter : undefined}
+          onDragLeave={isManager ? handleDragLeave : undefined}
+          onDragOver={isManager ? handleDragOver : undefined}
+          onDrop={isManager ? handleDrop : undefined}
+        >
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-[var(--foreground-muted)]">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -195,11 +251,37 @@ export function PluginInstallSection({ onChanged }: PluginInstallSectionProps) {
           </ul>
         ) : (
           <p className="text-sm text-[var(--foreground-muted)]">
-            No hay plugins instalados. Sube un paquete <code className="text-xs">.tfplugin</code>.
+            No hay plugins instalados. Arrastra un paquete <code className="text-xs">.tfplugin</code>{" "}
+            a esta tarjeta o pulsa <strong>Subir .tfplugin</strong>.
             Si el plugin requiere licencia u otros datos, aparecerán los ajustes correspondientes
             debajo una vez cargado.
           </p>
         )}
+
+        {isManager ? (
+          <div
+            className={cn(
+              "flex w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-8 text-center transition-colors",
+              dragActive
+                ? "border-[var(--primary)] bg-[color-mix(in_oklch,var(--primary)_10%,var(--card))]"
+                : "border-[var(--border)] bg-[color-mix(in_oklch,var(--muted)_15%,var(--card))]",
+              busy && "pointer-events-none opacity-60",
+            )}
+            role="region"
+            aria-label="Zona para arrastrar archivos .tfplugin"
+          >
+            <Upload
+              className={cn(
+                "h-8 w-8",
+                dragActive ? "text-[var(--primary)]" : "text-[var(--foreground-muted)]",
+              )}
+            />
+            <p className="text-sm font-medium text-[var(--foreground)]">
+              {dragActive ? "Suelta el archivo aquí" : "Arrastra un .tfplugin aquí"}
+            </p>
+            <p className="text-xs text-[var(--foreground-muted)]">También puedes usar el botón Subir .tfplugin</p>
+          </div>
+        ) : null}
 
         {isManager ? (
           <div className="flex flex-wrap items-center gap-3 border-t border-[var(--border)] pt-4">
@@ -237,6 +319,7 @@ export function PluginInstallSection({ onChanged }: PluginInstallSectionProps) {
 
         {error ? <p className="text-sm text-red-400">{error}</p> : null}
         {success ? <p className="text-sm text-emerald-400">{success}</p> : null}
+        </div>
       </CardContent>
     </Card>
   );
