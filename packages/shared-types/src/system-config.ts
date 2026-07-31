@@ -5,6 +5,7 @@
 
 export type SystemConfigCategory =
   | "integrations"
+  | "auth"
   | "llm"
   | "queues"
   | "mcp"
@@ -41,6 +42,12 @@ export const SYSTEM_CONFIG_CATEGORIES: ReadonlyArray<{
     label: "Integraciones",
     description:
       "Conexión con MCP Ariadne, documentación Context7, búsqueda Tavily y converge brownfield. Sin MCP configurado, los proyectos LEGACY no indexan ni generan doc. de partida.",
+  },
+  {
+    id: "auth",
+    label: "Correo y acceso",
+    description:
+      "SMTP para OTP y correos de acceso, dominio público del front (magic link / autofill) y token M2M ForgeOps para alta de usuarios en instancias compartidas. Prioridad: valor guardado aquí → env del servidor → vacío.",
   },
   {
     id: "llm",
@@ -148,6 +155,81 @@ export const SYSTEM_CONFIG_DEFINITIONS: readonly SystemConfigDefinition[] = [
     "Brownfield — persistir converge",
     "Guarda el resultado del converge en el repositorio Ariadne. Desactivado = efecto transitorio; activado = cambios persistidos en el grafo.",
     "integrations",
+  ),
+  def(
+    "web_domain",
+    "WEB_DOMAIN",
+    "string",
+    "",
+    "Dominio público del front",
+    "Host canónico sin https:// (ej. theforge.kreoint.mx). Habilita magic link OTP y la línea @dominio #código en correos (autofill iOS/macOS).",
+    "auth",
+  ),
+  def(
+    "smtp_host",
+    "SMTP_HOST",
+    "string",
+    "",
+    "SMTP — host",
+    "Servidor de correo saliente para OTP y accesos ForgeOps (ej. mail.ejemplo.com). Vacío desactiva el envío real salvo OTP dev.",
+    "auth",
+  ),
+  def(
+    "smtp_port",
+    "SMTP_PORT",
+    "number",
+    "587",
+    "SMTP — puerto",
+    "587 = STARTTLS habitual; 465 = SSL directo (active SMTP — TLS directo).",
+    "auth",
+    { min: 1, max: 65535 },
+  ),
+  def(
+    "smtp_secure",
+    "SMTP_SECURE",
+    "boolean",
+    "0",
+    "SMTP — TLS directo (465)",
+    "Actívalo solo si el puerto usa SSL implícito (465). En 587 debe quedar desactivado (STARTTLS).",
+    "auth",
+  ),
+  def(
+    "smtp_user",
+    "SMTP_USER",
+    "string",
+    "",
+    "SMTP — usuario",
+    "Cuenta autenticada en el servidor SMTP (correo completo en la mayoría de proveedores).",
+    "auth",
+  ),
+  def(
+    "smtp_pass",
+    "SMTP_PASS",
+    "secret",
+    "",
+    "SMTP — contraseña",
+    "Contraseña o app password del usuario SMTP. Se guarda en AppConfig; PATCH vacío no borra el secreto existente.",
+    "auth",
+    { secret: true },
+  ),
+  def(
+    "smtp_from",
+    "SMTP_FROM",
+    "string",
+    "",
+    "SMTP — remitente visible",
+    "Nombre o dirección From (ej. Servicio The Forge o hola@dominio.com). Si no incluye @, se usa SMTP — usuario como dirección.",
+    "auth",
+  ),
+  def(
+    "forgeops_provision_secret",
+    "FORGEOPS_PROVISION_SECRET",
+    "secret",
+    "",
+    "ForgeOps — token provision-user",
+    "Secreto compartido con ForgeOps para POST /auth/forgeops/provision-user (Authorization: Bearer …). Alta idempotente + correo de acceso en instancias compartidas.",
+    "auth",
+    { secret: true },
   ),
   def(
     "llm_max_tokens",

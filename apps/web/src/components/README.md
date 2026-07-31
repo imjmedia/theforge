@@ -32,7 +32,7 @@
 | **PluginInstallSection** | Ajustes → **Plugins**: subida `.tfplugin`, listado instalado/cargado, desinstalar/recargar (admin). La licencia y demás config van en paneles del plugin tras cargarlo. |
 | **PluginSettingsSection** | Ajustes → **Plugins**: formularios declarativos de plugins cargados (`GET /plugins/settings-panels`, persistencia `PUT /plugins/:pluginId/user-settings`). Incluye `PluginInstallSection`. Sustituye campos comerciales en proveedores IA (p. ej. modelo de imagen EVD). |
 | **ProviderInstancesCard** | CRUD/listado de instancias de proveedor IA; marca la instancia **Activa** (runtime del grafo MDD y chat). En el modal: **Modelo auditor / planner** (`auditorChatModel`); **Modelo top MDD HIGH** (`highComplexityChatModel`, §3 SQL+ER) con leyenda de coste de referencia en MXN. |
-| **SystemConfigCard** | Ajustes → **Sistema** (solo `super_admin`): edita configuración de plataforma (`GET/PATCH /admin/system-config`) — subpestañas por categoría con texto de impacto; cada campo muestra descripción del catálogo `system-config.ts`. |
+| **SystemConfigCard** | Ajustes → **Sistema** (solo `super_admin`): edita configuración de plataforma (`GET/PATCH /admin/system-config`) — subpestañas por categoría con texto de impacto; incluye **Correo y acceso** (SMTP, dominio, ForgeOps). |
 | **TasksQualityBadge** | Toolbar Tasks (Workshop): lee `Stage.shortTermContext.tasksQualitySnapshot` y muestra score del auditor LLM (umbral 92) con tooltip de métricas deterministas. Regenerar Tasks usa `requestGenerateTasks` (confirmación `acknowledgeGaps` si el gate MDD tiene blockers). |
 | **AccountConfigCard** | Ajustes → Cuenta: secret MCP rotable y preferencias del taller. |
 | **McpSecretCard** | Re-export de `AccountConfigCard` (compat). |

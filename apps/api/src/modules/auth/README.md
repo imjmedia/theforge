@@ -12,6 +12,7 @@ Auth multi-usuario con OTP por email + JWT. Cada `User` tiene su propio `mcpSecr
 - **`POST /auth/sso/login`** — body `{ token }`. Login vía SSO externo (`SSO_URL/verify`). Crea/actualiza usuario local.
 - **`GET /auth/has-users`** — `{ hasUsers: boolean }`. Usado por el `SetupView` para detectar primer arranque.
 - **`POST /auth/register-first-admin`** — body `{ email, name? }`. Crea el primer usuario con rol `super_admin` (solo si la tabla `User` está vacía). Genera `mcpSecret` automáticamente.
+- **`POST /auth/forgeops/provision-user`** — M2M desde **ForgeOps** para instancias compartidas. Header `Authorization: Bearer <FORGEOPS_PROVISION_SECRET>`. Body `{ email, name?, role?, loginUrl?, resendIfExists? }`. Crea el usuario (`developer` por defecto; `admin` opcional) o, si ya existe, reenvía acceso (`resendIfExists: false` omite el correo). Envía email de bienvenida con OTP + magic link (misma plantilla que login). Requiere `FORGEOPS_PROVISION_SECRET` y SMTP en producción. Respuesta: `{ created, user, accessEmailSent, devCode? }`.
 
 ### Autenticados (JWT)
 
@@ -29,13 +30,31 @@ Auth multi-usuario con OTP por email + JWT. Cada `User` tiene su propio `mcpSecr
 - **`GET /users/:id/mcp-secret`** — ver `mcpSecret` de cualquier usuario.
 - **`POST /users/:id/mcp-secret/regenerate`** — rotar `mcpSecret` de cualquier usuario.
 
-## SMTP
+## SMTP y ForgeOps (Ajustes → Sistema → Correo y acceso)
 
-Variables: `SMTP_HOST`, `SMTP_PORT` (default 587), `SMTP_SECURE=1` solo si TLS directo, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` (puede ser solo nombre visible; si no incluye `@`, se usa `SMTP_USER`). En producción son obligatorias para `requestOtp` salvo `OTP_DEV_EXPOSE_CODE=1`.
+Prioridad runtime: **valor guardado en UI** → **env Dokploy** → default.
 
-`OTP_DEV_EXPOSE_CODE=1` (o `true`/`yes`/`on`): la respuesta de `POST /auth/otp/request` incluye `devCode` y **no** se envía correo. Con `0` u omitido: se envía por SMTP; sin SMTP la petición falla con 503.
+Campos: `web_domain`, `smtp_host`, `smtp_port`, `smtp_secure`, `smtp_user`, `smtp_pass`, `smtp_from`, `forgeops_provision_secret`.
 
-`WEB_DOMAIN` (o `WEB_APP_HOST` / `HOST`): host del front **sin** `https://` — incluye en el correo la línea `@dominio #123456` que Safari/Mail usan para autofill OTP. Debe ser el mismo dominio donde abres el login. También habilita magic link `https://${dominio}/auth/magic-link?otp=...&email=...`.
+Variables env legacy (siguen como fallback): `SMTP_*`, `WEB_DOMAIN`, `FORGEOPS_PROVISION_SECRET`.
+
+`OTP_DEV_EXPOSE_CODE` vive en Ajustes → Sistema → Depuración (`otp_dev_expose_code`).
+
+```http
+POST /auth/forgeops/provision-user
+Authorization: Bearer <forgeops_provision_secret>
+Content-Type: application/json
+
+{
+  "email": "dev@cliente.com",
+  "name": "Nombre Apellido",
+  "role": "developer",
+  "loginUrl": "https://theforge.kreoint.mx",
+  "resendIfExists": true
+}
+```
+
+Idempotente por email: usuario nuevo → correo de bienvenida; existente → reenvío de OTP (salvo `resendIfExists: false`). No asigna `super_admin` vía este endpoint.
 
 ## Notas
 

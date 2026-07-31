@@ -114,6 +114,7 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-https://${WEB_DOMAIN:-theforge.local},https://theforge.kreoint.mx,http://localhost:5173,http://127.0.0.1:5173}
       # Secreto compartido para validar login MCP (POST /auth/mcp-login)
       MCP_M2M_SECRET: ${MCP_M2M_SECRET:-}
+      FORGEOPS_PROVISION_SECRET: ${FORGEOPS_PROVISION_SECRET:-}
       # 1 = un arranque: borra ProviderInstance + UserProviderConfig (clave BYOK irrecuperable). Quitar tras deploy.
       WIPE_BYOK_ON_START: ${WIPE_BYOK_ON_START:-}
       # HTTP solo encola jobs; workers BullMQ viven en theforge-worker.

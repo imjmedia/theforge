@@ -14,6 +14,7 @@ const SOURCE_LABELS = {
 
 const CATEGORY_ORDER: SystemConfigCategory[] = [
   "integrations",
+  "auth",
   "llm",
   "queues",
   "mcp",
@@ -24,6 +25,7 @@ const CATEGORY_ORDER: SystemConfigCategory[] = [
 
 const CATEGORY_SHORT_LABELS: Partial<Record<SystemConfigCategory, string>> = {
   integrations: "Integ.",
+  auth: "Correo",
   llm: "LLM",
   queues: "Colas",
   mcp: "MCP",

@@ -32,12 +32,12 @@ Estas variables **siguen en env**; no están en la pantalla Sistema (o no deben 
 | `THEFORGE_RUNTIME_ROLE` | `http` (API) o `worker` (worker) |
 | `PORT` | Puerto HTTP (solo API) |
 | `CORS_ORIGINS` | CORS producción |
-| `WEB_DOMAIN` | OTP / autofill correo |
 | `JWT_SECRET`, `JWT_EXPIRES_IN` | Auth |
-| `SMTP_*` | OTP por correo |
 | `TOKEN_MASTER_KEYS`, `TOKEN_ACTIVE_KEY_VERSION` | Cifrado en servidor de tokens guardados en UI (no es configuración de proveedor) |
-| `MCP_M2M_SECRET` | Auth MCP ↔ API |
+| `MCP_M2M_SECRET` | Auth MCP ↔ API (header por cliente; opcional en env) |
 | `FALKORDB_URL` / `FALKORDB_SDD_URL` | Grafo SDD (si aplica) |
+
+**Migrar a Ajustes → Sistema → Correo y acceso:** `WEB_DOMAIN`, `SMTP_*`, `FORGEOPS_PROVISION_SECRET` (prioridad UI > env).
 
 ### Servicio `theforge-mcp` (`packages/mcp-server`)
 

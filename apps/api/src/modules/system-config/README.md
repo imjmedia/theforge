@@ -13,6 +13,8 @@ Prioridad en runtime: **BD → env → default** (`platform-config.runtime.ts`).
 
 Catálogo allowlist y textos de ayuda (por categoría y por campo): `packages/shared-types/src/system-config.ts` (`SYSTEM_CONFIG_CATEGORIES`, `SYSTEM_CONFIG_DEFINITIONS`).
 
+Categoría **`auth` (Correo y acceso):** SMTP, `web_domain`, `forgeops_provision_secret` — consumidos por `AuthService` vía `platform-config.runtime`.
+
 **Fuera de alcance:** claves API, modelos, embeddings y fallbacks de chat → **Ajustes → Proveedores** (BYOK/tenant).
 
 **Migración Dokploy (v1.3.0+):** [`docs/DOKPLOY-MIGRACION-CONFIG-SISTEMA.md`](../../../docs/DOKPLOY-MIGRACION-CONFIG-SISTEMA.md)
