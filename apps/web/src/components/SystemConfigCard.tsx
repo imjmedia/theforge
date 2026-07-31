@@ -46,6 +46,107 @@ function isMaskedSecretValue(value: string): boolean {
   return value === SYSTEM_CONFIG_SECRET_MASK;
 }
 
+function resolveForgeOpsProvisionWebhookUrl(webDomain: string): string {
+  const raw = webDomain.trim();
+  if (raw) {
+    const host = raw.replace(/^https?:\/\//i, "").split("/")[0]?.split(":")[0] ?? "";
+    if (host) return `https://${host}/api/auth/forgeops/provision-user`;
+  }
+  if (typeof window !== "undefined" && window.location.origin) {
+    return `${window.location.origin}/api/auth/forgeops/provision-user`;
+  }
+  return "/api/auth/forgeops/provision-user";
+}
+
+function buildForgeOpsProvisionExampleBody(webDomain: string): string {
+  const loginUrl = (() => {
+    const raw = webDomain.trim();
+    if (!raw) {
+      return typeof window !== "undefined" ? window.location.origin : "https://theforge.ejemplo.com";
+    }
+    if (/^https?:\/\//i.test(raw)) return raw.replace(/\/+$/, "");
+    const host = raw.replace(/^https?:\/\//i, "").split("/")[0]?.split(":")[0] ?? raw;
+    return `https://${host}`;
+  })();
+
+  return JSON.stringify(
+    {
+      email: "dev@cliente.com",
+      name: "Nombre Apellido",
+      role: "developer",
+      loginUrl,
+      resendIfExists: true,
+    },
+    null,
+    2,
+  );
+}
+
+function CopyableMonoBlock({
+  label,
+  text,
+  multiline = false,
+}: {
+  label: string;
+  text: string;
+  multiline?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-medium text-[var(--foreground-muted)]">{label}</p>
+        <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={() => void handleCopy()}>
+          {copied ? <Check className="h-3.5 w-3.5 text-[var(--success)]" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? "Copiado" : "Copiar"}
+        </Button>
+      </div>
+      <pre
+        className={cn(
+          "overflow-x-auto rounded-lg border border-[var(--border)] bg-[color-mix(in_oklch,var(--muted)_18%,var(--card))] p-3 font-mono text-xs leading-relaxed text-[var(--foreground)]",
+          multiline ? "whitespace-pre-wrap break-all" : "whitespace-nowrap",
+        )}
+      >
+        {text}
+      </pre>
+    </div>
+  );
+}
+
+function ForgeOpsProvisionWebhookHelp({ webDomain }: { webDomain: string }) {
+  const webhookUrl = useMemo(() => resolveForgeOpsProvisionWebhookUrl(webDomain), [webDomain]);
+  const exampleBody = useMemo(() => buildForgeOpsProvisionExampleBody(webDomain), [webDomain]);
+  const authHeader = "Authorization: Bearer <forgeops_provision_secret>";
+
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[color-mix(in_oklch,var(--muted)_12%,var(--card))] p-4 sm:ml-[calc(100%*1/2.2+1rem)] sm:max-w-[calc(100%*1.2/2.2)]">
+      <p className="mb-3 text-sm font-medium text-[var(--foreground)]">Webhook ForgeOps (provision-user)</p>
+      <div className="space-y-4">
+        <CopyableMonoBlock label="POST" text={webhookUrl} />
+        <CopyableMonoBlock label="Header" text={authHeader} />
+        <CopyableMonoBlock label="Body (JSON)" text={exampleBody} multiline />
+      </div>
+      <p className="mt-3 text-xs text-[var(--foreground-muted)]">
+        Crea o reactiva usuarios en instancias compartidas y envía acceso por correo (OTP + magic link).
+        Campos opcionales: <code className="font-mono">name</code>, <code className="font-mono">role</code> (
+        <code className="font-mono">developer</code> | <code className="font-mono">admin</code>),{" "}
+        <code className="font-mono">loginUrl</code>, <code className="font-mono">resendIfExists</code>.
+      </p>
+    </div>
+  );
+}
+
 function SystemConfigSettingField({
   setting,
   value,
@@ -379,13 +480,17 @@ export function SystemConfigCard() {
           </CardHeader>
           <CardContent className="space-y-5">
             {activeCategoryData.settings.map((setting) => (
-              <SystemConfigSettingField
-                key={setting.key}
-                setting={setting}
-                value={draft[setting.key] ?? ""}
-                changed={changedKeys.includes(setting.key)}
-                onChange={handleDraftChange}
-              />
+              <div key={setting.key} className="space-y-3">
+                <SystemConfigSettingField
+                  setting={setting}
+                  value={draft[setting.key] ?? ""}
+                  changed={changedKeys.includes(setting.key)}
+                  onChange={handleDraftChange}
+                />
+                {setting.key === "forgeops_provision_secret" ? (
+                  <ForgeOpsProvisionWebhookHelp webDomain={draft.web_domain ?? ""} />
+                ) : null}
+              </div>
             ))}
           </CardContent>
         </Card>
