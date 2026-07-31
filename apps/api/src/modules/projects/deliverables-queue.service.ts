@@ -23,6 +23,7 @@ import { longRunningBullmqWorkerOptions } from "../../common/bullmq-long-job.wor
 import {
   BULLMQ_DELIVERABLES_ORPHAN_REASON,
   forceFailBullMqActiveJob,
+  isBullMqJobLockHeld,
   reconcileOrphanBullMqActiveJob,
   recoverBullMqJobsAfterWorkerRestart,
 } from "../../common/bullmq-orphan-recovery.util.js";
@@ -877,5 +878,35 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
       createdAt: job.timestamp ?? Date.now(),
       finishedAt: job.finishedOn ?? undefined,
     };
+  }
+
+  async describeAdminRuntime(): Promise<import("@theforge/shared-types").AdminQueueRuntime> {
+    const { describeBullmqAdminRuntime } = await import("../../common/bullmq-admin-runtime.util.js");
+    return describeBullmqAdminRuntime({
+      queueKey: "deliverables",
+      queueName: DELIVERABLES_QUEUE_NAME,
+      queue: this.queue,
+      localWorkerRunning: this.worker !== null,
+      inMemoryActiveCount: () => {
+        let count = 0;
+        for (const mem of this.inMemoryJobs.values()) {
+          if (mem.status === "queued" || mem.status === "active") count += 1;
+        }
+        return count;
+      },
+    });
+  }
+
+  usesInMemoryBackend(): boolean {
+    return this.queue === null;
+  }
+
+  async isActiveJobLockHeld(jobId: string): Promise<boolean | null> {
+    if (!this.queue) return null;
+    try {
+      return await isBullMqJobLockHeld(this.queue, jobId);
+    } catch {
+      return null;
+    }
   }
 }

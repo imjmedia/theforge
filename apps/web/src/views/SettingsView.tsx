@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { BookOpen, Cable, LayoutTemplate, Puzzle, Settings, Shield, SlidersHorizontal, Sparkles } from "lucide-react";
+import { Activity, BookOpen, Cable, LayoutTemplate, Puzzle, Settings, Shield, SlidersHorizontal, Sparkles } from "lucide-react";
 import { ProviderInstancesCard } from "@/components/ProviderInstancesCard";
 import { AccountConfigCard } from "@/components/AccountConfigCard";
 import { AriadneConfigCard } from "@/components/AriadneConfigCard";
@@ -7,10 +7,11 @@ import { TechDocsConfigCard } from "@/components/TechDocsConfigCard";
 import { UiMcpInstancesCard } from "@/components/UiMcpInstancesCard";
 import { PluginSettingsSection } from "@/components/PluginSettingsSection";
 import { SystemConfigCard } from "@/components/SystemConfigCard";
+import { WorkerJobsConfigCard } from "@/components/WorkerJobsConfigCard";
 import { UnderlineTabs, type UnderlineTabItem } from "@/components/ui/UnderlineTabs";
 import { getStoredUser } from "@/utils/apiClient";
 
-type SettingsTab = "providers" | "plugins" | "ariadne" | "tech-docs" | "ui-mcp" | "system" | "account";
+type SettingsTab = "providers" | "plugins" | "ariadne" | "tech-docs" | "ui-mcp" | "workers" | "system" | "account";
 
 const BASE_SETTINGS_TABS: UnderlineTabItem<SettingsTab>[] = [
   { id: "providers", label: "Proveedores de IA", shortLabel: "Proveedores", icon: Sparkles },
@@ -28,6 +29,13 @@ const SYSTEM_SETTINGS_TAB: UnderlineTabItem<SettingsTab> = {
   icon: SlidersHorizontal,
 };
 
+const WORKERS_SETTINGS_TAB: UnderlineTabItem<SettingsTab> = {
+  id: "workers",
+  label: "Workers",
+  shortLabel: "Workers",
+  icon: Activity,
+};
+
 interface SettingsViewProps {
   showIaCost: boolean;
   onToggleIaCost: () => void;
@@ -37,18 +45,21 @@ interface SettingsViewProps {
 export default function SettingsView({ showIaCost, onToggleIaCost }: SettingsViewProps) {
   const userRole = getStoredUser()?.role;
   const isDeveloper = userRole === "developer";
+  const isAdmin = userRole === "admin" || userRole === "super_admin";
   const isSuperAdmin = userRole === "super_admin";
   const visibleTabs = useMemo(() => {
     if (isDeveloper) {
       return BASE_SETTINGS_TABS.filter((tab) => tab.id === "account");
     }
-    if (isSuperAdmin) {
-      const tabs = [...BASE_SETTINGS_TABS];
-      tabs.splice(tabs.length - 1, 0, SYSTEM_SETTINGS_TAB);
-      return tabs;
+    const tabs = [...BASE_SETTINGS_TABS];
+    if (isAdmin) {
+      tabs.splice(tabs.length - 1, 0, WORKERS_SETTINGS_TAB);
     }
-    return BASE_SETTINGS_TABS;
-  }, [isDeveloper, isSuperAdmin]);
+    if (isSuperAdmin) {
+      tabs.splice(tabs.length - 1, 0, SYSTEM_SETTINGS_TAB);
+    }
+    return tabs;
+  }, [isAdmin, isDeveloper, isSuperAdmin]);
   const [activeTab, setActiveTab] = useState<SettingsTab>(isDeveloper ? "account" : "providers");
 
   useEffect(() => {
@@ -138,6 +149,16 @@ export default function SettingsView({ showIaCost, onToggleIaCost }: SettingsVie
               className={activeTab === "ui-mcp" ? "space-y-6" : undefined}
             >
               {activeTab === "ui-mcp" ? <UiMcpInstancesCard /> : null}
+            </div>
+
+            <div
+              id="settings-panel-workers"
+              role="tabpanel"
+              aria-labelledby="settings-tab-workers"
+              hidden={activeTab !== "workers"}
+              className={activeTab === "workers" ? "space-y-6" : undefined}
+            >
+              {activeTab === "workers" ? <WorkerJobsConfigCard /> : null}
             </div>
 
             <div

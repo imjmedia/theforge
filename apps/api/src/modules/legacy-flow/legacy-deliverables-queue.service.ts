@@ -2,6 +2,8 @@ import {
   Inject,
   Injectable,
   Logger,
+  NotFoundException,
+  ForbiddenException,
   OnModuleDestroy,
   OnModuleInit,
   forwardRef,
@@ -15,6 +17,7 @@ import {
   shouldStartBullmqWorkers,
 } from "../../common/bullmq-runtime.config.js";
 import { longRunningBullmqWorkerOptions } from "../../common/bullmq-long-job.worker-options.js";
+import { forceFailBullMqActiveJob, isBullMqJobLockHeld } from "../../common/bullmq-orphan-recovery.util.js";
 import { ProjectsService } from "../projects/projects.service.js";
 import { LegacyCoordinatorService } from "./legacy-coordinator.service.js";
 
@@ -252,5 +255,132 @@ export class LegacyDeliverablesQueueService implements OnModuleInit, OnModuleDes
       createdAt: job.timestamp ?? Date.now(),
       finishedAt: job.finishedOn ?? undefined,
     };
+  }
+
+  /** Escaneo único de cola (panel admin / dashboard). */
+  async listActiveJobsGroupedByProject(): Promise<Map<string, Array<{ jobId: string; status: "queued" | "active" | "retrying" }>>> {
+    const map = new Map<string, Array<{ jobId: string; status: "queued" | "active" | "retrying" }>>();
+    const push = (projectId: string, entry: { jobId: string; status: "queued" | "active" | "retrying" }) => {
+      const list = map.get(projectId) ?? [];
+      list.push(entry);
+      map.set(projectId, list);
+    };
+
+    for (const [jobId, mem] of this.inMemoryJobs) {
+      if (mem.status !== "queued" && mem.status !== "active") continue;
+      push(mem.data.projectId, { jobId, status: mem.status });
+    }
+
+    if (!this.queue) return map;
+
+    const states = ["waiting", "active", "delayed"] as const;
+    for (const state of states) {
+      const jobs = await this.queue.getJobs([state], 0, 200);
+      for (const job of jobs) {
+        const data = job.data as LegacyDeliverablesJobData | undefined;
+        if (!data?.projectId) continue;
+        push(data.projectId, {
+          jobId: String(job.id),
+          status: state === "active" ? "active" : state === "delayed" ? "retrying" : "queued",
+        });
+      }
+    }
+    return map;
+  }
+
+  async cancelJob(jobId: string, projectId: string): Promise<{ cancelled: boolean; status: string }> {
+    const mem = this.inMemoryJobs.get(jobId);
+    if (mem) {
+      if (mem.data.projectId !== projectId) {
+        throw new ForbiddenException();
+      }
+      if (mem.status === "completed") {
+        return { cancelled: false, status: "completed" };
+      }
+      if (mem.status === "failed") {
+        return { cancelled: false, status: "failed" };
+      }
+      if (mem.status === "queued") {
+        mem.status = "failed";
+        mem.error = "Cancelado por el administrador";
+        mem.finishedAt = Date.now();
+        this.logger.log(`In-memory legacy job ${jobId} cancelado (queued) projectId=${projectId}`);
+        return { cancelled: true, status: "cancelled" };
+      }
+      if (mem.status === "active") {
+        mem.status = "failed";
+        mem.error = "Cancelado por el administrador";
+        mem.finishedAt = Date.now();
+        this.logger.warn(
+          `In-memory legacy job ${jobId} marcado cancelado (active; el hilo puede seguir un instante) projectId=${projectId}`,
+        );
+        return { cancelled: true, status: "cancelled" };
+      }
+      return { cancelled: false, status: mem.status };
+    }
+
+    if (!this.queue) {
+      throw new NotFoundException("Job legacy no encontrado");
+    }
+
+    const job = await this.queue.getJob(jobId);
+    if (!job) {
+      throw new NotFoundException("Job legacy no encontrado");
+    }
+    const data = job.data as LegacyDeliverablesJobData | undefined;
+    if (data?.projectId !== projectId) {
+      throw new ForbiddenException();
+    }
+    const state = await job.getState();
+    if (state === "completed") {
+      return { cancelled: false, status: "completed" };
+    }
+    if (state === "failed") {
+      return { cancelled: false, status: "failed" };
+    }
+    if (state === "waiting" || state === "delayed" || state === "waiting-children") {
+      await job.remove();
+      this.logger.log(`BullMQ legacy job ${jobId} cancelado (queued) projectId=${projectId}`);
+      return { cancelled: true, status: "cancelled" };
+    }
+    if (state === "active") {
+      if (!(await isBullMqJobLockHeld(this.queue, jobId))) {
+        const failed = await forceFailBullMqActiveJob(
+          this.queue,
+          job,
+          "Cancelado por el administrador (worker no activo)",
+        );
+        if (failed) {
+          this.logger.log(`BullMQ legacy job ${jobId} fallido (huérfano activo) projectId=${projectId}`);
+          return { cancelled: true, status: "cancelled" };
+        }
+      }
+      this.logger.warn(
+        `BullMQ legacy job ${jobId} activo con lock; solicita reinicio worker si persiste projectId=${projectId}`,
+      );
+      return { cancelled: true, status: "cancelling" };
+    }
+    return { cancelled: false, status: state };
+  }
+
+  async describeAdminRuntime(): Promise<import("@theforge/shared-types").AdminQueueRuntime> {
+    const { describeBullmqAdminRuntime } = await import("../../common/bullmq-admin-runtime.util.js");
+    return describeBullmqAdminRuntime({
+      queueKey: "legacy-deliverables",
+      queueName: LEGACY_DELIVERABLES_QUEUE_NAME,
+      queue: this.queue,
+      localWorkerRunning: this.worker !== null,
+      inMemoryActiveCount: () => {
+        let count = 0;
+        for (const mem of this.inMemoryJobs.values()) {
+          if (mem.status === "queued" || mem.status === "active") count += 1;
+        }
+        return count;
+      },
+    });
+  }
+
+  usesInMemoryBackend(): boolean {
+    return this.queue === null;
   }
 }

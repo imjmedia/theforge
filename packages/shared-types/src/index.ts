@@ -12,6 +12,7 @@ export * from "./project-group.js";
 export * from "./project-merge.js";
 export * from "./deliverables-matrix.js";
 export * from "./project-generation-guard.js";
+export * from "./admin-worker-jobs.js";
 export * from "./mdd-job-progress.js";
 export * from "./mdd-upstream-sync.js";
 export * from "./agent-governance.js";
