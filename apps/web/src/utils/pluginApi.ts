@@ -15,7 +15,6 @@ import { MIN_GENERATION_CONTENT_LEN } from "@theforge/shared-types";
 import { apiFetch, API_BASE } from "./apiClient";
 
 let cachedArtifacts: ArtifactTypeDefinition[] | null = null;
-let cachedSettingsPanels: PluginSettingsPanelDefinition[] | null = null;
 
 const POLL_MAX_ATTEMPTS = 10_800;
 const POLL_INTERVAL_MS = 2_000;
@@ -30,17 +29,13 @@ export async function fetchPluginArtifacts(): Promise<ArtifactTypeDefinition[]> 
 }
 
 export async function fetchPluginSettingsPanels(): Promise<PluginSettingsPanelDefinition[]> {
-  if (cachedSettingsPanels) return cachedSettingsPanels;
   const res = await apiFetch(`${API_BASE}/plugins/settings-panels`);
   if (!res.ok) return [];
-  const data: PluginSettingsPanelDefinition[] = await res.json();
-  cachedSettingsPanels = data;
-  return data;
+  return res.json();
 }
 
 export function clearPluginArtifactsCache(): void {
   cachedArtifacts = null;
-  cachedSettingsPanels = null;
 }
 
 export async function fetchInstalledPlugins(): Promise<PluginInstalledListResponse> {

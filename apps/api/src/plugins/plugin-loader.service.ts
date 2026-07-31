@@ -115,11 +115,9 @@ export class PluginLoaderService implements OnModuleInit {
     }
 
     try {
-      // Dynamic import — el core NUNCA tiene static imports hacia plugins
-      const module = (await import(pathToFileURL(entryPoint).href)) as Record<
-        string,
-        unknown
-      >;
+      // Dynamic import — bust Node ESM cache so reload picks up replaced files on disk.
+      const importHref = `${pathToFileURL(entryPoint).href}?tfreload=${Date.now()}`;
+      const module = (await import(importHref)) as Record<string, unknown>;
 
       const PluginClass = this.resolvePluginExportClass(module);
 
