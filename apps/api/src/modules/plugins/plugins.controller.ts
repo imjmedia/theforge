@@ -190,7 +190,12 @@ export class PluginsController {
 
     let normalized = body ?? {};
     if (plugin.validateUserSettings) {
-      normalized = await plugin.validateUserSettings(normalized);
+      try {
+        normalized = await plugin.validateUserSettings(normalized);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new BadRequestException(msg);
+      }
     }
 
     const saved = await this.pluginUserSettings.saveForPlugin(userId, pluginId, normalized);
