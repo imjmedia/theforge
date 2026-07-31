@@ -554,3 +554,6 @@ export interface SystemConfigSnapshot {
   categories: typeof SYSTEM_CONFIG_CATEGORIES;
   settings: SystemConfigSettingView[];
 }
+
+/** Valor enmascarado en GET snapshot para campos secret con valor configurado. */
+export const SYSTEM_CONFIG_SECRET_MASK = "••••••••";

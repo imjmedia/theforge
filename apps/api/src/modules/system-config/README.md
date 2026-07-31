@@ -7,6 +7,7 @@ Configuración de plataforma persistida en `AppConfig` y editable desde **Ajuste
 | Método | Ruta | Rol |
 |--------|------|-----|
 | `GET` | `/admin/system-config` | `super_admin` |
+| `GET` | `/admin/system-config/reveal/:key` | `super_admin` — valor efectivo de un campo `secret` (p. ej. copiar token ForgeOps) |
 | `PATCH` | `/admin/system-config` | `super_admin` |
 
 Prioridad en runtime: **BD → env → default** (`platform-config.runtime.ts`).

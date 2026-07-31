@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Loader2, RefreshCw, RotateCcw, Save, SlidersHorizontal } from "lucide-react";
-import type { SystemConfigCategory, SystemConfigSnapshot } from "@theforge/shared-types";
+import { Check, Copy, Eye, EyeOff, Loader2, RefreshCw, RotateCcw, Save, SlidersHorizontal } from "lucide-react";
+import { SYSTEM_CONFIG_SECRET_MASK, type SystemConfigCategory, type SystemConfigSnapshot } from "@theforge/shared-types";
 import { UnderlineTabs, type UnderlineTabItem } from "./ui/UnderlineTabs";
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from "./ui";
+import { ListRowIconButton } from "./ListRowIconButton";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +42,10 @@ function isTruthy(value: string): boolean {
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
+function isMaskedSecretValue(value: string): boolean {
+  return value === SYSTEM_CONFIG_SECRET_MASK;
+}
+
 function SystemConfigSettingField({
   setting,
   value,
@@ -52,6 +57,48 @@ function SystemConfigSettingField({
   changed: boolean;
   onChange: (key: string, value: string) => void;
 }) {
+  const [visible, setVisible] = useState(false);
+  const [revealedPlain, setRevealedPlain] = useState<string | null>(null);
+  const [revealLoading, setRevealLoading] = useState(false);
+  const [revealError, setRevealError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const isSecret = setting.secret || setting.type === "secret";
+  const displayValue =
+    isSecret && visible && revealedPlain !== null && isMaskedSecretValue(value)
+      ? revealedPlain
+      : value;
+
+  const handleToggleVisible = async () => {
+    if (!visible && isSecret && isMaskedSecretValue(value) && revealedPlain === null) {
+      setRevealLoading(true);
+      setRevealError("");
+      try {
+        const res = await api.get(`/api/admin/system-config/reveal/${encodeURIComponent(setting.key)}`);
+        if (!res.ok) throw new Error("No se pudo revelar el valor");
+        const data = (await res.json()) as { value?: string };
+        setRevealedPlain(data.value ?? "");
+      } catch {
+        setRevealError("No se pudo cargar el valor");
+        return;
+      } finally {
+        setRevealLoading(false);
+      }
+    }
+    setVisible((v) => !v);
+  };
+
+  const handleCopy = async () => {
+    if (!displayValue.trim()) return;
+    try {
+      await navigator.clipboard.writeText(displayValue);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* ignore */
+    }
+  };
+
   return (
     <div
       className="grid gap-2 border-b border-[var(--border)] pb-5 last:border-0 last:pb-0 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] sm:gap-4"
@@ -68,7 +115,7 @@ function SystemConfigSettingField({
         </p>
       </div>
 
-      <div className="min-w-0">
+      <div className="min-w-0 space-y-1">
         {setting.type === "boolean" ? (
           <label className="flex cursor-pointer items-center gap-2 text-sm">
             <input
@@ -79,18 +126,59 @@ function SystemConfigSettingField({
             />
             {isTruthy(value) ? "Activado" : "Desactivado"}
           </label>
+        ) : isSecret ? (
+          <div className="relative">
+            <Input
+              type={visible ? "text" : "password"}
+              value={displayValue}
+              placeholder={setting.defaultValue || setting.envKey}
+              autoComplete="off"
+              onChange={(e) => onChange(setting.key, e.target.value)}
+              className={cn("pr-[5.5rem] font-mono text-sm", changed && "ring-1 ring-[var(--primary)]")}
+            />
+            <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 gap-0.5">
+              <ListRowIconButton
+                tooltip={visible ? "Ocultar" : "Mostrar"}
+                variant="ghost"
+                className="h-8 w-8 border-0 bg-transparent shadow-none hover:bg-[var(--muted)]"
+                disabled={revealLoading || (!value && !setting.defaultValue)}
+                onClick={() => void handleToggleVisible()}
+              >
+                {revealLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                ) : visible ? (
+                  <EyeOff className="h-4 w-4" aria-hidden />
+                ) : (
+                  <Eye className="h-4 w-4" aria-hidden />
+                )}
+              </ListRowIconButton>
+              <ListRowIconButton
+                tooltip={copied ? "Copiado" : "Copiar"}
+                variant="ghost"
+                className="h-8 w-8 border-0 bg-transparent shadow-none hover:bg-[var(--muted)]"
+                disabled={!displayValue.trim() || revealLoading}
+                onClick={() => void handleCopy()}
+              >
+                {copied ? (
+                  <Check className="h-4 w-4 text-[var(--success)]" aria-hidden />
+                ) : (
+                  <Copy className="h-4 w-4" aria-hidden />
+                )}
+              </ListRowIconButton>
+            </div>
+          </div>
         ) : (
           <Input
-            type={setting.type === "secret" ? "password" : setting.type === "number" ? "number" : "text"}
+            type={setting.type === "number" ? "number" : "text"}
             value={value}
             placeholder={setting.defaultValue || setting.envKey}
             min={setting.min}
             max={setting.max}
-            autoComplete={setting.type === "secret" ? "off" : undefined}
             onChange={(e) => onChange(setting.key, e.target.value)}
             className={cn(changed && "ring-1 ring-[var(--primary)]")}
           />
         )}
+        {revealError ? <p className="text-xs text-red-500">{revealError}</p> : null}
       </div>
     </div>
   );
