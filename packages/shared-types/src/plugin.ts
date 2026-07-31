@@ -64,6 +64,8 @@ export interface PluginSettingsFieldDefinition {
   required?: boolean;
   /** Solo para type === "select" */
   options?: Array<{ value: string; label: string }>;
+  /** Campo informativo — no editable en Ajustes */
+  readOnly?: boolean;
 }
 
 /**

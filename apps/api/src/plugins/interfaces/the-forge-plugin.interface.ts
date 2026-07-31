@@ -228,6 +228,15 @@ export interface ITheForgePlugin {
   ): Promise<Record<string, unknown>> | Record<string, unknown>;
 
   /**
+   * Enriquece ajustes al leer (p. ej. metadatos de licencia en disco no guardados en DB).
+   *
+   * @optional
+   */
+  hydrateUserSettings?(
+    stored: Record<string, unknown>,
+  ): Record<string, unknown>;
+
+  /**
    * Hook post-guardado (side-effects: invalidar caché, revalidar licencia, etc.).
    *
    * @optional

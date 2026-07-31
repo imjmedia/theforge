@@ -83,10 +83,11 @@ function PluginSettingsPanelCard({ panel }: { panel: PluginSettingsPanelDefiniti
           <select
             id={id}
             value={value}
+            disabled={field.readOnly}
             onChange={(e) =>
               setValues((prev) => ({ ...prev, [field.key]: e.target.value }))
             }
-            className="flex h-9 w-full rounded-md border border-[var(--input-border)] bg-[var(--input)] px-3 py-1 text-sm"
+            className="flex h-9 w-full rounded-md border border-[var(--input-border)] bg-[var(--input)] px-3 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-70"
           >
             <option value="">—</option>
             {field.options.map((opt) => (
@@ -113,10 +114,15 @@ function PluginSettingsPanelCard({ panel }: { panel: PluginSettingsPanelDefiniti
           type={field.type === "password" ? "password" : "text"}
           value={value}
           placeholder={field.placeholder}
+          readOnly={field.readOnly}
+          disabled={field.readOnly}
           onChange={(e) =>
             setValues((prev) => ({ ...prev, [field.key]: e.target.value }))
           }
-          className={cn(field.type !== "password" && "font-mono text-xs")}
+          className={cn(
+            field.type !== "password" && "font-mono text-xs",
+            field.readOnly && "cursor-default opacity-90",
+          )}
         />
         {field.hint ? (
           <p className="text-xs text-[var(--foreground-muted)]">{field.hint}</p>

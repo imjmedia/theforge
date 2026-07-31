@@ -176,8 +176,15 @@ export class PluginsController {
 
   @Get(":pluginId/user-settings")
   async getUserSettings(@Param("pluginId") pluginId: string) {
-    this.ensurePluginLoaded(pluginId);
-    return this.pluginUserSettings.getForPlugin(getRequestUserId(), pluginId);
+    const plugin = this.ensurePluginLoaded(pluginId);
+    const stored = await this.pluginUserSettings.getForPlugin(
+      getRequestUserId(),
+      pluginId,
+    );
+    if (plugin.hydrateUserSettings) {
+      return plugin.hydrateUserSettings(stored);
+    }
+    return stored;
   }
 
   @Put(":pluginId/user-settings")
