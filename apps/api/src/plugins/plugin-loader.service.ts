@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   Injectable,
   Logger,
@@ -9,12 +10,14 @@ import { ModuleRef } from "@nestjs/core";
 import { ConfigService } from "@nestjs/config";
 import type { ITheForgePlugin } from "./interfaces/the-forge-plugin.interface.js";
 import type { ArtifactTypeDefinition, PluginSettingsPanelDefinition } from "@theforge/shared-types";
+import { THEFORGE_PLUGIN_MANIFEST_FILENAME } from "@theforge/shared-types";
 import type {
   BeforeDocumentRenderPayload,
   AfterDocumentRenderPayload,
   AfterDocumentPersistPayload,
   ProjectLifecyclePayload,
 } from "./types/plugin-payloads.js";
+import { parsePluginManifest } from "./plugin-packaging.util.js";
 
 /** Token DI para exponer PluginLoaderService */
 export const PLUGIN_LOADER_SERVICE = Symbol("PLUGIN_LOADER_SERVICE");
@@ -102,21 +105,7 @@ export class PluginLoaderService implements OnModuleInit {
    * Si falla, loguea el error y continúa (graceful degradation).
    */
   private async tryLoadPlugin(pluginPath: string): Promise<void> {
-    // Try both .ts (dev) and .js (prod/compiled) entry points
-    const candidates = [
-      join(pluginPath, "index.ts"),
-      join(pluginPath, "index.js"),
-      join(pluginPath, "src", "index.ts"),
-      join(pluginPath, "src", "index.js"),
-    ];
-
-    let entryPoint: string | undefined;
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) {
-        entryPoint = candidate;
-        break;
-      }
-    }
+    const entryPoint = this.resolvePluginEntryPoint(pluginPath);
 
     if (!entryPoint) {
       this.logger.verbose(
@@ -127,14 +116,16 @@ export class PluginLoaderService implements OnModuleInit {
 
     try {
       // Dynamic import — el core NUNCA tiene static imports hacia plugins
-      const module = await import(entryPoint);
+      const module = (await import(pathToFileURL(entryPoint).href)) as Record<
+        string,
+        unknown
+      >;
 
-      // Soporta export default o export named
-      const PluginClass = module.default ?? module.TheForgePlugin;
+      const PluginClass = this.resolvePluginExportClass(module);
 
-      if (!PluginClass || typeof PluginClass !== "function") {
+      if (!PluginClass) {
         this.logger.warn(
-          `Plugin at ${pluginPath} does not export a class — skipping`,
+          `Plugin at ${pluginPath} does not export a class — skipping (entry=${entryPoint}, exports=${Object.keys(module).join(", ") || "none"})`,
         );
         return;
       }
@@ -198,7 +189,59 @@ export class PluginLoaderService implements OnModuleInit {
     }
   }
 
-  /** Construye el contexto limitado de inyección para un plugin */
+  /** Resuelve el entry point del plugin (manifest.entry o heurística). */
+  private resolvePluginEntryPoint(pluginPath: string): string | undefined {
+    const manifestPath = join(pluginPath, THEFORGE_PLUGIN_MANIFEST_FILENAME);
+    if (existsSync(manifestPath)) {
+      try {
+        const manifest = parsePluginManifest(
+          JSON.parse(readFileSync(manifestPath, "utf8")) as unknown,
+        );
+        const entry = manifest.entry?.trim() || "index.js";
+        const fromManifest = join(pluginPath, entry);
+        if (existsSync(fromManifest)) return fromManifest;
+        this.logger.debug(
+          `Manifest entry not found for ${pluginPath}: ${fromManifest}`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.debug(`Invalid manifest in ${pluginPath}: ${msg}`);
+      }
+    }
+
+    const candidates = [
+      join(pluginPath, "index.ts"),
+      join(pluginPath, "index.js"),
+      join(pluginPath, "src", "index.ts"),
+      join(pluginPath, "src", "index.js"),
+    ];
+
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) return candidate;
+    }
+
+    return undefined;
+  }
+
+  /** Soporta export default, TheForgePlugin y default anidado (interop). */
+  private resolvePluginExportClass(
+    module: Record<string, unknown>,
+  ): (new () => ITheForgePlugin) | undefined {
+    const candidates = [
+      module.default,
+      module.TheForgePlugin,
+      (module.default as Record<string, unknown> | undefined)?.default,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === "function") {
+        return candidate as new () => ITheForgePlugin;
+      }
+    }
+
+    return undefined;
+  }
+
   private buildPluginContext(pluginId: string): {
     getService: <T>(
       token: string | symbol | (new (...args: unknown[]) => T),
