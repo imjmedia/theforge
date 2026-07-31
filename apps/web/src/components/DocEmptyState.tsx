@@ -20,6 +20,7 @@ export function DocEmptyState({
   legacyGenerateLoading,
   generateButtonLabel,
   prerequisiteHint,
+  generationProgress,
 }: {
   icon: LucideIcon;
   title: string;
@@ -38,12 +39,14 @@ export function DocEmptyState({
   generateButtonLabel?: string;
   /** Shown when `hasMdd` is false (e.g. Benchmark needs Fase 0). */
   prerequisiteHint?: string;
+  /** Progreso de generación (plugins con reportProgress). */
+  generationProgress?: { percent: number; detail?: string };
 }) {
   const blocked = !!generateBlocked;
   if (loading && !blocked) {
     return (
       <div className="flex min-h-[280px] w-full flex-1 flex-col items-center justify-center px-4 py-8 text-center sm:px-6">
-        <AiDocumentBuildingPlaceholder documentTitle={title} />
+        <AiDocumentBuildingPlaceholder documentTitle={title} progress={generationProgress} />
       </div>
     );
   }

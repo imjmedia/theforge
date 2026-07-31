@@ -106,6 +106,11 @@ const DOC_BUILD_FLOAT_ICONS: {
 export type AiDocumentBuildingPlaceholderProps = {
   /** Document name for the status line, e.g. “Spec”. */
   documentTitle?: string;
+  /** Progreso reportado por el plugin (0–100). */
+  progress?: {
+    percent: number;
+    detail?: string;
+  };
   className?: string;
 };
 
@@ -114,12 +119,15 @@ export type AiDocumentBuildingPlaceholderProps = {
  */
 export function AiDocumentBuildingPlaceholder({
   documentTitle,
+  progress,
   className,
 }: AiDocumentBuildingPlaceholderProps) {
   const lineWidthsPct = [100, 88, 94, 62, 76];
+  const percent = progress?.percent;
   const statusLine = documentTitle?.trim()
     ? `Generando ${documentTitle.trim()}…`
     : "Generando documento…";
+  const detailLine = progress?.detail?.trim();
 
   return (
     <div
@@ -127,6 +135,9 @@ export function AiDocumentBuildingPlaceholder({
       role="status"
       aria-live="polite"
       aria-busy="true"
+      aria-valuenow={percent}
+      aria-valuemin={0}
+      aria-valuemax={100}
     >
       <div
         className={cn(
@@ -172,6 +183,22 @@ export function AiDocumentBuildingPlaceholder({
         <p className="text-sm font-medium tracking-tight text-[color-mix(in_oklch,var(--foreground)_92%,var(--muted-foreground))]">
           {statusLine}
         </p>
+        {typeof percent === "number" ? (
+          <div className="flex w-full max-w-[220px] flex-col items-center gap-1.5">
+            <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-[color-mix(in_oklch,var(--muted)_55%,var(--card))]">
+              <div
+                className="absolute inset-y-0 left-0 rounded-full bg-[var(--primary)] transition-[width] duration-300 ease-out motion-reduce:transition-none"
+                style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
+              />
+            </div>
+            <p className="text-xs font-semibold tabular-nums text-[var(--primary)]">{percent}%</p>
+          </div>
+        ) : null}
+        {detailLine ? (
+          <p className="max-w-[260px] text-xs leading-relaxed text-[var(--foreground-subtle)]">
+            {detailLine}
+          </p>
+        ) : null}
         <span className="text-[var(--primary)]">
           <AiGenerativeDots className="scale-125" />
         </span>

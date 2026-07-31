@@ -43,6 +43,8 @@ export interface StandardDocPanelProps {
   documentTimestamps?: WorkshopDocumentTimestamps | null;
   /** Clarificación `[NEEDS CLARIFICATION]` — banner, respuestas y regeneración. */
   clarification?: Omit<DocumentClarificationSectionProps, "content">;
+  /** Progreso de generación (plugins con reportProgress). */
+  generationProgress?: { percent: number; detail?: string };
 }
 
 /**
@@ -75,6 +77,7 @@ export function StandardDocPanel({
   readOnly = false,
   documentTimestamps,
   clarification,
+  generationProgress,
 }: StandardDocPanelProps) {
   const IconComp = icon;
   // Estado 1: preview vacío → DocEmptyState
@@ -104,6 +107,7 @@ export function StandardDocPanel({
           onLegacyGenerate={onLegacyGenerate}
           legacyGenerateLoading={legacyGenerateLoading}
           generateButtonLabel={generateLabel}
+          generationProgress={generationProgress}
         />
       </div>
     );
@@ -137,7 +141,7 @@ export function StandardDocPanel({
           {!content?.trim() && !hideGenerate && !readOnly && (
             <div className="shrink-0 mt-4 flex min-h-[200px] w-full justify-center sm:justify-end">
               {isLoading ? (
-                <AiDocumentBuildingPlaceholder documentTitle={title} />
+                <AiDocumentBuildingPlaceholder documentTitle={title} progress={generationProgress} />
               ) : (
                 <Button
                   type="button"

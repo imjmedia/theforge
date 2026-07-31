@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import type { Prisma } from "@theforge/database";
-import type { ArtifactTypeDefinition, PluginArtifactContext } from "@theforge/shared-types";
+import type { ArtifactTypeDefinition, PluginArtifactContext, PluginArtifactProgress } from "@theforge/shared-types";
 import { getRequestUserId } from "../common/request-user.store.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { PluginDocumentPipelineService } from "./plugin-document-pipeline.service.js";
@@ -17,6 +17,7 @@ import { PluginUserSettingsService } from "./plugin-user-settings.service.js";
 
 export interface GeneratePluginArtifactOptions {
   stageId?: string | null;
+  onProgress?: (update: PluginArtifactProgress) => void;
 }
 
 export interface GeneratePluginArtifactResult {
@@ -96,6 +97,7 @@ export class PluginArtifactService {
       deliverables,
       userSettings,
       timestamp: new Date(),
+      reportProgress: options?.onProgress,
     };
 
     const result = await plugin.generateArtifact(ctx);

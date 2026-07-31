@@ -628,6 +628,10 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
         }
         result = await this.pluginArtifact.generate(projectId, pluginId, artifactId, {
           stageId: stageId ?? null,
+          onProgress: (update) => {
+            this.throwIfAborted(signal);
+            onProgress(update);
+          },
         });
         break;
       }

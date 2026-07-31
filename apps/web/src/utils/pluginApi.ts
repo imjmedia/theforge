@@ -4,6 +4,7 @@
 
 import type {
   ArtifactTypeDefinition,
+  PluginArtifactProgress,
   PluginInstallResult,
   PluginInstalledListResponse,
   PluginReloadResult,
@@ -153,10 +154,13 @@ export function pluginArtifactRequirementsMessage(
 }
 
 /** Poll BullMQ / in-memory job hasta completed o failed. */
-export async function pollDeliverablesJob<T>(jobId: string, signal?: AbortSignal): Promise<T> {
+export async function pollDeliverablesJob<T>(
+  jobId: string,
+  opts?: { signal?: AbortSignal; onProgress?: (progress: PluginArtifactProgress) => void },
+): Promise<T> {
   const pollUrl = `${API_BASE}/projects/jobs/${jobId}`;
   for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
-    if (signal?.aborted) throw new Error("Cancelado por el usuario");
+    if (opts?.signal?.aborted) throw new Error("Cancelado por el usuario");
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
     const pr = await apiFetch(pollUrl);
     if (!pr.ok) {
@@ -165,9 +169,16 @@ export async function pollDeliverablesJob<T>(jobId: string, signal?: AbortSignal
     }
     const status = (await pr.json()) as {
       status: string;
+      progress?: PluginArtifactProgress | number | unknown;
       result?: T;
       error?: string;
     };
+    if (status.progress && opts?.onProgress) {
+      const p = status.progress;
+      if (typeof p === "object" && p !== null && "percent" in p) {
+        opts.onProgress(p as PluginArtifactProgress);
+      }
+    }
     if (status.status === "completed") return status.result as T;
     if (status.status === "failed") throw new Error(status.error ?? "Error en la generación");
   }
@@ -207,7 +218,11 @@ export async function generateAndPollPluginArtifact(
   projectId: string,
   pluginId: string,
   artifactId: string,
-  opts?: { stageId?: string | null; signal?: AbortSignal },
+  opts?: {
+    stageId?: string | null;
+    signal?: AbortSignal;
+    onProgress?: (progress: PluginArtifactProgress) => void;
+  },
 ): Promise<unknown> {
   const res = await generatePluginArtifact(projectId, pluginId, artifactId, {
     queue: true,
@@ -216,6 +231,9 @@ export async function generateAndPollPluginArtifact(
   });
   if (!res.queued) return res.data;
   if (!res.jobId) throw new Error("Cola no devolvió jobId");
-  const result = await pollDeliverablesJob<{ data?: unknown }>(res.jobId, opts?.signal);
+  const result = await pollDeliverablesJob<{ data?: unknown }>(res.jobId, {
+    signal: opts?.signal,
+    onProgress: opts?.onProgress,
+  });
   return result?.data ?? result;
 }

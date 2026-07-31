@@ -22,6 +22,16 @@ export interface ArtifactTypeDefinition {
   requires?: string[];
 }
 
+/** Progreso reportado por el plugin durante `generateArtifact`. */
+export interface PluginArtifactProgress {
+  /** 0–100 */
+  percent: number;
+  /** Identificador de fase (p. ej. "license", "deck", "images", "finalize"). */
+  step: string;
+  /** Detalle legible para la UI (p. ej. "Slide 4/12"). */
+  detail?: string;
+}
+
 /** Contexto que el core pasa a `generateArtifact` del plugin */
 export interface PluginArtifactContext {
   pluginId: string;
@@ -32,6 +42,8 @@ export interface PluginArtifactContext {
   deliverables: Record<string, string | null | undefined>;
   userSettings: Record<string, unknown>;
   timestamp: Date;
+  /** Callback opcional — el core lo reenvía al job de cola / polling del frontend. */
+  reportProgress?: (update: PluginArtifactProgress) => void;
 }
 
 /** Resultado de generación de artifact propio del plugin */

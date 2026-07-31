@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { FileText } from "lucide-react";
-import type { ArtifactTypeDefinition } from "@theforge/shared-types";
+import type { ArtifactTypeDefinition, PluginArtifactProgress } from "@theforge/shared-types";
 import { getPluginDocPanelHeader, parsePluginPanelId } from "../utils/workshopDocNav";
 import {
   generateAndPollPluginArtifact,
@@ -83,6 +83,7 @@ export function PluginDocPanel({
   const viewMode = pluginArtifactDefaultViewMode(contentType);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState<PluginArtifactProgress | null>(null);
 
   const deliverables = useMemo(
     () => projectDeliverablesForArtifact(project as Record<string, unknown> | null, mddContent),
@@ -150,13 +151,17 @@ export function PluginDocPanel({
   const handleGenerate = useCallback(async () => {
     if (!parsed || !artifact || generateBlockedReason) return;
     setGenerating(true);
+    setGenerationProgress({ percent: 0, step: "start", detail: "Iniciando generación…" });
     void fetchGenerationStatus(projectId);
     try {
       const data = await generateAndPollPluginArtifact(
         projectId,
         parsed.pluginId,
         parsed.artifactId,
-        { stageId },
+        {
+          stageId,
+          onProgress: (p) => setGenerationProgress(p),
+        },
       );
       if (data != null) {
         patchPluginData(parsed.pluginId, data);
@@ -168,6 +173,7 @@ export function PluginDocPanel({
       setError(err instanceof Error ? err.message : "Error al generar artifact del plugin");
     } finally {
       setGenerating(false);
+      setGenerationProgress(null);
       void fetchGenerationStatus(projectId);
     }
   }, [
@@ -202,6 +208,11 @@ export function PluginDocPanel({
       onGenerate={() => void handleGenerate()}
       canGenerate={artifact.generatable === true && !generateBlockedReason}
       isLoading={loading || generating}
+      generationProgress={
+        generationProgress
+          ? { percent: generationProgress.percent, detail: generationProgress.detail }
+          : undefined
+      }
       generateLabel={generating || activePluginJob ? "Generando…" : "Generar"}
       generateBlocked={Boolean(generateBlockedReason)}
       generateBlockedReason={generateBlockedReason ?? undefined}
