@@ -130,7 +130,7 @@ function ForgeOpsProvisionWebhookHelp({ webDomain }: { webDomain: string }) {
   const authHeader = "Authorization: Bearer <forgeops_provision_secret>";
 
   return (
-    <div className="rounded-xl border border-[var(--border)] bg-[color-mix(in_oklch,var(--muted)_12%,var(--card))] p-4 sm:ml-[calc(100%*1/2.2+1rem)] sm:max-w-[calc(100%*1.2/2.2)]">
+    <div className="w-full rounded-xl border border-[var(--border)] bg-[color-mix(in_oklch,var(--muted)_12%,var(--card))] p-4">
       <p className="mb-3 text-sm font-medium text-[var(--foreground)]">Webhook ForgeOps (provision-user)</p>
       <div className="space-y-4">
         <CopyableMonoBlock label="POST" text={webhookUrl} />
