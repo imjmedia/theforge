@@ -12,6 +12,8 @@ docs
 **/coverage
 **/*.excalidraw
 **/*.checkpoint.json
+apps/api/plugins-enabled
+plugins-enabled
 agent-transcripts
 docker-compose*.yml
 Dockerfile

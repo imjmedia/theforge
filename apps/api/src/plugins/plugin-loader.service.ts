@@ -73,7 +73,7 @@ export class PluginLoaderService implements OnModuleInit {
   /** Ciclo de vida de NestJS: cargar plugins al arrancar */
   async onModuleInit(): Promise<void> {
     this.logger.log("[PluginLoaderService] onModuleInit start");
-    const directories = this.resolvePluginDirectories();
+    const directories = this.getPluginScanDirectories();
 
     for (const dir of directories) {
       if (!existsSync(dir)) {
@@ -148,12 +148,27 @@ export class PluginLoaderService implements OnModuleInit {
         return;
       }
 
-      // Evitar duplicados
+      // Evitar duplicados — el directorio primario (instalación) gana sobre copias embebidas en la imagen
       if (this.plugins.has(instance.id)) {
-        this.logger.warn(
-          `Plugin '${instance.id}' already loaded — skipping duplicate at ${pluginPath}`,
-        );
-        return;
+        const existingPath = this.pluginPaths.get(instance.id);
+        const primary = this.getPrimaryPluginDirectory();
+        const isPrimaryPath = (p: string) =>
+          resolve(p).startsWith(resolve(primary));
+        if (
+          isPrimaryPath(pluginPath) &&
+          existingPath &&
+          !isPrimaryPath(existingPath)
+        ) {
+          this.logger.warn(
+            `Plugin '${instance.id}' reemplazado: ${existingPath} → ${pluginPath} (directorio primario)`,
+          );
+          await this.unloadPlugin(instance.id);
+        } else {
+          this.logger.warn(
+            `Plugin '${instance.id}' already loaded — skipping duplicate at ${pluginPath}`,
+          );
+          return;
+        }
       }
 
       // Contexto de inyección limitado
@@ -168,7 +183,7 @@ export class PluginLoaderService implements OnModuleInit {
       this.registerHooks(instance);
 
       this.logger.log(
-        `✅ Plugin loaded: ${instance.name} v${instance.version} (${instance.id})`,
+        `✅ Plugin loaded: ${instance.name} v${instance.version} (${instance.id}) from ${pluginPath}`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -382,6 +397,19 @@ export class PluginLoaderService implements OnModuleInit {
     this.logger.error(`Hook '${hookName}' failed in plugin '${pluginId}': ${msg}`);
   }
 
+  /** Directorios a escanear al cargar/recargar (primario primero; en prod solo el primario). */
+  getPluginScanDirectories(): string[] {
+    const primary = this.getPrimaryPluginDirectory();
+    if (this.configService.get<string>("NODE_ENV") === "production") {
+      return [primary];
+    }
+    const all = this.resolvePluginDirectories();
+    return [
+      primary,
+      ...all.filter((dir) => resolve(dir) !== resolve(primary)),
+    ];
+  }
+
   /** Obtiene la lista de directorios donde escanear plugins */
   resolvePluginDirectories(): string[] {
     const fromEnv = this.configService.get<string>("plugins.directory");
@@ -443,20 +471,16 @@ export class PluginLoaderService implements OnModuleInit {
   async reloadPlugin(pluginId: string): Promise<boolean> {
     const folderName = pluginId.replace(/[^a-zA-Z0-9._-]/g, "_");
     const primary = this.getPrimaryPluginDirectory();
-    const candidates = [
-      this.pluginPaths.get(pluginId),
-      join(primary, folderName),
-    ].filter((p): p is string => Boolean(p));
+    const pluginPath = join(primary, folderName);
 
     await this.unloadPlugin(pluginId);
 
-    for (const pluginPath of candidates) {
-      if (!existsSync(pluginPath)) continue;
-      await this.tryLoadPlugin(pluginPath);
-      return this.plugins.has(pluginId);
+    if (!existsSync(pluginPath)) {
+      return false;
     }
 
-    return false;
+    await this.tryLoadPlugin(pluginPath);
+    return this.plugins.has(pluginId);
   }
 
   /** Re-escanea todos los directorios de plugins. */
@@ -466,7 +490,7 @@ export class PluginLoaderService implements OnModuleInit {
       await this.unloadPlugin(id);
     }
 
-    const directories = this.resolvePluginDirectories();
+    const directories = this.getPluginScanDirectories();
     for (const dir of directories) {
       if (!existsSync(dir)) continue;
       const entries = readdirSync(dir, { withFileTypes: true })
