@@ -153,6 +153,27 @@ export function pluginArtifactRequirementsMessage(
   return `Faltan entregables requeridos: ${missing.join(", ")}`;
 }
 
+/** Estado público de un job de entregables (polling). */
+export async function fetchDeliverablesJobStatus(jobId: string): Promise<{
+  status: string;
+  progress?: PluginArtifactProgress | number | unknown;
+  result?: unknown;
+  error?: string;
+}> {
+  const res = await apiFetch(`${API_BASE}/projects/jobs/${jobId}`);
+  if (!res.ok) {
+    throw new Error(res.status === 404 ? "Job no encontrado" : "Error al consultar el job");
+  }
+  return res.json();
+}
+
+function parsePluginArtifactProgress(value: unknown): PluginArtifactProgress | null {
+  if (typeof value !== "object" || value === null || !("percent" in value)) return null;
+  const p = value as PluginArtifactProgress;
+  if (typeof p.percent !== "number" || Number.isNaN(p.percent)) return null;
+  return p;
+}
+
 /** Poll BullMQ / in-memory job hasta completed o failed. */
 export async function pollDeliverablesJob<T>(
   jobId: string,
@@ -161,26 +182,24 @@ export async function pollDeliverablesJob<T>(
   const pollUrl = `${API_BASE}/projects/jobs/${jobId}`;
   for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
     if (opts?.signal?.aborted) throw new Error("Cancelado por el usuario");
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
     const pr = await apiFetch(pollUrl);
     if (!pr.ok) {
       if (pr.status === 404) throw new Error("Job no encontrado");
-      continue;
-    }
-    const status = (await pr.json()) as {
-      status: string;
-      progress?: PluginArtifactProgress | number | unknown;
-      result?: T;
-      error?: string;
-    };
-    if (status.progress && opts?.onProgress) {
-      const p = status.progress;
-      if (typeof p === "object" && p !== null && "percent" in p) {
-        opts.onProgress(p as PluginArtifactProgress);
+    } else {
+      const status = (await pr.json()) as {
+        status: string;
+        progress?: PluginArtifactProgress | number | unknown;
+        result?: T;
+        error?: string;
+      };
+      const parsed = parsePluginArtifactProgress(status.progress);
+      if (parsed && opts?.onProgress) {
+        opts.onProgress(parsed);
       }
+      if (status.status === "completed") return status.result as T;
+      if (status.status === "failed") throw new Error(status.error ?? "Error en la generación");
     }
-    if (status.status === "completed") return status.result as T;
-    if (status.status === "failed") throw new Error(status.error ?? "Error en la generación");
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
   throw new Error(
     "Tiempo de espera agotado (6 h). Recarga el proyecto; el job puede haber terminado en el servidor.",

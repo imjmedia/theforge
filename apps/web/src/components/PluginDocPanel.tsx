@@ -4,6 +4,7 @@ import type { ArtifactTypeDefinition, PluginArtifactProgress } from "@theforge/s
 import { getPluginDocPanelHeader, parsePluginPanelId } from "../utils/workshopDocNav";
 import {
   generateAndPollPluginArtifact,
+  fetchDeliverablesJobStatus,
   getPluginData,
   pluginArtifactRequirementsMessage,
   setPluginData,
@@ -96,9 +97,22 @@ export function PluginDocPanel({
   );
 
   const generationBusy = generationStatus?.busy === true;
-  const activePluginJob =
-    generationStatus?.activeJob?.type === "plugin-artifact" ||
-    generationStatus?.queuedJobs.some((j) => j.type === "plugin-artifact");
+  const activePluginJobId =
+    generationStatus?.activeJob?.type === "plugin-artifact"
+      ? generationStatus.activeJob.jobId
+      : generationStatus?.queuedJobs.find((j) => j.type === "plugin-artifact")?.jobId ?? null;
+  const activePluginJob = Boolean(activePluginJobId);
+  const isPluginGenerating = generating || activePluginJob;
+
+  const displayProgress = useMemo(() => {
+    if (generationProgress) {
+      return { percent: generationProgress.percent, detail: generationProgress.detail };
+    }
+    if (isPluginGenerating) {
+      return { percent: 0, detail: "Iniciando generación…" };
+    }
+    return undefined;
+  }, [generationProgress, isPluginGenerating]);
 
   const generateBlockedReason = useMemo(() => {
     if (requirementsBlock) return requirementsBlock;
@@ -131,6 +145,60 @@ export function PluginDocPanel({
       setLoading(false);
     }
   }, [parsed, patchPluginData, projectId, storePluginData, syncEditorFromPayload]);
+
+  useEffect(() => {
+    if (generating || !activePluginJobId || !parsed) return;
+
+    let cancelled = false;
+    const pollActiveJob = async () => {
+      while (!cancelled) {
+        try {
+          const status = await fetchDeliverablesJobStatus(activePluginJobId);
+          if (
+            typeof status.progress === "object" &&
+            status.progress !== null &&
+            "percent" in status.progress
+          ) {
+            setGenerationProgress(status.progress as PluginArtifactProgress);
+          }
+          if (status.status === "completed") {
+            const data = (status.result as { data?: unknown } | undefined)?.data ?? status.result;
+            if (data != null) {
+              patchPluginData(parsed.pluginId, data);
+              syncEditorFromPayload(data);
+            } else {
+              await reload();
+            }
+            void fetchGenerationStatus(projectId);
+            break;
+          }
+          if (status.status === "failed") {
+            setError(status.error ?? "Error al generar artifact del plugin");
+            void fetchGenerationStatus(projectId);
+            break;
+          }
+        } catch {
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    };
+
+    void pollActiveJob();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activePluginJobId,
+    fetchGenerationStatus,
+    generating,
+    parsed,
+    patchPluginData,
+    projectId,
+    reload,
+    setError,
+    syncEditorFromPayload,
+  ]);
 
   useEffect(() => {
     if (storedPayload !== undefined) {
@@ -207,13 +275,9 @@ export function PluginDocPanel({
       viewMode={viewMode}
       onGenerate={() => void handleGenerate()}
       canGenerate={artifact.generatable === true && !generateBlockedReason}
-      isLoading={loading || generating}
-      generationProgress={
-        generationProgress
-          ? { percent: generationProgress.percent, detail: generationProgress.detail }
-          : undefined
-      }
-      generateLabel={generating || activePluginJob ? "Generando…" : "Generar"}
+      isLoading={loading || isPluginGenerating}
+      generationProgress={displayProgress}
+      generateLabel={isPluginGenerating ? "Generando…" : "Generar"}
       generateBlocked={Boolean(generateBlockedReason)}
       generateBlockedReason={generateBlockedReason ?? undefined}
       placeholder={`# ${artifact.label}\n\nContenido generado por el plugin...`}
