@@ -21,4 +21,9 @@ export interface PluginWorkshopPreviewRenderOptions {
   pluginId: string;
   artifactId: string;
   projectId: string;
+  onRegenerate?: () => void | Promise<void>;
+  canRegenerate?: boolean;
+  isRegenerating?: boolean;
+  regenerateLabel?: string;
+  regenerateBlockedReason?: string;
 }

@@ -1,9 +1,28 @@
 import type { ReactElement } from "react";
-import type { PluginWorkshopPreviewProps } from "@theforge/shared-types";
-import { EvdDeckPreview } from "./EvdDeckPreview";
-import { parseEvdDeck } from "./evd-deck.utils";
+import { EvdDeckPreview } from "./EvdDeckPreview.js";
+import { parseEvdDeck } from "./evd-deck.utils.js";
 
-export function EvdWorkshopPreview({ data }: PluginWorkshopPreviewProps): ReactElement {
+/** Props — alineadas con PluginWorkshopPreviewProps del core. */
+export interface EvdWorkshopPreviewProps {
+  data: unknown;
+  pluginId: string;
+  artifactId: string;
+  projectId: string;
+  onRegenerate?: () => void | Promise<void>;
+  canRegenerate?: boolean;
+  isRegenerating?: boolean;
+  regenerateLabel?: string;
+  regenerateBlockedReason?: string;
+}
+
+export function EvdWorkshopPreview({
+  data,
+  onRegenerate,
+  canRegenerate,
+  isRegenerating,
+  regenerateLabel,
+  regenerateBlockedReason,
+}: EvdWorkshopPreviewProps): ReactElement {
   const deck = parseEvdDeck(data);
   if (!deck) {
     return (
@@ -12,5 +31,14 @@ export function EvdWorkshopPreview({ data }: PluginWorkshopPreviewProps): ReactE
       </div>
     );
   }
-  return <EvdDeckPreview deck={deck} />;
+  return (
+    <EvdDeckPreview
+      deck={deck}
+      onRegenerate={onRegenerate}
+      canRegenerate={canRegenerate}
+      isRegenerating={isRegenerating}
+      regenerateLabel={regenerateLabel}
+      regenerateBlockedReason={regenerateBlockedReason}
+    />
+  );
 }

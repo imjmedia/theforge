@@ -34,6 +34,12 @@ export interface PluginWorkshopPreviewProps {
   pluginId: string;
   artifactId: string;
   projectId: string;
+  /** Regeneración completa vía POST generate del artifact. */
+  onRegenerate?: () => void | Promise<void>;
+  canRegenerate?: boolean;
+  isRegenerating?: boolean;
+  regenerateLabel?: string;
+  regenerateBlockedReason?: string;
 }
 
 /** Metadatos de registro UI — el paquete npm del plugin exporta esto; el core no hardcodea plugins. */
@@ -45,6 +51,8 @@ export interface PluginWorkshopPreviewRegistration {
   sourceLabel?: string;
   /** Etiqueta del botón al aplicar cambios en modo fuente (default: "Guardar"). */
   sourceApplyLabel?: string;
+  /** Etiqueta del botón de regeneración en vista preview (default: "Regenerar"). */
+  regenerateLabel?: string;
 }
 
 /** Progreso reportado por el plugin durante `generateArtifact`. */

@@ -168,20 +168,6 @@ export function PluginDocPanel({
     return fromEditor;
   }, [content, contentType, storedPayload, workshopPreviewEntry]);
 
-  const previewSlot = useMemo(() => {
-    if (!parsed || !artifact?.workshopPreview || !workshopPreviewEntry) return undefined;
-    if (workshopPreviewEntry.parsePayload && !workshopPreviewEntry.parsePayload(previewPayload)) {
-      return undefined;
-    }
-    return renderPluginWorkshopPreview({
-      workshopPreview: artifact.workshopPreview,
-      data: previewPayload,
-      pluginId: parsed.pluginId,
-      artifactId: parsed.artifactId,
-      projectId,
-    });
-  }, [artifact?.workshopPreview, parsed, previewPayload, projectId, workshopPreviewEntry]);
-
   const reload = useCallback(async () => {
     if (!pluginId) return;
     setLoading(true);
@@ -310,6 +296,59 @@ export function PluginDocPanel({
     setError,
     stageId,
     syncEditorFromPayload,
+  ]);
+
+  const handleRegenerate = useCallback(async () => {
+    if (!parsed || !pluginId || !artifact || generateBlockedReason || generating) return;
+    if (
+      storedPayload != null &&
+      !window.confirm(
+        "¿Regenerar todo el contenido? Se reemplazará el deck actual con una nueva generación desde los entregables del proyecto.",
+      )
+    ) {
+      return;
+    }
+    await handleGenerate();
+  }, [
+    artifact,
+    generateBlockedReason,
+    generating,
+    handleGenerate,
+    parsed,
+    pluginId,
+    storedPayload,
+  ]);
+
+  const previewSlot = useMemo(() => {
+    if (!parsed || !artifact?.workshopPreview || !workshopPreviewEntry) return undefined;
+    if (workshopPreviewEntry.parsePayload && !workshopPreviewEntry.parsePayload(previewPayload)) {
+      return undefined;
+    }
+    const canRegenerate =
+      artifact.generatable === true && !generateBlockedReason && !loading && !generating;
+    return renderPluginWorkshopPreview({
+      workshopPreview: artifact.workshopPreview,
+      data: previewPayload,
+      pluginId: parsed.pluginId,
+      artifactId: parsed.artifactId,
+      projectId,
+      onRegenerate: () => void handleRegenerate(),
+      canRegenerate,
+      isRegenerating: generating,
+      regenerateLabel: workshopPreviewEntry.regenerateLabel ?? "Regenerar",
+      regenerateBlockedReason: generateBlockedReason ?? undefined,
+    });
+  }, [
+    artifact?.generatable,
+    artifact?.workshopPreview,
+    generateBlockedReason,
+    generating,
+    handleRegenerate,
+    loading,
+    parsed,
+    previewPayload,
+    projectId,
+    workshopPreviewEntry,
   ]);
 
   if (!parsed || !artifact) return null;

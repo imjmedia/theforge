@@ -27,6 +27,11 @@ export function renderPluginWorkshopPreview(
       pluginId={options.pluginId}
       artifactId={options.artifactId}
       projectId={options.projectId}
+      onRegenerate={options.onRegenerate}
+      canRegenerate={options.canRegenerate}
+      isRegenerating={options.isRegenerating}
+      regenerateLabel={options.regenerateLabel}
+      regenerateBlockedReason={options.regenerateBlockedReason}
     />
   );
 }

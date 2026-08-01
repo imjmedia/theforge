@@ -1,6 +1,5 @@
 import type { ComponentType } from "react";
-import type { PluginWorkshopPreviewProps } from "@theforge/shared-types";
-import { EvdWorkshopPreview } from "./EvdWorkshopPreview.js";
+import { EvdWorkshopPreview, type EvdWorkshopPreviewProps } from "./EvdWorkshopPreview.js";
 import {
   EVD_WORKSHOP_PREVIEW,
   evdDeckFromEditorText,
@@ -16,8 +15,11 @@ export interface EvdWorkshopPreviewRegistration {
   sourceReadOnly?: boolean;
   previewLabel?: string;
   sourceLabel?: string;
+  /** Etiqueta del botón para aplicar cambios del editor JSON. */
   sourceApplyLabel?: string;
-  Preview: ComponentType<PluginWorkshopPreviewProps>;
+  /** Etiqueta del botón de regeneración en vista preview. */
+  regenerateLabel?: string;
+  Preview: ComponentType<EvdWorkshopPreviewProps>;
   parsePayload?: (data: unknown) => unknown | null;
   toEditorText?: (data: unknown) => string;
   /** Parsea JSON editado — null si es inválido. */
@@ -33,6 +35,7 @@ export const evdWorkshopPreviewRegistration: EvdWorkshopPreviewRegistration = {
   previewLabel: "Diapositivas",
   sourceLabel: "JSON",
   sourceApplyLabel: "Aplicar y actualizar diapositivas",
+  regenerateLabel: "Regenerar diapositivas",
   Preview: EvdWorkshopPreview,
   parsePayload: parseEvdDeck,
   toEditorText: evdDeckToEditorText,

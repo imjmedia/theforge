@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
-import { ChevronLeft, ChevronRight, Download } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, RefreshCw } from "lucide-react";
 import { cn } from "./cn.js";
 import { b64ToDataUrl } from "./evd-deck.utils.js";
 import type { EvdDeckJson } from "./evd-deck.types.js";
@@ -11,9 +11,21 @@ const BTN_OUTLINE =
 
 interface EvdDeckPreviewProps {
   deck: EvdDeckJson;
+  onRegenerate?: () => void | Promise<void>;
+  canRegenerate?: boolean;
+  isRegenerating?: boolean;
+  regenerateLabel?: string;
+  regenerateBlockedReason?: string;
 }
 
-export function EvdDeckPreview({ deck }: EvdDeckPreviewProps): ReactElement {
+export function EvdDeckPreview({
+  deck,
+  onRegenerate,
+  canRegenerate = false,
+  isRegenerating = false,
+  regenerateLabel = "Regenerar diapositivas",
+  regenerateBlockedReason,
+}: EvdDeckPreviewProps): ReactElement {
   const slides = useMemo(
     () => [...deck.slides].sort((a, b) => a.order - b.order),
     [deck.slides],
@@ -82,6 +94,21 @@ export function EvdDeckPreview({ deck }: EvdDeckPreviewProps): ReactElement {
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {onRegenerate ? (
+            <button
+              type="button"
+              className={BTN_OUTLINE}
+              onClick={() => void onRegenerate()}
+              disabled={!canRegenerate || isRegenerating}
+              title={regenerateBlockedReason ?? "Regenerar deck completo desde entregables"}
+            >
+              <RefreshCw
+                className={cn("h-4 w-4", isRegenerating && "animate-spin")}
+                aria-hidden
+              />
+              {isRegenerating ? "Regenerando…" : regenerateLabel}
+            </button>
+          ) : null}
           <button
             type="button"
             className={BTN_OUTLINE}
