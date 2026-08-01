@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { FileText } from "lucide-react";
 import type { ArtifactTypeDefinition, PluginArtifactProgress } from "@theforge/shared-types";
 import { getPluginDocPanelHeader, parsePluginPanelId } from "../utils/workshopDocNav";
 import {
-  fetchDeliverablesJobStatus,
   generatePluginArtifact,
   getPluginData,
   pluginArtifactRequirementsMessage,
@@ -86,7 +85,6 @@ export function PluginDocPanel({
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<PluginArtifactProgress | null>(null);
-  const ownedJobIdRef = useRef<string | null>(null);
 
   const deliverables = useMemo(
     () => projectDeliverablesForArtifact(project as Record<string, unknown> | null, mddContent),
@@ -99,30 +97,27 @@ export function PluginDocPanel({
   );
 
   const generationBusy = generationStatus?.busy === true;
-  const activePluginJobId =
-    generationStatus?.activeJob?.type === "plugin-artifact"
-      ? generationStatus.activeJob.jobId
-      : generationStatus?.queuedJobs.find((j) => j.type === "plugin-artifact")?.jobId ?? null;
-  const activePluginJob = Boolean(activePluginJobId);
-  const isPluginGenerating = generating || activePluginJob;
+  const activePluginJob =
+    generationStatus?.activeJob?.type === "plugin-artifact" ||
+    generationStatus?.queuedJobs.some((j) => j.type === "plugin-artifact");
 
   const displayProgress = useMemo(() => {
-    if (generationProgress) {
-      return { percent: generationProgress.percent, detail: generationProgress.detail };
-    }
-    if (isPluginGenerating) {
-      return { percent: 0, detail: "Iniciando generación…" };
-    }
-    return undefined;
-  }, [generationProgress, isPluginGenerating]);
+    if (!generating || !generationProgress) return undefined;
+    return { percent: generationProgress.percent, detail: generationProgress.detail };
+  }, [generationProgress, generating]);
 
   const generateBlockedReason = useMemo(() => {
     if (requirementsBlock) return requirementsBlock;
+    if (loading) return null;
+    if (generating) return null;
+    if (activePluginJob) {
+      return "Hay una generación del plugin en curso. Espera a que termine o recarga el proyecto.";
+    }
     if (generationBusy && !activePluginJob) {
       return "Hay otra generación en curso. Espera a que termine.";
     }
     return null;
-  }, [requirementsBlock, generationBusy, activePluginJob]);
+  }, [requirementsBlock, loading, generating, activePluginJob, generationBusy]);
 
   const syncEditorFromPayload = useCallback(
     (data: unknown) => {
@@ -149,88 +144,6 @@ export function PluginDocPanel({
   }, [parsed, patchPluginData, projectId, storePluginData, syncEditorFromPayload]);
 
   useEffect(() => {
-    if (generating || !activePluginJobId || !parsed) return;
-
-    let cancelled = false;
-    const pollActiveJob = async () => {
-      try {
-        let status = await fetchDeliverablesJobStatus(activePluginJobId);
-        if (cancelled) return;
-
-        if (status.status === "failed") {
-          void fetchGenerationStatus(projectId);
-          if (ownedJobIdRef.current === activePluginJobId) {
-            setError(status.error ?? "Error al generar artifact del plugin");
-          }
-          return;
-        }
-
-        if (status.status === "completed") {
-          const data = (status.result as { data?: unknown } | undefined)?.data ?? status.result;
-          if (data != null) {
-            patchPluginData(parsed.pluginId, data);
-            syncEditorFromPayload(data);
-          } else {
-            await reload();
-          }
-          void fetchGenerationStatus(projectId);
-          return;
-        }
-
-        while (!cancelled) {
-          if (
-            typeof status.progress === "object" &&
-            status.progress !== null &&
-            "percent" in status.progress
-          ) {
-            setGenerationProgress(status.progress as PluginArtifactProgress);
-          }
-
-          await new Promise((r) => setTimeout(r, 2000));
-          if (cancelled) return;
-
-          status = await fetchDeliverablesJobStatus(activePluginJobId);
-          if (status.status === "completed") {
-            const data = (status.result as { data?: unknown } | undefined)?.data ?? status.result;
-            if (data != null) {
-              patchPluginData(parsed.pluginId, data);
-              syncEditorFromPayload(data);
-            } else {
-              await reload();
-            }
-            void fetchGenerationStatus(projectId);
-            return;
-          }
-          if (status.status === "failed") {
-            void fetchGenerationStatus(projectId);
-            if (ownedJobIdRef.current === activePluginJobId) {
-              setError(status.error ?? "Error al generar artifact del plugin");
-            }
-            return;
-          }
-        }
-      } catch {
-        void fetchGenerationStatus(projectId);
-      }
-    };
-
-    void pollActiveJob();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    activePluginJobId,
-    fetchGenerationStatus,
-    generating,
-    parsed,
-    patchPluginData,
-    projectId,
-    reload,
-    setError,
-    syncEditorFromPayload,
-  ]);
-
-  useEffect(() => {
     if (storedPayload !== undefined) {
       syncEditorFromPayload(storedPayload);
       setLoading(false);
@@ -251,7 +164,6 @@ export function PluginDocPanel({
     setError(null);
     setGenerating(true);
     setGenerationProgress({ percent: 0, step: "start", detail: "Iniciando generación…" });
-    ownedJobIdRef.current = null;
     void fetchGenerationStatus(projectId);
     try {
       const queued = await generatePluginArtifact(
@@ -268,7 +180,6 @@ export function PluginDocPanel({
         return;
       }
       if (!queued.jobId) throw new Error("Cola no devolvió jobId");
-      ownedJobIdRef.current = queued.jobId;
 
       const result = await pollDeliverablesJob<{ data?: unknown }>(queued.jobId, {
         onProgress: (p) => setGenerationProgress(p),
@@ -283,7 +194,6 @@ export function PluginDocPanel({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al generar artifact del plugin");
     } finally {
-      ownedJobIdRef.current = null;
       setGenerating(false);
       setGenerationProgress(null);
       void fetchGenerationStatus(projectId);
@@ -318,10 +228,14 @@ export function PluginDocPanel({
       isDirty={false}
       viewMode={viewMode}
       onGenerate={() => void handleGenerate()}
-      canGenerate={artifact.generatable === true && !generateBlockedReason}
-      isLoading={loading || isPluginGenerating}
-      generationProgress={displayProgress}
-      generateLabel={isPluginGenerating ? "Generando…" : "Generar"}
+      canGenerate={artifact.generatable === true && !generateBlockedReason && !loading}
+      isLoading={generating}
+      generationProgress={
+        generating
+          ? (displayProgress ?? { percent: 0, detail: "Iniciando generación…" })
+          : undefined
+      }
+      generateLabel={generating ? "Generando…" : "Generar"}
       generateBlocked={Boolean(generateBlockedReason)}
       generateBlockedReason={generateBlockedReason ?? undefined}
       placeholder={`# ${artifact.label}\n\nContenido generado por el plugin...`}
