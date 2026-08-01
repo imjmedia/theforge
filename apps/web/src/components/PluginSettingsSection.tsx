@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Loader2, Puzzle } from "lucide-react";
 import type {
+  InstalledPluginRecord,
   PluginSettingsFieldDefinition,
   PluginSettingsPanelDefinition,
 } from "@theforge/shared-types";
 import {
+  fetchInstalledPlugins,
   fetchPluginSettingsPanels,
   fetchPluginUserSettings,
   savePluginUserSettings,
@@ -12,6 +14,47 @@ import {
 import { PluginInstallSection } from "@/components/PluginInstallSection";
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from "@/components/ui";
 import { cn } from "@/lib/utils";
+
+type PluginSettingsGroup = {
+  pluginId: string;
+  label: string;
+  panels: PluginSettingsPanelDefinition[];
+};
+
+function resolvePluginDisplayName(
+  pluginId: string,
+  installed: InstalledPluginRecord[],
+  panels: PluginSettingsPanelDefinition[],
+): string {
+  const fromInstalled = installed.find((p) => p.id === pluginId)?.name;
+  if (fromInstalled?.trim()) return fromInstalled.trim();
+
+  const firstPanel = panels.find((p) => p.pluginId === pluginId);
+  if (firstPanel?.label) {
+    return firstPanel.label.replace(/\s·\sv[\d.]+$/, "").trim();
+  }
+
+  const tail = pluginId.split(".").pop();
+  return tail?.trim() || pluginId;
+}
+
+function groupPanelsByPlugin(
+  panels: PluginSettingsPanelDefinition[],
+  installed: InstalledPluginRecord[],
+): PluginSettingsGroup[] {
+  const byPlugin = new Map<string, PluginSettingsPanelDefinition[]>();
+  for (const panel of panels) {
+    const list = byPlugin.get(panel.pluginId) ?? [];
+    list.push(panel);
+    byPlugin.set(panel.pluginId, list);
+  }
+
+  return Array.from(byPlugin.entries()).map(([pluginId, pluginPanels]) => ({
+    pluginId,
+    label: resolvePluginDisplayName(pluginId, installed, panels),
+    panels: pluginPanels.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
+  }));
+}
 
 function fieldValue(settings: Record<string, unknown>, key: string): string {
   const v = settings[key];
@@ -178,16 +221,92 @@ function PluginSettingsPanelCard({ panel }: { panel: PluginSettingsPanelDefiniti
   );
 }
 
+function PluginSettingsGroupSelector({
+  groups,
+  value,
+  onValueChange,
+}: {
+  groups: PluginSettingsGroup[];
+  value: string;
+  onValueChange: (pluginId: string) => void;
+}) {
+  if (groups.length <= 1) return null;
+
+  return (
+    <div
+      className="flex flex-wrap gap-2"
+      role="tablist"
+      aria-label="Plugins con ajustes"
+    >
+      {groups.map((group) => {
+        const selected = value === group.pluginId;
+        return (
+          <button
+            key={group.pluginId}
+            type="button"
+            role="tab"
+            id={`plugin-settings-tab-${group.pluginId}`}
+            aria-selected={selected}
+            aria-controls={`plugin-settings-panel-${group.pluginId}`}
+            onClick={() => onValueChange(group.pluginId)}
+            className={cn(
+              "min-h-[36px] touch-manipulation rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+              selected
+                ? "border-[var(--primary)] bg-[color-mix(in_oklch,var(--primary)_12%,var(--card))] text-[var(--primary)]"
+                : "border-[var(--border)] bg-[var(--card)] text-[var(--foreground-muted)] hover:border-[var(--primary)]/40 hover:text-[var(--foreground)]",
+            )}
+          >
+            {group.label}
+            {group.panels.length > 1 ? (
+              <span className="ml-1.5 text-xs font-normal opacity-80">
+                ({group.panels.length})
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Paneles de ajustes declarados por plugins cargados (enganchados en Ajustes). */
 export function PluginSettingsSection() {
   const [panels, setPanels] = useState<PluginSettingsPanelDefinition[]>([]);
+  const [installed, setInstalled] = useState<InstalledPluginRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [settingsRefreshKey, setSettingsRefreshKey] = useState(0);
+  const [activePluginId, setActivePluginId] = useState("");
+
+  const pluginGroups = useMemo(
+    () => groupPanelsByPlugin(panels, installed),
+    [panels, installed],
+  );
+
+  const activeGroup = useMemo(
+    () => pluginGroups.find((group) => group.pluginId === activePluginId) ?? pluginGroups[0],
+    [pluginGroups, activePluginId],
+  );
+
+  useEffect(() => {
+    if (pluginGroups.length === 0) {
+      setActivePluginId("");
+      return;
+    }
+    if (!pluginGroups.some((group) => group.pluginId === activePluginId)) {
+      setActivePluginId(pluginGroups[0].pluginId);
+    }
+  }, [pluginGroups, activePluginId]);
 
   const reloadPanels = useCallback(() => {
     setLoading(true);
-    void fetchPluginSettingsPanels()
-      .then(setPanels)
+    void Promise.all([
+      fetchPluginSettingsPanels(),
+      fetchInstalledPlugins().catch(() => ({ installed: [] as InstalledPluginRecord[] })),
+    ])
+      .then(([nextPanels, installedStatus]) => {
+        setPanels(nextPanels);
+        setInstalled(installedStatus.installed);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -232,15 +351,50 @@ export function PluginSettingsSection() {
     );
   }
 
+  const visiblePanels = activeGroup?.panels ?? [];
+
   return (
     <div className="space-y-6">
       <PluginInstallSection onChanged={handlePluginsChanged} />
-      {panels.map((panel) => (
-        <PluginSettingsPanelCard
-          key={`${panel.pluginId}:${panel.id}:${settingsRefreshKey}`}
-          panel={panel}
-        />
-      ))}
+
+      {pluginGroups.length > 1 ? (
+        <Card className="border-[var(--border)] bg-[var(--card)]">
+          <CardHeader className="space-y-4 pb-4">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Puzzle className="h-5 w-5 text-[var(--primary)]" />
+                Ajustes por plugin
+              </CardTitle>
+              <CardDescription className="mt-1.5">
+                Elige un plugin para ver sus paneles de licencia, modelos y preferencias.
+              </CardDescription>
+            </div>
+            <PluginSettingsGroupSelector
+              groups={pluginGroups}
+              value={activeGroup?.pluginId ?? ""}
+              onValueChange={setActivePluginId}
+            />
+          </CardHeader>
+        </Card>
+      ) : null}
+
+      <div
+        role="tabpanel"
+        id={activeGroup ? `plugin-settings-panel-${activeGroup.pluginId}` : undefined}
+        aria-labelledby={
+          activeGroup && pluginGroups.length > 1
+            ? `plugin-settings-tab-${activeGroup.pluginId}`
+            : undefined
+        }
+        className="space-y-6"
+      >
+        {visiblePanels.map((panel) => (
+          <PluginSettingsPanelCard
+            key={`${panel.pluginId}:${panel.id}:${settingsRefreshKey}`}
+            panel={panel}
+          />
+        ))}
+      </div>
     </div>
   );
 }
