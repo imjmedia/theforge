@@ -20,16 +20,28 @@ import { apiFetch, API_BASE } from "./apiClient";
 
 let cachedArtifacts: ArtifactTypeDefinition[] | null = null;
 
+export const PLUGIN_ARTIFACTS_CHANGED_EVENT = "theforge:plugin-artifacts-changed";
+
 const POLL_MAX_ATTEMPTS = 10_800;
 const POLL_INTERVAL_MS = 2_000;
 
-export async function fetchPluginArtifacts(): Promise<ArtifactTypeDefinition[]> {
-  if (cachedArtifacts) return cachedArtifacts;
+export async function fetchPluginArtifacts(options?: {
+  force?: boolean;
+}): Promise<ArtifactTypeDefinition[]> {
+  if (!options?.force && cachedArtifacts) return cachedArtifacts;
   const res = await apiFetch(`${API_BASE}/plugins/artifacts`);
-  if (!res.ok) return [];
+  if (!res.ok) return cachedArtifacts ?? [];
   const data: ArtifactTypeDefinition[] = await res.json();
-  cachedArtifacts = data;
+  if (data.length > 0 || !cachedArtifacts) {
+    cachedArtifacts = data;
+  }
   return data;
+}
+
+export function notifyPluginArtifactsChanged(): void {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(PLUGIN_ARTIFACTS_CHANGED_EVENT));
+  }
 }
 
 export async function fetchPluginSettingsPanels(): Promise<{
@@ -77,6 +89,7 @@ export async function downloadPluginArtifactExport(
 
 export function clearPluginArtifactsCache(): void {
   cachedArtifacts = null;
+  notifyPluginArtifactsChanged();
 }
 
 export async function fetchInstalledPlugins(): Promise<PluginInstalledListResponse> {

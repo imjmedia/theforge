@@ -84,7 +84,7 @@ import { isTabVisibleForComplexity, type WorkshopDocTab } from "../utils/complex
 import { isWorkshopFrozenDeliverableTab } from "@theforge/shared-types";
 import { evaluateTasksGenerationPrerequisites } from "../utils/tasksGenerationPrerequisites";
 import { isWorkshopAgentActivityPanel } from "../utils/workshopDocNav";
-import { fetchPluginArtifacts } from "../utils/pluginApi";
+import { fetchPluginArtifacts, PLUGIN_ARTIFACTS_CHANGED_EVENT } from "../utils/pluginApi";
 import {
   buildRegenerateSectionChatMessage,
   canRegenerateMddSectionFromWorkshop,
@@ -1235,7 +1235,12 @@ export default function WorkshopView({
 
   const [pluginArtifactTypes, setPluginArtifactTypes] = useState<ArtifactTypeDefinition[]>([]);
   useEffect(() => {
-    fetchPluginArtifacts().then(setPluginArtifactTypes);
+    const refresh = () => {
+      void fetchPluginArtifacts({ force: true }).then(setPluginArtifactTypes);
+    };
+    refresh();
+    window.addEventListener(PLUGIN_ARTIFACTS_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(PLUGIN_ARTIFACTS_CHANGED_EVENT, refresh);
   }, []);
 
   /** BRD / To-Be (pestañas Workshop): borradores locales y modo preview|fuente (Grabar vía barra / aviso). */
