@@ -583,6 +583,22 @@ export class PluginLoaderService implements OnModuleInit {
     return { plugin, artifact };
   }
 
+  /** Versión declarada en theforge-plugin.manifest.json (disco), si existe. */
+  private readInstalledManifestVersion(pluginId: string): string | undefined {
+    const pluginPath = this.pluginPaths.get(pluginId);
+    if (!pluginPath) return undefined;
+    const manifestPath = join(pluginPath, THEFORGE_PLUGIN_MANIFEST_FILENAME);
+    if (!existsSync(manifestPath)) return undefined;
+    try {
+      const manifest = parsePluginManifest(
+        JSON.parse(readFileSync(manifestPath, "utf8")) as unknown,
+      );
+      return manifest.version?.trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Paneles de ajustes declarados por plugins cargados */
   getSettingsPanels(): PluginSettingsPanelDefinition[] {
     const panels: PluginSettingsPanelDefinition[] = [];
@@ -590,10 +606,12 @@ export class PluginLoaderService implements OnModuleInit {
       if (!plugin.getSettingsPanels) continue;
       const declared = plugin.getSettingsPanels();
       if (!Array.isArray(declared)) continue;
+      const displayVersion =
+        this.readInstalledManifestVersion(plugin.id) ?? plugin.version;
       for (const panel of declared) {
         const label =
           typeof panel.label === "string"
-            ? panel.label.replace(/\s·\sv[\d.]+$/, "") + ` · v${plugin.version}`
+            ? panel.label.replace(/\s·\sv[\d.]+$/, "") + ` · v${displayVersion}`
             : panel.label;
         panels.push({
           ...panel,

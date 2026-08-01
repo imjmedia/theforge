@@ -38,6 +38,20 @@ function resolvePluginDisplayName(
   return tail?.trim() || pluginId;
 }
 
+/** Etiqueta del panel con versión del manifest en disco (lista instalados). */
+function resolvePanelDisplayLabel(
+  panel: PluginSettingsPanelDefinition,
+  installed: InstalledPluginRecord[],
+): string {
+  const record = installed.find((p) => p.id === panel.pluginId);
+  const base = panel.label.replace(/\s·\sv[\d.]+$/, "").trim();
+  const version = record?.version?.trim();
+  if (version && version !== "unknown") {
+    return `${base} · v${version}`;
+  }
+  return panel.label;
+}
+
 function groupPanelsByPlugin(
   panels: PluginSettingsPanelDefinition[],
   installed: InstalledPluginRecord[],
@@ -61,13 +75,24 @@ function fieldValue(settings: Record<string, unknown>, key: string): string {
   return typeof v === "string" ? v : v != null ? String(v) : "";
 }
 
-function PluginSettingsPanelCard({ panel }: { panel: PluginSettingsPanelDefinition }) {
+function PluginSettingsPanelCard({
+  panel,
+  installed,
+}: {
+  panel: PluginSettingsPanelDefinition;
+  installed: InstalledPluginRecord[];
+}) {
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [initial, setInitial] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+
+  const displayLabel = useMemo(
+    () => resolvePanelDisplayLabel(panel, installed),
+    [panel, installed],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -177,7 +202,7 @@ function PluginSettingsPanelCard({ panel }: { panel: PluginSettingsPanelDefiniti
   return (
     <Card className="border-[var(--border)] bg-[var(--card)]">
       <CardHeader>
-        <CardTitle className="text-lg">{panel.label}</CardTitle>
+        <CardTitle className="text-lg">{displayLabel}</CardTitle>
         {panel.description ? (
           <CardDescription>{panel.description}</CardDescription>
         ) : null}
@@ -388,6 +413,7 @@ export function PluginSettingsSection() {
               <PluginSettingsPanelCard
                 key={`${panel.pluginId}:${panel.id}:${settingsRefreshKey}`}
                 panel={panel}
+                installed={installed}
               />
             ))}
           </div>
