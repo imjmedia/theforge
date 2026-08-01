@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { FileText } from "lucide-react";
 import type { ArtifactTypeDefinition, PluginArtifactProgress } from "@theforge/shared-types";
 import { getPluginDocPanelHeader, parsePluginPanelId } from "../utils/workshopDocNav";
@@ -63,28 +63,34 @@ export function PluginDocPanel({
   artifactTypes,
   stageId,
 }: PluginDocPanelProps): ReactElement | null {
-  const parsed = parsePluginPanelId(panel);
-  const artifact = artifactTypes.find(
-    (a) => a.pluginId === parsed?.pluginId && a.id === parsed?.artifactId,
+  const parsed = useMemo(() => parsePluginPanelId(panel), [panel]);
+  const pluginId = parsed?.pluginId;
+  const artifact = useMemo(
+    () =>
+      parsed
+        ? artifactTypes.find((a) => a.pluginId === parsed.pluginId && a.id === parsed.artifactId)
+        : undefined,
+    [artifactTypes, parsed],
   );
   const header = getPluginDocPanelHeader(panel, artifactTypes);
   const contentType = artifact?.contentType ?? "json";
 
   const project = useWorkshopStore((s) => s.project);
-  const storePluginData = useWorkshopStore((s) => s.pluginData);
+  const storedPayload = useWorkshopStore((s) =>
+    pluginId ? s.pluginData[pluginId] : undefined,
+  );
   const patchPluginData = useWorkshopStore((s) => s.patchPluginData);
   const mddContent = useWorkshopStore((s) => s.mddContent);
   const generationStatus = useWorkshopStore((s) => s.generationStatus);
   const fetchGenerationStatus = useWorkshopStore((s) => s.fetchGenerationStatus);
   const setError = useWorkshopStore((s) => s.setError);
 
-  const storedPayload = parsed ? storePluginData[parsed.pluginId] : undefined;
-
   const [content, setContent] = useState<string>("");
   const viewMode = pluginArtifactDefaultViewMode(contentType);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<PluginArtifactProgress | null>(null);
+  const fetchGenerationRef = useRef(0);
 
   const deliverables = useMemo(
     () => projectDeliverablesForArtifact(project as Record<string, unknown> | null, mddContent),
@@ -127,40 +133,60 @@ export function PluginDocPanel({
   );
 
   const reload = useCallback(async () => {
-    if (!parsed) return;
+    if (!pluginId) return;
     setLoading(true);
     try {
-      const fromStore = storePluginData[parsed.pluginId];
-      if (fromStore !== undefined) {
-        syncEditorFromPayload(fromStore);
-        return;
-      }
-      const data = await getPluginData(projectId, parsed.pluginId);
-      if (data != null) patchPluginData(parsed.pluginId, data);
+      const data = await getPluginData(projectId, pluginId);
+      patchPluginData(pluginId, data ?? null);
       syncEditorFromPayload(data);
     } finally {
       setLoading(false);
     }
-  }, [parsed, patchPluginData, projectId, storePluginData, syncEditorFromPayload]);
+  }, [patchPluginData, pluginId, projectId, syncEditorFromPayload]);
 
   useEffect(() => {
+    if (!pluginId) return;
     if (storedPayload !== undefined) {
       syncEditorFromPayload(storedPayload);
       setLoading(false);
       return;
     }
-    void reload();
-  }, [reload, storedPayload, syncEditorFromPayload]);
+
+    const fetchId = ++fetchGenerationRef.current;
+    let cancelled = false;
+    setLoading(true);
+
+    void (async () => {
+      try {
+        const data = await getPluginData(projectId, pluginId);
+        if (cancelled || fetchId !== fetchGenerationRef.current) return;
+        patchPluginData(pluginId, data ?? null);
+        syncEditorFromPayload(data);
+      } catch {
+        if (cancelled || fetchId !== fetchGenerationRef.current) return;
+        patchPluginData(pluginId, null);
+        syncEditorFromPayload(null);
+      } finally {
+        if (!cancelled && fetchId === fetchGenerationRef.current) {
+          setLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [patchPluginData, pluginId, projectId, storedPayload, syncEditorFromPayload]);
 
   const handleSave = useCallback(async () => {
-    if (!parsed) return;
+    if (!parsed || !pluginId) return;
     const parsedData = pluginArtifactFromEditorText(content, contentType);
-    await setPluginData(projectId, parsed.pluginId, parsedData as Record<string, unknown>);
-    patchPluginData(parsed.pluginId, parsedData);
-  }, [content, contentType, patchPluginData, projectId, parsed]);
+    await setPluginData(projectId, pluginId, parsedData as Record<string, unknown>);
+    patchPluginData(pluginId, parsedData);
+  }, [content, contentType, patchPluginData, pluginId, projectId, parsed]);
 
   const handleGenerate = useCallback(async () => {
-    if (!parsed || !artifact || generateBlockedReason) return;
+    if (!parsed || !pluginId || !artifact || generateBlockedReason) return;
     setError(null);
     setGenerating(true);
     setGenerationProgress({ percent: 0, step: "start", detail: "Iniciando generación…" });
@@ -204,6 +230,7 @@ export function PluginDocPanel({
     generateBlockedReason,
     parsed,
     patchPluginData,
+    pluginId,
     projectId,
     reload,
     setError,

@@ -406,7 +406,10 @@ export const createProjectSlice: StateCreator<WorkshopState, [], [], ProjectSlic
         legacyMcpDebugTrace: null,
         synced: true,
         ...resetWorkshopSemaphoreSnapshot(),
-        pluginData: (data.pluginData as Record<string, unknown> | null | undefined) ?? {},
+        pluginData: {
+          ...get().pluginData,
+          ...((data.pluginData as Record<string, unknown> | null | undefined) ?? {}),
+        },
       });
       void (async () => {
         const sessionsRes = await apiFetch(`${API_BASE}/sessions/project/${requestedId}`);

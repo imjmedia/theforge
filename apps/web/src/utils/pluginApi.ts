@@ -117,6 +117,12 @@ export async function fetchAllPluginUserSettings(): Promise<PluginUserSettingsMa
   return res.json();
 }
 
+async function parseJsonResponseBody(res: Response): Promise<unknown> {
+  const text = await res.text();
+  if (!text.trim()) return null;
+  return JSON.parse(text) as unknown;
+}
+
 export async function getPluginData(
   projectId: string,
   pluginId: string,
@@ -125,7 +131,11 @@ export async function getPluginData(
     `${API_BASE}/plugins/projects/${projectId}/plugin-data/${pluginId}`,
   );
   if (!res.ok) return null;
-  return res.json();
+  try {
+    return await parseJsonResponseBody(res);
+  } catch {
+    return null;
+  }
 }
 
 export async function setPluginData(
@@ -138,7 +148,7 @@ export async function setPluginData(
     { method: "PUT", body: JSON.stringify(data), headers: { "Content-Type": "application/json" } },
   );
   if (!res.ok) throw new Error("Failed to save plugin data");
-  return res.json();
+  return parseJsonResponseBody(res);
 }
 
 /** Mensaje si faltan entregables core requeridos por el artifact (client-side guard). */

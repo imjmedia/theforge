@@ -1,3 +1,4 @@
+import type { Response } from "express";
 import {
   BadRequestException,
   Body,
@@ -9,6 +10,7 @@ import {
   Param,
   Post,
   Put,
+  Res,
   UploadedFile,
   UseInterceptors,
   forwardRef,
@@ -115,6 +117,7 @@ export class PluginsController {
   async getPluginData(
     @Param("id") id: string,
     @Param("pluginId") pluginId: string,
+    @Res() res: Response,
   ) {
     const project = await this.prisma.project.findUnique({
       where: { id },
@@ -122,7 +125,7 @@ export class PluginsController {
     });
     if (!project) throw new NotFoundException("Project not found");
     const data = project.pluginData as Record<string, unknown> | null;
-    return data?.[pluginId] ?? null;
+    return res.status(200).json(data?.[pluginId] ?? null);
   }
 
   @Put("projects/:id/plugin-data/:pluginId")
