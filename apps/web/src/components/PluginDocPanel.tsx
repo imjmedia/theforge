@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
-import { FileText } from "lucide-react";
+import { FileText, LayoutGrid, Code2 } from "lucide-react";
 import type { ArtifactTypeDefinition, PluginArtifactProgress } from "@theforge/shared-types";
 import { getPluginDocPanelHeader, parsePluginPanelId } from "../utils/workshopDocNav";
 import {
@@ -14,8 +14,12 @@ import {
   pluginArtifactFromEditorText,
   pluginArtifactToEditorText,
 } from "../utils/pluginArtifactContent";
+import { isEvdArtifact, parseEvdDeck } from "../utils/evdDeck";
 import { useWorkshopStore } from "../store/workshopStore";
 import { StandardDocPanel } from "./StandardDocPanel";
+import { EvdDeckPreview } from "./evd/EvdDeckPreview";
+import { Button } from "@/components/ui";
+import { cn } from "@/lib/utils";
 
 interface PluginDocPanelProps {
   panel: string;
@@ -74,6 +78,10 @@ export function PluginDocPanel({
   );
   const header = getPluginDocPanelHeader(panel, artifactTypes);
   const contentType = artifact?.contentType ?? "json";
+  const artifactOptions = parsed
+    ? { pluginId: parsed.pluginId, artifactId: parsed.artifactId }
+    : undefined;
+  const isEvdDeck = parsed ? isEvdArtifact(parsed.pluginId, parsed.artifactId) : false;
 
   const project = useWorkshopStore((s) => s.project);
   const storedPayload = useWorkshopStore((s) =>
@@ -86,7 +94,9 @@ export function PluginDocPanel({
   const setError = useWorkshopStore((s) => s.setError);
 
   const [content, setContent] = useState<string>("");
-  const viewMode = pluginArtifactDefaultViewMode(contentType);
+  const [viewMode, setViewMode] = useState<"preview" | "source">(() =>
+    pluginArtifactDefaultViewMode(contentType, artifactOptions),
+  );
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<PluginArtifactProgress | null>(null);
@@ -127,10 +137,15 @@ export function PluginDocPanel({
 
   const syncEditorFromPayload = useCallback(
     (data: unknown) => {
-      setContent(pluginArtifactToEditorText(data, contentType));
+      setContent(pluginArtifactToEditorText(data, contentType, artifactOptions));
     },
-    [contentType],
+    [artifactOptions, contentType],
   );
+
+  const evdDeck = useMemo(() => {
+    if (!isEvdDeck) return null;
+    return parseEvdDeck(storedPayload) ?? parseEvdDeck(pluginArtifactFromEditorText(content, contentType));
+  }, [content, contentType, isEvdDeck, storedPayload]);
 
   const reload = useCallback(async () => {
     if (!pluginId) return;
@@ -241,31 +256,59 @@ export function PluginDocPanel({
   if (!parsed || !artifact) return null;
 
   return (
-    <StandardDocPanel
-      icon={FileText}
-      title={header.title}
-      description={
-        generateBlockedReason
-          ? generateBlockedReason
-          : `Plugin: ${artifact.label}${contentType !== "json" ? ` (${contentType})` : ""}`
-      }
-      content={content}
-      onContentChange={(v) => setContent(v ?? "")}
-      onSave={handleSave}
-      isDirty={false}
-      viewMode={viewMode}
-      onGenerate={() => void handleGenerate()}
-      canGenerate={artifact.generatable === true && !generateBlockedReason && !loading}
-      isLoading={generating}
-      generationProgress={
-        generating
-          ? (displayProgress ?? { percent: 0, detail: "Iniciando generación…" })
-          : undefined
-      }
-      generateLabel={generating ? "Generando…" : "Generar"}
-      generateBlocked={Boolean(generateBlockedReason)}
-      generateBlockedReason={generateBlockedReason ?? undefined}
-      placeholder={`# ${artifact.label}\n\nContenido generado por el plugin...`}
-    />
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      {isEvdDeck && evdDeck ? (
+        <div className="flex shrink-0 items-center gap-1 border-b border-[var(--border)] px-4 py-2">
+          <Button
+            type="button"
+            variant={viewMode === "preview" ? "default" : "outline"}
+            size="sm"
+            className={cn("h-8 gap-1.5")}
+            onClick={() => setViewMode("preview")}
+          >
+            <LayoutGrid className="h-3.5 w-3.5" aria-hidden />
+            Diapositivas
+          </Button>
+          <Button
+            type="button"
+            variant={viewMode === "source" ? "default" : "outline"}
+            size="sm"
+            className={cn("h-8 gap-1.5")}
+            onClick={() => setViewMode("source")}
+          >
+            <Code2 className="h-3.5 w-3.5" aria-hidden />
+            JSON
+          </Button>
+        </div>
+      ) : null}
+      <StandardDocPanel
+        icon={FileText}
+        title={header.title}
+        description={
+          generateBlockedReason
+            ? generateBlockedReason
+            : `Plugin: ${artifact.label}${contentType !== "json" ? ` (${contentType})` : ""}`
+        }
+        content={content}
+        onContentChange={(v) => setContent(v ?? "")}
+        onSave={handleSave}
+        isDirty={false}
+        viewMode={viewMode}
+        readOnly={isEvdDeck && viewMode === "source"}
+        previewSlot={isEvdDeck && evdDeck ? <EvdDeckPreview deck={evdDeck} /> : undefined}
+        onGenerate={() => void handleGenerate()}
+        canGenerate={artifact.generatable === true && !generateBlockedReason && !loading}
+        isLoading={generating}
+        generationProgress={
+          generating
+            ? (displayProgress ?? { percent: 0, detail: "Iniciando generación…" })
+            : undefined
+        }
+        generateLabel={generating ? "Generando…" : "Generar"}
+        generateBlocked={Boolean(generateBlockedReason)}
+        generateBlockedReason={generateBlockedReason ?? undefined}
+        placeholder={`# ${artifact.label}\n\nContenido generado por el plugin...`}
+      />
+    </div>
   );
 }

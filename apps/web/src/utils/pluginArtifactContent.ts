@@ -1,11 +1,25 @@
 import type { ArtifactTypeDefinition } from "@theforge/shared-types";
+import { evdDeckToEditorText, isEvdArtifact } from "./evdDeck";
+
+export interface PluginArtifactEditorOptions {
+  pluginId?: string;
+  artifactId?: string;
+}
 
 /** Texto editable en el panel según contentType del artifact. */
 export function pluginArtifactToEditorText(
   data: unknown,
   contentType: ArtifactTypeDefinition["contentType"] = "json",
+  options?: PluginArtifactEditorOptions,
 ): string {
   if (data == null) return "";
+  if (
+    options?.pluginId &&
+    options?.artifactId &&
+    isEvdArtifact(options.pluginId, options.artifactId)
+  ) {
+    return evdDeckToEditorText(data);
+  }
   if (contentType === "markdown") {
     if (typeof data === "string") return data;
     if (typeof data === "object" && data !== null && "markdown" in data) {
@@ -34,6 +48,14 @@ export function pluginArtifactFromEditorText(
 
 export function pluginArtifactDefaultViewMode(
   contentType: ArtifactTypeDefinition["contentType"] = "json",
+  options?: PluginArtifactEditorOptions,
 ): "preview" | "source" {
+  if (
+    options?.pluginId &&
+    options?.artifactId &&
+    isEvdArtifact(options.pluginId, options.artifactId)
+  ) {
+    return "preview";
+  }
   return contentType === "markdown" ? "preview" : "source";
 }

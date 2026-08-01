@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui";
@@ -45,6 +46,8 @@ export interface StandardDocPanelProps {
   clarification?: Omit<DocumentClarificationSectionProps, "content">;
   /** Progreso de generación (plugins con reportProgress). */
   generationProgress?: { percent: number; detail?: string };
+  /** Vista preview personalizada (p. ej. diapositivas EVD). */
+  previewSlot?: ReactNode;
 }
 
 /**
@@ -78,6 +81,7 @@ export function StandardDocPanel({
   documentTimestamps,
   clarification,
   generationProgress,
+  previewSlot,
 }: StandardDocPanelProps) {
   const IconComp = icon;
   // Estado 1: preview vacío → DocEmptyState
@@ -120,7 +124,9 @@ export function StandardDocPanel({
       ) : null}
       {viewMode === "preview" ? (
         /* Estado 2: preview con contenido */
-        <MddViewer content={content || ""} documentTimestamps={documentTimestamps} />
+        previewSlot ?? (
+          <MddViewer content={content || ""} documentTimestamps={documentTimestamps} />
+        )
       ) : (
         <>
           {isLoading && !content?.trim() && !hideGenerate && !readOnly ? (
