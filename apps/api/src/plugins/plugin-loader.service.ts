@@ -42,6 +42,9 @@ interface HookEntry<H> {
 export class PluginLoaderService implements OnModuleInit {
   private readonly logger = new Logger(PluginLoaderService.name);
 
+  /** Plugins cargados en modo degradado (init falló; solo ajustes, sin hooks). */
+  private readonly degradedPluginIds = new Set<string>();
+
   /** Mapa de plugins cargados: id → instancia */
   private readonly plugins = new Map<string, ITheForgePlugin>();
 
@@ -175,11 +178,27 @@ export class PluginLoaderService implements OnModuleInit {
       const context = this.buildPluginContext(instance.id);
 
       // Inicialización del plugin
-      await instance.onPluginInit(context);
+      try {
+        await instance.onPluginInit(context);
+      } catch (initErr) {
+        const initMsg =
+          initErr instanceof Error ? initErr.message : String(initErr);
+        if (typeof instance.getSettingsPanels === "function") {
+          this.plugins.set(instance.id, instance);
+          this.pluginPaths.set(instance.id, pluginPath);
+          this.degradedPluginIds.add(instance.id);
+          this.logger.warn(
+            `⚠️ Plugin '${instance.id}' en modo degradado (init falló: ${initMsg}). Ajustes disponibles; corrige configuración y recarga.`,
+          );
+          return;
+        }
+        throw initErr;
+      }
 
       // Registro en el sistema
       this.plugins.set(instance.id, instance);
       this.pluginPaths.set(instance.id, pluginPath);
+      this.degradedPluginIds.delete(instance.id);
       this.registerHooks(instance);
 
       this.logger.log(
@@ -463,6 +482,7 @@ export class PluginLoaderService implements OnModuleInit {
 
     this.plugins.delete(pluginId);
     this.pluginPaths.delete(pluginId);
+    this.degradedPluginIds.delete(pluginId);
     this.removeHooksForPlugin(pluginId);
     this.logger.log(`Plugin unloaded: ${pluginId}`);
   }
@@ -553,10 +573,15 @@ export class PluginLoaderService implements OnModuleInit {
     return [...this.plugins.keys()];
   }
 
+  isPluginDegraded(pluginId: string): boolean {
+    return this.degradedPluginIds.has(pluginId);
+  }
+
   /** Obtiene los artifact types registrados por todos los plugins */
   getArtifactTypes(): ArtifactTypeDefinition[] {
     const types: ArtifactTypeDefinition[] = [];
     for (const plugin of this.plugins.values()) {
+      if (this.degradedPluginIds.has(plugin.id)) continue;
       if (plugin.getArtifactTypes) {
         const pluginTypes = plugin.getArtifactTypes();
         if (Array.isArray(pluginTypes)) {
@@ -661,12 +686,14 @@ export class PluginLoaderService implements OnModuleInit {
   getHealthSnapshot(): {
     loaded: number;
     pluginIds: string[];
+    degradedPluginIds: string[];
     artifactCount: number;
     hooks: Record<string, number>;
   } {
     return {
       loaded: this.plugins.size,
       pluginIds: [...this.plugins.keys()],
+      degradedPluginIds: [...this.degradedPluginIds],
       artifactCount: this.getArtifactTypes().length,
       hooks: {
         beforeDocumentRender: this.beforeDocumentRenderHooks.length,

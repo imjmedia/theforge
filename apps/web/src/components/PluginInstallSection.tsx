@@ -224,7 +224,9 @@ export function PluginInstallSection({ onChanged }: PluginInstallSectionProps) {
                 className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[var(--border)] px-3 py-2 text-sm"
               >
                 <div className="flex min-w-0 items-center gap-2">
-                  {p.loaded ? (
+                  {p.degraded ? (
+                    <Circle className="h-4 w-4 shrink-0 text-amber-400" aria-hidden />
+                  ) : p.loaded ? (
                     <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" aria-hidden />
                   ) : (
                     <Circle className="h-4 w-4 shrink-0 text-amber-400" aria-hidden />
@@ -233,7 +235,11 @@ export function PluginInstallSection({ onChanged }: PluginInstallSectionProps) {
                     <p className="font-medium truncate">{p.name}</p>
                     <p className="font-mono text-xs text-[var(--foreground-muted)]">
                       {p.id} · v{p.version}
-                      {p.loaded ? " · cargado" : " · en disco, no cargado"}
+                      {p.degraded
+                        ? " · modo degradado (ajusta y guarda licencia)"
+                        : p.loaded
+                          ? " · cargado"
+                          : " · en disco, no cargado"}
                     </p>
                   </div>
                 </div>

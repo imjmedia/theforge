@@ -147,9 +147,11 @@ function fieldValue(settings: Record<string, unknown>, key: string): string {
 function PluginSettingsPanelCard({
   panel,
   installed,
+  onSaved,
 }: {
   panel: PluginSettingsPanelDefinition;
   installed: InstalledPluginRecord[];
+  onSaved?: (pluginReloaded: boolean) => void;
 }) {
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [initial, setInitial] = useState<Record<string, unknown>>({});
@@ -157,6 +159,7 @@ function PluginSettingsPanelCard({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const [reloadedAfterSave, setReloadedAfterSave] = useState(false);
 
   const displayLabel = useMemo(
     () => resolvePanelDisplayLabel(panel, installed),
@@ -195,16 +198,24 @@ function PluginSettingsPanelCard({
     setSuccess(false);
     try {
       const saved = await savePluginUserSettings(panel.pluginId, values);
-      setValues(saved);
-      setInitial(saved);
+      const pluginReloaded =
+        typeof saved === "object" &&
+        saved != null &&
+        (saved as { _pluginReloaded?: boolean })._pluginReloaded === true;
+      const clean = { ...(saved as Record<string, unknown>) };
+      delete clean._pluginReloaded;
+      setValues(clean);
+      setInitial(clean);
       setSuccess(true);
+      setReloadedAfterSave(pluginReloaded);
+      onSaved?.(pluginReloaded);
       window.setTimeout(() => setSuccess(false), 2500);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al guardar");
     } finally {
       setSaving(false);
     }
-  }, [panel.pluginId, values]);
+  }, [onSaved, panel.pluginId, values]);
 
   const renderField = (field: PluginSettingsFieldDefinition) => {
     const id = `${panel.pluginId}-${panel.id}-${field.key}`;
@@ -333,7 +344,7 @@ function PluginSettingsPanelCard({
               {success ? (
                 <span className="inline-flex items-center gap-1 text-sm text-emerald-400">
                   <Check className="h-4 w-4" />
-                  Guardado
+                  {reloadedAfterSave ? "Guardado · plugin recargado" : "Guardado"}
                 </span>
               ) : null}
             </div>
@@ -548,6 +559,7 @@ export function PluginSettingsSection() {
                 key={`${panel.pluginId}:${panel.id}:${settingsRefreshKey}`}
                 panel={panel}
                 installed={installed}
+                onSaved={() => handlePluginsChanged()}
               />
             ))}
           </div>

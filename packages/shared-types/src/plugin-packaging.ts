@@ -46,6 +46,8 @@ export interface InstalledPluginRecord {
   description?: string;
   installedAt?: string;
   loaded: boolean;
+  /** Init falló pero el plugin expone ajustes (recargar tras corregir config). */
+  degraded?: boolean;
   path: string;
   manifest?: TheForgePluginManifest;
 }

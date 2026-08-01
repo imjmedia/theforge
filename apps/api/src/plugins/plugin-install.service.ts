@@ -67,6 +67,7 @@ export class PluginInstallService {
           description: manifest?.description,
           installedAt: manifest?.builtAt,
           loaded: loadedIds.has(id),
+          degraded: this.pluginLoader.isPluginDegraded(id),
           path: pluginPath,
           manifest,
         });

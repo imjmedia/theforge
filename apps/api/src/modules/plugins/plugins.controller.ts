@@ -255,10 +255,19 @@ export class PluginsController {
       await plugin.onUserSettingsSaved(merged, { userId });
     }
 
-    if (plugin.hydrateUserSettings) {
-      return plugin.hydrateUserSettings(saved);
+    const reloaded = await this.pluginLoader.reloadPlugin(pluginId);
+
+    const pluginAfterReload = this.pluginLoader.getPluginForSettings(pluginId);
+    const hydratedPlugin = pluginAfterReload ?? plugin;
+
+    if (hydratedPlugin.hydrateUserSettings) {
+      const latest = await this.pluginUserSettings.getForPlugin(userId, pluginId);
+      return {
+        ...hydratedPlugin.hydrateUserSettings(latest),
+        _pluginReloaded: reloaded,
+      };
     }
-    return saved;
+    return { ...saved, _pluginReloaded: reloaded };
   }
 
   private ensurePluginLoaded(pluginId: string) {
