@@ -13,6 +13,7 @@ import type {
   PluginUserSettingsMap,
 } from "@theforge/shared-types";
 import { MIN_GENERATION_CONTENT_LEN } from "@theforge/shared-types";
+import { parseErrorMessageFromResponse } from "./httpError";
 import { apiFetch, API_BASE } from "./apiClient";
 
 let cachedArtifacts: ArtifactTypeDefinition[] | null = null;
@@ -222,11 +223,8 @@ export async function generatePluginArtifact(
     },
   );
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
     throw new Error(
-      typeof (err as { message?: string }).message === "string"
-        ? (err as { message: string }).message
-        : "Error al generar artifact del plugin",
+      await parseErrorMessageFromResponse(res, "Error al generar artifact del plugin"),
     );
   }
   return res.json();

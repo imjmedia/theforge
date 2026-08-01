@@ -97,7 +97,15 @@ export class PluginArtifactService {
       deliverables,
       userSettings,
       timestamp: new Date(),
-      reportProgress: options?.onProgress,
+      reportProgress: options?.onProgress
+        ? (update) => {
+            try {
+              options.onProgress?.(update);
+            } catch {
+              /* progress must never abort generation */
+            }
+          }
+        : undefined,
     };
 
     const result = await plugin.generateArtifact(ctx);

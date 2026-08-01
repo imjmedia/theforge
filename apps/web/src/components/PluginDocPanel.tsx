@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { FileText } from "lucide-react";
 import type { ArtifactTypeDefinition, PluginArtifactProgress } from "@theforge/shared-types";
 import { getPluginDocPanelHeader, parsePluginPanelId } from "../utils/workshopDocNav";
 import {
-  generateAndPollPluginArtifact,
   fetchDeliverablesJobStatus,
+  generatePluginArtifact,
   getPluginData,
   pluginArtifactRequirementsMessage,
+  pollDeliverablesJob,
   setPluginData,
 } from "../utils/pluginApi";
 import {
@@ -85,6 +86,7 @@ export function PluginDocPanel({
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<PluginArtifactProgress | null>(null);
+  const ownedJobIdRef = useRef<string | null>(null);
 
   const deliverables = useMemo(
     () => projectDeliverablesForArtifact(project as Record<string, unknown> | null, mddContent),
@@ -151,9 +153,31 @@ export function PluginDocPanel({
 
     let cancelled = false;
     const pollActiveJob = async () => {
-      while (!cancelled) {
-        try {
-          const status = await fetchDeliverablesJobStatus(activePluginJobId);
+      try {
+        let status = await fetchDeliverablesJobStatus(activePluginJobId);
+        if (cancelled) return;
+
+        if (status.status === "failed") {
+          void fetchGenerationStatus(projectId);
+          if (ownedJobIdRef.current === activePluginJobId) {
+            setError(status.error ?? "Error al generar artifact del plugin");
+          }
+          return;
+        }
+
+        if (status.status === "completed") {
+          const data = (status.result as { data?: unknown } | undefined)?.data ?? status.result;
+          if (data != null) {
+            patchPluginData(parsed.pluginId, data);
+            syncEditorFromPayload(data);
+          } else {
+            await reload();
+          }
+          void fetchGenerationStatus(projectId);
+          return;
+        }
+
+        while (!cancelled) {
           if (
             typeof status.progress === "object" &&
             status.progress !== null &&
@@ -161,6 +185,11 @@ export function PluginDocPanel({
           ) {
             setGenerationProgress(status.progress as PluginArtifactProgress);
           }
+
+          await new Promise((r) => setTimeout(r, 2000));
+          if (cancelled) return;
+
+          status = await fetchDeliverablesJobStatus(activePluginJobId);
           if (status.status === "completed") {
             const data = (status.result as { data?: unknown } | undefined)?.data ?? status.result;
             if (data != null) {
@@ -170,17 +199,18 @@ export function PluginDocPanel({
               await reload();
             }
             void fetchGenerationStatus(projectId);
-            break;
+            return;
           }
           if (status.status === "failed") {
-            setError(status.error ?? "Error al generar artifact del plugin");
             void fetchGenerationStatus(projectId);
-            break;
+            if (ownedJobIdRef.current === activePluginJobId) {
+              setError(status.error ?? "Error al generar artifact del plugin");
+            }
+            return;
           }
-        } catch {
-          break;
         }
-        await new Promise((r) => setTimeout(r, 2000));
+      } catch {
+        void fetchGenerationStatus(projectId);
       }
     };
 
@@ -218,19 +248,32 @@ export function PluginDocPanel({
 
   const handleGenerate = useCallback(async () => {
     if (!parsed || !artifact || generateBlockedReason) return;
+    setError(null);
     setGenerating(true);
     setGenerationProgress({ percent: 0, step: "start", detail: "Iniciando generación…" });
+    ownedJobIdRef.current = null;
     void fetchGenerationStatus(projectId);
     try {
-      const data = await generateAndPollPluginArtifact(
+      const queued = await generatePluginArtifact(
         projectId,
         parsed.pluginId,
         parsed.artifactId,
-        {
-          stageId,
-          onProgress: (p) => setGenerationProgress(p),
-        },
+        { queue: true, stageId },
       );
+      if (!queued.queued) {
+        if (queued.data != null) {
+          patchPluginData(parsed.pluginId, queued.data);
+          syncEditorFromPayload(queued.data);
+        }
+        return;
+      }
+      if (!queued.jobId) throw new Error("Cola no devolvió jobId");
+      ownedJobIdRef.current = queued.jobId;
+
+      const result = await pollDeliverablesJob<{ data?: unknown }>(queued.jobId, {
+        onProgress: (p) => setGenerationProgress(p),
+      });
+      const data = result?.data ?? result;
       if (data != null) {
         patchPluginData(parsed.pluginId, data);
         syncEditorFromPayload(data);
@@ -240,6 +283,7 @@ export function PluginDocPanel({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al generar artifact del plugin");
     } finally {
+      ownedJobIdRef.current = null;
       setGenerating(false);
       setGenerationProgress(null);
       void fetchGenerationStatus(projectId);
