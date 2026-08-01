@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Loader2, Puzzle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Check, ChevronDown, Loader2, Puzzle } from "lucide-react";
 import type {
   InstalledPluginRecord,
   PluginSettingsFieldDefinition,
+  PluginSettingsFieldGroupDefinition,
   PluginSettingsLayout,
   PluginSettingsPanelDefinition,
 } from "@theforge/shared-types";
@@ -142,6 +143,66 @@ function PluginSettingsTabSelector({
 function fieldValue(settings: Record<string, unknown>, key: string): string {
   const v = settings[key];
   return typeof v === "string" ? v : v != null ? String(v) : "";
+}
+
+function partitionPanelFields(panel: PluginSettingsPanelDefinition): {
+  ungrouped: PluginSettingsFieldDefinition[];
+  grouped: Map<string, PluginSettingsFieldDefinition[]>;
+} {
+  const ungrouped: PluginSettingsFieldDefinition[] = [];
+  const grouped = new Map<string, PluginSettingsFieldDefinition[]>();
+
+  for (const field of panel.fields) {
+    if (field.group) {
+      const list = grouped.get(field.group) ?? [];
+      list.push(field);
+      grouped.set(field.group, list);
+    } else {
+      ungrouped.push(field);
+    }
+  }
+
+  return { ungrouped, grouped };
+}
+
+function resolveFieldGroups(
+  panel: PluginSettingsPanelDefinition,
+  grouped: Map<string, PluginSettingsFieldDefinition[]>,
+): PluginSettingsFieldGroupDefinition[] {
+  const declared = panel.fieldGroups ?? [];
+  const declaredIds = new Set(declared.map((group) => group.id));
+  const extras = [...grouped.keys()]
+    .filter((id) => !declaredIds.has(id))
+    .map((id) => ({ id, label: id, collapsed: true }));
+
+  return [...declared, ...extras].filter((group) => grouped.has(group.id));
+}
+
+function PluginSettingsFieldGroup({
+  group,
+  fields,
+  renderField,
+}: {
+  group: PluginSettingsFieldGroupDefinition;
+  fields: PluginSettingsFieldDefinition[];
+  renderField: (field: PluginSettingsFieldDefinition) => ReactNode;
+}) {
+  const collapsed = group.collapsed !== false;
+
+  return (
+    <details
+      className="group rounded-lg border border-[var(--border)] bg-[color-mix(in_oklch,var(--card)_92%,var(--background))]"
+      {...(collapsed ? {} : { open: true })}
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 marker:content-none [&::-webkit-details-marker]:hidden">
+        <span className="text-sm font-medium text-[var(--foreground)]">{group.label}</span>
+        <ChevronDown className="h-4 w-4 shrink-0 text-[var(--foreground-muted)] transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="space-y-4 border-t border-[var(--border)] px-3 py-3">
+        {fields.map(renderField)}
+      </div>
+    </details>
+  );
 }
 
 function PluginSettingsPanelCard({
@@ -308,6 +369,12 @@ function PluginSettingsPanelCard({
     );
   };
 
+  const { ungrouped, grouped } = useMemo(() => partitionPanelFields(panel), [panel]);
+  const fieldGroups = useMemo(
+    () => resolveFieldGroups(panel, grouped),
+    [grouped, panel],
+  );
+
   return (
     <Card className="border-[var(--border)] bg-[var(--card)]">
       <CardHeader>
@@ -324,7 +391,15 @@ function PluginSettingsPanelCard({
           </div>
         ) : (
           <>
-            {panel.fields.map(renderField)}
+            {ungrouped.map(renderField)}
+            {fieldGroups.map((group) => (
+              <PluginSettingsFieldGroup
+                key={group.id}
+                group={group}
+                fields={grouped.get(group.id) ?? []}
+                renderField={renderField}
+              />
+            ))}
             {error ? <p className="text-sm text-red-400">{error}</p> : null}
             <div className="flex items-center gap-3 pt-2">
               <Button

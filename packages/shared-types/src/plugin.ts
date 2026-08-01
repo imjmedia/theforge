@@ -129,6 +129,16 @@ export interface PluginSettingsFieldDefinition {
   readOnly?: boolean;
   /** Filas visibles para type === "textarea" */
   rows?: number;
+  /** Agrupa el campo bajo fieldGroups[].id del panel. */
+  group?: string;
+}
+
+/** Sección colapsable dentro de un panel de ajustes de plugin. */
+export interface PluginSettingsFieldGroupDefinition {
+  id: string;
+  label: string;
+  /** Si true (default), la sección empieza colapsada en Ajustes. */
+  collapsed?: boolean;
 }
 
 /**
@@ -151,6 +161,8 @@ export interface PluginSettingsPanelDefinition {
   tab?: string;
   /** Etiqueta legible de la pestaña (usar en el primer panel de cada grupo). */
   tabLabel?: string;
+  /** Secciones colapsables dentro del panel. */
+  fieldGroups?: PluginSettingsFieldGroupDefinition[];
   fields: PluginSettingsFieldDefinition[];
 }
 
