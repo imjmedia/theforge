@@ -44,6 +44,8 @@ export interface StandardDocPanelProps {
   documentTimestamps?: WorkshopDocumentTimestamps | null;
   /** Clarificación `[NEEDS CLARIFICATION]` — banner, respuestas y regeneración. */
   clarification?: Omit<DocumentClarificationSectionProps, "content">;
+  /** Etiqueta del botón Guardar en modo fuente (default: "Guardar"). */
+  saveLabel?: string;
   /** Progreso de generación (plugins con reportProgress). */
   generationProgress?: { percent: number; detail?: string };
   /** Vista preview personalizada (p. ej. diapositivas EVD). */
@@ -82,6 +84,7 @@ export function StandardDocPanel({
   clarification,
   generationProgress,
   previewSlot,
+  saveLabel,
 }: StandardDocPanelProps) {
   const IconComp = icon;
   // Estado 1: preview vacío → DocEmptyState
@@ -137,7 +140,11 @@ export function StandardDocPanel({
             <>
               <WorkshopDocumentStampBar timestamps={documentTimestamps} />
               <div className="flex min-h-0 flex-1 flex-col gap-2">
-                <WorkshopDocSourceSaveBar onSave={onSave} disabled={!isDirty || readOnly} />
+                <WorkshopDocSourceSaveBar
+                  onSave={onSave}
+                  disabled={!isDirty || readOnly}
+                  label={saveLabel}
+                />
                 <WorkshopDocTextarea
                   value={content ?? ""}
                   onChange={(v) => {

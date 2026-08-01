@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { b64ToDataUrl } from "./evd-deck.utils";
-import type { EvdDeckJson } from "./evd-deck.types";
-import { EvdSlideContent } from "./EvdSlideContent";
+import { ChevronLeft, ChevronRight, Download } from "lucide-react";
+import { cn } from "./cn.js";
+import { b64ToDataUrl } from "./evd-deck.utils.js";
+import type { EvdDeckJson } from "./evd-deck.types.js";
+import { EvdSlideContent } from "./EvdSlideContent.js";
+import { exportEvdDeckToPptx } from "./evd-pptx-export.js";
 
 const BTN_OUTLINE =
   "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-transparent px-3 text-sm font-medium text-[var(--foreground)] transition-colors hover:bg-[color-mix(in_oklch,var(--muted)_50%,transparent)] disabled:pointer-events-none disabled:opacity-50";
@@ -18,6 +19,18 @@ export function EvdDeckPreview({ deck }: EvdDeckPreviewProps): ReactElement {
     [deck.slides],
   );
   const [index, setIndex] = useState(0);
+  const [exporting, setExporting] = useState(false);
+
+  const handleExportPptx = useCallback(async () => {
+    setExporting(true);
+    try {
+      await exportEvdDeckToPptx(deck);
+    } catch (err) {
+      console.error("[EVD] PPTX export failed:", err);
+    } finally {
+      setExporting(false);
+    }
+  }, [deck]);
 
   const branding = deck.branding;
   const primary = branding?.primaryColor ?? "#2563EB";
@@ -68,9 +81,21 @@ export function EvdDeckPreview({ deck }: EvdDeckPreviewProps): ReactElement {
             <p className="truncate text-xs text-[var(--muted-foreground)]">{deck.meta.subtitle}</p>
           ) : null}
         </div>
-        <p className="shrink-0 text-xs tabular-nums text-[var(--muted-foreground)]">
-          {index + 1} / {total}
-        </p>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            className={BTN_OUTLINE}
+            onClick={handleExportPptx}
+            disabled={exporting}
+            title="Descargar PowerPoint editable (.pptx)"
+          >
+            <Download className="h-4 w-4" aria-hidden />
+            {exporting ? "Exportando…" : "Descargar PPTX"}
+          </button>
+          <p className="text-xs tabular-nums text-[var(--muted-foreground)]">
+            {index + 1} / {total}
+          </p>
+        </div>
       </div>
 
       <div

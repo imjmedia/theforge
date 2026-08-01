@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import type { Prisma } from "@theforge/database";
-import type { ArtifactTypeDefinition, PluginArtifactContext, PluginArtifactProgress, PluginLlmRuntime } from "@theforge/shared-types";
+import type { ArtifactTypeDefinition, PluginArtifactContext, PluginArtifactProgress, PluginExportContext, PluginLlmRuntime } from "@theforge/shared-types";
 import { getRequestUserId } from "../common/request-user.store.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { PluginDocumentPipelineService } from "./plugin-document-pipeline.service.js";
@@ -147,6 +147,61 @@ export class PluginArtifactService {
       artifactId,
       data: result.data,
       metadata,
+    };
+  }
+
+  async export(
+    projectId: string,
+    pluginId: string,
+    artifactId: string,
+    format: "pptx" | "pdf",
+  ): Promise<{ data: Buffer; filename: string; mimeType: string }> {
+    this.resolveArtifactDefinition(pluginId, artifactId);
+    const plugin = this.pluginLoader.getPlugin(pluginId);
+    if (!plugin?.exportArtifact) {
+      throw new BadRequestException(
+        `El plugin '${pluginId}' no implementa exportArtifact`,
+      );
+    }
+
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { pluginData: true },
+    });
+    if (!project) throw new NotFoundException("Project not found");
+
+    const pluginData = (project.pluginData as Record<string, unknown>) ?? {};
+    const data = pluginData[pluginId];
+    if (data == null) {
+      throw new NotFoundException(
+        `No hay datos persistidos para el plugin '${pluginId}' en este proyecto`,
+      );
+    }
+
+    const userId = getRequestUserId();
+    const userSettings = await this.pluginUserSettings.getForPlugin(userId, pluginId);
+
+    const ctx: PluginExportContext = {
+      pluginId,
+      artifactId,
+      projectId,
+      userId,
+      data,
+      format,
+      userSettings,
+    };
+
+    const result = await plugin.exportArtifact(ctx);
+    const raw = result.data ?? (result as { buffer?: Buffer }).buffer;
+    if (!raw) {
+      throw new BadRequestException("El plugin no devolvió datos de exportación");
+    }
+    const buffer = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+
+    return {
+      data: buffer,
+      filename: result.filename,
+      mimeType: result.mimeType,
     };
   }
 

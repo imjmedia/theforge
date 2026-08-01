@@ -12,6 +12,8 @@ import {
 import {
   pluginArtifactDefaultViewMode,
   pluginArtifactFromEditorText,
+  pluginArtifactMergeSourceEdit,
+  pluginArtifactSourceApplyLabel,
   pluginArtifactSourceReadOnly,
   pluginArtifactToEditorText,
 } from "../utils/pluginArtifactContent";
@@ -101,6 +103,8 @@ export function PluginDocPanel({
   const setError = useWorkshopStore((s) => s.setError);
 
   const [content, setContent] = useState<string>("");
+  const [savedContent, setSavedContent] = useState<string>("");
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"preview" | "source">(() =>
     pluginArtifactDefaultViewMode(contentType, editorContext),
   );
@@ -144,10 +148,16 @@ export function PluginDocPanel({
 
   const syncEditorFromPayload = useCallback(
     (data: unknown) => {
-      setContent(pluginArtifactToEditorText(data, contentType, editorContext));
+      const text = pluginArtifactToEditorText(data, contentType, editorContext);
+      setContent(text);
+      setSavedContent(text);
+      setSaveError(null);
     },
     [contentType, editorContext],
   );
+
+  const isDirty = content !== savedContent;
+  const sourceApplyLabel = pluginArtifactSourceApplyLabel(editorContext);
 
   const previewPayload = useMemo(() => {
     if (storedPayload !== undefined && storedPayload !== null) return storedPayload;
@@ -220,10 +230,34 @@ export function PluginDocPanel({
 
   const handleSave = useCallback(async () => {
     if (!parsed || !pluginId) return;
-    const parsedData = pluginArtifactFromEditorText(content, contentType);
+    setSaveError(null);
+    const edited = pluginArtifactFromEditorText(content, contentType, editorContext);
+    if (edited == null) {
+      setSaveError("El contenido no es válido. Revisa el formato antes de aplicar.");
+      return;
+    }
+    const parsedData = pluginArtifactMergeSourceEdit(
+      storedPayload ?? null,
+      edited,
+      editorContext,
+    );
+    if (parsedData == null) {
+      setSaveError("No se pudo aplicar la edición.");
+      return;
+    }
     await setPluginData(projectId, pluginId, parsedData as Record<string, unknown>);
     patchPluginData(pluginId, parsedData);
-  }, [content, contentType, patchPluginData, pluginId, projectId, parsed]);
+    setSavedContent(content);
+  }, [
+    content,
+    contentType,
+    editorContext,
+    patchPluginData,
+    pluginId,
+    projectId,
+    parsed,
+    storedPayload,
+  ]);
 
   const handleGenerate = useCallback(async () => {
     if (!parsed || !pluginId || !artifact || generateBlockedReason) return;
@@ -313,14 +347,19 @@ export function PluginDocPanel({
         icon={FileText}
         title={header.title}
         description={
-          generateBlockedReason
+          saveError ??
+          (generateBlockedReason
             ? generateBlockedReason
-            : `Plugin: ${artifact.label}${contentType !== "json" ? ` (${contentType})` : ""}`
+            : `Plugin: ${artifact.label}${contentType !== "json" ? ` (${contentType})` : ""}`)
         }
         content={content}
-        onContentChange={(v) => setContent(v ?? "")}
+        onContentChange={(v) => {
+          setContent(v ?? "");
+          setSaveError(null);
+        }}
         onSave={handleSave}
-        isDirty={false}
+        isDirty={isDirty}
+        saveLabel={sourceApplyLabel}
         viewMode={viewMode}
         readOnly={sourceReadOnly && viewMode === "source"}
         previewSlot={previewSlot ?? undefined}

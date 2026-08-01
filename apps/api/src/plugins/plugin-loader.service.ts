@@ -624,6 +624,16 @@ export class PluginLoaderService implements OnModuleInit {
     return panels.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   }
 
+  /** Layout de ajustes por plugin (tabs vs stack). */
+  getSettingsLayouts(): Record<string, import("@theforge/shared-types").PluginSettingsLayout> {
+    const layouts: Record<string, import("@theforge/shared-types").PluginSettingsLayout> = {};
+    for (const plugin of this.plugins.values()) {
+      if (!plugin.getSettingsLayout) continue;
+      layouts[plugin.id] = plugin.getSettingsLayout();
+    }
+    return layouts;
+  }
+
   /** Plugin cargado por id (para validación de ajustes) */
   getPluginForSettings(pluginId: string): ITheForgePlugin | undefined {
     return this.plugins.get(pluginId);

@@ -3,6 +3,7 @@ import { Check, Loader2, Puzzle } from "lucide-react";
 import type {
   InstalledPluginRecord,
   PluginSettingsFieldDefinition,
+  PluginSettingsLayout,
   PluginSettingsPanelDefinition,
 } from "@theforge/shared-types";
 import {
@@ -68,6 +69,74 @@ function groupPanelsByPlugin(
     label: resolvePluginDisplayName(pluginId, installed, panels),
     panels: pluginPanels.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
   }));
+}
+
+type PluginSettingsTab = {
+  id: string;
+  label: string;
+  panels: PluginSettingsPanelDefinition[];
+};
+
+function groupPanelsByTab(
+  panels: PluginSettingsPanelDefinition[],
+): PluginSettingsTab[] {
+  const byTab = new Map<string, PluginSettingsPanelDefinition[]>();
+  for (const panel of panels) {
+    const tabId = panel.tab?.trim() || panel.id;
+    const list = byTab.get(tabId) ?? [];
+    list.push(panel);
+    byTab.set(tabId, list);
+  }
+
+  return Array.from(byTab.entries()).map(([id, tabPanels]) => {
+    const sorted = tabPanels.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const label =
+      sorted.find((p) => p.tabLabel?.trim())?.tabLabel?.trim() ??
+      sorted[0]?.label.replace(/\s·\sv[\d.]+$/, "").trim() ??
+      id;
+    return { id, label, panels: sorted };
+  });
+}
+
+function PluginSettingsTabSelector({
+  tabs,
+  value,
+  onValueChange,
+}: {
+  tabs: PluginSettingsTab[];
+  value: string;
+  onValueChange: (tabId: string) => void;
+}) {
+  if (tabs.length <= 1) return null;
+
+  return (
+    <div
+      className="flex flex-wrap gap-2"
+      role="tablist"
+      aria-label="Secciones de configuración del plugin"
+    >
+      {tabs.map((tab) => {
+        const selected = value === tab.id;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            onClick={() => onValueChange(tab.id)}
+            className={cn(
+              "min-h-[36px] touch-manipulation rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+              selected
+                ? "border-[var(--primary)] bg-[color-mix(in_oklch,var(--primary)_12%,var(--card))] text-[var(--primary)]"
+                : "border-[var(--border)] bg-[var(--card)] text-[var(--foreground-muted)] hover:border-[var(--primary)]/40 hover:text-[var(--foreground)]",
+            )}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 function fieldValue(settings: Record<string, unknown>, key: string): string {
@@ -164,6 +233,35 @@ function PluginSettingsPanelCard({
               </option>
             ))}
           </select>
+          {field.hint ? (
+            <p className="text-xs text-[var(--foreground-muted)]">{field.hint}</p>
+          ) : null}
+        </div>
+      );
+    }
+
+    if (field.type === "textarea") {
+      return (
+        <div key={field.key} className="space-y-1.5">
+          <label htmlFor={id} className="block text-sm font-medium text-[var(--foreground)]">
+            {field.label}
+            {field.required ? " *" : ""}
+          </label>
+          <textarea
+            id={id}
+            rows={field.rows ?? 6}
+            value={value}
+            placeholder={field.placeholder}
+            readOnly={field.readOnly}
+            disabled={field.readOnly}
+            onChange={(e) =>
+              setValues((prev) => ({ ...prev, [field.key]: e.target.value }))
+            }
+            className={cn(
+              "flex w-full rounded-md border border-[var(--input-border)] bg-[var(--input)] px-3 py-2 text-sm font-mono disabled:cursor-not-allowed disabled:opacity-70",
+              field.readOnly && "cursor-default opacity-90",
+            )}
+          />
           {field.hint ? (
             <p className="text-xs text-[var(--foreground-muted)]">{field.hint}</p>
           ) : null}
@@ -295,10 +393,12 @@ function PluginSettingsGroupSelector({
 /** Paneles de ajustes declarados por plugins cargados (enganchados en Ajustes). */
 export function PluginSettingsSection() {
   const [panels, setPanels] = useState<PluginSettingsPanelDefinition[]>([]);
+  const [layouts, setLayouts] = useState<Record<string, PluginSettingsLayout>>({});
   const [installed, setInstalled] = useState<InstalledPluginRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [settingsRefreshKey, setSettingsRefreshKey] = useState(0);
   const [activePluginId, setActivePluginId] = useState("");
+  const [activeSettingsTabId, setActiveSettingsTabId] = useState("");
 
   const pluginGroups = useMemo(
     () => groupPanelsByPlugin(panels, installed),
@@ -309,6 +409,30 @@ export function PluginSettingsSection() {
     () => pluginGroups.find((group) => group.pluginId === activePluginId) ?? pluginGroups[0],
     [pluginGroups, activePluginId],
   );
+
+  const activePluginUsesTabs =
+    activeGroup != null && layouts[activeGroup.pluginId]?.mode === "tabs";
+
+  const settingsTabs = useMemo(() => {
+    if (!activeGroup || !activePluginUsesTabs) return [];
+    return groupPanelsByTab(activeGroup.panels);
+  }, [activeGroup, activePluginUsesTabs]);
+
+  const activeSettingsTab = useMemo(
+    () => settingsTabs.find((tab) => tab.id === activeSettingsTabId) ?? settingsTabs[0],
+    [settingsTabs, activeSettingsTabId],
+  );
+
+  useEffect(() => {
+    if (settingsTabs.length === 0) {
+      setActiveSettingsTabId("");
+      return;
+    }
+    if (!settingsTabs.some((tab) => tab.id === activeSettingsTabId)) {
+      const firstTab = settingsTabs[0];
+      if (firstTab) setActiveSettingsTabId(firstTab.id);
+    }
+  }, [settingsTabs, activeSettingsTabId]);
 
   useEffect(() => {
     if (pluginGroups.length === 0) {
@@ -327,8 +451,9 @@ export function PluginSettingsSection() {
       fetchPluginSettingsPanels(),
       fetchInstalledPlugins().catch(() => ({ installed: [] as InstalledPluginRecord[] })),
     ])
-      .then(([nextPanels, installedStatus]) => {
-        setPanels(nextPanels);
+      .then(([settingsPayload, installedStatus]) => {
+        setPanels(settingsPayload.panels);
+        setLayouts(settingsPayload.layouts);
         setInstalled(installedStatus.installed);
       })
       .finally(() => setLoading(false));
@@ -375,7 +500,9 @@ export function PluginSettingsSection() {
     );
   }
 
-  const visiblePanels = activeGroup?.panels ?? [];
+  const visiblePanels = activePluginUsesTabs
+    ? (activeSettingsTab?.panels ?? [])
+    : (activeGroup?.panels ?? []);
 
   return (
     <div className="space-y-6">
@@ -399,6 +526,13 @@ export function PluginSettingsSection() {
             value={activeGroup?.pluginId ?? ""}
             onValueChange={setActivePluginId}
           />
+          {activePluginUsesTabs ? (
+            <PluginSettingsTabSelector
+              tabs={settingsTabs}
+              value={activeSettingsTab?.id ?? ""}
+              onValueChange={setActiveSettingsTabId}
+            />
+          ) : null}
         </CardHeader>
         <CardContent className="border-t border-[var(--border)] pt-6">
           <div

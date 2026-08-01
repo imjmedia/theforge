@@ -10,6 +10,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   Res,
   UploadedFile,
   UseInterceptors,
@@ -59,7 +60,10 @@ export class PluginsController {
 
   @Get("settings-panels")
   getSettingsPanels() {
-    return this.pluginLoader.getSettingsPanels();
+    return {
+      panels: this.pluginLoader.getSettingsPanels(),
+      layouts: this.pluginLoader.getSettingsLayouts(),
+    };
   }
 
   @Post("install")
@@ -175,6 +179,36 @@ export class PluginsController {
       stageId: body?.stageId ?? null,
     });
     return { queued: false, ...result };
+  }
+
+  @Get("projects/:id/export/:pluginId/:artifactId")
+  async exportPluginArtifact(
+    @Param("id") projectId: string,
+    @Param("pluginId") pluginId: string,
+    @Param("artifactId") artifactId: string,
+    @Query("format") formatRaw: string | undefined,
+    @Res() res: Response,
+  ) {
+    const format = formatRaw?.trim().toLowerCase();
+    if (format !== "pptx" && format !== "pdf") {
+      throw new BadRequestException(
+        "Query 'format' requerido: pptx | pdf",
+      );
+    }
+
+    const exported = await this.pluginArtifact.export(
+      projectId,
+      decodeURIComponent(pluginId),
+      decodeURIComponent(artifactId),
+      format,
+    );
+
+    res.setHeader("Content-Type", exported.mimeType);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${exported.filename.replace(/"/g, "")}"`,
+    );
+    return res.send(exported.data);
   }
 
   @Get(":pluginId/user-settings")

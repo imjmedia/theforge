@@ -31,15 +31,43 @@ export function pluginArtifactToEditorText(
 export function pluginArtifactFromEditorText(
   text: string,
   contentType: ArtifactTypeDefinition["contentType"] = "json",
+  context?: PluginArtifactEditorContext,
 ): unknown {
   const trimmed = text.trim();
   if (!trimmed) return contentType === "json" ? {} : "";
+
+  const previewEntry = getPluginWorkshopPreview(context?.workshopPreview);
+  if (previewEntry?.fromEditorText) {
+    return previewEntry.fromEditorText(text);
+  }
+
   if (contentType === "markdown" || contentType === "html") return trimmed;
   try {
     return JSON.parse(text) as unknown;
   } catch {
     return { raw: text };
   }
+}
+
+/** Fusiona edición de fuente con el payload persistido (delega al registry del plugin). */
+export function pluginArtifactMergeSourceEdit(
+  original: unknown,
+  edited: unknown,
+  context?: PluginArtifactEditorContext,
+): unknown {
+  const previewEntry = getPluginWorkshopPreview(context?.workshopPreview);
+  if (previewEntry?.mergeSourceEdit) {
+    const merged = previewEntry.mergeSourceEdit(original, edited);
+    if (merged != null) return merged;
+  }
+  return edited;
+}
+
+export function pluginArtifactSourceApplyLabel(
+  context?: PluginArtifactEditorContext,
+): string {
+  const previewEntry = getPluginWorkshopPreview(context?.workshopPreview);
+  return previewEntry?.sourceApplyLabel?.trim() || "Guardar";
 }
 
 export function pluginArtifactDefaultViewMode(

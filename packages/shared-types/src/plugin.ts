@@ -43,6 +43,8 @@ export interface PluginWorkshopPreviewRegistration {
   sourceReadOnly?: boolean;
   previewLabel?: string;
   sourceLabel?: string;
+  /** Etiqueta del botón al aplicar cambios en modo fuente (default: "Guardar"). */
+  sourceApplyLabel?: string;
 }
 
 /** Progreso reportado por el plugin durante `generateArtifact`. */
@@ -98,7 +100,12 @@ export type PluginArtifactTypeDeclaration = Omit<ArtifactTypeDefinition, "plugin
 export type PluginDataMap = Record<string, unknown>;
 
 /** Tipo de campo en un panel de ajustes de plugin */
-export type PluginSettingsFieldType = "text" | "password" | "select" | "url";
+export type PluginSettingsFieldType =
+  | "text"
+  | "password"
+  | "select"
+  | "url"
+  | "textarea";
 
 /** Campo de formulario declarado por un plugin para Ajustes */
 export interface PluginSettingsFieldDefinition {
@@ -112,6 +119,8 @@ export interface PluginSettingsFieldDefinition {
   options?: Array<{ value: string; label: string }>;
   /** Campo informativo — no editable en Ajustes */
   readOnly?: boolean;
+  /** Filas visibles para type === "textarea" */
+  rows?: number;
 }
 
 /**
@@ -130,7 +139,39 @@ export interface PluginSettingsPanelDefinition {
   mountPoint?: "settings.plugins";
   /** Orden relativo dentro de la sección (menor = arriba) */
   order?: number;
+  /** Agrupa paneles bajo una pestaña cuando layout del plugin es "tabs". */
+  tab?: string;
+  /** Etiqueta legible de la pestaña (usar en el primer panel de cada grupo). */
+  tabLabel?: string;
   fields: PluginSettingsFieldDefinition[];
+}
+
+/** Layout de ajustes declarado por un plugin. */
+export interface PluginSettingsLayout {
+  mode: "tabs" | "stack";
+}
+
+/** Respuesta de GET /plugins/settings-panels */
+export interface PluginSettingsPanelsResponse {
+  panels: PluginSettingsPanelDefinition[];
+  layouts: Record<string, PluginSettingsLayout>;
+}
+
+/** Contexto para exportación de artifacts (PPTX, PDF, …). */
+export interface PluginExportContext {
+  pluginId: string;
+  artifactId: string;
+  projectId: string;
+  userId: string;
+  data: unknown;
+  format: "pptx" | "pdf";
+  userSettings: Record<string, unknown>;
+}
+
+export interface PluginExportResult {
+  data: Uint8Array;
+  filename: string;
+  mimeType: string;
 }
 
 /** Mapa userId → ajustes por pluginId */

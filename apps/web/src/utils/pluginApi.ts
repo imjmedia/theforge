@@ -8,7 +8,9 @@ import type {
   PluginInstallResult,
   PluginInstalledListResponse,
   PluginReloadResult,
+  PluginSettingsLayout,
   PluginSettingsPanelDefinition,
+  PluginSettingsPanelsResponse,
   PluginUninstallResult,
   PluginUserSettingsMap,
 } from "@theforge/shared-types";
@@ -30,10 +32,47 @@ export async function fetchPluginArtifacts(): Promise<ArtifactTypeDefinition[]> 
   return data;
 }
 
-export async function fetchPluginSettingsPanels(): Promise<PluginSettingsPanelDefinition[]> {
+export async function fetchPluginSettingsPanels(): Promise<{
+  panels: PluginSettingsPanelDefinition[];
+  layouts: Record<string, PluginSettingsLayout>;
+}> {
   const res = await apiFetch(`${API_BASE}/plugins/settings-panels`);
-  if (!res.ok) return [];
-  return res.json();
+  if (!res.ok) return { panels: [], layouts: {} };
+  const data: PluginSettingsPanelsResponse | PluginSettingsPanelDefinition[] =
+    await res.json();
+  if (Array.isArray(data)) {
+    return { panels: data, layouts: {} };
+  }
+  return {
+    panels: data.panels ?? [],
+    layouts: data.layouts ?? {},
+  };
+}
+
+/** Descarga un artifact exportado por el plugin (format=pptx|pdf). */
+export async function downloadPluginArtifactExport(
+  projectId: string,
+  pluginId: string,
+  artifactId: string,
+  format: "pptx" | "pdf",
+): Promise<void> {
+  const params = new URLSearchParams({ format });
+  const res = await apiFetch(
+    `${API_BASE}/plugins/projects/${encodeURIComponent(projectId)}/export/${encodeURIComponent(pluginId)}/${encodeURIComponent(artifactId)}?${params}`,
+  );
+  if (!res.ok) {
+    throw new Error(await parseErrorMessageFromResponse(res, "Error al exportar artifact"));
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const match = /filename="([^"]+)"/i.exec(disposition);
+  const filename = match?.[1] ?? `export.${format}`;
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 export function clearPluginArtifactsCache(): void {

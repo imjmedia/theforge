@@ -1,4 +1,4 @@
-import type { EvdSlideBase } from "./evd-deck.types";
+import type { EvdSlideBase } from "./evd-deck.types.js";
 
 function BulletList({ items }: { items: string[] }) {
   if (items.length === 0) return null;
@@ -155,6 +155,56 @@ export function EvdSlideContent({ slide }: { slide: EvdSlideBase }) {
         />
       );
 
+    case "data_overview": {
+      const dataTypes = (slide.dataTypes as Array<Record<string, unknown>> | undefined) ?? [];
+      const painPoints = (slide.painPoints as string[] | undefined) ?? [];
+      const keyOutcomes = (slide.keyOutcomes as string[] | undefined) ?? [];
+      if (dataTypes.length > 0) {
+        return (
+          <>
+            <NamedItems
+              items={dataTypes}
+              render={(d) => {
+                const name = String(d.name ?? "");
+                const desc = d.description ? `: ${String(d.description)}` : "";
+                return `${name}${desc}`;
+              }}
+            />
+            {slide.body ? <p className="mt-3 text-sm opacity-90">{String(slide.body)}</p> : null}
+          </>
+        );
+      }
+      if (painPoints.length > 0) return <BulletList items={painPoints} />;
+      if (keyOutcomes.length > 0) return <BulletList items={keyOutcomes} />;
+      if (slide.body) {
+        return (
+          <div className="mt-3 space-y-1 text-sm leading-relaxed whitespace-pre-wrap">
+            {String(slide.body)
+              .split("\n")
+              .filter(Boolean)
+              .map((line, i) => (
+                <p key={i}>{line}</p>
+              ))}
+          </div>
+        );
+      }
+      return null;
+    }
+
+    case "security_access":
+      return (
+        <NamedItems
+          items={(slide.roles as Array<Record<string, unknown>> | undefined) ?? []}
+          render={(r) => {
+            const name = String(r.name ?? "");
+            const perms = Array.isArray(r.permissions)
+              ? `: ${(r.permissions as string[]).join(", ")}`
+              : "";
+            return `${name}${perms}`;
+          }}
+        />
+      );
+
     case "cta":
       return (
         <>
@@ -166,6 +216,18 @@ export function EvdSlideContent({ slide }: { slide: EvdSlideBase }) {
       );
 
     default:
+      if (slide.body) {
+        return (
+          <div className="mt-3 space-y-1 text-sm leading-relaxed whitespace-pre-wrap">
+            {String(slide.body)
+              .split("\n")
+              .filter(Boolean)
+              .map((line, i) => (
+                <p key={i}>{line}</p>
+              ))}
+          </div>
+        );
+      }
       return null;
   }
 }

@@ -9,6 +9,10 @@ export interface PluginWorkshopPreviewEntry extends PluginWorkshopPreviewRegistr
   Preview: ComponentType<PluginWorkshopPreviewProps>;
   parsePayload?: (data: unknown) => unknown | null;
   toEditorText?: (data: unknown) => string;
+  /** Parsea texto editado — null si es inválido. */
+  fromEditorText?: (text: string) => unknown | null;
+  /** Fusiona edición con payload original (p. ej. restaurar blobs omitidos en el editor). */
+  mergeSourceEdit?: (original: unknown, edited: unknown) => unknown | null;
 }
 
 export interface PluginWorkshopPreviewRenderOptions {
