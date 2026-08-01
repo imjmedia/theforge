@@ -41,6 +41,19 @@ export interface TheForgePluginManifest {
    * Permite editar vía API aunque el plugin no haya cargado.
    */
   instanceSettingsPath?: string;
+  /**
+   * Bundle ESM de vista Workshop servido desde el `.tfplugin` instalado.
+   * El frontend lo carga con `import()` y llama `register(host)`.
+   */
+  workshopUi?: PluginWorkshopUiManifest;
+}
+
+/** UI embebida en el paquete `.tfplugin` — autocontenida, sin vendor en el core. */
+export interface PluginWorkshopUiManifest {
+  /** Ruta relativa dentro del ZIP, p. ej. `workshop-ui/workshop-preview.js`. */
+  entry: string;
+  /** Versión del contrato host↔plugin (default `"1"`). */
+  hostApiVersion?: "1" | string;
 }
 
 /** Plugin detectado en disco (instalado pero no necesariamente cargado). */

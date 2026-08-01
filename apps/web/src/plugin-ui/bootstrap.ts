@@ -1,8 +1,11 @@
 /**
- * Registra vistas Workshop de plugins instalados.
- * Vendors embebidos en `vendors/` — sin dependencia npm a repos hermanos en Docker.
+ * Inicializa el host de UI de plugins y carga bundles embebidos en `.tfplugin` instalados.
+ * Sin imports estáticos por plugin — el marco es genérico.
  */
-import { evdWorkshopPreviewRegistration } from "@/plugin-ui/vendors/evd-workshop-ui/registration";
-import { registerPluginWorkshopPreview } from "./registry";
+import { installPluginUiHost } from "./host-bridge";
+import { loadInstalledPluginWorkshopUi } from "./load-installed-workshop-ui";
 
-registerPluginWorkshopPreview(evdWorkshopPreviewRegistration);
+installPluginUiHost();
+void loadInstalledPluginWorkshopUi();
+
+export { reloadPluginWorkshopUi } from "./load-installed-workshop-ui";

@@ -42,6 +42,22 @@ export interface PluginWorkshopPreviewProps {
   regenerateBlockedReason?: string;
 }
 
+/** Entrada completa que el bundle embebido registra en el host Workshop. */
+export interface PluginWorkshopPreviewHostEntry
+  extends PluginWorkshopPreviewRegistration {
+  Preview: import("react").ComponentType<PluginWorkshopPreviewProps>;
+  parsePayload?: (data: unknown) => unknown | null;
+  toEditorText?: (data: unknown) => string;
+  fromEditorText?: (text: string) => unknown | null;
+  mergeSourceEdit?: (original: unknown, edited: unknown) => unknown | null;
+}
+
+/** Host que el core expone al bundle `workshopUi` del plugin vía `globalThis.__THEFORGE_PLUGIN_UI__`. */
+export interface TheForgePluginUiHost {
+  React: typeof import("react");
+  registerWorkshopPreview: (entry: PluginWorkshopPreviewHostEntry) => void;
+}
+
 /** Metadatos de registro UI — el paquete npm del plugin exporta esto; el core no hardcodea plugins. */
 export interface PluginWorkshopPreviewRegistration {
   id: string;

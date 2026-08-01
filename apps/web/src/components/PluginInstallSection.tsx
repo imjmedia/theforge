@@ -17,6 +17,7 @@ import {
   reloadPlugins,
   uninstallPlugin,
 } from "@/utils/pluginApi";
+import { reloadPluginWorkshopUi } from "@/plugin-ui/bootstrap";
 import {
   Button,
   Card,
@@ -82,6 +83,7 @@ export function PluginInstallSection({ onChanged }: PluginInstallSectionProps) {
 
   const notifyChanged = () => {
     clearPluginArtifactsCache();
+    void reloadPluginWorkshopUi();
     onChanged?.();
   };
 

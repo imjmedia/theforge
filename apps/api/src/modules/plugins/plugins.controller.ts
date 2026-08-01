@@ -21,6 +21,7 @@ import { PluginLoaderService } from "../../plugins/plugin-loader.service.js";
 import { PluginArtifactService } from "../../plugins/plugin-artifact.service.js";
 import { PluginUserSettingsService } from "../../plugins/plugin-user-settings.service.js";
 import { PluginInstallService } from "../../plugins/plugin-install.service.js";
+import { PluginWorkshopUiService } from "../../plugins/plugin-workshop-ui.service.js";
 import { PluginInstanceSettingsService } from "../../plugins/plugin-instance-settings.service.js";
 import { DeliverablesQueueService } from "../projects/deliverables-queue.service.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
@@ -39,6 +40,7 @@ export class PluginsController {
     private readonly pluginArtifact: PluginArtifactService,
     private readonly pluginUserSettings: PluginUserSettingsService,
     private readonly pluginInstall: PluginInstallService,
+    private readonly pluginWorkshopUi: PluginWorkshopUiService,
     private readonly pluginInstanceSettings: PluginInstanceSettingsService,
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => DeliverablesQueueService))
@@ -58,6 +60,22 @@ export class PluginsController {
   @Get("installed")
   getInstalled() {
     return this.pluginInstall.listInstalled();
+  }
+
+  /** Bundle ESM de preview Workshop embebido en el `.tfplugin` instalado. */
+  @Get("workshop-ui/:pluginId/:filename")
+  serveWorkshopUi(
+    @Param("pluginId") pluginId: string,
+    @Param("filename") filename: string,
+    @Res() res: Response,
+  ) {
+    const data = this.pluginWorkshopUi.readAsset(
+      decodeURIComponent(pluginId),
+      filename,
+    );
+    res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+    res.setHeader("Cache-Control", "public, max-age=300");
+    return res.send(data);
   }
 
   @Get("settings-panels")

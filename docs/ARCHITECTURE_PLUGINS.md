@@ -555,20 +555,21 @@ El frontend consulta este endpoint al montar un proyecto y genera items de naveg
 
 #### Vista preview en Workshop (`workshopPreview`)
 
-Los artifacts con UI propia (p. ej. diapositivas EVD) declaran en `getArtifactTypes()`:
+Los artifacts con UI propia declaran en `getArtifactTypes()`:
 
 ```typescript
 {
   id: "evd",
   contentType: "json",
-  workshopPreview: "com.kreodevs.evd/deck", // id estable, acordado con el paquete npm UI
+  workshopPreview: "com.kreodevs.evd/deck",
 }
 ```
 
-El **paquete npm del plugin** (p. ej. `@kreodevs/evd-workshop-ui`) exporta `*WorkshopPreviewRegistration` con el mismo `id`, componente React `Preview`, y opcionalmente `toEditorText` / `parsePayload`. The Forge solo:
+El **`.tfplugin`** incluye un bundle ESM (`manifest.workshopUi.entry`) que exporta `register(host)`. The Forge:
 
-1. Registra entradas en `apps/web/src/plugin-ui/bootstrap.ts` (una línea por plugin instalado).
-2. Resuelve `artifact.workshopPreview` en `PluginDocPanel` — **sin hardcodear plugin IDs**.
+1. Sirve el bundle en `GET /api/plugins/workshop-ui/:pluginId/:filename`.
+2. Carga dinámicamente los bundles de plugins **instalados** al arrancar la web (y tras install/reload).
+3. Resuelve `artifact.workshopPreview` en `PluginDocPanel` — **sin imports estáticos por plugin**.
 
 Ver `apps/web/src/plugin-ui/README.md`.
 

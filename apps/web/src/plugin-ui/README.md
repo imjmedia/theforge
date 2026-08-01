@@ -2,11 +2,13 @@
 
 Extensión genérica del Workshop para **vistas preview de artifacts de plugins**.
 
-## Contrato
+## Contrato (autocontenido en `.tfplugin`)
 
 1. **Backend (plugin):** `getArtifactTypes()` declara `workshopPreview: "{pluginId}/{kind}"`.
-2. **Vendor en el core:** copia en `vendors/{plugin}-workshop-ui/` (p. ej. EVD) registrada en `bootstrap.ts`. Evita `file:` links a repos hermanos que rompen Docker.
-3. **Core (aquí):** `bootstrap.ts` registra las entradas al arrancar la app. `PluginDocPanel` resuelve por `artifact.workshopPreview` — **sin hardcodear plugin IDs**.
+2. **Manifest del paquete:** `workshopUi.entry` apunta al bundle ESM dentro del ZIP (p. ej. `workshop-ui/workshop-preview.js`).
+3. **Bundle del plugin:** exporta `register(host)` y llama `host.registerWorkshopPreview({ id, Preview, … })` usando el React del core vía `globalThis.__THEFORGE_PLUGIN_UI__`.
+4. **Core API:** sirve el bundle en `GET /api/plugins/workshop-ui/:pluginId/:filename`.
+5. **Core web:** `bootstrap.ts` carga dinámicamente los bundles de plugins instalados — **sin imports estáticos por plugin**.
 
 ## Archivos
 
@@ -14,14 +16,21 @@ Extensión genérica del Workshop para **vistas preview de artifacts de plugins*
 | --- | --- |
 | `types.ts` | `PluginWorkshopPreviewEntry` (React + metadatos) |
 | `registry.ts` | `registerPluginWorkshopPreview`, `getPluginWorkshopPreview`, `renderPluginWorkshopPreview` |
-| `bootstrap.ts` | Instala registros de vendors embebidos (`vendors/evd-workshop-ui`, …) |
+| `host-bridge.ts` | Expone React/registry al bundle embebido |
+| `load-installed-workshop-ui.ts` | `import()` dinámico tras login / install |
+| `bootstrap.ts` | Inicializa host + carga bundles instalados |
 
-## Añadir un plugin nuevo
+## Autor de plugin
 
-```ts
-// bootstrap.ts
-import { myPluginRegistration } from "@/plugin-ui/vendors/my-plugin-workshop-ui/registration";
-registerPluginWorkshopPreview(myPluginRegistration);
+Empaqueta el bundle en el `.tfplugin` y declara en el manifest:
+
+```json
+{
+  "workshopUi": {
+    "entry": "workshop-ui/workshop-preview.js",
+    "hostApiVersion": "1"
+  }
+}
 ```
 
-Añadir carpeta vendor y redeploy web.
+Ver `docs/PLUGINS-PACKAGING.md` y el repo `evd-plugin` como referencia.

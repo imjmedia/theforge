@@ -75,6 +75,20 @@ export function parsePluginManifest(raw: unknown): TheForgePluginManifest {
       typeof m.instanceSettingsPath === "string"
         ? m.instanceSettingsPath
         : undefined,
+    workshopUi:
+      m.workshopUi &&
+      typeof m.workshopUi === "object" &&
+      typeof (m.workshopUi as Record<string, unknown>).entry === "string"
+        ? {
+            entry: (m.workshopUi as Record<string, unknown>).entry as string,
+            hostApiVersion:
+              typeof (m.workshopUi as Record<string, unknown>).hostApiVersion ===
+              "string"
+                ? ((m.workshopUi as Record<string, unknown>)
+                    .hostApiVersion as string)
+                : undefined,
+          }
+        : undefined,
   };
 }
 

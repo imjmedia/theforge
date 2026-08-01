@@ -26,6 +26,7 @@ com.kreodevs.evd@2.1.0.tfplugin
 | `minCoreVersion` | No | Versión mínima del core |
 | `payloadSha256` | Recomendado | SHA-256 hex del payload (sin manifest) |
 | `signature` | Opcional | HMAC-SHA256 del JSON sin `signature` |
+| `workshopUi` | No | `{ "entry": "workshop-ui/workshop-preview.js", "hostApiVersion": "1" }` — bundle ESM de preview Workshop embebido en el ZIP |
 
 Tipos compartidos: `packages/shared-types/src/plugin-packaging.ts`.
 
