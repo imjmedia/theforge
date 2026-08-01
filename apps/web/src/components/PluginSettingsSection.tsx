@@ -182,6 +182,7 @@ function PluginSettingsPanelCard({ panel }: { panel: PluginSettingsPanelDefiniti
 export function PluginSettingsSection() {
   const [panels, setPanels] = useState<PluginSettingsPanelDefinition[]>([]);
   const [loading, setLoading] = useState(true);
+  const [settingsRefreshKey, setSettingsRefreshKey] = useState(0);
 
   const reloadPanels = useCallback(() => {
     setLoading(true);
@@ -190,6 +191,11 @@ export function PluginSettingsSection() {
       .finally(() => setLoading(false));
   }, []);
 
+  const handlePluginsChanged = useCallback(() => {
+    setSettingsRefreshKey((key) => key + 1);
+    reloadPanels();
+  }, [reloadPanels]);
+
   useEffect(() => {
     reloadPanels();
   }, [reloadPanels]);
@@ -197,7 +203,7 @@ export function PluginSettingsSection() {
   if (loading) {
     return (
       <div className="space-y-6">
-        <PluginInstallSection onChanged={reloadPanels} />
+        <PluginInstallSection onChanged={handlePluginsChanged} />
         <div className="flex items-center gap-2 text-sm text-[var(--foreground-muted)]">
           <Loader2 className="h-4 w-4 animate-spin" />
           Buscando plugins…
@@ -209,7 +215,7 @@ export function PluginSettingsSection() {
   if (panels.length === 0) {
     return (
       <div className="space-y-6">
-        <PluginInstallSection onChanged={reloadPanels} />
+        <PluginInstallSection onChanged={handlePluginsChanged} />
         <Card className="border-[var(--border)] bg-[var(--card)]">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
@@ -228,9 +234,12 @@ export function PluginSettingsSection() {
 
   return (
     <div className="space-y-6">
-      <PluginInstallSection onChanged={reloadPanels} />
+      <PluginInstallSection onChanged={handlePluginsChanged} />
       {panels.map((panel) => (
-        <PluginSettingsPanelCard key={`${panel.pluginId}:${panel.id}`} panel={panel} />
+        <PluginSettingsPanelCard
+          key={`${panel.pluginId}:${panel.id}:${settingsRefreshKey}`}
+          panel={panel}
+        />
       ))}
     </div>
   );

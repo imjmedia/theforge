@@ -87,6 +87,9 @@ export function PluginInstallSection({ onChanged }: PluginInstallSectionProps) {
     setError("");
     try {
       const result = await installPluginFromFile(file);
+      if (!result.reloaded) {
+        await reloadPlugins();
+      }
       await refresh();
       notifyChanged();
       flashSuccess(
