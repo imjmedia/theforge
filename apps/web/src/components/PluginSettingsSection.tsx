@@ -230,8 +230,6 @@ function PluginSettingsGroupSelector({
   value: string;
   onValueChange: (pluginId: string) => void;
 }) {
-  if (groups.length <= 1) return null;
-
   return (
     <div
       className="flex flex-wrap gap-2"
@@ -358,44 +356,43 @@ export function PluginSettingsSection() {
     <div className="space-y-6">
       <PluginInstallSection onChanged={handlePluginsChanged} />
 
-      {pluginGroups.length > 1 ? (
-        <Card className="border-[var(--border)] bg-[var(--card)]">
-          <CardHeader className="space-y-4 pb-4">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Puzzle className="h-5 w-5 text-[var(--primary)]" />
-                Ajustes por plugin
-              </CardTitle>
-              <CardDescription className="mt-1.5">
-                Elige un plugin para ver sus paneles de licencia, modelos y preferencias.
-              </CardDescription>
-            </div>
-            <PluginSettingsGroupSelector
-              groups={pluginGroups}
-              value={activeGroup?.pluginId ?? ""}
-              onValueChange={setActivePluginId}
-            />
-          </CardHeader>
-        </Card>
-      ) : null}
-
-      <div
-        role="tabpanel"
-        id={activeGroup ? `plugin-settings-panel-${activeGroup.pluginId}` : undefined}
-        aria-labelledby={
-          activeGroup && pluginGroups.length > 1
-            ? `plugin-settings-tab-${activeGroup.pluginId}`
-            : undefined
-        }
-        className="space-y-6"
-      >
-        {visiblePanels.map((panel) => (
-          <PluginSettingsPanelCard
-            key={`${panel.pluginId}:${panel.id}:${settingsRefreshKey}`}
-            panel={panel}
+      <Card className="border-[var(--border)] bg-[var(--card)]">
+        <CardHeader className="space-y-4 pb-4">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Puzzle className="h-5 w-5 text-[var(--primary)]" />
+              Ajustes por plugin
+            </CardTitle>
+            <CardDescription className="mt-1.5">
+              {pluginGroups.length > 1
+                ? "Elige un plugin para ver sus paneles de licencia, modelos y preferencias."
+                : "Configura licencia, modelos y preferencias del plugin cargado."}
+            </CardDescription>
+          </div>
+          <PluginSettingsGroupSelector
+            groups={pluginGroups}
+            value={activeGroup?.pluginId ?? ""}
+            onValueChange={setActivePluginId}
           />
-        ))}
-      </div>
+        </CardHeader>
+        <CardContent className="border-t border-[var(--border)] pt-6">
+          <div
+            role="tabpanel"
+            id={activeGroup ? `plugin-settings-panel-${activeGroup.pluginId}` : undefined}
+            aria-labelledby={
+              activeGroup ? `plugin-settings-tab-${activeGroup.pluginId}` : undefined
+            }
+            className="space-y-6"
+          >
+            {visiblePanels.map((panel) => (
+              <PluginSettingsPanelCard
+                key={`${panel.pluginId}:${panel.id}:${settingsRefreshKey}`}
+                panel={panel}
+              />
+            ))}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
