@@ -32,6 +32,15 @@ export interface PluginArtifactProgress {
   detail?: string;
 }
 
+/** Runtime LLM resuelto por el core (BYOK / instancia activa del usuario). */
+export interface PluginLlmRuntime {
+  providerId: string;
+  model: string;
+  apiKey: string;
+  baseURL: string;
+  imageModel?: string | null;
+}
+
 /** Contexto que el core pasa a `generateArtifact` del plugin */
 export interface PluginArtifactContext {
   pluginId: string;
@@ -42,6 +51,8 @@ export interface PluginArtifactContext {
   deliverables: Record<string, string | null | undefined>;
   userSettings: Record<string, unknown>;
   timestamp: Date;
+  /** LLM del usuario/tenant — el plugin puede usarlo si no hay claves en env. */
+  llmRuntime?: PluginLlmRuntime;
   /** Callback opcional — el core lo reenvía al job de cola / polling del frontend. */
   reportProgress?: (update: PluginArtifactProgress) => void;
 }
