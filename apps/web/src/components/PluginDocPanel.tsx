@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
-import { FileText, LayoutGrid, Code2 } from "lucide-react";
+import { Code2, FileText, LayoutGrid } from "lucide-react";
 import type { ArtifactTypeDefinition, PluginArtifactProgress } from "@theforge/shared-types";
 import { getPluginDocPanelHeader, parsePluginPanelId } from "../utils/workshopDocNav";
 import {
@@ -12,12 +12,15 @@ import {
 import {
   pluginArtifactDefaultViewMode,
   pluginArtifactFromEditorText,
+  pluginArtifactSourceReadOnly,
   pluginArtifactToEditorText,
 } from "../utils/pluginArtifactContent";
-import { isEvdArtifact, parseEvdDeck } from "../utils/evdDeck";
+import {
+  getPluginWorkshopPreview,
+  renderPluginWorkshopPreview,
+} from "@/plugin-ui/registry";
 import { useWorkshopStore } from "../store/workshopStore";
 import { StandardDocPanel } from "./StandardDocPanel";
-import { EvdDeckPreview } from "./evd/EvdDeckPreview";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
@@ -78,10 +81,14 @@ export function PluginDocPanel({
   );
   const header = getPluginDocPanelHeader(panel, artifactTypes);
   const contentType = artifact?.contentType ?? "json";
-  const artifactOptions = parsed
-    ? { pluginId: parsed.pluginId, artifactId: parsed.artifactId }
-    : undefined;
-  const isEvdDeck = parsed ? isEvdArtifact(parsed.pluginId, parsed.artifactId) : false;
+  const editorContext = useMemo(
+    () => ({ workshopPreview: artifact?.workshopPreview }),
+    [artifact?.workshopPreview],
+  );
+  const workshopPreviewEntry = useMemo(
+    () => getPluginWorkshopPreview(artifact?.workshopPreview),
+    [artifact?.workshopPreview],
+  );
 
   const project = useWorkshopStore((s) => s.project);
   const storedPayload = useWorkshopStore((s) =>
@@ -95,7 +102,7 @@ export function PluginDocPanel({
 
   const [content, setContent] = useState<string>("");
   const [viewMode, setViewMode] = useState<"preview" | "source">(() =>
-    pluginArtifactDefaultViewMode(contentType, artifactOptions),
+    pluginArtifactDefaultViewMode(contentType, editorContext),
   );
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -137,15 +144,33 @@ export function PluginDocPanel({
 
   const syncEditorFromPayload = useCallback(
     (data: unknown) => {
-      setContent(pluginArtifactToEditorText(data, contentType, artifactOptions));
+      setContent(pluginArtifactToEditorText(data, contentType, editorContext));
     },
-    [artifactOptions, contentType],
+    [contentType, editorContext],
   );
 
-  const evdDeck = useMemo(() => {
-    if (!isEvdDeck) return null;
-    return parseEvdDeck(storedPayload) ?? parseEvdDeck(pluginArtifactFromEditorText(content, contentType));
-  }, [content, contentType, isEvdDeck, storedPayload]);
+  const previewPayload = useMemo(() => {
+    if (storedPayload !== undefined && storedPayload !== null) return storedPayload;
+    const fromEditor = pluginArtifactFromEditorText(content, contentType);
+    if (workshopPreviewEntry?.parsePayload) {
+      return workshopPreviewEntry.parsePayload(fromEditor) ? fromEditor : fromEditor;
+    }
+    return fromEditor;
+  }, [content, contentType, storedPayload, workshopPreviewEntry]);
+
+  const previewSlot = useMemo(() => {
+    if (!parsed || !artifact?.workshopPreview || !workshopPreviewEntry) return undefined;
+    if (workshopPreviewEntry.parsePayload && !workshopPreviewEntry.parsePayload(previewPayload)) {
+      return undefined;
+    }
+    return renderPluginWorkshopPreview({
+      workshopPreview: artifact.workshopPreview,
+      data: previewPayload,
+      pluginId: parsed.pluginId,
+      artifactId: parsed.artifactId,
+      projectId,
+    });
+  }, [artifact?.workshopPreview, parsed, previewPayload, projectId, workshopPreviewEntry]);
 
   const reload = useCallback(async () => {
     if (!pluginId) return;
@@ -255,9 +280,12 @@ export function PluginDocPanel({
 
   if (!parsed || !artifact) return null;
 
+  const showViewToggle = Boolean(workshopPreviewEntry && previewSlot);
+  const sourceReadOnly = pluginArtifactSourceReadOnly(editorContext);
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      {isEvdDeck && evdDeck ? (
+      {showViewToggle ? (
         <div className="flex shrink-0 items-center gap-1 border-b border-[var(--border)] px-4 py-2">
           <Button
             type="button"
@@ -267,7 +295,7 @@ export function PluginDocPanel({
             onClick={() => setViewMode("preview")}
           >
             <LayoutGrid className="h-3.5 w-3.5" aria-hidden />
-            Diapositivas
+            {workshopPreviewEntry?.previewLabel ?? "Vista"}
           </Button>
           <Button
             type="button"
@@ -277,7 +305,7 @@ export function PluginDocPanel({
             onClick={() => setViewMode("source")}
           >
             <Code2 className="h-3.5 w-3.5" aria-hidden />
-            JSON
+            {workshopPreviewEntry?.sourceLabel ?? "Fuente"}
           </Button>
         </div>
       ) : null}
@@ -294,8 +322,8 @@ export function PluginDocPanel({
         onSave={handleSave}
         isDirty={false}
         viewMode={viewMode}
-        readOnly={isEvdDeck && viewMode === "source"}
-        previewSlot={isEvdDeck && evdDeck ? <EvdDeckPreview deck={evdDeck} /> : undefined}
+        readOnly={sourceReadOnly && viewMode === "source"}
+        previewSlot={previewSlot ?? undefined}
         onGenerate={() => void handleGenerate()}
         canGenerate={artifact.generatable === true && !generateBlockedReason && !loading}
         isLoading={generating}

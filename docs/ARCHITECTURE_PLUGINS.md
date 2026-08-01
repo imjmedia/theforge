@@ -553,6 +553,25 @@ GET /api/plugins/artifacts → ArtifactTypeDefinition[]
 
 El frontend consulta este endpoint al montar un proyecto y genera items de navegación dinámicos para cada artifact con `showInSidebar: true`.
 
+#### Vista preview en Workshop (`workshopPreview`)
+
+Los artifacts con UI propia (p. ej. diapositivas EVD) declaran en `getArtifactTypes()`:
+
+```typescript
+{
+  id: "evd",
+  contentType: "json",
+  workshopPreview: "com.kreodevs.evd/deck", // id estable, acordado con el paquete npm UI
+}
+```
+
+El **paquete npm del plugin** (p. ej. `@kreodevs/evd-workshop-ui`) exporta `*WorkshopPreviewRegistration` con el mismo `id`, componente React `Preview`, y opcionalmente `toEditorText` / `parsePayload`. The Forge solo:
+
+1. Registra entradas en `apps/web/src/plugin-ui/bootstrap.ts` (una línea por plugin instalado).
+2. Resuelve `artifact.workshopPreview` en `PluginDocPanel` — **sin hardcodear plugin IDs**.
+
+Ver `apps/web/src/plugin-ui/README.md`.
+
 #### Almacenamiento de Datos
 
 Cada plugin puede leer y escribir datos propios por proyecto:

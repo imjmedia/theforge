@@ -1,24 +1,20 @@
 import type { ArtifactTypeDefinition } from "@theforge/shared-types";
-import { evdDeckToEditorText, isEvdArtifact } from "./evdDeck";
+import { getPluginWorkshopPreview } from "@/plugin-ui/registry";
 
-export interface PluginArtifactEditorOptions {
-  pluginId?: string;
-  artifactId?: string;
+export interface PluginArtifactEditorContext {
+  workshopPreview?: string;
 }
 
 /** Texto editable en el panel según contentType del artifact. */
 export function pluginArtifactToEditorText(
   data: unknown,
   contentType: ArtifactTypeDefinition["contentType"] = "json",
-  options?: PluginArtifactEditorOptions,
+  context?: PluginArtifactEditorContext,
 ): string {
   if (data == null) return "";
-  if (
-    options?.pluginId &&
-    options?.artifactId &&
-    isEvdArtifact(options.pluginId, options.artifactId)
-  ) {
-    return evdDeckToEditorText(data);
+  const previewEntry = getPluginWorkshopPreview(context?.workshopPreview);
+  if (previewEntry?.toEditorText) {
+    return previewEntry.toEditorText(data);
   }
   if (contentType === "markdown") {
     if (typeof data === "string") return data;
@@ -48,14 +44,16 @@ export function pluginArtifactFromEditorText(
 
 export function pluginArtifactDefaultViewMode(
   contentType: ArtifactTypeDefinition["contentType"] = "json",
-  options?: PluginArtifactEditorOptions,
+  context?: PluginArtifactEditorContext,
 ): "preview" | "source" {
-  if (
-    options?.pluginId &&
-    options?.artifactId &&
-    isEvdArtifact(options.pluginId, options.artifactId)
-  ) {
-    return "preview";
+  const previewEntry = getPluginWorkshopPreview(context?.workshopPreview);
+  if (previewEntry) {
+    return previewEntry.defaultViewMode ?? "preview";
   }
   return contentType === "markdown" ? "preview" : "source";
+}
+
+export function pluginArtifactSourceReadOnly(context?: PluginArtifactEditorContext): boolean {
+  const previewEntry = getPluginWorkshopPreview(context?.workshopPreview);
+  return previewEntry?.sourceReadOnly === true;
 }

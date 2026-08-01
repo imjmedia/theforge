@@ -18,8 +18,31 @@ export interface ArtifactTypeDefinition {
   generatable?: boolean;
   /** Cómo mostrar en Workshop: markdown (MddViewer), json (editor), html */
   contentType?: "markdown" | "json" | "html";
+  /**
+   * Vista preview del plugin en Workshop — resuelta por el registry UI del frontend.
+   * Formato recomendado: `{pluginId}/{artifactId}` o `{pluginId}/{previewKind}`.
+   * El paquete npm del plugin registra el componente con el mismo id.
+   */
+  workshopPreview?: string;
   /** Campos de entregables core requeridos (ej. specContent, mddContent) */
   requires?: string[];
+}
+
+/** Props que el core pasa al componente preview registrado por un plugin. */
+export interface PluginWorkshopPreviewProps {
+  data: unknown;
+  pluginId: string;
+  artifactId: string;
+  projectId: string;
+}
+
+/** Metadatos de registro UI — el paquete npm del plugin exporta esto; el core no hardcodea plugins. */
+export interface PluginWorkshopPreviewRegistration {
+  id: string;
+  defaultViewMode?: "preview" | "source";
+  sourceReadOnly?: boolean;
+  previewLabel?: string;
+  sourceLabel?: string;
 }
 
 /** Progreso reportado por el plugin durante `generateArtifact`. */
