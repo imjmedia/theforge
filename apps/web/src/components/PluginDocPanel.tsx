@@ -21,7 +21,7 @@ import {
   usePluginWorkshopPreview,
   renderPluginWorkshopPreview,
 } from "@/plugin-ui/registry";
-import { reloadPluginWorkshopUi } from "@/plugin-ui/bootstrap";
+import { reloadPluginWorkshopUi, getPluginWorkshopUiLoadError } from "@/plugin-ui/bootstrap";
 import { useWorkshopStore } from "../store/workshopStore";
 import { StandardDocPanel } from "./StandardDocPanel";
 import { Button } from "@/components/ui";
@@ -89,7 +89,10 @@ export function PluginDocPanel({
     [artifact?.workshopPreview],
   );
   const workshopPreviewEntry = usePluginWorkshopPreview(artifact?.workshopPreview);
-  const previewUiPending = Boolean(artifact?.workshopPreview && !workshopPreviewEntry);
+  const previewUiLoadError = pluginId ? getPluginWorkshopUiLoadError(pluginId) : undefined;
+  const previewUiPending = Boolean(
+    artifact?.workshopPreview && !workshopPreviewEntry && !previewUiLoadError,
+  );
 
   const project = useWorkshopStore((s) => s.project);
   const storedPayload = useWorkshopStore((s) =>
@@ -112,6 +115,13 @@ export function PluginDocPanel({
   const [generationProgress, setGenerationProgress] = useState<PluginArtifactProgress | null>(null);
   const fetchGenerationRef = useRef(0);
   const previewActivatedRef = useRef(false);
+  const [, setWorkshopUiLoadTick] = useState(0);
+
+  useEffect(() => {
+    const onLoaded = () => setWorkshopUiLoadTick((t) => t + 1);
+    window.addEventListener("theforge:plugin-workshop-ui-loaded", onLoaded);
+    return () => window.removeEventListener("theforge:plugin-workshop-ui-loaded", onLoaded);
+  }, []);
 
   useEffect(() => {
     if (!artifact?.workshopPreview || workshopPreviewEntry) return;
@@ -398,11 +408,13 @@ export function PluginDocPanel({
         title={header.title}
         description={
           saveError ??
-          (previewUiPending
-            ? "Cargando vista de diapositivas del plugin…"
-            : generateBlockedReason
-              ? generateBlockedReason
-              : `Plugin: ${artifact.label}${contentType !== "json" ? ` (${contentType})` : ""}`)
+          (previewUiLoadError
+            ? `No se pudo cargar la vista de diapositivas: ${previewUiLoadError}. Reinstala el .tfplugin o recarga plugins en Ajustes.`
+            : previewUiPending
+              ? "Cargando vista de diapositivas del plugin…"
+              : generateBlockedReason
+                ? generateBlockedReason
+                : `Plugin: ${artifact.label}${contentType !== "json" ? ` (${contentType})` : ""}`)
         }
         content={content}
         onContentChange={(v) => {

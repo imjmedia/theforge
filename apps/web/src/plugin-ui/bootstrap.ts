@@ -8,4 +8,4 @@ import { loadInstalledPluginWorkshopUi } from "./load-installed-workshop-ui";
 installPluginUiHost();
 void loadInstalledPluginWorkshopUi();
 
-export { reloadPluginWorkshopUi } from "./load-installed-workshop-ui";
+export { reloadPluginWorkshopUi, getPluginWorkshopUiLoadError } from "./load-installed-workshop-ui";
