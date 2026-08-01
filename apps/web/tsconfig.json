@@ -6,8 +6,7 @@
       "@theforge/business-rules": ["../../packages/business-rules/src/index.ts"],
       "@theforge/shared-types": ["../../packages/shared-types/src/index.ts"],
       "@theforge/shared-types/markdown-repair": ["../../packages/shared-types/src/markdown-repair.ts"],
-      "@theforge/shared-types/mdd-pipeline-limits": ["../../packages/shared-types/src/mdd-pipeline-limits.ts"],
-      "@kreodevs/evd-workshop-ui": ["../../../evd-plugin/packages/workshop-ui/src/index.ts"]
+      "@theforge/shared-types/mdd-pipeline-limits": ["../../packages/shared-types/src/mdd-pipeline-limits.ts"]
     },
     "typeRoots": ["../../node_modules/@types", "./node_modules/@types"],
     "target": "ES2020",

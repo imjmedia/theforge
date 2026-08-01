@@ -1,8 +1,8 @@
 /**
  * Registra vistas Workshop de plugins instalados.
- * Cada plugin comercial aporta un paquete npm `@kreodevs/*-workshop-ui`.
+ * Vendors embebidos en `vendors/` — sin dependencia npm a repos hermanos en Docker.
  */
-import { evdWorkshopPreviewRegistration } from "@kreodevs/evd-workshop-ui";
+import { evdWorkshopPreviewRegistration } from "@/plugin-ui/vendors/evd-workshop-ui/registration";
 import { registerPluginWorkshopPreview } from "./registry";
 
 registerPluginWorkshopPreview(evdWorkshopPreviewRegistration);

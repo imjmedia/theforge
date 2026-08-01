@@ -202,9 +202,6 @@ importers:
       '@excalidraw/mermaid-to-excalidraw':
         specifier: ^2.2.2
         version: 2.2.2
-      '@kreodevs/evd-workshop-ui':
-        specifier: file:../../../evd-plugin/packages/workshop-ui
-        version: file:../evd-plugin/packages/workshop-ui(lucide-react@0.563.0(react@18.3.1))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@lobehub/icons':
         specifier: ^5.8.0
         version: 5.8.0(@lobehub/ui@5.14.2)(@types/react@18.3.29)(antd@6.4.3(luxon@3.7.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -1247,13 +1244,6 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
-
-  '@kreodevs/evd-workshop-ui@file:../evd-plugin/packages/workshop-ui':
-    resolution: {directory: ../evd-plugin/packages/workshop-ui, type: directory}
-    peerDependencies:
-      lucide-react: ^0.563.0
-      react: ^18.3.1
-      react-dom: ^18.3.1
 
   '@langchain/anthropic@0.3.34':
     resolution: {integrity: sha512-8bOW1A2VHRCjbzdYElrjxutKNs9NSIxYRGtR+OJWVzluMqoKKh2NmmFrpPizEyqCUEG2tTq5xt6XA1lwfqMJRA==}
@@ -8183,12 +8173,6 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
-
-  '@kreodevs/evd-workshop-ui@file:../evd-plugin/packages/workshop-ui(lucide-react@0.563.0(react@18.3.1))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
-    dependencies:
-      lucide-react: 0.563.0(react@18.3.1)
-      react: 18.3.1
-      react-dom: 18.3.1(react@18.3.1)
 
   '@langchain/anthropic@0.3.34(@langchain/core@0.3.80(openai@4.104.0(ws@8.21.0)(zod@3.25.76)))(zod@3.25.76)':
     dependencies:

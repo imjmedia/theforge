@@ -75,13 +75,6 @@ export default defineConfig({
         find: /^@theforge\/shared-types$/,
         replacement: path.resolve(__dirname, "../../packages/shared-types/src/index.ts"),
       },
-      {
-        find: "@kreodevs/evd-workshop-ui",
-        replacement: path.resolve(
-          __dirname,
-          "../../../evd-plugin/packages/workshop-ui/src/index.ts",
-        ),
-      },
     ],
   },
   server: {
