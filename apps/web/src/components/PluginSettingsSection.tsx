@@ -293,7 +293,8 @@ export function PluginSettingsSection() {
       return;
     }
     if (!pluginGroups.some((group) => group.pluginId === activePluginId)) {
-      setActivePluginId(pluginGroups[0].pluginId);
+      const firstGroup = pluginGroups[0];
+      if (firstGroup) setActivePluginId(firstGroup.pluginId);
     }
   }, [pluginGroups, activePluginId]);
 
