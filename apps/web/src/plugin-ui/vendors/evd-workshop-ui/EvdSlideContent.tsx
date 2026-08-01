@@ -1,4 +1,6 @@
+import type { ReactNode } from "react";
 import type { EvdSlideBase } from "./evd-deck.types.js";
+import { extractSlideBodyLines } from "./evd-slide-text.js";
 
 function BulletList({ items }: { items: string[] }) {
   if (items.length === 0) return null;
@@ -31,7 +33,55 @@ function NamedItems({
   );
 }
 
-export function EvdSlideContent({ slide }: { slide: EvdSlideBase }) {
+function hasStructuredSlideData(slide: EvdSlideBase): boolean {
+  switch (slide.type) {
+    case "title":
+      return Boolean(slide.subtitle);
+    case "problem_statement":
+      return (
+        (Array.isArray(slide.painPoints) && slide.painPoints.length > 0) ||
+        Boolean(slide.impact) ||
+        Boolean(slide.urgency)
+      );
+    case "solution_vision":
+      return (
+        Boolean(slide.description) ||
+        (Array.isArray(slide.keyOutcomes) && slide.keyOutcomes.length > 0)
+      );
+    case "current_vs_new":
+      return (
+        (Array.isArray(slide.currentSteps) && slide.currentSteps.length > 0) ||
+        (Array.isArray(slide.newSteps) && slide.newSteps.length > 0) ||
+        Boolean(slide.improvementSummary)
+      );
+    case "process_flow":
+      return Array.isArray(slide.steps) && slide.steps.length > 0;
+    case "automations":
+      return Array.isArray(slide.automations) && slide.automations.length > 0;
+    case "key_features":
+      return Array.isArray(slide.features) && slide.features.length > 0;
+    case "integrations":
+      return Array.isArray(slide.integrations) && slide.integrations.length > 0;
+    case "rollout_plan":
+      return Array.isArray(slide.phases) && slide.phases.length > 0;
+    case "timeline":
+      return Array.isArray(slide.milestones) && slide.milestones.length > 0;
+    case "data_overview":
+      return (
+        (Array.isArray(slide.dataTypes) && slide.dataTypes.length > 0) ||
+        (Array.isArray(slide.painPoints) && slide.painPoints.length > 0) ||
+        (Array.isArray(slide.keyOutcomes) && slide.keyOutcomes.length > 0)
+      );
+    case "security_access":
+      return Array.isArray(slide.roles) && slide.roles.length > 0;
+    case "cta":
+      return Boolean(slide.description) || Boolean(slide.contactInfo);
+    default:
+      return false;
+  }
+}
+
+function renderTypedSlideContent(slide: EvdSlideBase): ReactNode {
   switch (slide.type) {
     case "title":
       return slide.subtitle ? (
@@ -216,18 +266,16 @@ export function EvdSlideContent({ slide }: { slide: EvdSlideBase }) {
       );
 
     default:
-      if (slide.body) {
-        return (
-          <div className="mt-3 space-y-1 text-sm leading-relaxed whitespace-pre-wrap">
-            {String(slide.body)
-              .split("\n")
-              .filter(Boolean)
-              .map((line, i) => (
-                <p key={i}>{line}</p>
-              ))}
-          </div>
-        );
-      }
       return null;
   }
+}
+
+export function EvdSlideContent({ slide }: { slide: EvdSlideBase }) {
+  const lines = extractSlideBodyLines(slide);
+  if (lines.length === 0) return null;
+
+  const typed = renderTypedSlideContent(slide);
+  if (typed && hasStructuredSlideData(slide)) return typed;
+
+  return <BulletList items={lines} />;
 }

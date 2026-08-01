@@ -20,7 +20,7 @@ function namedItems(
 }
 
 /** Devuelve líneas con viñetas para el cuerpo del slide. */
-export function extractSlideBodyLines(slide: EvdSlideBase): string[] {
+function extractTypedSlideBodyLines(slide: EvdSlideBase): string[] {
   switch (slide.type) {
     case "title":
       return slide.subtitle ? [String(slide.subtitle)] : [];
@@ -138,9 +138,28 @@ export function extractSlideBodyLines(slide: EvdSlideBase): string[] {
     }
 
     default:
-      if (slide.body) return String(slide.body).split("\n").filter(Boolean);
       return asStringArray(slide.painPoints ?? slide.keyOutcomes);
   }
+}
+
+function linesFromBody(body: unknown): string[] {
+  if (Array.isArray(body)) {
+    return body
+      .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+      .map((line) => line.replace(/^[-•*]\s*/, "").trim());
+  }
+  if (typeof body !== "string" || !body.trim()) return [];
+  return body
+    .split(/\n+/)
+    .map((line) => line.replace(/^[-•*]\s*/, "").trim())
+    .filter(Boolean);
+}
+
+/** Devuelve líneas de cuerpo; usa body como fallback universal. */
+export function extractSlideBodyLines(slide: EvdSlideBase): string[] {
+  const typed = extractTypedSlideBodyLines(slide);
+  if (typed.length > 0) return typed;
+  return linesFromBody(slide.body);
 }
 
 export function stripB64Prefix(b64: string): string {
