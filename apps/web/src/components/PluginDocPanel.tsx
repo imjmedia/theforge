@@ -18,9 +18,10 @@ import {
   pluginArtifactToEditorText,
 } from "../utils/pluginArtifactContent";
 import {
-  getPluginWorkshopPreview,
+  usePluginWorkshopPreview,
   renderPluginWorkshopPreview,
 } from "@/plugin-ui/registry";
+import { reloadPluginWorkshopUi } from "@/plugin-ui/bootstrap";
 import { useWorkshopStore } from "../store/workshopStore";
 import { StandardDocPanel } from "./StandardDocPanel";
 import { Button } from "@/components/ui";
@@ -87,10 +88,8 @@ export function PluginDocPanel({
     () => ({ workshopPreview: artifact?.workshopPreview }),
     [artifact?.workshopPreview],
   );
-  const workshopPreviewEntry = useMemo(
-    () => getPluginWorkshopPreview(artifact?.workshopPreview),
-    [artifact?.workshopPreview],
-  );
+  const workshopPreviewEntry = usePluginWorkshopPreview(artifact?.workshopPreview);
+  const previewUiPending = Boolean(artifact?.workshopPreview && !workshopPreviewEntry);
 
   const project = useWorkshopStore((s) => s.project);
   const storedPayload = useWorkshopStore((s) =>
@@ -112,6 +111,18 @@ export function PluginDocPanel({
   const [generating, setGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<PluginArtifactProgress | null>(null);
   const fetchGenerationRef = useRef(0);
+  const previewActivatedRef = useRef(false);
+
+  useEffect(() => {
+    if (!artifact?.workshopPreview || workshopPreviewEntry) return;
+    void reloadPluginWorkshopUi();
+  }, [artifact?.workshopPreview, workshopPreviewEntry]);
+
+  useEffect(() => {
+    if (!workshopPreviewEntry || previewActivatedRef.current) return;
+    previewActivatedRef.current = true;
+    setViewMode(workshopPreviewEntry.defaultViewMode ?? "preview");
+  }, [workshopPreviewEntry]);
 
   const deliverables = useMemo(
     () => projectDeliverablesForArtifact(project as Record<string, unknown> | null, mddContent),
@@ -387,9 +398,11 @@ export function PluginDocPanel({
         title={header.title}
         description={
           saveError ??
-          (generateBlockedReason
-            ? generateBlockedReason
-            : `Plugin: ${artifact.label}${contentType !== "json" ? ` (${contentType})` : ""}`)
+          (previewUiPending
+            ? "Cargando vista de diapositivas del plugin…"
+            : generateBlockedReason
+              ? generateBlockedReason
+              : `Plugin: ${artifact.label}${contentType !== "json" ? ` (${contentType})` : ""}`)
         }
         content={content}
         onContentChange={(v) => {
