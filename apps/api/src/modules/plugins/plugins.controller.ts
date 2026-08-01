@@ -195,22 +195,32 @@ export class PluginsController {
     const plugin = this.ensurePluginLoaded(pluginId);
     const userId = getRequestUserId();
 
-    let normalized = body ?? {};
+    const stored = await this.pluginUserSettings.getForPlugin(userId, pluginId);
+    const merged = { ...stored, ...(body ?? {}) };
+
+    let normalized = merged;
     if (plugin.validateUserSettings) {
       try {
-        normalized = await plugin.validateUserSettings(normalized);
+        normalized = await plugin.validateUserSettings(merged);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         throw new BadRequestException(msg);
       }
     }
 
+    if ("licenseKey" in normalized) {
+      delete normalized.licenseKey;
+    }
+
     const saved = await this.pluginUserSettings.saveForPlugin(userId, pluginId, normalized);
 
     if (plugin.onUserSettingsSaved) {
-      await plugin.onUserSettingsSaved(saved, { userId });
+      await plugin.onUserSettingsSaved(merged, { userId });
     }
 
+    if (plugin.hydrateUserSettings) {
+      return plugin.hydrateUserSettings(saved);
+    }
     return saved;
   }
 

@@ -567,8 +567,13 @@ export class PluginLoaderService implements OnModuleInit {
       const declared = plugin.getSettingsPanels();
       if (!Array.isArray(declared)) continue;
       for (const panel of declared) {
+        const label =
+          typeof panel.label === "string"
+            ? panel.label.replace(/\s·\sv[\d.]+$/, "") + ` · v${plugin.version}`
+            : panel.label;
         panels.push({
           ...panel,
+          label,
           pluginId: plugin.id,
           mountPoint: panel.mountPoint ?? "settings.plugins",
         });
