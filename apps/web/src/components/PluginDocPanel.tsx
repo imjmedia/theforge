@@ -303,7 +303,7 @@ export function PluginDocPanel({
     if (
       storedPayload != null &&
       !window.confirm(
-        "¿Regenerar todo el contenido? Se reemplazará el deck actual con una nueva generación desde los entregables del proyecto.",
+        "¿Regenerar todas las diapositivas? Se reemplazará el deck actual con una nueva generación desde los entregables del proyecto.",
       )
     ) {
       return;

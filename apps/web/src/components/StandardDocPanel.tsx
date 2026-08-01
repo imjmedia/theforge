@@ -126,9 +126,17 @@ export function StandardDocPanel({
         <DocumentClarificationSection {...clarification} content={content} />
       ) : null}
       {viewMode === "preview" ? (
-        /* Estado 2: preview con contenido */
-        previewSlot ?? (
-          <MddViewer content={content || ""} documentTimestamps={documentTimestamps} />
+        isLoading ? (
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-4 py-8 text-center">
+            <AiDocumentBuildingPlaceholder
+              documentTitle={title}
+              progress={generationProgress ?? { percent: 0, detail: "Iniciando generación…" }}
+            />
+          </div>
+        ) : (
+          previewSlot ?? (
+            <MddViewer content={content || ""} documentTimestamps={documentTimestamps} />
+          )
         )
       ) : (
         <>
