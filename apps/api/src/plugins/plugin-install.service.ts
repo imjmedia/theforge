@@ -346,7 +346,13 @@ export class PluginInstallService {
   async reloadAll(): Promise<PluginReloadResult> {
     await this.pluginLoader.reloadAll();
     const health = this.pluginLoader.getHealthSnapshot();
-    return { ok: true, loaded: health.loaded, pluginIds: health.pluginIds };
+    const loadErrors = this.pluginLoader.getLastLoadErrors();
+    return {
+      ok: true,
+      loaded: health.loaded,
+      pluginIds: health.pluginIds,
+      ...(Object.keys(loadErrors).length > 0 ? { loadErrors } : {}),
+    };
   }
 
   private folderNameForPlugin(pluginId: string): string {

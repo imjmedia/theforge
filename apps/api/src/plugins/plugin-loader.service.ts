@@ -45,6 +45,9 @@ export class PluginLoaderService implements OnModuleInit {
   /** Plugins cargados en modo degradado (init falló; solo ajustes, sin hooks). */
   private readonly degradedPluginIds = new Set<string>();
 
+  /** Errores del último escaneo/reload por pluginId. */
+  private lastLoadErrors = new Map<string, string>();
+
   /** Mapa de plugins cargados: id → instancia */
   private readonly plugins = new Map<string, ITheForgePlugin>();
 
@@ -187,6 +190,7 @@ export class PluginLoaderService implements OnModuleInit {
           this.plugins.set(instance.id, instance);
           this.pluginPaths.set(instance.id, pluginPath);
           this.degradedPluginIds.add(instance.id);
+          this.lastLoadErrors.delete(instance.id);
           this.logger.warn(
             `⚠️ Plugin '${instance.id}' en modo degradado (init falló: ${initMsg}). Ajustes disponibles; corrige configuración y recarga.`,
           );
@@ -199,6 +203,7 @@ export class PluginLoaderService implements OnModuleInit {
       this.plugins.set(instance.id, instance);
       this.pluginPaths.set(instance.id, pluginPath);
       this.degradedPluginIds.delete(instance.id);
+      this.lastLoadErrors.delete(instance.id);
       this.registerHooks(instance);
 
       this.logger.log(
@@ -206,6 +211,8 @@ export class PluginLoaderService implements OnModuleInit {
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      const pluginId = this.readManifestIdFromDir(pluginPath) ?? pluginPath;
+      this.lastLoadErrors.set(pluginId, msg);
       this.logger.error(`❌ Failed to load plugin ${pluginPath}: ${msg}`);
 
       const failOnError = this.configService.get<boolean>(
@@ -505,6 +512,7 @@ export class PluginLoaderService implements OnModuleInit {
 
   /** Re-escanea todos los directorios de plugins. */
   async reloadAll(): Promise<void> {
+    this.lastLoadErrors.clear();
     const ids = [...this.plugins.keys()];
     for (const id of ids) {
       await this.unloadPlugin(id);
@@ -575,6 +583,23 @@ export class PluginLoaderService implements OnModuleInit {
 
   isPluginDegraded(pluginId: string): boolean {
     return this.degradedPluginIds.has(pluginId);
+  }
+
+  getLastLoadErrors(): Record<string, string> {
+    return Object.fromEntries(this.lastLoadErrors);
+  }
+
+  private readManifestIdFromDir(pluginPath: string): string | undefined {
+    const manifestPath = join(pluginPath, THEFORGE_PLUGIN_MANIFEST_FILENAME);
+    if (!existsSync(manifestPath)) return undefined;
+    try {
+      const manifest = parsePluginManifest(
+        JSON.parse(readFileSync(manifestPath, "utf8")) as unknown,
+      );
+      return manifest.id;
+    } catch {
+      return undefined;
+    }
   }
 
   /** Obtiene los artifact types registrados por todos los plugins */

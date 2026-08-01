@@ -118,7 +118,9 @@ export async function uninstallPlugin(pluginId: string): Promise<PluginUninstall
 
 export async function reloadPlugins(): Promise<PluginReloadResult> {
   const res = await apiFetch(`${API_BASE}/plugins/reload`, { method: "POST" });
-  if (!res.ok) throw new Error("Error al recargar plugins");
+  if (!res.ok) {
+    throw new Error(await parseErrorMessageFromResponse(res, "Error al recargar plugins"));
+  }
   return res.json();
 }
 

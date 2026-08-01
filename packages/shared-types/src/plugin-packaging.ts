@@ -126,4 +126,6 @@ export interface PluginReloadResult {
   ok: true;
   loaded: number;
   pluginIds: string[];
+  /** pluginId → mensaje si no cargó en el último reload */
+  loadErrors?: Record<string, string>;
 }

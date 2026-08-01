@@ -149,12 +149,23 @@ export function PluginInstallSection({ onChanged }: PluginInstallSectionProps) {
     setBusy(true);
     setError("");
     try {
-      await reloadPlugins();
+      const result = await reloadPlugins();
       await refresh();
       notifyChanged();
-      flashSuccess("Plugins recargados");
+      if (result.loadErrors && Object.keys(result.loadErrors).length > 0) {
+        const summary = Object.entries(result.loadErrors)
+          .map(([id, msg]) => `${id}: ${msg}`)
+          .join(" · ");
+        setError(`Recarga incompleta — ${summary}`);
+      } else {
+        flashSuccess(
+          result.loaded > 0
+            ? `Plugins recargados (${result.loaded} activo(s))`
+            : "Recarga completada",
+        );
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al recargar");
+      setError(err instanceof Error ? err.message : "Error al recargar plugins");
     } finally {
       setBusy(false);
     }
