@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, Fragment } from "react";
 import {
   CheckCircle2,
   Circle,
@@ -26,6 +26,10 @@ import {
   CardTitle,
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import {
+  PluginInstanceRecoveryForm,
+  pluginNeedsInstanceRecovery,
+} from "@/components/PluginInstanceRecoveryForm";
 
 function isValidPluginFile(file: File): boolean {
   const name = file.name.toLowerCase();
@@ -219,8 +223,8 @@ export function PluginInstallSection({ onChanged }: PluginInstallSectionProps) {
         {status?.installed.length ? (
           <ul className="space-y-2">
             {status.installed.map((p) => (
+              <Fragment key={p.id}>
               <li
-                key={p.id}
                 className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[var(--border)] px-3 py-2 text-sm"
               >
                 <div className="flex min-w-0 items-center gap-2">
@@ -256,6 +260,12 @@ export function PluginInstallSection({ onChanged }: PluginInstallSectionProps) {
                   </Button>
                 ) : null}
               </li>
+              {isManager && pluginNeedsInstanceRecovery(p) ? (
+                <li className="list-none px-1 pb-2">
+                  <PluginInstanceRecoveryForm plugin={p} onSaved={notifyChanged} />
+                </li>
+              ) : null}
+              </Fragment>
             ))}
           </ul>
         ) : (

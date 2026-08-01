@@ -13,6 +13,8 @@ Expone el contrato runtime entre el core y plugins cargados dinámicamente.
 | POST | `/plugins/provision` | Aprovisionamiento compuesto `{ pluginId, downloadUrl?, licenseKey?, licensePortalUrl? }` — **admin** |
 | DELETE | `/plugins/installed/:pluginId` | Desinstalar — **admin** |
 | POST | `/plugins/reload` | Re-escaneo de directorios — **admin** |
+| GET | `/plugins/installed/:pluginId/instance-settings` | Ajustes de instancia en disco (sin cargar plugin) — **admin** |
+| PUT | `/plugins/installed/:pluginId/instance-settings` | Parche JSON instancia + recarga plugin — **admin** |
 | GET | `/plugins/settings-panels` | Paneles de Ajustes declarados por plugins |
 | GET | `/plugins/user-settings` | Mapa de ajustes del usuario autenticado |
 | GET | `/plugins/:pluginId/user-settings` | Ajustes de un plugin |

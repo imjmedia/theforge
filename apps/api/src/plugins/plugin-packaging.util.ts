@@ -71,6 +71,10 @@ export function parsePluginManifest(raw: unknown): TheForgePluginManifest {
         ? (m.envSchema as TheForgePluginManifest["envSchema"])
         : undefined,
     signature: typeof m.signature === "string" ? m.signature : undefined,
+    instanceSettingsPath:
+      typeof m.instanceSettingsPath === "string"
+        ? m.instanceSettingsPath
+        : undefined,
   };
 }
 

@@ -122,6 +122,50 @@ export async function reloadPlugins(): Promise<PluginReloadResult> {
   return res.json();
 }
 
+export type PluginInstanceSettingsResponse = {
+  pluginId: string;
+  relativePath: string;
+  settings: Record<string, unknown>;
+};
+
+export type PluginInstanceSettingsPatchResult = {
+  ok: boolean;
+  pluginId: string;
+  settings: Record<string, unknown>;
+  reloaded: boolean;
+  loaded: boolean;
+  degraded: boolean;
+};
+
+export async function fetchPluginInstanceSettings(
+  pluginId: string,
+): Promise<PluginInstanceSettingsResponse | null> {
+  const res = await apiFetch(
+    `${API_BASE}/plugins/installed/${encodeURIComponent(pluginId)}/instance-settings`,
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error("No se pudieron cargar los ajustes de instancia");
+  return res.json();
+}
+
+export async function patchPluginInstanceSettings(
+  pluginId: string,
+  patch: Record<string, unknown>,
+): Promise<PluginInstanceSettingsPatchResult> {
+  const res = await apiFetch(
+    `${API_BASE}/plugins/installed/${encodeURIComponent(pluginId)}/instance-settings`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(await parseErrorMessageFromResponse(res, "Error al guardar ajustes de instancia"));
+  }
+  return res.json();
+}
+
 export async function fetchPluginUserSettings(
   pluginId: string,
 ): Promise<Record<string, unknown>> {

@@ -21,6 +21,7 @@ import { PluginLoaderService } from "../../plugins/plugin-loader.service.js";
 import { PluginArtifactService } from "../../plugins/plugin-artifact.service.js";
 import { PluginUserSettingsService } from "../../plugins/plugin-user-settings.service.js";
 import { PluginInstallService } from "../../plugins/plugin-install.service.js";
+import { PluginInstanceSettingsService } from "../../plugins/plugin-instance-settings.service.js";
 import { DeliverablesQueueService } from "../projects/deliverables-queue.service.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
 import { getRequestUserId } from "../../common/request-user.store.js";
@@ -38,6 +39,7 @@ export class PluginsController {
     private readonly pluginArtifact: PluginArtifactService,
     private readonly pluginUserSettings: PluginUserSettingsService,
     private readonly pluginInstall: PluginInstallService,
+    private readonly pluginInstanceSettings: PluginInstanceSettingsService,
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => DeliverablesQueueService))
     private readonly deliverablesQueue: DeliverablesQueueService,
@@ -110,6 +112,43 @@ export class PluginsController {
   async reloadPlugins() {
     requireAdmin();
     return this.pluginInstall.reloadAll();
+  }
+
+  /** Ajustes de instancia en disco — funciona aunque el plugin no haya cargado. */
+  @Get("installed/:pluginId/instance-settings")
+  getInstanceSettings(@Param("pluginId") pluginId: string) {
+    requireAdmin();
+    const id = decodeURIComponent(pluginId);
+    const relativePath = this.pluginInstanceSettings.resolveRelativePath(id);
+    if (!relativePath) {
+      throw new NotFoundException(
+        `Plugin '${id}' no expone instanceSettingsPath en el manifest`,
+      );
+    }
+    return {
+      pluginId: id,
+      relativePath,
+      settings: this.pluginInstanceSettings.readPublic(id),
+    };
+  }
+
+  @Put("installed/:pluginId/instance-settings")
+  async patchInstanceSettings(
+    @Param("pluginId") pluginId: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    requireAdmin();
+    const id = decodeURIComponent(pluginId);
+    const settings = this.pluginInstanceSettings.patch(id, body ?? {});
+    const reloaded = await this.pluginLoader.reloadPlugin(id);
+    return {
+      ok: true,
+      pluginId: id,
+      settings,
+      reloaded,
+      loaded: this.pluginLoader.getPluginIds().includes(id),
+      degraded: this.pluginLoader.isPluginDegraded(id),
+    };
   }
 
   @Get("user-settings")

@@ -36,6 +36,11 @@ export interface TheForgePluginManifest {
   envSchema?: { optional?: string[]; required?: string[] };
   /** HMAC-SHA256 hex del JSON canonical sin este campo (opcional). */
   signature?: string;
+  /**
+   * Ruta relativa al cwd del servidor para ajustes de instancia (licencia, etc.).
+   * Permite editar vía API aunque el plugin no haya cargado.
+   */
+  instanceSettingsPath?: string;
 }
 
 /** Plugin detectado en disco (instalado pero no necesariamente cargado). */
