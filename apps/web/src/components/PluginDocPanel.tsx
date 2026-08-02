@@ -3,6 +3,9 @@ import { Code2, FileText, LayoutGrid } from "lucide-react";
 import type { ArtifactTypeDefinition, PluginArtifactProgress } from "@theforge/shared-types";
 import { getPluginDocPanelHeader, parsePluginPanelId } from "../utils/workshopDocNav";
 import {
+  isPluginDataPresenceStub,
+} from "../utils/pluginDataPresence.util";
+import {
   generatePluginArtifact,
   getPluginData,
   pluginArtifactRequirementsMessage,
@@ -219,7 +222,13 @@ export function PluginDocPanel({
   const sourceApplyLabel = pluginArtifactSourceApplyLabel(editorContext);
 
   const previewPayload = useMemo(() => {
-    if (storedPayload !== undefined && storedPayload !== null) return storedPayload;
+    if (
+      storedPayload !== undefined &&
+      storedPayload !== null &&
+      !isPluginDataPresenceStub(storedPayload)
+    ) {
+      return storedPayload;
+    }
     const fromEditor = pluginArtifactFromEditorText(content, contentType);
     if (workshopPreviewEntry?.parsePayload) {
       return workshopPreviewEntry.parsePayload(fromEditor) ? fromEditor : fromEditor;
@@ -241,7 +250,7 @@ export function PluginDocPanel({
 
   useEffect(() => {
     if (!pluginId) return;
-    if (storedPayload !== undefined) {
+    if (storedPayload !== undefined && !isPluginDataPresenceStub(storedPayload)) {
       syncEditorFromPayload(storedPayload);
       setLoading(false);
       return;
@@ -282,7 +291,7 @@ export function PluginDocPanel({
       return;
     }
     const parsedData = pluginArtifactMergeSourceEdit(
-      storedPayload ?? null,
+      isPluginDataPresenceStub(storedPayload) ? null : (storedPayload ?? null),
       edited,
       editorContext,
     );
@@ -361,6 +370,7 @@ export function PluginDocPanel({
     if (!parsed || !pluginId || !artifact || generateBlockedReason || generating) return;
     if (
       storedPayload != null &&
+      !isPluginDataPresenceStub(storedPayload) &&
       !window.confirm(
         "¿Regenerar todas las diapositivas? Se reemplazará el deck actual con una nueva generación desde los entregables del proyecto.",
       )

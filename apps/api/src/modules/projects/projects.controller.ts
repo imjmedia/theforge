@@ -281,7 +281,7 @@ export class ProjectsController {
 
   @Get(":id")
   findOne(@Param("id") id: string) {
-    return this.projects.findOne(id);
+    return this.projects.findOne(id, { forHttpClient: true });
   }
 
   @Get(":id/conformance")
