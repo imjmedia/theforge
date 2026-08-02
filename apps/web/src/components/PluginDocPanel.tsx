@@ -36,15 +36,30 @@ interface PluginDocPanelProps {
 
 function projectDeliverablesForArtifact(
   project: Record<string, unknown> | null,
-  mddContent: string,
+  overrides: {
+    mddContent: string;
+    dbgaContent?: string | null;
+    phase0SummaryContent?: string | null;
+    brdContent?: string | null;
+  },
 ): Record<string, string | null | undefined> {
-  if (!project) return { mddContent };
+  if (!project) {
+    return {
+      mddContent: overrides.mddContent,
+      dbgaContent: overrides.dbgaContent ?? null,
+      phase0SummaryContent: overrides.phase0SummaryContent ?? null,
+      brdContent: overrides.brdContent ?? null,
+    };
+  }
   return {
-    mddContent,
-    dbgaContent: typeof project.dbgaContent === "string" ? project.dbgaContent : null,
+    mddContent: overrides.mddContent,
+    dbgaContent:
+      overrides.dbgaContent ??
+      (typeof project.dbgaContent === "string" ? project.dbgaContent : null),
     specContent: typeof project.specContent === "string" ? project.specContent : null,
     phase0SummaryContent:
-      typeof project.phase0SummaryContent === "string" ? project.phase0SummaryContent : null,
+      overrides.phase0SummaryContent ??
+      (typeof project.phase0SummaryContent === "string" ? project.phase0SummaryContent : null),
     architectureContent:
       typeof project.architectureContent === "string" ? project.architectureContent : null,
     useCasesContent: typeof project.useCasesContent === "string" ? project.useCasesContent : null,
@@ -63,7 +78,9 @@ function projectDeliverablesForArtifact(
     aemContent: typeof project.aemContent === "string" ? project.aemContent : null,
     uiScreensContent:
       typeof project.uiScreensContent === "string" ? project.uiScreensContent : null,
-    brdContent: typeof project.brdContent === "string" ? project.brdContent : null,
+    brdContent:
+      overrides.brdContent ??
+      (typeof project.brdContent === "string" ? project.brdContent : null),
   };
 }
 
@@ -100,6 +117,10 @@ export function PluginDocPanel({
   );
   const patchPluginData = useWorkshopStore((s) => s.patchPluginData);
   const mddContent = useWorkshopStore((s) => s.mddContent);
+  const dbgaContent = useWorkshopStore((s) => s.dbgaContent);
+  const phase0SummaryContent = useWorkshopStore((s) => s.phase0SummaryContent);
+  const activeStageId = useWorkshopStore((s) => s.activeStageId);
+  const workshopStages = useWorkshopStore((s) => s.workshopStages);
   const generationStatus = useWorkshopStore((s) => s.generationStatus);
   const fetchGenerationStatus = useWorkshopStore((s) => s.fetchGenerationStatus);
   const setError = useWorkshopStore((s) => s.setError);
@@ -134,9 +155,26 @@ export function PluginDocPanel({
     setViewMode(workshopPreviewEntry.defaultViewMode ?? "preview");
   }, [workshopPreviewEntry]);
 
+  const activeWorkshopStage = useMemo(() => {
+    const stages = workshopStages.length > 0 ? workshopStages : (project?.stages ?? []);
+    return stages.find((s) => s.id === activeStageId);
+  }, [workshopStages, project?.stages, activeStageId]);
+
   const deliverables = useMemo(
-    () => projectDeliverablesForArtifact(project as Record<string, unknown> | null, mddContent),
-    [project, mddContent],
+    () =>
+      projectDeliverablesForArtifact(project as Record<string, unknown> | null, {
+        mddContent,
+        dbgaContent: dbgaContent ?? project?.dbgaContent ?? null,
+        phase0SummaryContent: phase0SummaryContent ?? project?.phase0SummaryContent ?? null,
+        brdContent: activeWorkshopStage?.brdContent ?? project?.brdContent ?? null,
+      }),
+    [
+      project,
+      mddContent,
+      dbgaContent,
+      phase0SummaryContent,
+      activeWorkshopStage?.brdContent,
+    ],
   );
 
   const requirementsBlock = useMemo(

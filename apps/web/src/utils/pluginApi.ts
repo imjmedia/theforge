@@ -249,6 +249,16 @@ export async function setPluginData(
   return parseJsonResponseBody(res);
 }
 
+/** Etiquetas legibles para campos de entregables en mensajes de requisitos. */
+const DELIVERABLE_FIELD_LABELS: Record<string, string> = {
+  phase0SummaryContent: "Benchmark",
+  dbgaContent: "Paso 0 / DBGA",
+  brdContent: "BRD",
+  specContent: "Spec",
+  architectureContent: "Arquitectura",
+  mddContent: "MDD",
+};
+
 /** Mensaje si faltan entregables core requeridos por el artifact (client-side guard). */
 export function pluginArtifactRequirementsMessage(
   requires: string[] | undefined,
@@ -259,7 +269,8 @@ export function pluginArtifactRequirementsMessage(
     (field) => (deliverables[field] ?? "").trim().length < MIN_GENERATION_CONTENT_LEN,
   );
   if (missing.length === 0) return null;
-  return `Faltan entregables requeridos: ${missing.join(", ")}`;
+  const labels = missing.map((field) => DELIVERABLE_FIELD_LABELS[field] ?? field);
+  return `Faltan entregables requeridos: ${labels.join(", ")}`;
 }
 
 /** Estado público de un job de entregables (polling). */
