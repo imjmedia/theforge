@@ -166,7 +166,7 @@ export function PluginDocPanel({
         mddContent,
         dbgaContent: dbgaContent ?? project?.dbgaContent ?? null,
         phase0SummaryContent: phase0SummaryContent ?? project?.phase0SummaryContent ?? null,
-        brdContent: activeWorkshopStage?.brdContent ?? project?.brdContent ?? null,
+        brdContent: activeWorkshopStage?.brdContent ?? null,
       }),
     [
       project,
