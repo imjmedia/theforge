@@ -41,7 +41,11 @@ export class ProjectStageService {
   ) {}
 
   /** Una sola etapa ACTIVE por proyecto: demueve las demás ACTIVE a SUPERSEDED. */
-  async activateStageExclusive(projectId: string, stageId: string): Promise<void> {
+  async activateStageExclusive(
+    projectId: string,
+    stageId: string,
+    options?: { seedExcludeDeliverableKeys?: readonly ("tasksContent" | "userStoriesContent")[] },
+  ): Promise<void> {
     const uid = getRequestUserId();
     const stage = await this.prisma.stage.findFirst({
       where: {
@@ -83,6 +87,7 @@ export class ProjectStageService {
     const previousStageId = previousActive.sort((a, b) => a.ordinal - b.ordinal)[0]?.id;
     await seedActiveStageDeliverables(this.prisma, stageId, projectId, {
       previousStageId: previousStageId ?? null,
+      excludeDeliverableKeys: options?.seedExcludeDeliverableKeys,
     }).catch((err) =>
       this.logger.warn(
         `[Stage] seed deliverables on activate: ${err instanceof Error ? err.message : String(err)}`,
@@ -142,7 +147,9 @@ export class ProjectStageService {
     });
 
     if (dto.activate !== false) {
-      await this.activateStageExclusive(projectId, newStage.id);
+      await this.activateStageExclusive(projectId, newStage.id, {
+        seedExcludeDeliverableKeys: dto.seedExcludeDeliverableKeys,
+      });
     }
 
     const withEst = await this.prisma.stage.findUnique({

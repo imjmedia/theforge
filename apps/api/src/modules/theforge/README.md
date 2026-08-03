@@ -71,6 +71,6 @@ Al programar el auto-wire, **`scheduleAriadneBrownfieldWire`** también hace ups
 
 - **`POST /theforge/resolve-forge-project-for-ariadne`** — input: al menos uno de `ariadneProjectId`, `ariadneRepositoryId`, `projectKey`, `repoSlug`, `gitRemoteUrl`. Resuelve proyecto Workshop con scoring en `resolve-forge-project-for-ariadne.util.ts`. 404 si no hay match; 409 con `candidates[]` si hay empate.
 - **MCP:** `resolve_forge_project_for_ariadne` (delega en el endpoint anterior; devuelve JSON estructurado en 404/409 para modal en Ariadne).
-- **`POST /theforge/create-stage-from-ariadne-change-pack`** — MCP `create_stage_from_ariadne_change_pack`. Crea etapa LEGACY o importa pack v1 en `stageId` existente (≥2). Contrato en `@theforge/shared-types/ariadne-change-pack`.
-- **Flujo Ariadne recomendado:** (1) `resolve_forge_project_for_ariadne` → (2) `create_stage_from_ariadne_change_pack` → (3) `legacy_generate_mdd` / `legacy_generate_deliverables` según `recommendedNextTools`.
+- **`POST /theforge/create-stage-from-ariadne-change-pack`** — MCP `create_stage_from_ariadne_change_pack`. Crea etapa LEGACY o importa pack v1 en `stageId` existente (≥2). Contrato en `@theforge/shared-types/ariadne-change-pack`. Con `handoffPlanType: migration_tasks` o `cursorTasksMarkdown` importa tasks del handoff y **omite LLM tasks** en cascada legacy.
+- **Flujo Ariadne recomendado:** (1) `resolve_forge_project_for_ariadne` → (2) `create_stage_from_ariadne_change_pack` → (3) `legacy_generate_mdd` → (4) `legacy_generate_deliverables` (sin `tasks` si migration) → (5) `get_next_implementation_task`.
 - **Secuencia alternativa:** `create_project_stage` + `POST …/integration/stages/:stageId/import-handoff` (handoff NEW) + tools legacy scoped con `stageId`.

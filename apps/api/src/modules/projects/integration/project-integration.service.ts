@@ -21,6 +21,9 @@ import {
   reconcileHandoffStageBodySchema,
   createStageFromAriadneChangePackInputSchema,
   type CreateStageFromAriadneChangePackOutput,
+  INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS,
+  isAriadneMigrationTasksPack,
+  resolveIntegrationHandoffTasksMarkdown,
 } from "@theforge/shared-types";
 import { StageStatus } from "@theforge/database";
 import { PrismaService } from "../../../prisma/prisma.service.js";
@@ -32,6 +35,7 @@ import { ProjectsService } from "../projects.service.js";
 import { prependDocumentTimestamps } from "../../engine/document-date-header.util.js";
 import { isLegacyHandoffAutoLegacyStartEnabled } from "./legacy-handoff-auto-start.util.js";
 import { persistStageDeliverableSnapshotFromProject, ensureStageDeliverableSnapshotIfMissing } from "../stage-deliverable-snapshot.util.js";
+import { persistStageAndProjectDeliverables } from "../stage-deliverable-persist.util.js";
 import {
   buildExternalLegacyContextBlock,
   buildHandoffImportDescription,
@@ -435,9 +439,13 @@ export class ProjectIntegrationService {
       importMode = "existing";
     } else {
       const stageName = dto.stageName?.trim() || defaultStageNameFromAriadnePack(pack);
+      const migrationTasks = isAriadneMigrationTasksPack(pack);
       const { stage } = await this.projectsService.createStage(project.id, {
         name: stageName,
         activate: dto.activate,
+        seedExcludeDeliverableKeys: migrationTasks
+          ? [...INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS]
+          : undefined,
       });
       stageRow = {
         id: stage.id,
@@ -464,6 +472,7 @@ export class ProjectIntegrationService {
     const handoffItems = pack.handoffItems ?? [];
     const linkedNewProjectId = pack.linkedNewProjectId?.trim() || project.linkedNewProjectId;
     let handoffDesc = pack.changeDescription.trim();
+    const migrationTasksMode = isAriadneMigrationTasksPack(pack);
 
     if (handoffItems.length) {
       const snapshot = {
@@ -510,12 +519,22 @@ export class ProjectIntegrationService {
           stageId,
         );
       }
-      await this.finalizeHandoffStageSetup(project.id, stageId, linkedNewProjectId ?? project.id, handoffItems);
+      await this.finalizeHandoffStageSetup(project.id, stageId, linkedNewProjectId ?? project.id, handoffItems, {
+        cursorTasksMarkdown: pack.cursorTasksMarkdown,
+        migrationTasksMode,
+      });
     } else {
       await this.prisma.stage.update({
         where: { id: stageId },
         data: { legacyChangeState: nextLegacyState as object },
       });
+      if (migrationTasksMode && pack.cursorTasksMarkdown?.trim()) {
+        await this.applyIntegrationHandoffTasks(project.id, stageId, {
+          cursorTasksMarkdown: pack.cursorTasksMarkdown,
+          handoffItems: [],
+          stageName: stageRow.name ?? undefined,
+        });
+      }
     }
 
     await this.changeLog.log(
@@ -585,6 +604,7 @@ export class ProjectIntegrationService {
       recommendedNextTools: buildRecommendedNextToolsAfterAriadnePack({
         questionsCount,
         hasHandoffItems: handoffItems.length > 0,
+        migrationTasksMode,
       }),
     };
   }
@@ -845,6 +865,7 @@ export class ProjectIntegrationService {
     const { stage } = await this.projectsService.createStage(projectId, {
       name: stageName,
       activate: dto.activate,
+      seedExcludeDeliverableKeys: [...INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS],
     });
 
     await this.applyHandoffPayloadToStage(stage.id, newProjectId, snapshot, handoffDesc);
@@ -889,30 +910,47 @@ export class ProjectIntegrationService {
     stageId: string,
     _newProjectId: string,
     activeItems: IntegrationHandoffItem[],
+    options?: {
+      cursorTasksMarkdown?: string | null;
+      migrationTasksMode?: boolean;
+    },
   ): Promise<void> {
-    const [stage, projectRow] = await Promise.all([
+    const [stage, _projectRow] = await Promise.all([
       this.prisma.stage.findUnique({ where: { id: stageId } }),
       this.prisma.project.findUnique({ where: { id: legacyProjectId } }),
     ]);
-    if (!stage || !projectRow) return;
+    if (!stage) return;
 
-    await persistStageDeliverableSnapshotFromProject(this.prisma, stageId, projectRow, {
+    if (options?.migrationTasksMode !== false) {
+      await this.clearIntegrationGhostDeliverables(legacyProjectId, stageId);
+      await this.applyIntegrationHandoffTasks(legacyProjectId, stageId, {
+        cursorTasksMarkdown: options?.cursorTasksMarkdown,
+        handoffItems: activeItems,
+        stageName: stage.name ?? undefined,
+      });
+    }
+
+    const refreshedStage = await this.prisma.stage.findUnique({ where: { id: stageId } });
+    const refreshedProject = await this.prisma.project.findUnique({ where: { id: legacyProjectId } });
+    if (!refreshedStage || !refreshedProject) return;
+
+    await persistStageDeliverableSnapshotFromProject(this.prisma, stageId, refreshedProject, {
       source: "manual",
     }).catch(() => {});
 
     let priorMdd: string | null = null;
-    if (stage.ordinal > 1) {
+    if (refreshedStage.ordinal > 1) {
       const prior = await this.prisma.stage.findFirst({
-        where: { projectId: legacyProjectId, ordinal: stage.ordinal - 1 },
+        where: { projectId: legacyProjectId, ordinal: refreshedStage.ordinal - 1 },
         select: { mddContent: true },
       });
       priorMdd = prior?.mddContent ?? null;
     }
 
-    const legacyState = stage.legacyChangeState as { description?: string } | null;
+    const legacyState = refreshedStage.legacyChangeState as { description?: string } | null;
     const changeSpec = buildStageChangeSpecContent({
-      stageOrdinal: stage.ordinal,
-      stageName: stage.name,
+      stageOrdinal: refreshedStage.ordinal,
+      stageName: refreshedStage.name,
       priorMddExcerpt: priorMdd,
       legacyChangeDescription:
         legacyState?.description ??
@@ -925,6 +963,65 @@ export class ProjectIntegrationService {
         data: { changeSpecContent: prependDocumentTimestamps(changeSpec) },
       });
     }
+  }
+
+  /** Removes baseline tasks/US copied before handoff-aware seeding existed. */
+  private async clearIntegrationGhostDeliverables(
+    projectId: string,
+    stageId: string,
+  ): Promise<void> {
+    await persistStageAndProjectDeliverables(this.prisma, stageId, projectId, {
+      tasksContent: null,
+      userStoriesContent: null,
+    });
+  }
+
+  private async applyIntegrationHandoffTasks(
+    projectId: string,
+    stageId: string,
+    input: {
+      cursorTasksMarkdown?: string | null;
+      handoffItems: IntegrationHandoffItem[];
+      stageName?: string;
+    },
+  ): Promise<{ applied: boolean; source?: string }> {
+    const resolved = resolveIntegrationHandoffTasksMarkdown({
+      cursorTasksMarkdown: input.cursorTasksMarkdown,
+      handoffItems: input.handoffItems,
+      title: input.stageName,
+    });
+    if (!resolved) return { applied: false };
+
+    await persistStageAndProjectDeliverables(this.prisma, stageId, projectId, {
+      tasksContent: resolved.markdown,
+    });
+
+    const stageRow = await this.prisma.stage.findUnique({
+      where: { id: stageId },
+      select: { legacyChangeState: true },
+    });
+    const existing =
+      stageRow?.legacyChangeState != null && typeof stageRow.legacyChangeState === "object"
+        ? (stageRow.legacyChangeState as Record<string, unknown>)
+        : {};
+
+    await this.prisma.stage.update({
+      where: { id: stageId },
+      data: {
+        legacyChangeState: {
+          ...existing,
+          integrationHandoffTasks: {
+            source: resolved.source,
+            importedAt: new Date().toISOString(),
+          },
+        },
+      },
+    });
+
+    this.logger.log(
+      `[Integration] handoff tasks imported (stage=${stageId.slice(0, 8)} source=${resolved.source})`,
+    );
+    return { applied: true, source: resolved.source };
   }
 
   private async applyHandoffPayloadToStage(

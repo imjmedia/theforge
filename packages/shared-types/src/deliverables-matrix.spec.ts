@@ -17,6 +17,16 @@ describe("planLegacyDeliverablesToGenerate", () => {
     assert.match(planned.join(","), /blueprint/);
     assert.match(planned.join(","), /spec/);
   });
+
+  it("omite tasks cuando skipKinds incluye tasks", () => {
+    const planned = planLegacyDeliverablesToGenerate({
+      complexity: "LOW",
+      hasMddContent: true,
+      skipKinds: ["tasks"],
+    });
+    assert.doesNotMatch(planned.join(","), /tasks/);
+    assert.match(planned.join(","), /user_stories/);
+  });
 });
 
 describe("DELIVERABLES_BY_COMPLEXITY agent_governance ordering", () => {

@@ -11,6 +11,7 @@ import {
   DELIVERABLES_BY_COMPLEXITY,
   DELIVERABLE_STEP_LABELS,
   planLegacyDeliverablesToGenerate,
+  shouldSkipLegacyTasksGeneration,
   type DeliverableKind,
 } from "@theforge/shared-types";
 import { PrismaService } from "../../prisma/prisma.service.js";
@@ -185,6 +186,9 @@ export class LegacyDeliverablesOrchestratorService {
 
     // enforceLegacyBrdTobeGate eliminado — To-Be y As-Is removidos
     const gateState = this.stageContext.readLegacyChangeState(gateStage);
+    const skipTasksFromHandoff = shouldSkipLegacyTasksGeneration({
+      legacyChangeState: gateStage?.legacyChangeState,
+    });
     const codebaseDoc = String(gateState.codebaseDoc ?? "").trim();
     const mddContent = String(project.mddContent ?? "").trim();
     const legacyBaselineStage = resolveLegacyBaselineStageFlag(gateStage, mddContent);
@@ -648,6 +652,15 @@ export class LegacyDeliverablesOrchestratorService {
           return;
         }
         case "tasks": {
+          if (skipTasksFromHandoff) {
+            pushStep({
+              kind: "tasks",
+              durationMs: 0,
+              ok: true,
+              detail: "skipped_handoff_ssot",
+            });
+            return;
+          }
           const bpTasks = p.blueprintContent?.trim();
           const smTk = await trySectionMergeDeliverable(
             this.ai,
@@ -744,6 +757,7 @@ export class LegacyDeliverablesOrchestratorService {
     const deliverablesPlanned = planLegacyDeliverablesToGenerate({
       complexity,
       hasMddContent: !!mddContent,
+      skipKinds: skipTasksFromHandoff ? (["tasks"] as const) : undefined,
     });
     report.deliverablesOrder = [...deliverablesPlanned];
 

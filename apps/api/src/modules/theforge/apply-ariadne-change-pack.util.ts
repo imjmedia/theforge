@@ -1,5 +1,6 @@
 import type { AriadneChangePackV1, CreateStageFromAriadneChangePackOutput } from "@theforge/shared-types";
 import {
+  isAriadneMigrationTasksPack,
   normalizeAriadneHandoffItemsRaw,
   type AriadneHandoffIdRemap,
 } from "@theforge/shared-types";
@@ -48,6 +49,8 @@ export function buildLegacyChangeStateFromAriadnePack(
       ariadneChangeId: pack.ariadneChangeId ?? null,
       ariadneRepositoryId: pack.ariadneRepositoryId ?? null,
       importedAt: new Date().toISOString(),
+      handoffPlanType: pack.handoffPlanType ?? null,
+      tasksImportedFromHandoff: isAriadneMigrationTasksPack(pack),
     },
   };
 }
@@ -75,6 +78,7 @@ export function shouldRunLegacyStartForAriadnePack(
 export function buildRecommendedNextToolsAfterAriadnePack(input: {
   questionsCount: number;
   hasHandoffItems: boolean;
+  migrationTasksMode?: boolean;
 }): CreateStageFromAriadneChangePackOutput["recommendedNextTools"] {
   const steps: CreateStageFromAriadneChangePackOutput["recommendedNextTools"] = [];
   if (input.questionsCount > 0) {
@@ -93,9 +97,21 @@ export function buildRecommendedNextToolsAfterAriadnePack(input: {
       reason: "Opcional: POST …/integration/stages/:stageId/sync-handoff-spec si hay ítems NEW-LEG.",
     });
   }
-  steps.push({
-    tool: "legacy_generate_deliverables",
-    reason: "Tras MDD en VERDE, cascada legacy de entregables para la etapa activa.",
-  });
+  if (input.migrationTasksMode) {
+    steps.push({
+      tool: "legacy_generate_deliverables",
+      reason: "Tras MDD en VERDE, cascada legacy excepto tasks (ya importadas del handoff).",
+      skipDeliverableKinds: ["tasks"],
+    });
+    steps.push({
+      tool: "get_next_implementation_task",
+      reason: "Tasks del handoff listas — iniciar implementación Cursor.",
+    });
+  } else {
+    steps.push({
+      tool: "legacy_generate_deliverables",
+      reason: "Tras MDD en VERDE, cascada legacy de entregables para la etapa activa.",
+    });
+  }
   return steps;
 }

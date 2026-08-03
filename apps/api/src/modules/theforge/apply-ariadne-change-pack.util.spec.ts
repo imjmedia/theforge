@@ -83,4 +83,15 @@ describe("buildRecommendedNextToolsAfterAriadnePack", () => {
     assert.ok(tools.some((t) => t.tool === "legacy_answer"));
     assert.ok(tools.some((t) => t.tool === "legacy_generate_mdd"));
   });
+
+  it("suggests get_next_implementation_task when migrationTasksMode", () => {
+    const tools = buildRecommendedNextToolsAfterAriadnePack({
+      questionsCount: 0,
+      hasHandoffItems: true,
+      migrationTasksMode: true,
+    });
+    const deliverables = tools.find((t) => t.tool === "legacy_generate_deliverables");
+    assert.deepEqual(deliverables?.skipDeliverableKinds, ["tasks"]);
+    assert.ok(tools.some((t) => t.tool === "get_next_implementation_task"));
+  });
 });
