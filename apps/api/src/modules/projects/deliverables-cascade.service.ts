@@ -261,6 +261,9 @@ export class DeliverablesCascadeService {
       const progressKey = step === "ui_screens_sync" ? "ui_screens_sync" : step;
       completedSteps.push(progressKey);
       completedCount++;
+      this.logger.log(
+        `[Cascade] Paso ${progressKey} completado (${completedCount}/${flatSteps.length})`,
+      );
       return emitProgress({
         step: progressKey,
         completedSteps: [...completedSteps],

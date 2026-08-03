@@ -1024,6 +1024,9 @@ export class ProjectDeliverableGeneratorsService {
   }
 
   const updated = await this.projects.update(projectId, { blueprintContent });
+  this.logger.log(
+    `[Blueprint] Blueprint completado (${blueprintContent.length} chars, hardGaps=${hardGaps.length})`,
+  );
   this.notifyPluginAfterDocumentPersist(
     "blueprint",
     projectId,
@@ -1108,15 +1111,19 @@ export class ProjectDeliverableGeneratorsService {
     throw new BadRequestException("No se pudo generar Contratos API. Intenta de nuevo.");
   }
 
-  let qualityRetried = false;
+  // Reparación determinista antes del quality gate (extras §4 → sin retry LLM de ~7 min).
+  const MAX_API_QUALITY_RETRIES = 1;
+  let qualityRetries = 0;
+  apiContent = repairApiProgrammaticGaps(mddContent, apiContent);
   let apiCheck = runApiConformanceCheck(mddContent, apiContent);
-  if (!apiCheck.ok && !qualityRetried) {
+
+  while (!apiCheck.ok && qualityRetries < MAX_API_QUALITY_RETRIES) {
     this.throwIfAborted(signal);
-    qualityRetried = true;
+    qualityRetries += 1;
     const internalFeedback = buildApiRetryFeedback(apiCheck);
     const combinedFeedback = [gapsFeedback?.trim(), internalFeedback].filter(Boolean).join("\n\n");
     this.logger.warn(
-      `[API] Conformidad insuficiente (${apiCheck.missingInApi.length} faltantes, ${apiCheck.extraInApi.length} extra) — reintentando`,
+      `[API] Conformidad insuficiente (${apiCheck.missingInApi.length} faltantes, ${apiCheck.extraInApi.length} extra) — reintento ${qualityRetries}/${MAX_API_QUALITY_RETRIES}`,
     );
     apiContent = cleanDocumentContent(
       await this.ai.generateApiContracts(
@@ -1127,7 +1134,14 @@ export class ProjectDeliverableGeneratorsService {
         legacyOpts,
       ),
     );
+    apiContent = repairApiProgrammaticGaps(mddContent, apiContent);
     apiCheck = runApiConformanceCheck(mddContent, apiContent);
+  }
+
+  if (!apiCheck.ok) {
+    this.logger.warn(
+      `[API] Persistiendo con ${apiCheck.missingInApi.length + apiCheck.extraInApi.length} gap(s) de conformidad tras ${qualityRetries} reintento(s)`,
+    );
   }
 
   apiContent = repairApiProgrammaticGaps(mddContent, apiContent);
@@ -1156,6 +1170,9 @@ export class ProjectDeliverableGeneratorsService {
   }
 
   const updated = await this.projects.update(projectId, { apiContractsContent: apiContent });
+  this.logger.log(
+    `[API] Contratos API completados (${apiContent.length} chars, conformidad=${postCheck.ok})`,
+  );
   this.notifyPluginAfterDocumentPersist(
     "api-contracts",
     projectId,
@@ -1176,16 +1193,28 @@ export class ProjectDeliverableGeneratorsService {
   let content = await this.ai.generateLogicFlows(mdd, gapsFeedback, legacyOpts);
   let cleaned = cleanDocumentContent(content);
 
-  let qualityRetried = false;
+  const MAX_LOGIC_FLOWS_QUALITY_RETRIES = 1;
+  let qualityRetries = 0;
+  cleaned = repairLogicFlowsProgrammaticGaps(mdd, cleaned);
   let lfCheck = this.conformance.checkLogicFlows(mdd, cleaned);
-  if (!lfCheck.ok && !qualityRetried) {
+
+  while (!lfCheck.ok && qualityRetries < MAX_LOGIC_FLOWS_QUALITY_RETRIES) {
     this.throwIfAborted(signal);
-    qualityRetried = true;
+    qualityRetries += 1;
     const internalFeedback = lfCheck.gaps.join("; ");
     const combinedFeedback = [gapsFeedback?.trim(), internalFeedback].filter(Boolean).join("\n\n");
-    this.logger.warn(`[Flujos] Conformidad insuficiente — reintentando: ${internalFeedback.slice(0, 200)}`);
+    this.logger.warn(
+      `[Flujos] Conformidad insuficiente — reintento ${qualityRetries}/${MAX_LOGIC_FLOWS_QUALITY_RETRIES}: ${internalFeedback.slice(0, 200)}`,
+    );
     cleaned = cleanDocumentContent(await this.ai.generateLogicFlows(mdd, combinedFeedback, legacyOpts));
+    cleaned = repairLogicFlowsProgrammaticGaps(mdd, cleaned);
     lfCheck = this.conformance.checkLogicFlows(mdd, cleaned);
+  }
+
+  if (!lfCheck.ok) {
+    this.logger.warn(
+      `[Flujos] Persistiendo con ${lfCheck.gaps.length} gap(s) tras ${qualityRetries} reintento(s)`,
+    );
   }
 
   cleaned = repairLogicFlowsProgrammaticGaps(mdd, cleaned);
@@ -1204,6 +1233,9 @@ export class ProjectDeliverableGeneratorsService {
   }
 
   const updated = await this.projects.update(projectId, { logicFlowsContent: cleaned });
+  this.logger.log(
+    `[Flujos] Flujos de lógica completados (${cleaned.length} chars, conformidad=${postCheck.ok})`,
+  );
   this.notifyPluginAfterDocumentPersist(
     "logic-flows",
     projectId,
