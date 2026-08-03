@@ -19,7 +19,10 @@ import {
   resolveRedisUrlOrThrow,
   shouldStartBullmqWorkers,
 } from "../../common/bullmq-runtime.config.js";
-import { longRunningBullmqWorkerOptions } from "../../common/bullmq-long-job.worker-options.js";
+import {
+  LONG_JOB_LOCK_DURATION_MS,
+  longRunningBullmqWorkerOptions,
+} from "../../common/bullmq-long-job.worker-options.js";
 import {
   BULLMQ_DELIVERABLES_ORPHAN_REASON,
   forceFailBullMqActiveJob,
@@ -34,6 +37,7 @@ import { PluginArtifactService } from "../../plugins/plugin-artifact.service.js"
 import {
   toDeliverablesJobError,
 } from "./deliverables-job-error.util.js";
+import { resolveDeliverablesActiveCancel } from "./deliverables-queue-cancel.util.js";
 
 /** Entregables no deben reintentar tras stall: cascada a medias es peor que fallar y verificar entregables. */
 const DELIVERABLES_MAX_STALLED_COUNT = 0;
@@ -45,6 +49,8 @@ export const DELIVERABLES_QUEUE_NAME = "theforge-deliverables";
 
 /** Clave Redis compartida API ↔ worker para cancelar jobs activos en BullMQ. */
 const DELIVERABLES_CANCEL_KEY_PREFIX = "theforge:deliverables-cancel:";
+const DELIVERABLES_CANCEL_POLL_MS = 500;
+const DELIVERABLES_JOB_CANCELLED_REASON = "Cancelado por el usuario";
 
 /** Tipos de job soportados por la cola. */
 export type GenerateJobType =
@@ -214,16 +220,18 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
     if (shouldStartBullmqWorkers()) {
       this.worker = new Worker(
         DELIVERABLES_QUEUE_NAME,
-        async (job: Job<GenerateJobData>) => {
+        async (job: Job<GenerateJobData>, token?: string) => {
           const { userId } = job.data;
           return runWithRequestUserAsync(userId ?? "system", async () => {
             this.logger.log(
               `BullMQ worker: iniciando job ${job.id} type=${job.data.type} projectId=${job.data.projectId} attempt=${job.attemptsMade + 1}/${this.MAX_ATTEMPTS}`,
             );
-            job.updateProgress(0);
-            return this.executeJob(String(job.id), job.data, (p) =>
-              job.updateProgress(p as Job["progress"]),
-            );
+            await job.updateProgress(0);
+            return this.executeJob(String(job.id), job.data, (p) => {
+              void job.updateProgress(p as Job["progress"]);
+              if (!token) return;
+              void job.extendLock(token, LONG_JOB_LOCK_DURATION_MS).catch(() => undefined);
+            });
           });
         },
         {
@@ -317,6 +325,8 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
     if (state === "active") {
       const reconciled = await this.reconcileOrphanDeliverablesJob(job);
       if (reconciled) return null;
+      const stuckCancelled = await this.reconcileStuckCancellation(job);
+      if (stuckCancelled) return null;
     }
     const status =
       state === "active" ? "active" : state === "delayed" ? "retrying" : ("queued" as const);
@@ -343,9 +353,41 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async markCancelRequested(jobId: string): Promise<void> {
+    this.cancelRequestedJobIds.add(jobId);
     if (!this.queue) return;
     const client = await this.queue.client;
     await client.set(`${DELIVERABLES_CANCEL_KEY_PREFIX}${jobId}`, "1");
+  }
+
+  /** Marca failed en Redis y limpia flag de cancelación (huérfano o forzado). */
+  private async forceCancelBullMqActiveJob(job: Job, reason: string): Promise<boolean> {
+    if (!this.queue) return false;
+    const jobId = String(job.id);
+    this.jobAbortControllers.get(jobId)?.abort();
+    const failed = await forceFailBullMqActiveJob(this.queue, job, reason);
+    if (failed) {
+      await this.clearCancelRequested(jobId);
+    }
+    return failed;
+  }
+
+  /** Job `active` con cancel solicitado pero sin worker local ni lock → huérfano colgado. */
+  private async reconcileStuckCancellation(job: Job): Promise<boolean> {
+    if (!this.queue) return false;
+    const jobId = String(job.id);
+    if (!(await this.isCancelRequested(jobId))) return false;
+    if (this.jobAbortControllers.has(jobId)) return false;
+    if (await isBullMqJobLockHeld(this.queue, jobId)) return false;
+    const state = await job.getState();
+    if (state !== "active") return false;
+    const failed = await this.forceCancelBullMqActiveJob(
+      job,
+      `${DELIVERABLES_JOB_CANCELLED_REASON} (worker no activo)`,
+    );
+    if (failed) {
+      this.logger.warn(`BullMQ deliverables job ${jobId} cancelado (huérfano tras solicitud)`);
+    }
+    return failed;
   }
 
   private async clearCancelRequested(jobId: string): Promise<void> {
@@ -363,7 +405,7 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
         const val = await client.get(`${DELIVERABLES_CANCEL_KEY_PREFIX}${jobId}`);
         if (val) abortController.abort();
       })().catch(() => undefined);
-    }, 1500);
+    }, DELIVERABLES_CANCEL_POLL_MS);
     return () => clearInterval(interval);
   }
 
@@ -436,8 +478,30 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
       return { cancelled: true, status: "cancelled" };
     }
     if (state === "active") {
+      const alreadyCancelling = await this.isCancelRequested(jobId);
       await this.markCancelRequested(jobId);
       this.jobAbortControllers.get(jobId)?.abort();
+
+      const outcome = await resolveDeliverablesActiveCancel({
+        alreadyCancelling,
+        locallyRunning: this.jobAbortControllers.has(jobId),
+        lockHeld: await isBullMqJobLockHeld(this.queue, jobId),
+        forceFail: () =>
+          this.forceCancelBullMqActiveJob(
+            job,
+            alreadyCancelling
+              ? DELIVERABLES_JOB_CANCELLED_REASON
+              : `${DELIVERABLES_JOB_CANCELLED_REASON} (worker no activo)`,
+          ),
+      });
+
+      if (outcome === "cancelled") {
+        this.logger.log(
+          `BullMQ deliverables job ${jobId} cancelado (${alreadyCancelling ? "forzado" : "huérfano activo"})`,
+        );
+        return { cancelled: true, status: "cancelled" };
+      }
+
       this.logger.log(`BullMQ deliverables job ${jobId} cancelación solicitada (active)`);
       return { cancelled: true, status: "cancelling" };
     }
@@ -852,6 +916,9 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
     if (state === "active") {
       const reconciled = await this.reconcileOrphanDeliverablesJob(job);
       if (reconciled) {
+        state = await job.getState();
+      } else {
+        await this.reconcileStuckCancellation(job);
         state = await job.getState();
       }
     }

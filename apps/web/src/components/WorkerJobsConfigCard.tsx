@@ -430,7 +430,8 @@ export function WorkerJobsConfigCard() {
                   {snapshot.jobs.map((job) => {
                     const rowKey = jobRowKey(job);
                     const expanded = expandedJobKey === rowKey;
-                    const stopDisabled = stoppingJobId === job.jobId || job.status === "cancelling";
+                    const stopDisabled = stoppingJobId === job.jobId;
+                    const forceCancel = job.status === "cancelling";
 
                     return (
                       <Fragment key={rowKey}>
@@ -464,7 +465,7 @@ export function WorkerJobsConfigCard() {
                               </ListRowIconButton>
                               <ListRowIconButton
                                 variant="destructive"
-                                tooltip="Detener job"
+                                tooltip={forceCancel ? "Forzar cancelación (job atascado)" : "Detener job"}
                                 disabled={stopDisabled}
                                 onClick={() => setStopConfirmJob(job)}
                               >
@@ -506,11 +507,15 @@ export function WorkerJobsConfigCard() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>¿Detener este job?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {stopConfirmJob?.status === "cancelling" ? "¿Forzar cancelación?" : "¿Detener este job?"}
+            </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-sm text-[var(--muted-foreground)]">
                 <p>
-                  Se solicitará la cancelación del job{" "}
+                  {stopConfirmJob?.status === "cancelling"
+                    ? "El job sigue activo en Redis tras una cancelación previa. Se forzará el fallo en BullMQ y se limpiará la clave de cancelación."
+                    : "Se solicitará la cancelación del job"}{" "}
                   <span className="font-mono">{stopConfirmJob?.jobId.slice(0, 8)}…</span> en la cola{" "}
                   {stopConfirmJob ? ADMIN_WORKER_JOB_QUEUE_LABELS[stopConfirmJob.queue] : ""}.
                 </p>
@@ -537,6 +542,8 @@ export function WorkerJobsConfigCard() {
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
                   Deteniendo…
                 </>
+              ) : stopConfirmJob?.status === "cancelling" ? (
+                "Forzar cancelación"
               ) : (
                 "Detener job"
               )}
