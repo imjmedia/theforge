@@ -45,7 +45,7 @@ sólo lo necesario (turbo cache hit si no cambió nada).
 - **`us-id-registry.ts`:** IDs estables `US-CRUD-*` / `US-JRN-*` (sin re-numerar por orden CrudMatrix).
 - **`tasks-resolve.ts`:** `resolveTasksForConsume`, `hasValidTasksJson` — SSOT tasks para Workshop/spec-kit/MCP.
 - **`deliverable-bundle.ts`:** `buildDeliverableBundleVersion` — versión atómica US+pantallas+API+tasks.
-- **`integration-handoff-tasks.util.ts`:** `INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS`, `resolveIntegrationHandoffTasksMarkdown`, `shouldSkipLegacyTasksGeneration` — handoff NEW→LEG sin tareas fantasma del baseline.
+- **`integration-handoff-tasks.util.ts`:** `INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS` (`tasksContent`, `userStoriesContent`, `logicFlowsContent`), `resolveIntegrationHandoffTasksMarkdown`, `shouldSkipLegacyTasksGeneration` — handoff NEW→LEG sin entregables fantasma del baseline.
 - **`ariadne-change-pack.ts`:** change pack v1 + `handoffPlanType`, `cursorTasksMarkdown` (alias `cursor_tasks_markdown`).
 - **`sdd-analyze.ts`:** tipos del reporte `GET /projects/:id/analyze`.
 - **`readiness-audit.util.ts`:** semáforo compuesto, clasificación de gaps (auto/LLM/humano), plan de convergencia post-cascada.

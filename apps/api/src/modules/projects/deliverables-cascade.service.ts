@@ -23,6 +23,7 @@ import {
 } from "../engine/conformance.service.js";
 import { buildApiRetryFeedback } from "../engine/api-conformance-repair.util.js";
 import { buildDeterministicDeliverableConformancePatches } from "../engine/deliverable-conformance-enforce.util.js";
+import { isLogicFlowsInsufficientContent } from "../ai/utils/legacy-as-is-logic-flows-ariadne.util.js";
 import { computeCascadeAccuracy } from "../engine/cascade-accuracy.util.js";
 import {
   buildCrossArtifactTraceReport,
@@ -614,11 +615,19 @@ export class DeliverablesCascadeService {
 
   /** Alineación determinista API/Blueprint/Flujos al MDD (sin LLM). */
   private async runCascadeDeterministicConformancePass(projectId: string): Promise<void> {
-    const project = await this.projects.findOne(projectId);
+    const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
     const mdd = buildConstitutionMarkdown(project);
     if (!mdd.trim()) return;
 
-    const patches = buildDeterministicDeliverableConformancePatches(mdd, project);
+    const stage = pickPrimaryStage(project.stages ?? []);
+    const codebaseDoc =
+      stage?.legacyChangeState != null &&
+      typeof stage.legacyChangeState === "object" &&
+      typeof (stage.legacyChangeState as { codebaseDoc?: unknown }).codebaseDoc === "string"
+        ? ((stage.legacyChangeState as { codebaseDoc: string }).codebaseDoc ?? null)
+        : null;
+
+    const patches = buildDeterministicDeliverableConformancePatches(mdd, project, { codebaseDoc });
     if (Object.keys(patches).length === 0) return;
 
     this.logger.log(
@@ -668,11 +677,19 @@ export class DeliverablesCascadeService {
           ),
         );
       }
-      if (!lfCheck.ok && (project.logicFlowsContent ?? "").trim().length >= 80) {
+      const flowsContent = (project.logicFlowsContent ?? "").trim();
+      const logicFlowsDeterministicBaseline =
+        !isLogicFlowsInsufficientContent(flowsContent) &&
+        /mapeo determinista|mapeo Ariadne business_logic/i.test(flowsContent);
+      if (!lfCheck.ok && !logicFlowsDeterministicBaseline && !isLogicFlowsInsufficientContent(flowsContent)) {
         retries.push(
           this.projects.generateLogicFlows(projectId, lfCheck.gaps.slice(0, 12).join("; ")).catch((e) =>
             this.logger.warn(`[Cascade] Flujos conformance retry: ${e instanceof Error ? e.message : e}`),
           ),
+        );
+      } else if (!lfCheck.ok && isLogicFlowsInsufficientContent(flowsContent)) {
+        this.logger.warn(
+          "[Cascade] Flujos insuficientes (stub/changelog vacío) tras pass determinista — omitiendo retry LLM",
         );
       }
       if (!infraCheck.ok && (project.infraContent ?? "").trim().length > 80) {

@@ -10,6 +10,7 @@ import {
   patchStageBodySchema,
   transitionStageBodySchema,
   getAllowedStageTransitions,
+  type IntegrationHandoffSeedExcludeKey,
 } from "@theforge/shared-types";
 import { getRequestUserId } from "../../common/request-user.store.js";
 import { prependDocumentTimestamps } from "../engine/document-date-header.util.js";
@@ -44,7 +45,7 @@ export class ProjectStageService {
   async activateStageExclusive(
     projectId: string,
     stageId: string,
-    options?: { seedExcludeDeliverableKeys?: readonly ("tasksContent" | "userStoriesContent")[] },
+    options?: { seedExcludeDeliverableKeys?: readonly IntegrationHandoffSeedExcludeKey[] },
   ): Promise<void> {
     const uid = getRequestUserId();
     const stage = await this.prisma.stage.findFirst({

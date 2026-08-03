@@ -45,7 +45,7 @@ Body (`createStageFromAriadneChangePackInputSchema`):
 
 - **`handoffPlanType`:** `migration_tasks` (default cuando hay `cursorTasksMarkdown` o `handoffItems`) importa tasks del handoff y Forge **omite LLM `tasks`** en `legacy_generate_deliverables`. `full_cascade` = cascada clásica.
 - **`cursorTasksMarkdown`** (alias snake_case `cursor_tasks_markdown`): SSOT Cursor-ready; si falta, Forge sintetiza checklist desde `handoffItems`.
-- Etapas de integración **no heredan** `tasksContent` / `userStoriesContent` del snapshot baseline (`INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS`).
+- Etapas de integración **no heredan** `tasksContent`, `userStoriesContent` ni `logicFlowsContent` del snapshot baseline (`INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS`).
 
 - LEGACY only; sin `stageId` → crea etapa; con `stageId` → importa en existente (ordinal ≥ 2)
 - **`handoffItems[].id`:** Ariadne puede enviar `LEG-01`, `NEW-LEG-1`, UUID, etc.; Forge normaliza a `NEW-LEG-NN` antes del parse Zod (`ariadne-handoff-normalize.util.ts`). Log en API: `[Integration] Ariadne handoff id remap`.

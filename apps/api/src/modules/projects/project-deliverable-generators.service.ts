@@ -36,6 +36,7 @@ import {
   runApiConformanceCheck,
 } from "../engine/api-conformance-repair.util.js";
 import { repairLogicFlowsProgrammaticGaps } from "../engine/logic-flows-conformance-repair.util.js";
+import { isLogicFlowsInsufficientContent } from "../ai/utils/legacy-as-is-logic-flows-ariadne.util.js";
 import {
   buildInfraConformanceGapFeedback,
   extractEntities,
@@ -161,6 +162,12 @@ export class ProjectDeliverableGeneratorsService {
     preferThinLiteraryDocs: true,
     omitLiteraryUcUs: (project.complexity ?? ComplexityLevel.HIGH) === ComplexityLevel.HIGH,
     domainInventory: this.resolveStageDomainInventory(project, stage),
+    codebaseDoc:
+      stage?.legacyChangeState != null &&
+      typeof stage.legacyChangeState === "object" &&
+      typeof (stage.legacyChangeState as { codebaseDoc?: unknown }).codebaseDoc === "string"
+        ? ((stage.legacyChangeState as { codebaseDoc: string }).codebaseDoc ?? null)
+        : null,
   };
   return domainAware;
   }
@@ -1160,17 +1167,23 @@ export class ProjectDeliverableGeneratorsService {
   );
   const mdd = buildConstitutionMarkdown(project);
   let content = await this.ai.generateLogicFlows(mdd, gapsFeedback, legacyOpts);
-  let cleaned = cleanDocumentContent(content);
+  let cleaned = cleanDocumentContent(this.ai.resolveLogicFlowsLlmFallback(mdd, content, legacyOpts));
+
+  const deterministicBaseline =
+    legacyOpts.legacyBaselineStage === true &&
+    !isLogicFlowsInsufficientContent(cleaned) &&
+    /mapeo determinista|mapeo Ariadne business_logic/i.test(cleaned);
 
   let qualityRetried = false;
   let lfCheck = this.conformance.checkLogicFlows(mdd, cleaned);
-  if (!lfCheck.ok && !qualityRetried) {
+  if (!lfCheck.ok && !qualityRetried && !deterministicBaseline) {
     this.throwIfAborted(signal);
     qualityRetried = true;
     const internalFeedback = lfCheck.gaps.join("; ");
     const combinedFeedback = [gapsFeedback?.trim(), internalFeedback].filter(Boolean).join("\n\n");
     this.logger.warn(`[Flujos] Conformidad insuficiente — reintentando: ${internalFeedback.slice(0, 200)}`);
-    cleaned = cleanDocumentContent(await this.ai.generateLogicFlows(mdd, combinedFeedback, legacyOpts));
+    content = await this.ai.generateLogicFlows(mdd, combinedFeedback, legacyOpts);
+    cleaned = cleanDocumentContent(this.ai.resolveLogicFlowsLlmFallback(mdd, content, legacyOpts));
     lfCheck = this.conformance.checkLogicFlows(mdd, cleaned);
   }
 

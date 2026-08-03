@@ -4,6 +4,7 @@ import type { IntegrationHandoffItem } from "./project-integration.js";
 export const INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS = [
   "tasksContent",
   "userStoriesContent",
+  "logicFlowsContent",
 ] as const;
 
 export type IntegrationHandoffSeedExcludeKey = (typeof INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS)[number];

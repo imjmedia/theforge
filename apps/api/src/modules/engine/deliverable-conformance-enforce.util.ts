@@ -5,6 +5,10 @@
 import { repairApiProgrammaticGaps } from "./api-conformance-repair.util.js";
 import { repairBlueprintProgrammaticGaps } from "./blueprint-conformance-repair.util.js";
 import { repairLogicFlowsProgrammaticGaps } from "./logic-flows-conformance-repair.util.js";
+import {
+  isLogicFlowsInsufficientContent,
+  resolveLegacyAsIsLogicFlowsDeterministic,
+} from "../ai/utils/legacy-as-is-logic-flows-ariadne.util.js";
 import { checkApiVsMdd } from "./conformance.service.js";
 
 export type DeliverableConformancePatch = {
@@ -23,6 +27,7 @@ export function buildDeterministicDeliverableConformancePatches(
     blueprintContent?: string | null;
     logicFlowsContent?: string | null;
   },
+  options?: { codebaseDoc?: string | null },
 ): DeliverableConformancePatch {
   const patches: DeliverableConformancePatch = {};
   const mdd = (mddContent ?? "").trim();
@@ -43,7 +48,13 @@ export function buildDeterministicDeliverableConformancePatches(
   }
 
   const flows = (source.logicFlowsContent ?? "").trim();
-  if (flows.length >= MIN_DOC) {
+  if (isLogicFlowsInsufficientContent(flows)) {
+    const built = resolveLegacyAsIsLogicFlowsDeterministic({
+      mddMarkdown: mdd,
+      codebaseDoc: options?.codebaseDoc,
+    });
+    if (built) patches.logicFlowsContent = built;
+  } else if (flows.length >= MIN_DOC) {
     const fixed = repairLogicFlowsProgrammaticGaps(mdd, flows);
     if (fixed !== flows) patches.logicFlowsContent = fixed;
   }
