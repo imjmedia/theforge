@@ -241,16 +241,32 @@ export class DeliverablesCascadeService {
 
     let completedCount = 0;
     const completedSteps: string[] = [];
-    const reportProgress = (step: DeliverableWaveStep) => {
+    let progressChain = Promise.resolve();
+    const emitProgress = (payload: DeliverablesCascadeProgress) => {
+      progressChain = progressChain.then(() => {
+        onProgress?.(payload);
+      });
+      return progressChain;
+    };
+    const reportStepActive = (step: DeliverableWaveStep) => {
       const progressKey = step === "ui_screens_sync" ? "ui_screens_sync" : step;
-      completedSteps.push(progressKey);
-      onProgress?.({
+      return emitProgress({
         step: progressKey,
         completedSteps: [...completedSteps],
         index: completedCount,
         total,
       });
+    };
+    const reportProgress = (step: DeliverableWaveStep) => {
+      const progressKey = step === "ui_screens_sync" ? "ui_screens_sync" : step;
+      completedSteps.push(progressKey);
       completedCount++;
+      return emitProgress({
+        step: progressKey,
+        completedSteps: [...completedSteps],
+        index: completedCount - 1,
+        total,
+      });
     };
 
     for (let waveIndex = 0; waveIndex < waves.length; waveIndex++) {
@@ -269,6 +285,7 @@ export class DeliverablesCascadeService {
         wave.map(async (step: DeliverableWaveStep) => {
           try {
             throwIfAborted();
+            await reportStepActive(step);
             const stepGaps = step !== "ui_screens_sync" ? gapsMap.get(step) : undefined;
             await this.runDeliverableWaveStep(
               step,
@@ -283,9 +300,10 @@ export class DeliverablesCascadeService {
             this.logger.warn(`[Cascade] Paso ${step} saltado: ${message}.`);
             errors.push({ step, error: message });
           }
-          reportProgress(step);
+          await reportProgress(step);
         }),
       );
+      await progressChain;
       throwIfAborted();
     }
 

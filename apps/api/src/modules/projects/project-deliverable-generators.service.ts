@@ -28,6 +28,7 @@ import { enrichBlueprintWithUiDesignSystem } from "../engine/blueprint-enrich-ui
 import {
   buildBlueprintQualityRetryFeedback,
   collectBlueprintHardQualityGaps,
+  repairBlueprintMarkdownTables,
   repairBlueprintProgrammaticGaps,
   runBlueprintQualityChecks,
 } from "../engine/blueprint-conformance-repair.util.js";
@@ -947,6 +948,7 @@ export class ProjectDeliverableGeneratorsService {
   );
   let blueprintContent = await this.ai.generateBlueprint(enrichedMdd, gapsFeedback, legacyOpts);
   blueprintContent = cleanDocumentContent(blueprintContent);
+  blueprintContent = repairBlueprintMarkdownTables(blueprintContent);
 
   // GUARD: Si gapsFeedback provocó un resultado vacío/corto, reintentar SIN gaps
   if (gapsFeedback && blueprintContent.length < 80) {
@@ -954,6 +956,7 @@ export class ProjectDeliverableGeneratorsService {
     this.logger.warn(`[Blueprint] Resultado vacío/corto (${blueprintContent.length} chars) con gapsFeedback — reintentando sin gaps`);
     blueprintContent = await this.ai.generateBlueprint(enrichedMdd, null, legacyOpts);
     blueprintContent = cleanDocumentContent(blueprintContent);
+    blueprintContent = repairBlueprintMarkdownTables(blueprintContent);
   }
 
   // GUARD: No persistir si sigue vacío — preservar el Blueprint anterior
@@ -962,26 +965,33 @@ export class ProjectDeliverableGeneratorsService {
     throw new BadRequestException("No se pudo generar el Blueprint. Intenta de nuevo.");
   }
 
-  // Verificación multi-capa + un reintento LLM solo ante gaps "duros" (entidades, secciones, tablas…).
-  // Autocontenido es soft: evita ~80s de retry cuando el blueprint ya es sustancial.
-  let qualityRetried = false;
+  // Verificación multi-capa + reintento LLM acotado ante gaps "duros" (entidades, secciones, tablas…).
+  const MAX_BLUEPRINT_QUALITY_RETRIES = 1;
+  let qualityRetries = 0;
   let checks = runBlueprintQualityChecks(mddContent, blueprintContent);
   let hardGaps = collectBlueprintHardQualityGaps(checks);
 
-  if (hardGaps.length > 0 && !qualityRetried) {
+  while (hardGaps.length > 0 && qualityRetries < MAX_BLUEPRINT_QUALITY_RETRIES) {
     this.throwIfAborted(signal);
-    qualityRetried = true;
+    qualityRetries += 1;
     const internalFeedback = buildBlueprintQualityRetryFeedback(checks);
     const combinedFeedback = [gapsFeedback?.trim(), internalFeedback].filter(Boolean).join("\n\n");
     this.logger.warn(
       `[Blueprint] Calidad insuficiente (${checks.entity.gaps.length} entidades, ${checks.section.gaps.length} secciones, ` +
-        `${checks.generalTable.gaps.length} tablaGral, ${checks.spanish.gaps.length} español, ` +
-        `${checks.selfContained.gaps.length} autocontenido) — reintentando: ${hardGaps[0]?.slice(0, 140)}`,
+        `${checks.generalTable.gaps.length} tablaGral, ${checks.apiTable.gaps.length} tablaApi, ${checks.spanish.gaps.length} español, ` +
+        `${checks.selfContained.gaps.length} autocontenido) — reintento ${qualityRetries}/${MAX_BLUEPRINT_QUALITY_RETRIES}: ${hardGaps[0]?.slice(0, 140)}`,
     );
     blueprintContent = await this.ai.generateBlueprint(enrichedMdd, combinedFeedback, legacyOpts);
     blueprintContent = cleanDocumentContent(blueprintContent);
+    blueprintContent = repairBlueprintMarkdownTables(blueprintContent);
     checks = runBlueprintQualityChecks(mddContent, blueprintContent);
     hardGaps = collectBlueprintHardQualityGaps(checks);
+  }
+
+  if (hardGaps.length > 0) {
+    this.logger.warn(
+      `[Blueprint] Persistiendo con ${hardGaps.length} gap(s) de calidad tras ${qualityRetries} reintento(s): ${hardGaps.slice(0, 3).join("; ")}`,
+    );
   } else if (checks.selfContained.gaps.length > 0) {
     this.logger.warn(
       `[Blueprint] Referencias al MDD (${checks.selfContained.gaps.length} autocontenido) — sin retry LLM: ` +

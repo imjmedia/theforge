@@ -4,7 +4,9 @@ import {
   collectBlueprintHardQualityGaps,
   injectMissingBlueprintEntities,
   injectMissingBlueprintStackKeywords,
+  repairBlueprintMarkdownTables,
   repairBlueprintProgrammaticGaps,
+  runBlueprintQualityChecks,
 } from "./blueprint-conformance-repair.util.js";
 import { checkBlueprintSelfContained } from "./conformance.service.js";
 
@@ -86,5 +88,21 @@ describe("blueprint-conformance-repair", () => {
     assert.equal(collectBlueprintHardQualityGaps(checks).length, 0);
     checks.entity = { ok: false, gaps: ['Entidad "orders" faltante'] };
     assert.equal(collectBlueprintHardQualityGaps(checks).length, 1);
+  });
+
+  it("tabla API con separador GFM alineado no dispara gap tablaApi", () => {
+    const bp =
+      "## Mapa API\n\n| Método | Ruta | Descripción |\n| :----- | :--- | :---------- |\n| GET | `/api/v1/health` | Health |\n\n" +
+      "### Persistencia\n\n### orders\n\n### users\n";
+    const checks = runBlueprintQualityChecks(MDD, bp);
+    assert.equal(checks.apiTable.ok, true, checks.apiTable.gaps.join("; "));
+  });
+
+  it("repairBlueprintMarkdownTables evita retry por separador faltante", () => {
+    const bp =
+      "## Mapa API\n\n| Método | Ruta | Descripción |\n| GET | `/api/v1/health` | Health |\n";
+    const repaired = repairBlueprintMarkdownTables(bp);
+    const checks = runBlueprintQualityChecks(MDD, repaired);
+    assert.equal(checks.apiTable.ok, true, checks.apiTable.gaps.join("; "));
   });
 });
