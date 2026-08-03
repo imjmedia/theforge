@@ -57,6 +57,7 @@ import {
   buildLegacyChangeStateFromAriadnePack,
   buildRecommendedNextToolsAfterAriadnePack,
   defaultStageNameFromAriadnePack,
+  preprocessCreateStageFromAriadneChangePackBody,
   shouldRunLegacyStartForAriadnePack,
 } from "../../theforge/apply-ariadne-change-pack.util.js";
 
@@ -406,7 +407,15 @@ export class ProjectIntegrationService {
    * MCP: `create_stage_from_ariadne_change_pack`.
    */
   async createStageFromAriadneChangePack(body: unknown): Promise<CreateStageFromAriadneChangePackOutput> {
-    const dto = createStageFromAriadneChangePackInputSchema.parse(body ?? {});
+    const { bodyForParse, handoffIdRemaps } = preprocessCreateStageFromAriadneChangePackBody(body);
+    if (handoffIdRemaps.length > 0) {
+      this.logger.log(
+        `[Integration] Ariadne handoff id remap (${handoffIdRemaps.length}): ${handoffIdRemaps
+          .map((r) => `${r.from}→${r.to}`)
+          .join(", ")}`,
+      );
+    }
+    const dto = createStageFromAriadneChangePackInputSchema.parse(bodyForParse);
     const project = await this.assertAccess(dto.forgeProjectId);
     if (project.projectType !== "LEGACY") {
       throw new BadRequestException("create_stage_from_ariadne_change_pack solo en proyectos LEGACY");

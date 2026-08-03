@@ -41,6 +41,7 @@ Body (`createStageFromAriadneChangePackInputSchema`):
 ```
 
 - LEGACY only; sin `stageId` → crea etapa; con `stageId` → importa en existente (ordinal ≥ 2)
+- **`handoffItems[].id`:** Ariadne puede enviar `LEG-01`, `NEW-LEG-1`, UUID, etc.; Forge normaliza a `NEW-LEG-NN` antes del parse Zod (`ariadne-handoff-normalize.util.ts`). Log en API: `[Integration] Ariadne handoff id remap`.
 - Secuencia alternativa: `create_project_stage` → `import-handoff` (NEW) → `legacy_generate_mdd` con `stageId`
 
 ## Promote to stage (hybrid C+B)
