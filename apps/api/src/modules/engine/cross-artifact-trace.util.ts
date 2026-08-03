@@ -19,7 +19,9 @@ export type CrossArtifactTraceGap = {
     | "screen_without_frontend_task"
     | "us_without_task"
     | "duplicate_route"
-    | "api_without_task";
+    | "api_without_task"
+    | "surface_without_shell"
+    | "task_ui_missing_responsive";
   ref: string;
   detail?: string;
 };
@@ -63,6 +65,25 @@ function taskCoversRoute(tasksMarkdown: string, route: string): boolean {
 function taskCoversEndpoint(tasksMarkdown: string, method: string, path: string): boolean {
   const key = `${method.toUpperCase()} ${path}`.toLowerCase();
   return tasksMarkdown.toLowerCase().includes(key);
+}
+
+function frontendTaskMissingResponsive(tasksMarkdown: string): string[] {
+  const parsed = parseTasksV2(tasksMarkdown);
+  const missing: string[] = [];
+  for (const t of parsed.tasks) {
+    if (!/^frontend$/i.test(t.section?.trim() ?? "")) continue;
+    const blob = `${t.title}\n${t.description ?? ""}\n${t.rawMarkdown ?? ""}`.toLowerCase();
+    if (!/\bresponsive\s*:/i.test(blob) && !/\bviewport\b/i.test(blob)) {
+      missing.push(t.id);
+    }
+  }
+  return missing;
+}
+
+function adminRoutesWithoutShell(uiMd: string, routes: string[]): string[] {
+  const hasAdminShellDoc = /admin\s*shell|adminshell/i.test(uiMd);
+  if (hasAdminShellDoc) return [];
+  return routes.filter((r) => /^\/admin\b/i.test(r));
 }
 
 /** Builds cross-artifact conformance report for W4 retry and preflight. */
@@ -114,6 +135,14 @@ export function buildCrossArtifactTraceReport(params: {
     }
   }
 
+  for (const route of adminRoutesWithoutShell(uiMd, v1Routes)) {
+    gaps.push({
+      kind: "surface_without_shell",
+      ref: route,
+      detail: "Ruta admin sin AdminShell documentado en pantallas.md",
+    });
+  }
+
   const duplicateRoutes = [...routeCounts.entries()]
     .filter(([, n]) => n > 1)
     .map(([route]) => route);
@@ -126,6 +155,16 @@ export function buildCrossArtifactTraceReport(params: {
     gaps.push({ kind: "orphan_user_story", ref: usId, detail: "HU sin pantalla v1 enlazada" });
     if (tasksMd && !taskCoversUserStory(tasksMd, usId)) {
       gaps.push({ kind: "us_without_task", ref: usId, detail: "HU sin task con story_ref" });
+    }
+  }
+
+  if (tasksMd.length > 0) {
+    for (const taskId of frontendTaskMissingResponsive(tasksMd)) {
+      gaps.push({
+        kind: "task_ui_missing_responsive",
+        ref: taskId,
+        detail: "Task Frontend sin línea Responsive: o AC-UI viewport",
+      });
     }
   }
 

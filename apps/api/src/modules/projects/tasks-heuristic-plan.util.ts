@@ -9,7 +9,7 @@
  */
 
 import type { DomainInventory, TasksGenerationPlan, TasksPlanItem } from "@theforge/shared-types";
-import { stableJourneyUserStoryId } from "@theforge/shared-types";
+import { detectWebSurfaces, stableJourneyUserStoryId } from "@theforge/shared-types";
 import { extractEntities } from "../engine/conformance.service.js";
 import { extractSectionByNumber } from "../engine/mdd-markdown-parser.js";
 import {
@@ -160,9 +160,16 @@ export function buildHeuristicTasksPlan(input: HeuristicTasksPlanInput): TasksGe
     uiMd.trim().length > 0
       ? extractV1InScopePantallaRoutes(uiMd)
       : filterPlannerRoutes(extractPantallaRoutes(uiMd));
-  if (routes.length > 0 || input.hasUxTeam) {
+  const hasWebSurfaces = detectWebSurfaces(input.mddMarkdown, input.blueprintMarkdown);
+  if (routes.length > 0 || input.hasUxTeam || hasWebSurfaces) {
     sections.add("Frontend");
-    for (const route of routes) {
+    const routesToCover =
+      routes.length > 0
+        ? routes
+        : hasWebSurfaces
+          ? ["/"]
+          : [];
+    for (const route of routesToCover) {
       items.push({
         id: nextTaskId(counter),
         title: `Implementar pantalla ${route}`,

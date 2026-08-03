@@ -2,6 +2,8 @@
  * Prerrequisitos UI para generar Tasks (alineado con tasks-preflight strict).
  */
 
+import { detectWebSurfaces } from "@theforge/shared-types";
+
 export type TasksPrerequisitesResult = {
   ready: boolean;
   missing: string[];
@@ -24,6 +26,8 @@ export function evaluateTasksGenerationPrerequisites(params: {
   const api = (params.apiContractsMarkdown ?? "").trim();
   const pantallas = (params.uiScreensMarkdown ?? "").trim();
   const legacy = params.legacyBaseline === true;
+  const hasWebSurfaces = detectWebSurfaces(mdd, blueprint);
+  const uiScreensRequired = hasWebSurfaces || params.hasUxTeam === true;
 
   if (mdd.length < 80) missing.push("MDD");
   if (blueprint.length < 80) missing.push("Blueprint");
@@ -31,7 +35,7 @@ export function evaluateTasksGenerationPrerequisites(params: {
   if (!legacy) {
     if (spec.length < 80) missing.push("Spec");
     if (/##\s*4[\.\s]/i.test(mdd) && api.length < 80) missing.push("Contratos API");
-    if (params.hasUxTeam === true && pantallas.length < 80) missing.push("Pantallas");
+    if (uiScreensRequired && pantallas.length < 80) missing.push("Pantallas");
   }
 
   const hint =

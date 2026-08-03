@@ -59,4 +59,36 @@ describe("tasks-generation-structure", () => {
     const routes = extractPantallaRoutes("| /admin/mcp | Page | — | Wizard | GET /api/v1/mcp-plugins | ok |");
     assert.deepEqual(routes, ["/admin/mcp"]);
   });
+
+  it("exige Frontend cuando MDD declara superficie web sin pantallas", () => {
+    const mdd = "## 2. Stack\n\nReact 18 + Vite + Tailwind\n## 7. Infra\nDocker";
+    const tasks = [
+      "# Tasks",
+      "## Backend tasks",
+      "---",
+      "id: T-001",
+      "section: Backend",
+      "title: API",
+      "target_files: [a.ts]",
+      "change_type: create",
+      "---",
+      "- [ ] task",
+      "## Infra tasks",
+      "---",
+      "id: T-002",
+      "section: Infra",
+      "title: Docker",
+      "target_files: [docker-compose.yml]",
+      "change_type: configure",
+      "---",
+      "- [ ] infra",
+    ].join("\n");
+
+    const report = evaluateTasksStructure({
+      tasksMarkdown: tasks,
+      mddMarkdown: mdd,
+      blueprintMarkdown: "# Blueprint\n\nReact SPA",
+    });
+    assert.ok(report.gaps.some((g) => /Frontend|superficie web/i.test(g)));
+  });
 });

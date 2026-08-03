@@ -5,6 +5,7 @@
 import {
   CASCADE_ACCURACY_THRESHOLD,
   type DocAccuracyResult,
+  detectWebSurfaces,
 } from "@theforge/shared-types";
 import { normalizeSpecMarkdown } from "./spec-content.util.js";
 
@@ -37,6 +38,8 @@ export function deriveTasksUpstreamActions(
   doc: DocAccuracyResult,
   opts: {
     hasUxTeam?: boolean;
+    mddMarkdown?: string | null;
+    blueprintMarkdown?: string | null;
     specMarkdown?: string | null;
     apiContractsMarkdown?: string | null;
     logicFlowsMarkdown?: string | null;
@@ -46,6 +49,8 @@ export function deriveTasksUpstreamActions(
 ): TasksUpstreamAction[] {
   const actions: TasksUpstreamAction[] = [];
   const seen = new Set<TasksUpstreamArtifact>();
+  const hasWebSurfaces = detectWebSurfaces(opts.mddMarkdown, opts.blueprintMarkdown);
+  const uiScreensRequired = hasWebSurfaces || opts.hasUxTeam === true;
 
   const push = (action: TasksUpstreamAction) => {
     if (seen.has(action.artifact)) return;
@@ -65,10 +70,15 @@ export function deriveTasksUpstreamActions(
   const gaps = doc.components.flatMap((c) => c.gaps);
   const gapText = gaps.join(" ").toLowerCase();
 
-  if (gapText.includes("uiscreens ausente") || (opts.hasUxTeam && !(opts.uiScreensMarkdown ?? "").trim())) {
+  if (
+    gapText.includes("uiscreens ausente") ||
+    (uiScreensRequired && !(opts.uiScreensMarkdown ?? "").trim())
+  ) {
     push({
       artifact: "ui_screens",
-      message: "Sincronizar pantallas MCP (W2b) — proyecto con equipo UX.",
+      message: hasWebSurfaces
+        ? "Sincronizar pantallas (W2b) — superficie web declarada en MDD/Blueprint."
+        : "Sincronizar pantallas MCP (W2b) — proyecto con equipo UX.",
       autoRepairable: true,
     });
   }

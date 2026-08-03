@@ -19,6 +19,7 @@ import {
   type DeliverableKind,
   type TasksPipelineProgress,
   type TasksPipelineQualitySnapshot,
+  detectWebSurfaces,
 } from "@theforge/shared-types";
 import { loadProjectBorrador, hasBorradorContent } from "../ai-analysis/phase0/phase0-load-borrador.util.js";
 import { phase0ToMarkdown } from "../ai-analysis/phase0/phase0-to-markdown.js";
@@ -647,6 +648,7 @@ export class ProjectDeliverableGeneratorsService {
 
   const mdd = buildConstitutionMarkdown(project);
   const hasUxTeam = project.hasUxTeam === true;
+  const hasWebSurfaces = detectWebSurfaces(mdd, project.blueprintContent);
   const stage = pickPrimaryStage(project.stages ?? []);
   const inventory = resolveDomainInventory({
     persisted: stage?.domainInventory,
@@ -664,11 +666,13 @@ export class ProjectDeliverableGeneratorsService {
     logicFlowsMarkdown: project.logicFlowsContent,
     uiScreensMarkdown: project.uiScreensContent,
     inventory,
-    uiScreensRequired: hasUxTeam,
+    uiScreensRequired: hasUxTeam || hasWebSurfaces,
   });
 
   const actions = deriveTasksUpstreamActions(docAcc, {
     hasUxTeam,
+    mddMarkdown: mdd,
+    blueprintMarkdown: project.blueprintContent,
     specMarkdown: spec,
     apiContractsMarkdown: project.apiContractsContent,
     logicFlowsMarkdown: project.logicFlowsContent,
@@ -678,8 +682,8 @@ export class ProjectDeliverableGeneratorsService {
 
   for (const action of actions) {
     try {
-      if (action.artifact === "ui_screens" && hasUxTeam) {
-        this.logger.log("[Tasks upstream] sync pantallas MCP");
+      if (action.artifact === "ui_screens" && (hasUxTeam || hasWebSurfaces)) {
+        this.logger.log("[Tasks upstream] sync pantallas (MCP o heurístico)");
         await this.deliverablesCascade.syncUiScreens(projectId);
         project = await this.projects.findOne(projectId);
         continue;

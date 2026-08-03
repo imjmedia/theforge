@@ -39,7 +39,7 @@ export function buildTheforgeDocConsumptionGuide(featureDir?: string): string {
     `4. **\`${specPath}\`** — Requisitos y criterios de aceptación; espejo: \`docs/sdd/spec.md\`.\n` +
     `5. **\`${featureRef}/architecture.md\`**, **\`use-cases.md\`**, **\`user-stories.md\`** — cuando existan.\n` +
     `6. **\`${planPath}\`** — Blueprint / plan técnico; espejo: \`docs/sdd/blueprint.md\`.\n` +
-    `7. **\`${featureRef}/design-system.md\`** y **\`pantallas.md\`** — **antes de UI** (espejos \`ux-ui-guide.md\`, \`pantallas.md\`). Si existe **\`pantallas.md\`**, gana sobre heurísticas de Blueprint §8.\n` +
+    `7. **\`${featureRef}/design-system.md\`** y **\`pantallas.md\`** — **antes de UI** (espejos \`ux-ui-guide.md\`, \`pantallas.md\`). Si existe **\`pantallas.md\`**, gana sobre heurísticas de Blueprint §8. Importar componentes **solo** vía adapter \`packages/ui\` (\`@scope/ui\`); mismo DS en producto y admin (\`AppShell\` / \`AdminShell\`). Responsive mobile-first (sm–xl) documentado en pantallas y tasks.\n` +
     `8. **\`${contractsPath}api-contracts.md\`** y **\`${featureRef}/logic-flows.md\`** — contratos y flujos (**vinculantes** si existen).\n` +
     `9. **\`${tasksPath}\`** — Checklist de implementación; espejo: \`docs/sdd/tasks.md\`.\n` +
     `10. **\`${featureRef}/infra.md\`**, **\`data-model.md\`**, **\`docs/sdd/decisions/*.md\`**, **\`quickstart.md\`** — cuando existan.\n\n` +

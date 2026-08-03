@@ -8,6 +8,7 @@ import {
   extractPantallaRoutes,
   formatTasksCoverageChecklistGaps,
 } from "./tasks-coverage-checklist.util.js";
+import { detectWebSurfaces } from "@theforge/shared-types";
 
 export { extractPantallaRoutes };
 
@@ -82,6 +83,7 @@ export function evaluateTasksStructure(params: {
   uiScreensMarkdown?: string | null;
   apiContractsMarkdown?: string | null;
   mddMarkdown?: string | null;
+  blueprintMarkdown?: string | null;
   infraMarkdown?: string | null;
 }): TasksStructuralReport {
   const tasksMarkdown = (params.tasksMarkdown ?? "").trim();
@@ -92,6 +94,7 @@ export function evaluateTasksStructure(params: {
   const parsedTaskCount = parsed.tasks.length;
   const pantallaRoutes = extractPantallaRoutes(params.uiScreensMarkdown ?? "").length;
   const frontendTaskCount = countFrontendTasks(tasksMarkdown);
+  const hasWebSurfaces = detectWebSurfaces(params.mddMarkdown, params.blueprintMarkdown);
 
   if (truncated) {
     gaps.push("Tasks truncado: front-matter sin cerrar o documento cortado a mitad de tarea.");
@@ -108,6 +111,12 @@ export function evaluateTasksStructure(params: {
   if (pantallaRoutes > 0 && frontendTaskCount === 0) {
     gaps.push(
       `${pantallaRoutes} rutas en pantallas.md pero 0 tareas con section: Frontend — requerido 1 task Frontend por vista.`,
+    );
+  }
+
+  if (hasWebSurfaces && frontendTaskCount === 0) {
+    gaps.push(
+      "Superficie web declarada en MDD/Blueprint pero 0 tareas Frontend — genera pantallas upstream o tasks UI.",
     );
   }
 
