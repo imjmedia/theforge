@@ -16,6 +16,13 @@ import nodemailer from "nodemailer";
 import { PrismaService } from "../../prisma/prisma.service.js";
 import { isSuperAdmin } from "../../common/roles.js";
 import { UserProvidersService } from "../user-providers/user-providers.service.js";
+import type { ForgeOpsProvisionUserBody, ForgeOpsProvisionUserResult } from "@theforge/shared-types";
+import { assertForgeOpsProvisionAuthorized } from "./forgeops-provision-auth.util.js";
+import {
+  resolvePlatformConfigBoolean,
+  resolvePlatformConfigNumber,
+  resolvePlatformConfigString,
+} from "../system-config/platform-config.runtime.js";
 
 const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_RESEND_MS = 60 * 1000;
@@ -46,10 +53,7 @@ function isProduction(): boolean {
 
 /** 1|true|yes|on — devuelve el OTP en la respuesta sin enviar correo. Con 0 u omitido, se envía email si hay SMTP. */
 function otpDevExposeCode(): boolean {
-  const v = stripEnvQuotes(process.env.OTP_DEV_EXPOSE_CODE);
-  if (!v) return false;
-  const n = v.toLowerCase();
-  return n === "1" || n === "true" || n === "yes" || n === "on";
+  return resolvePlatformConfigBoolean("otp_dev_expose_code");
 }
 
 @Injectable()
@@ -58,6 +62,7 @@ export class AuthService {
   private readonly otpByEmail = new Map<string, { code: string; expiresAt: number }>();
   private readonly lastOtpRequestAt = new Map<string, number>();
   private transporter: nodemailer.Transporter | null | undefined;
+  private smtpTransportCacheKey: string | null = null;
 
   constructor(
     private readonly jwt: JwtService,
@@ -69,12 +74,12 @@ export class AuthService {
   private smtpConfig():
     | { host: string; port: number; secure: boolean; user: string; pass: string }
     | null {
-    const host = stripEnvQuotes(this.config.get<string>("SMTP_HOST"));
+    const host = stripEnvQuotes(resolvePlatformConfigString("smtp_host"));
     if (!host) return null;
-    const port = Number(stripEnvQuotes(this.config.get<string>("SMTP_PORT")) ?? "587") || 587;
-    const secure = this.config.get<string>("SMTP_SECURE") === "1";
-    const user = stripEnvQuotes(this.config.get<string>("SMTP_USER")) ?? "";
-    const pass = stripEnvQuotes(this.config.get<string>("SMTP_PASS")) ?? "";
+    const port = resolvePlatformConfigNumber("smtp_port") || 587;
+    const secure = resolvePlatformConfigBoolean("smtp_secure");
+    const user = stripEnvQuotes(resolvePlatformConfigString("smtp_user")) ?? "";
+    const pass = stripEnvQuotes(resolvePlatformConfigString("smtp_pass")) ?? "";
     if (!user || !pass) return null;
     return { host, port, secure, user, pass };
   }
@@ -104,40 +109,45 @@ export class AuthService {
   }
 
   private smtpTransport(): nodemailer.Transporter | null {
-    if (this.transporter === undefined) {
-      const cfg = this.smtpConfig();
-      if (!cfg) {
-        this.transporter = null;
-        return null;
-      }
-      const pass = this.normalizeSmtpPassword(cfg.pass, cfg.host);
-      const { port, secure } = this.resolveSmtpTls(cfg.port, cfg.secure);
-      if (cfg.port === 587 && cfg.secure) {
-        this.logger.warn(
-          "SMTP: puerto 587 implica STARTTLS (secure=false). Se fuerza secure=false; revise SMTP_SECURE en .env.",
-        );
-      }
-      if (cfg.port === 465 && !cfg.secure) {
-        this.logger.warn(
-          "SMTP: puerto 465 suele usar SSL directo (secure=true). Se fuerza secure=true; revise SMTP_SECURE.",
-        );
-      }
-
-      this.transporter = nodemailer.createTransport({
-        host: cfg.host,
-        port,
-        secure,
-        auth: { user: cfg.user, pass },
-        tls: { minVersion: "TLSv1.2" },
-        connectionTimeout: 25_000,
-        greetingTimeout: 25_000,
-        socketTimeout: 25_000,
-        ...(!secure && port === 587 && this.isGoogleSmtpHost(cfg.host)
-          ? // Gmail expects STARTTLS on 587; some other hosts reject strict requireTLS.
-            { requireTLS: true as const }
-          : {}),
-      });
+    const cfg = this.smtpConfig();
+    if (!cfg) {
+      this.transporter = null;
+      this.smtpTransportCacheKey = null;
+      return null;
     }
+
+    const cacheKey = JSON.stringify(cfg);
+    if (this.transporter !== undefined && this.smtpTransportCacheKey === cacheKey) {
+      return this.transporter;
+    }
+
+    const pass = this.normalizeSmtpPassword(cfg.pass, cfg.host);
+    const { port, secure } = this.resolveSmtpTls(cfg.port, cfg.secure);
+    if (cfg.port === 587 && cfg.secure) {
+      this.logger.warn(
+        "SMTP: puerto 587 implica STARTTLS (secure=false). Se fuerza secure=false; revise SMTP — TLS directo en Ajustes → Sistema.",
+      );
+    }
+    if (cfg.port === 465 && !cfg.secure) {
+      this.logger.warn(
+        "SMTP: puerto 465 suele usar SSL directo (secure=true). Se fuerza secure=true; revise SMTP — TLS directo en Ajustes → Sistema.",
+      );
+    }
+
+    this.transporter = nodemailer.createTransport({
+      host: cfg.host,
+      port,
+      secure,
+      auth: { user: cfg.user, pass },
+      tls: { minVersion: "TLSv1.2" },
+      connectionTimeout: 25_000,
+      greetingTimeout: 25_000,
+      socketTimeout: 25_000,
+      ...(!secure && port === 587 && this.isGoogleSmtpHost(cfg.host)
+        ? { requireTLS: true as const }
+        : {}),
+    });
+    this.smtpTransportCacheKey = cacheKey;
     return this.transporter;
   }
 
@@ -147,8 +157,8 @@ export class AuthService {
    */
   private mailFromHeader(): string {
     const cfg = this.smtpConfig();
-    const user = cfg?.user ?? stripEnvQuotes(this.config.get<string>("SMTP_USER")) ?? "";
-    const raw = stripEnvQuotes(this.config.get<string>("SMTP_FROM"));
+    const user = cfg?.user ?? stripEnvQuotes(resolvePlatformConfigString("smtp_user")) ?? "";
+    const raw = stripEnvQuotes(resolvePlatformConfigString("smtp_from"));
     const display = raw?.trim() ?? "";
     const host = cfg?.host ?? "";
 
@@ -175,8 +185,7 @@ export class AuthService {
   /** Host público del front para autofill iOS/macOS (`@dominio #code`) y magic link. */
   private resolveWebAppHostname(): string | null {
     const candidates = [
-      stripEnvQuotes(this.config.get<string>("WEB_DOMAIN")),
-      stripEnvQuotes(this.config.get<string>("WEB_APP_HOST")),
+      resolvePlatformConfigString("web_domain"),
       stripEnvQuotes(process.env.WEB_APP_HOST),
       stripEnvQuotes(process.env.HOST),
     ];
@@ -194,6 +203,76 @@ export class AuthService {
     if (!host || host.length > 253 || !/^[\w.-]+$/.test(host)) return null;
     if (host.includes("..")) return null;
     return host;
+  }
+
+  private resolveWebAppHostnameFromLoginUrl(loginUrl?: string): string | null {
+    if (loginUrl?.trim()) {
+      return this.normalizeWebAppHostname(loginUrl.trim());
+    }
+    return this.resolveWebAppHostname();
+  }
+
+  private forgeOpsProvisionSecret(): string | undefined {
+    const configured = stripEnvQuotes(resolvePlatformConfigString("forgeops_provision_secret"));
+    return configured || undefined;
+  }
+
+  private assertSmtpAvailableForAccessEmail(): void {
+    if (isProduction() && !this.smtpConfig()) {
+      this.logger.error(
+        "SMTP_HOST, SMTP_USER y SMTP_PASS deben estar definidos en producción para envío de accesos",
+      );
+      throw new ServiceUnavailableException("Envío de correo no disponible");
+    }
+  }
+
+  private storeOtp(email: string): string {
+    const now = Date.now();
+    const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
+    this.otpByEmail.set(email, { code, expiresAt: now + OTP_TTL_MS });
+    this.lastOtpRequestAt.set(email, now);
+    return code;
+  }
+
+  private otpThrottleAllowsSend(email: string): boolean {
+    const now = Date.now();
+    const last = this.lastOtpRequestAt.get(email) ?? 0;
+    return now - last >= OTP_RESEND_MS;
+  }
+
+  private async sendMailMessage(args: {
+    to: string;
+    subject: string;
+    text: string;
+    html: string;
+    onFailure?: () => void;
+  }): Promise<void> {
+    const transport = this.smtpTransport();
+    if (!transport) {
+      if (isProduction()) {
+        throw new ServiceUnavailableException("Envío de correo no disponible");
+      }
+      throw new ServiceUnavailableException(
+        "Envío de correo no disponible. Configure SMTP o OTP_DEV_EXPOSE_CODE=1 en desarrollo.",
+      );
+    }
+
+    const from = this.mailFromHeader();
+    try {
+      await transport.sendMail({
+        from,
+        to: args.to,
+        subject: args.subject,
+        text: args.text,
+        html: args.html,
+      });
+    } catch (err) {
+      args.onFailure?.();
+      const e = err as Error & { responseCode?: number | string; response?: string; command?: string };
+      const detail = [e.message, e.responseCode, e.response].filter(Boolean).join(" | ");
+      this.logger.error(`Fallo SMTP al enviar correo: ${detail || String(err)}`);
+      throw new ServiceUnavailableException("No se pudo enviar el correo de acceso");
+    }
   }
 
   /**
@@ -290,6 +369,151 @@ export class AuthService {
     };
   }
 
+  private buildForgeOpsAccessEmailParts(args: {
+    code: string;
+    email: string;
+    appHost: string | null;
+    name: string | null;
+    created: boolean;
+  }): { subject: string; text: string; html: string } {
+    const base = this.buildOtpEmailParts({
+      code: args.code,
+      email: args.email,
+      appHost: args.appHost,
+    });
+    const greeting = args.name?.trim() ? `Hola ${args.name.trim()},` : "Hola,";
+    const introText = args.created
+      ? `${greeting}\n\nTu cuenta en The Forge ya está lista. Usa el código siguiente para iniciar sesión.`
+      : `${greeting}\n\nTe enviamos un nuevo código para acceder a The Forge.`;
+    const introHtml = `<p style="margin:0 0 18px;font-size:15px;line-height:1.55;color:#475569;">${
+      args.created
+        ? `${greeting} Tu cuenta ya está lista. Usa el código de abajo para iniciar sesión.`
+        : `${greeting} Te enviamos un nuevo código de acceso.`
+    }</p>`;
+    const subject = args.created ? "The Forge — Tu acceso está listo" : "The Forge — Acceso a tu cuenta";
+    const html = base.html.replace(
+      '<p style="margin:6px 0 22px;font-size:14px;color:#6b6b6b;">Acceso sin contraseña</p>',
+      `<p style="margin:6px 0 8px;font-size:14px;color:#6b6b6b;">Acceso sin contraseña</p>${introHtml}`,
+    );
+    return {
+      subject,
+      text: `${introText}\n\n${base.text}`,
+      html,
+    };
+  }
+
+  private async sendForgeOpsAccessEmail(args: {
+    email: string;
+    name: string | null;
+    created: boolean;
+    appHost: string | null;
+  }): Promise<{ devCode?: string }> {
+    this.assertSmtpAvailableForAccessEmail();
+
+    const code = this.storeOtp(args.email);
+
+    if (otpDevExposeCode()) {
+      this.logger.warn(
+        `OTP_DEV_EXPOSE_CODE activo: acceso ForgeOps para ${args.email} (no se envía correo)`,
+      );
+      return { devCode: code };
+    }
+
+    const { subject, text, html } = this.buildForgeOpsAccessEmailParts({
+      code,
+      email: args.email,
+      appHost: args.appHost,
+      name: args.name,
+      created: args.created,
+    });
+
+    await this.sendMailMessage({
+      to: args.email,
+      subject,
+      text,
+      html,
+      onFailure: () => {
+        this.otpByEmail.delete(args.email);
+        this.lastOtpRequestAt.delete(args.email);
+      },
+    });
+    this.logger.log(`Acceso ForgeOps enviado por SMTP a ${args.email}`);
+    return {};
+  }
+
+  /**
+   * POST /auth/forgeops/provision-user — alta M2M desde ForgeOps en instancia compartida.
+   */
+  async provisionUserFromForgeOps(
+    authorizationHeader: string | undefined,
+    input: ForgeOpsProvisionUserBody,
+  ): Promise<ForgeOpsProvisionUserResult> {
+    assertForgeOpsProvisionAuthorized(authorizationHeader, this.forgeOpsProvisionSecret());
+
+    const email = normalizeEmail(input.email);
+    const role = input.role === "admin" ? "admin" : "developer";
+    const appHost = this.resolveWebAppHostnameFromLoginUrl(input.loginUrl);
+    if (!appHost) {
+      this.logger.warn(
+        "ForgeOps provision: sin loginUrl ni WEB_DOMAIN — el correo no incluirá magic link ni autofill @dominio.",
+      );
+    }
+
+    let user = await this.prisma.user.findUnique({ where: { email } });
+    let created = false;
+
+    if (user) {
+      if (input.resendIfExists === false) {
+        return {
+          created: false,
+          user: {
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            name: user.name,
+          },
+          accessEmailSent: false,
+        };
+      }
+      const trimmedName = input.name?.trim();
+      if (trimmedName && trimmedName !== user.name) {
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: { name: trimmedName },
+        });
+      }
+    } else {
+      user = await this.prisma.user.create({
+        data: {
+          email,
+          name: input.name?.trim() || null,
+          role,
+          mcpSecret: this.generateMcpSecret(),
+        },
+      });
+      created = true;
+    }
+
+    const { devCode } = await this.sendForgeOpsAccessEmail({
+      email: user.email,
+      name: user.name,
+      created,
+      appHost,
+    });
+
+    return {
+      created,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        name: user.name,
+      },
+      accessEmailSent: true,
+      ...(devCode ? { devCode } : {}),
+    };
+  }
+
   /**
    * Solicitud de OTP. El email viene del request; solo se envía si existe un usuario registrado con ese email.
    * Si no existe, devuelve ok igualmente (anti-enumeración).
@@ -308,22 +532,13 @@ export class AuthService {
         return { ok: true };
       }
 
-      const now = Date.now();
-      const last = this.lastOtpRequestAt.get(email) ?? 0;
-      if (now - last < OTP_RESEND_MS) {
+      if (!this.otpThrottleAllowsSend(email)) {
         return { ok: true };
       }
 
-      if (isProduction() && !this.smtpConfig()) {
-        this.logger.error(
-          "SMTP_HOST, SMTP_USER y SMTP_PASS deben estar definidos en producción para OTP",
-        );
-        throw new ServiceUnavailableException("Envío de correo no disponible");
-      }
+      this.assertSmtpAvailableForAccessEmail();
 
-      const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
-      this.otpByEmail.set(email, { code, expiresAt: now + OTP_TTL_MS });
-      this.lastOtpRequestAt.set(email, now);
+      const code = this.storeOtp(email);
 
       if (otpDevExposeCode()) {
         this.logger.warn(
@@ -332,23 +547,6 @@ export class AuthService {
         return { ok: true, devCode: code };
       }
 
-      const transport = this.smtpTransport();
-      if (!transport) {
-        if (isProduction()) {
-          this.logger.error(
-            "SMTP no configurado y OTP_DEV_EXPOSE_CODE=0: no se puede enviar el código",
-          );
-          throw new ServiceUnavailableException("Envío de correo no disponible");
-        }
-        this.logger.warn(
-          `OTP para ${email}: configure SMTP o OTP_DEV_EXPOSE_CODE=1 para desarrollo`,
-        );
-        throw new ServiceUnavailableException(
-          "Envío de correo no disponible. Configure SMTP o OTP_DEV_EXPOSE_CODE=1 en desarrollo.",
-        );
-      }
-
-      const from = this.mailFromHeader();
       const appHost = this.resolveWebAppHostname();
       if (!appHost) {
         this.logger.warn(
@@ -361,23 +559,17 @@ export class AuthService {
         appHost,
       });
 
-      try {
-        await transport.sendMail({
-          from,
-          to: email,
-          subject,
-          text,
-          html,
-        });
-        this.logger.log(`OTP enviado por SMTP a ${email}`);
-      } catch (err) {
-        this.otpByEmail.delete(email);
-        this.lastOtpRequestAt.delete(email);
-        const e = err as Error & { responseCode?: number | string; response?: string; command?: string };
-        const detail = [e.message, e.responseCode, e.response].filter(Boolean).join(" | ");
-        this.logger.error(`Fallo SMTP al enviar OTP: ${detail || String(err)}`);
-        throw new ServiceUnavailableException("No se pudo enviar el código por correo");
-      }
+      await this.sendMailMessage({
+        to: email,
+        subject,
+        text,
+        html,
+        onFailure: () => {
+          this.otpByEmail.delete(email);
+          this.lastOtpRequestAt.delete(email);
+        },
+      });
+      this.logger.log(`OTP enviado por SMTP a ${email}`);
 
       return { ok: true };
     } catch (err) {

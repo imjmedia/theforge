@@ -553,6 +553,26 @@ GET /api/plugins/artifacts → ArtifactTypeDefinition[]
 
 El frontend consulta este endpoint al montar un proyecto y genera items de navegación dinámicos para cada artifact con `showInSidebar: true`.
 
+#### Vista preview en Workshop (`workshopPreview`)
+
+Los artifacts con UI propia declaran en `getArtifactTypes()`:
+
+```typescript
+{
+  id: "evd",
+  contentType: "json",
+  workshopPreview: "com.kreodevs.evd/deck",
+}
+```
+
+El **`.tfplugin`** incluye un bundle ESM (`manifest.workshopUi.entry`) que exporta `register(host)`. The Forge:
+
+1. Sirve el bundle en `GET /api/plugins/workshop-ui/:pluginId/:filename`.
+2. Carga dinámicamente los bundles de plugins **instalados** al arrancar la web (y tras install/reload).
+3. Resuelve `artifact.workshopPreview` en `PluginDocPanel` — **sin imports estáticos por plugin**.
+
+Ver `apps/web/src/plugin-ui/README.md`.
+
 #### Almacenamiento de Datos
 
 Cada plugin puede leer y escribir datos propios por proyecto:

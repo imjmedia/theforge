@@ -9,7 +9,10 @@ import type {
   PluginArtifactContext,
   PluginArtifactResult,
   PluginArtifactTypeDeclaration,
+  PluginExportContext,
+  PluginExportResult,
   PluginLicenseRegistration,
+  PluginSettingsLayout,
   PluginSettingsPanelDefinition,
 } from "@theforge/shared-types";
 
@@ -174,6 +177,16 @@ export interface ITheForgePlugin {
   ): Promise<PluginArtifactResult> | PluginArtifactResult;
 
   /**
+   * Exporta un artifact persistido (PPTX, PDF, …).
+   * El core expone GET /api/plugins/projects/:id/export/:pluginId/:artifactId?format=…
+   *
+   * @optional
+   */
+  exportArtifact?(
+    context: PluginExportContext,
+  ): Promise<PluginExportResult> | PluginExportResult;
+
+  /**
    * Registra los tipos de documento/artifact que este plugin genera.
    *
    * El core expone esta información vía GET /api/plugins/artifacts
@@ -218,6 +231,13 @@ export interface ITheForgePlugin {
   getSettingsPanels?(): Array<Omit<PluginSettingsPanelDefinition, "pluginId">>;
 
   /**
+   * Layout de los paneles de ajustes (p. ej. pestañas por panel.tab).
+   *
+   * @optional
+   */
+  getSettingsLayout?(): PluginSettingsLayout;
+
+  /**
    * Normaliza o valida ajustes antes de persistir (opcional).
    * Si lanza Error, el core responde 400.
    *
@@ -226,6 +246,15 @@ export interface ITheForgePlugin {
   validateUserSettings?(
     settings: Record<string, unknown>,
   ): Promise<Record<string, unknown>> | Record<string, unknown>;
+
+  /**
+   * Enriquece ajustes al leer (p. ej. metadatos de licencia en disco no guardados en DB).
+   *
+   * @optional
+   */
+  hydrateUserSettings?(
+    stored: Record<string, unknown>,
+  ): Record<string, unknown>;
 
   /**
    * Hook post-guardado (side-effects: invalidar caché, revalidar licencia, etc.).

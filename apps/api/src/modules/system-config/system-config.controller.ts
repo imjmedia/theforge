@@ -2,7 +2,7 @@
  * @fileoverview Controller REST de configuración del sistema. Solo super_admin.
  * Endpoints: {@link GET /admin/system-config} (snapshot) y {@link PATCH /admin/system-config} (actualizar llaves).
  */
-import { Body, Controller, Get, Patch } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch } from "@nestjs/common";
 import { requireSuperAdmin } from "../../common/guards/role.helpers.js";
 import {
   SystemConfigService,
@@ -17,6 +17,12 @@ export class SystemConfigController {
   getSnapshot() {
     requireSuperAdmin();
     return this.systemConfig.getSnapshot();
+  }
+
+  @Get("reveal/:key")
+  revealSecret(@Param("key") key: string) {
+    requireSuperAdmin();
+    return this.systemConfig.revealSecret(decodeURIComponent(key));
   }
 
   @Patch()

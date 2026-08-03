@@ -2,6 +2,7 @@ import type { StateCreator } from "zustand";
 import { apiFetch, API_BASE } from "../../utils/apiClient";
 import { isWorkshopAgentsBusy } from "../../utils/workshopAgentsBusy";
 import { shouldPreserveWorkshopBusyState } from "../../utils/workshopBusyRefresh";
+import { mergePluginDataFromFetch } from "../../utils/pluginDataPresence.util";
 import { normalizeWorkshopDocumentForEditor } from "../../utils/workshop-document-content.util";
 import { resolveMddFetchMerge } from "../../utils/workshop-mdd-sync.util";
 import { pickDefaultStageId } from "./helpers/pick-default-stage";
@@ -406,7 +407,10 @@ export const createProjectSlice: StateCreator<WorkshopState, [], [], ProjectSlic
         legacyMcpDebugTrace: null,
         synced: true,
         ...resetWorkshopSemaphoreSnapshot(),
-        pluginData: (data.pluginData as Record<string, unknown> | null | undefined) ?? {},
+        pluginData: mergePluginDataFromFetch(
+          switchingProject ? {} : get().pluginData,
+          (data.pluginData as Record<string, unknown> | null | undefined) ?? {},
+        ),
       });
       void (async () => {
         const sessionsRes = await apiFetch(`${API_BASE}/sessions/project/${requestedId}`);

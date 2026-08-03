@@ -114,6 +114,7 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-https://${WEB_DOMAIN:-theforge.local},https://theforge.kreoint.mx,http://localhost:5173,http://127.0.0.1:5173}
       # Secreto compartido para validar login MCP (POST /auth/mcp-login)
       MCP_M2M_SECRET: ${MCP_M2M_SECRET:-}
+      FORGEOPS_PROVISION_SECRET: ${FORGEOPS_PROVISION_SECRET:-}
       # 1 = un arranque: borra ProviderInstance + UserProviderConfig (clave BYOK irrecuperable). Quitar tras deploy.
       WIPE_BYOK_ON_START: ${WIPE_BYOK_ON_START:-}
       # HTTP solo encola jobs; workers BullMQ viven en theforge-worker.
@@ -122,8 +123,10 @@ services:
       DELIVERABLES_BULLMQ_CONCURRENCY: ${DELIVERABLES_BULLMQ_CONCURRENCY:-2}
       LEGACY_DELIVERABLES_BULLMQ_CONCURRENCY: ${LEGACY_DELIVERABLES_BULLMQ_CONCURRENCY:-1}
       PLUGINS_DIRECTORY: /app/plugins-enabled
+      EVD_INSTANCE_SETTINGS_PATH: /app/data/evd-instance-settings.json
     volumes:
       - theforge_plugins:/app/plugins-enabled
+      - theforge_plugin_data:/app/data
     depends_on:
       theforge-db:
         condition: service_healthy
@@ -168,8 +171,10 @@ services:
       PRISMA_RESOLVE_ROLLED_BACK: ${PRISMA_RESOLVE_ROLLED_BACK:-}
       AGENT_EVALUATOR_LEGACY: ${AGENT_EVALUATOR_LEGACY:-}
       PLUGINS_DIRECTORY: /app/plugins-enabled
+      EVD_INSTANCE_SETTINGS_PATH: /app/data/evd-instance-settings.json
     volumes:
       - theforge_plugins:/app/plugins-enabled
+      - theforge_plugin_data:/app/data
     depends_on:
       theforge-api:
         condition: service_healthy
@@ -275,3 +280,4 @@ volumes:
   theforge_db_data:
   theforge_redis_queue_data:
   theforge_plugins:
+  theforge_plugin_data:

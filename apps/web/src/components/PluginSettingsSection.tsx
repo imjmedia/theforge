@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Loader2, Puzzle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Check, ChevronDown, Loader2, Puzzle } from "lucide-react";
 import type {
+  InstalledPluginRecord,
   PluginSettingsFieldDefinition,
+  PluginSettingsFieldGroupDefinition,
+  PluginSettingsLayout,
   PluginSettingsPanelDefinition,
 } from "@theforge/shared-types";
 import {
+  fetchInstalledPlugins,
   fetchPluginSettingsPanels,
   fetchPluginUserSettings,
   savePluginUserSettings,
@@ -13,18 +17,215 @@ import { PluginInstallSection } from "@/components/PluginInstallSection";
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
+type PluginSettingsGroup = {
+  pluginId: string;
+  label: string;
+  panels: PluginSettingsPanelDefinition[];
+};
+
+function resolvePluginDisplayName(
+  pluginId: string,
+  installed: InstalledPluginRecord[],
+  panels: PluginSettingsPanelDefinition[],
+): string {
+  const fromInstalled = installed.find((p) => p.id === pluginId)?.name;
+  if (fromInstalled?.trim()) return fromInstalled.trim();
+
+  const firstPanel = panels.find((p) => p.pluginId === pluginId);
+  if (firstPanel?.label) {
+    return firstPanel.label.replace(/\s·\sv[\d.]+$/, "").trim();
+  }
+
+  const tail = pluginId.split(".").pop();
+  return tail?.trim() || pluginId;
+}
+
+/** Etiqueta del panel con versión del manifest en disco (lista instalados). */
+function resolvePanelDisplayLabel(
+  panel: PluginSettingsPanelDefinition,
+  installed: InstalledPluginRecord[],
+): string {
+  const record = installed.find((p) => p.id === panel.pluginId);
+  const base = panel.label.replace(/\s·\sv[\d.]+$/, "").trim();
+  const version = record?.version?.trim();
+  if (version && version !== "unknown") {
+    return `${base} · v${version}`;
+  }
+  return panel.label;
+}
+
+function groupPanelsByPlugin(
+  panels: PluginSettingsPanelDefinition[],
+  installed: InstalledPluginRecord[],
+): PluginSettingsGroup[] {
+  const byPlugin = new Map<string, PluginSettingsPanelDefinition[]>();
+  for (const panel of panels) {
+    const list = byPlugin.get(panel.pluginId) ?? [];
+    list.push(panel);
+    byPlugin.set(panel.pluginId, list);
+  }
+
+  return Array.from(byPlugin.entries()).map(([pluginId, pluginPanels]) => ({
+    pluginId,
+    label: resolvePluginDisplayName(pluginId, installed, panels),
+    panels: pluginPanels.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
+  }));
+}
+
+type PluginSettingsTab = {
+  id: string;
+  label: string;
+  panels: PluginSettingsPanelDefinition[];
+};
+
+function groupPanelsByTab(
+  panels: PluginSettingsPanelDefinition[],
+): PluginSettingsTab[] {
+  const byTab = new Map<string, PluginSettingsPanelDefinition[]>();
+  for (const panel of panels) {
+    const tabId = panel.tab?.trim() || panel.id;
+    const list = byTab.get(tabId) ?? [];
+    list.push(panel);
+    byTab.set(tabId, list);
+  }
+
+  return Array.from(byTab.entries()).map(([id, tabPanels]) => {
+    const sorted = tabPanels.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const label =
+      sorted.find((p) => p.tabLabel?.trim())?.tabLabel?.trim() ??
+      sorted[0]?.label.replace(/\s·\sv[\d.]+$/, "").trim() ??
+      id;
+    return { id, label, panels: sorted };
+  });
+}
+
+function PluginSettingsTabSelector({
+  tabs,
+  value,
+  onValueChange,
+}: {
+  tabs: PluginSettingsTab[];
+  value: string;
+  onValueChange: (tabId: string) => void;
+}) {
+  if (tabs.length <= 1) return null;
+
+  return (
+    <div
+      className="flex flex-wrap gap-2"
+      role="tablist"
+      aria-label="Secciones de configuración del plugin"
+    >
+      {tabs.map((tab) => {
+        const selected = value === tab.id;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            onClick={() => onValueChange(tab.id)}
+            className={cn(
+              "min-h-[36px] touch-manipulation rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+              selected
+                ? "border-[var(--primary)] bg-[color-mix(in_oklch,var(--primary)_12%,var(--card))] text-[var(--primary)]"
+                : "border-[var(--border)] bg-[var(--card)] text-[var(--foreground-muted)] hover:border-[var(--primary)]/40 hover:text-[var(--foreground)]",
+            )}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function fieldValue(settings: Record<string, unknown>, key: string): string {
   const v = settings[key];
   return typeof v === "string" ? v : v != null ? String(v) : "";
 }
 
-function PluginSettingsPanelCard({ panel }: { panel: PluginSettingsPanelDefinition }) {
+function partitionPanelFields(panel: PluginSettingsPanelDefinition): {
+  ungrouped: PluginSettingsFieldDefinition[];
+  grouped: Map<string, PluginSettingsFieldDefinition[]>;
+} {
+  const ungrouped: PluginSettingsFieldDefinition[] = [];
+  const grouped = new Map<string, PluginSettingsFieldDefinition[]>();
+
+  for (const field of panel.fields) {
+    if (field.group) {
+      const list = grouped.get(field.group) ?? [];
+      list.push(field);
+      grouped.set(field.group, list);
+    } else {
+      ungrouped.push(field);
+    }
+  }
+
+  return { ungrouped, grouped };
+}
+
+function resolveFieldGroups(
+  panel: PluginSettingsPanelDefinition,
+  grouped: Map<string, PluginSettingsFieldDefinition[]>,
+): PluginSettingsFieldGroupDefinition[] {
+  const declared = panel.fieldGroups ?? [];
+  const declaredIds = new Set(declared.map((group) => group.id));
+  const extras = [...grouped.keys()]
+    .filter((id) => !declaredIds.has(id))
+    .map((id) => ({ id, label: id, collapsed: true }));
+
+  return [...declared, ...extras].filter((group) => grouped.has(group.id));
+}
+
+function PluginSettingsFieldGroup({
+  group,
+  fields,
+  renderField,
+}: {
+  group: PluginSettingsFieldGroupDefinition;
+  fields: PluginSettingsFieldDefinition[];
+  renderField: (field: PluginSettingsFieldDefinition) => ReactNode;
+}) {
+  const collapsed = group.collapsed !== false;
+
+  return (
+    <details
+      className="group rounded-lg border border-[var(--border)] bg-[color-mix(in_oklch,var(--card)_92%,var(--background))]"
+      {...(collapsed ? {} : { open: true })}
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 marker:content-none [&::-webkit-details-marker]:hidden">
+        <span className="text-sm font-medium text-[var(--foreground)]">{group.label}</span>
+        <ChevronDown className="h-4 w-4 shrink-0 text-[var(--foreground-muted)] transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="space-y-4 border-t border-[var(--border)] px-3 py-3">
+        {fields.map(renderField)}
+      </div>
+    </details>
+  );
+}
+
+function PluginSettingsPanelCard({
+  panel,
+  installed,
+  onSaved,
+}: {
+  panel: PluginSettingsPanelDefinition;
+  installed: InstalledPluginRecord[];
+  onSaved?: (pluginReloaded: boolean) => void;
+}) {
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [initial, setInitial] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const [reloadedAfterSave, setReloadedAfterSave] = useState(false);
+
+  const displayLabel = useMemo(
+    () => resolvePanelDisplayLabel(panel, installed),
+    [panel, installed],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -58,16 +259,24 @@ function PluginSettingsPanelCard({ panel }: { panel: PluginSettingsPanelDefiniti
     setSuccess(false);
     try {
       const saved = await savePluginUserSettings(panel.pluginId, values);
-      setValues(saved);
-      setInitial(saved);
+      const pluginReloaded =
+        typeof saved === "object" &&
+        saved != null &&
+        (saved as { _pluginReloaded?: boolean })._pluginReloaded === true;
+      const clean = { ...(saved as Record<string, unknown>) };
+      delete clean._pluginReloaded;
+      setValues(clean);
+      setInitial(clean);
       setSuccess(true);
+      setReloadedAfterSave(pluginReloaded);
+      onSaved?.(pluginReloaded);
       window.setTimeout(() => setSuccess(false), 2500);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al guardar");
     } finally {
       setSaving(false);
     }
-  }, [panel.pluginId, values]);
+  }, [onSaved, panel.pluginId, values]);
 
   const renderField = (field: PluginSettingsFieldDefinition) => {
     const id = `${panel.pluginId}-${panel.id}-${field.key}`;
@@ -83,10 +292,11 @@ function PluginSettingsPanelCard({ panel }: { panel: PluginSettingsPanelDefiniti
           <select
             id={id}
             value={value}
+            disabled={field.readOnly}
             onChange={(e) =>
               setValues((prev) => ({ ...prev, [field.key]: e.target.value }))
             }
-            className="flex h-9 w-full rounded-md border border-[var(--input-border)] bg-[var(--input)] px-3 py-1 text-sm"
+            className="flex h-9 w-full rounded-md border border-[var(--input-border)] bg-[var(--input)] px-3 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-70"
           >
             <option value="">—</option>
             {field.options.map((opt) => (
@@ -95,6 +305,35 @@ function PluginSettingsPanelCard({ panel }: { panel: PluginSettingsPanelDefiniti
               </option>
             ))}
           </select>
+          {field.hint ? (
+            <p className="text-xs text-[var(--foreground-muted)]">{field.hint}</p>
+          ) : null}
+        </div>
+      );
+    }
+
+    if (field.type === "textarea") {
+      return (
+        <div key={field.key} className="space-y-1.5">
+          <label htmlFor={id} className="block text-sm font-medium text-[var(--foreground)]">
+            {field.label}
+            {field.required ? " *" : ""}
+          </label>
+          <textarea
+            id={id}
+            rows={field.rows ?? 6}
+            value={value}
+            placeholder={field.placeholder}
+            readOnly={field.readOnly}
+            disabled={field.readOnly}
+            onChange={(e) =>
+              setValues((prev) => ({ ...prev, [field.key]: e.target.value }))
+            }
+            className={cn(
+              "flex w-full rounded-md border border-[var(--input-border)] bg-[var(--input)] px-3 py-2 text-sm font-mono disabled:cursor-not-allowed disabled:opacity-70",
+              field.readOnly && "cursor-default opacity-90",
+            )}
+          />
           {field.hint ? (
             <p className="text-xs text-[var(--foreground-muted)]">{field.hint}</p>
           ) : null}
@@ -113,10 +352,15 @@ function PluginSettingsPanelCard({ panel }: { panel: PluginSettingsPanelDefiniti
           type={field.type === "password" ? "password" : "text"}
           value={value}
           placeholder={field.placeholder}
+          readOnly={field.readOnly}
+          disabled={field.readOnly}
           onChange={(e) =>
             setValues((prev) => ({ ...prev, [field.key]: e.target.value }))
           }
-          className={cn(field.type !== "password" && "font-mono text-xs")}
+          className={cn(
+            field.type !== "password" && "font-mono text-xs",
+            field.readOnly && "cursor-default opacity-90",
+          )}
         />
         {field.hint ? (
           <p className="text-xs text-[var(--foreground-muted)]">{field.hint}</p>
@@ -125,10 +369,16 @@ function PluginSettingsPanelCard({ panel }: { panel: PluginSettingsPanelDefiniti
     );
   };
 
+  const { ungrouped, grouped } = useMemo(() => partitionPanelFields(panel), [panel]);
+  const fieldGroups = useMemo(
+    () => resolveFieldGroups(panel, grouped),
+    [grouped, panel],
+  );
+
   return (
     <Card className="border-[var(--border)] bg-[var(--card)]">
       <CardHeader>
-        <CardTitle className="text-lg">{panel.label}</CardTitle>
+        <CardTitle className="text-lg">{displayLabel}</CardTitle>
         {panel.description ? (
           <CardDescription>{panel.description}</CardDescription>
         ) : null}
@@ -141,7 +391,15 @@ function PluginSettingsPanelCard({ panel }: { panel: PluginSettingsPanelDefiniti
           </div>
         ) : (
           <>
-            {panel.fields.map(renderField)}
+            {ungrouped.map(renderField)}
+            {fieldGroups.map((group) => (
+              <PluginSettingsFieldGroup
+                key={group.id}
+                group={group}
+                fields={grouped.get(group.id) ?? []}
+                renderField={renderField}
+              />
+            ))}
             {error ? <p className="text-sm text-red-400">{error}</p> : null}
             <div className="flex items-center gap-3 pt-2">
               <Button
@@ -161,7 +419,7 @@ function PluginSettingsPanelCard({ panel }: { panel: PluginSettingsPanelDefiniti
               {success ? (
                 <span className="inline-flex items-center gap-1 text-sm text-emerald-400">
                   <Check className="h-4 w-4" />
-                  Guardado
+                  {reloadedAfterSave ? "Guardado · plugin recargado" : "Guardado"}
                 </span>
               ) : null}
             </div>
@@ -172,17 +430,125 @@ function PluginSettingsPanelCard({ panel }: { panel: PluginSettingsPanelDefiniti
   );
 }
 
+function PluginSettingsGroupSelector({
+  groups,
+  value,
+  onValueChange,
+}: {
+  groups: PluginSettingsGroup[];
+  value: string;
+  onValueChange: (pluginId: string) => void;
+}) {
+  return (
+    <div
+      className="flex flex-wrap gap-2"
+      role="tablist"
+      aria-label="Plugins con ajustes"
+    >
+      {groups.map((group) => {
+        const selected = value === group.pluginId;
+        return (
+          <button
+            key={group.pluginId}
+            type="button"
+            role="tab"
+            id={`plugin-settings-tab-${group.pluginId}`}
+            aria-selected={selected}
+            aria-controls={`plugin-settings-panel-${group.pluginId}`}
+            onClick={() => onValueChange(group.pluginId)}
+            className={cn(
+              "min-h-[36px] touch-manipulation rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+              selected
+                ? "border-[var(--primary)] bg-[color-mix(in_oklch,var(--primary)_12%,var(--card))] text-[var(--primary)]"
+                : "border-[var(--border)] bg-[var(--card)] text-[var(--foreground-muted)] hover:border-[var(--primary)]/40 hover:text-[var(--foreground)]",
+            )}
+          >
+            {group.label}
+            {group.panels.length > 1 ? (
+              <span className="ml-1.5 text-xs font-normal opacity-80">
+                ({group.panels.length})
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Paneles de ajustes declarados por plugins cargados (enganchados en Ajustes). */
 export function PluginSettingsSection() {
   const [panels, setPanels] = useState<PluginSettingsPanelDefinition[]>([]);
+  const [layouts, setLayouts] = useState<Record<string, PluginSettingsLayout>>({});
+  const [installed, setInstalled] = useState<InstalledPluginRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [settingsRefreshKey, setSettingsRefreshKey] = useState(0);
+  const [activePluginId, setActivePluginId] = useState("");
+  const [activeSettingsTabId, setActiveSettingsTabId] = useState("");
+
+  const pluginGroups = useMemo(
+    () => groupPanelsByPlugin(panels, installed),
+    [panels, installed],
+  );
+
+  const activeGroup = useMemo(
+    () => pluginGroups.find((group) => group.pluginId === activePluginId) ?? pluginGroups[0],
+    [pluginGroups, activePluginId],
+  );
+
+  const activePluginUsesTabs =
+    activeGroup != null && layouts[activeGroup.pluginId]?.mode === "tabs";
+
+  const settingsTabs = useMemo(() => {
+    if (!activeGroup || !activePluginUsesTabs) return [];
+    return groupPanelsByTab(activeGroup.panels);
+  }, [activeGroup, activePluginUsesTabs]);
+
+  const activeSettingsTab = useMemo(
+    () => settingsTabs.find((tab) => tab.id === activeSettingsTabId) ?? settingsTabs[0],
+    [settingsTabs, activeSettingsTabId],
+  );
+
+  useEffect(() => {
+    if (settingsTabs.length === 0) {
+      setActiveSettingsTabId("");
+      return;
+    }
+    if (!settingsTabs.some((tab) => tab.id === activeSettingsTabId)) {
+      const firstTab = settingsTabs[0];
+      if (firstTab) setActiveSettingsTabId(firstTab.id);
+    }
+  }, [settingsTabs, activeSettingsTabId]);
+
+  useEffect(() => {
+    if (pluginGroups.length === 0) {
+      setActivePluginId("");
+      return;
+    }
+    if (!pluginGroups.some((group) => group.pluginId === activePluginId)) {
+      const firstGroup = pluginGroups[0];
+      if (firstGroup) setActivePluginId(firstGroup.pluginId);
+    }
+  }, [pluginGroups, activePluginId]);
 
   const reloadPanels = useCallback(() => {
     setLoading(true);
-    void fetchPluginSettingsPanels()
-      .then(setPanels)
+    void Promise.all([
+      fetchPluginSettingsPanels(),
+      fetchInstalledPlugins().catch(() => ({ installed: [] as InstalledPluginRecord[] })),
+    ])
+      .then(([settingsPayload, installedStatus]) => {
+        setPanels(settingsPayload.panels);
+        setLayouts(settingsPayload.layouts);
+        setInstalled(installedStatus.installed);
+      })
       .finally(() => setLoading(false));
   }, []);
+
+  const handlePluginsChanged = useCallback(() => {
+    setSettingsRefreshKey((key) => key + 1);
+    reloadPanels();
+  }, [reloadPanels]);
 
   useEffect(() => {
     reloadPanels();
@@ -191,7 +557,7 @@ export function PluginSettingsSection() {
   if (loading) {
     return (
       <div className="space-y-6">
-        <PluginInstallSection onChanged={reloadPanels} />
+        <PluginInstallSection onChanged={handlePluginsChanged} />
         <div className="flex items-center gap-2 text-sm text-[var(--foreground-muted)]">
           <Loader2 className="h-4 w-4 animate-spin" />
           Buscando plugins…
@@ -203,7 +569,7 @@ export function PluginSettingsSection() {
   if (panels.length === 0) {
     return (
       <div className="space-y-6">
-        <PluginInstallSection onChanged={reloadPanels} />
+        <PluginInstallSection onChanged={handlePluginsChanged} />
         <Card className="border-[var(--border)] bg-[var(--card)]">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
@@ -220,12 +586,60 @@ export function PluginSettingsSection() {
     );
   }
 
+  const visiblePanels = activePluginUsesTabs
+    ? (activeSettingsTab?.panels ?? [])
+    : (activeGroup?.panels ?? []);
+
   return (
     <div className="space-y-6">
-      <PluginInstallSection onChanged={reloadPanels} />
-      {panels.map((panel) => (
-        <PluginSettingsPanelCard key={`${panel.pluginId}:${panel.id}`} panel={panel} />
-      ))}
+      <PluginInstallSection onChanged={handlePluginsChanged} />
+
+      <Card className="border-[var(--border)] bg-[var(--card)]">
+        <CardHeader className="space-y-4 pb-4">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Puzzle className="h-5 w-5 text-[var(--primary)]" />
+              Ajustes por plugin
+            </CardTitle>
+            <CardDescription className="mt-1.5">
+              {pluginGroups.length > 1
+                ? "Elige un plugin para ver sus paneles de licencia, modelos y preferencias."
+                : "Configura licencia, modelos y preferencias del plugin cargado."}
+            </CardDescription>
+          </div>
+          <PluginSettingsGroupSelector
+            groups={pluginGroups}
+            value={activeGroup?.pluginId ?? ""}
+            onValueChange={setActivePluginId}
+          />
+          {activePluginUsesTabs ? (
+            <PluginSettingsTabSelector
+              tabs={settingsTabs}
+              value={activeSettingsTab?.id ?? ""}
+              onValueChange={setActiveSettingsTabId}
+            />
+          ) : null}
+        </CardHeader>
+        <CardContent className="border-t border-[var(--border)] pt-6">
+          <div
+            role="tabpanel"
+            id={activeGroup ? `plugin-settings-panel-${activeGroup.pluginId}` : undefined}
+            aria-labelledby={
+              activeGroup ? `plugin-settings-tab-${activeGroup.pluginId}` : undefined
+            }
+            className="space-y-6"
+          >
+            {visiblePanels.map((panel) => (
+              <PluginSettingsPanelCard
+                key={`${panel.pluginId}:${panel.id}:${settingsRefreshKey}`}
+                panel={panel}
+                installed={installed}
+                onSaved={() => handlePluginsChanged()}
+              />
+            ))}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

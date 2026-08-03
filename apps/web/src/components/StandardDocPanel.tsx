@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui";
@@ -43,6 +44,12 @@ export interface StandardDocPanelProps {
   documentTimestamps?: WorkshopDocumentTimestamps | null;
   /** Clarificación `[NEEDS CLARIFICATION]` — banner, respuestas y regeneración. */
   clarification?: Omit<DocumentClarificationSectionProps, "content">;
+  /** Etiqueta del botón Guardar en modo fuente (default: "Guardar"). */
+  saveLabel?: string;
+  /** Progreso de generación (plugins con reportProgress). */
+  generationProgress?: { percent: number; detail?: string };
+  /** Vista preview personalizada (p. ej. diapositivas EVD). */
+  previewSlot?: ReactNode;
 }
 
 /**
@@ -75,6 +82,9 @@ export function StandardDocPanel({
   readOnly = false,
   documentTimestamps,
   clarification,
+  generationProgress,
+  previewSlot,
+  saveLabel,
 }: StandardDocPanelProps) {
   const IconComp = icon;
   // Estado 1: preview vacío → DocEmptyState
@@ -104,6 +114,7 @@ export function StandardDocPanel({
           onLegacyGenerate={onLegacyGenerate}
           legacyGenerateLoading={legacyGenerateLoading}
           generateButtonLabel={generateLabel}
+          generationProgress={generationProgress}
         />
       </div>
     );
@@ -115,43 +126,61 @@ export function StandardDocPanel({
         <DocumentClarificationSection {...clarification} content={content} />
       ) : null}
       {viewMode === "preview" ? (
-        /* Estado 2: preview con contenido */
-        <MddViewer content={content || ""} documentTimestamps={documentTimestamps} />
-      ) : (
-        <>
-          <WorkshopDocumentStampBar timestamps={documentTimestamps} />
-          <div className="flex min-h-0 flex-1 flex-col gap-2">
-            <WorkshopDocSourceSaveBar onSave={onSave} disabled={!isDirty || readOnly} />
-            <WorkshopDocTextarea
-              value={content ?? ""}
-              onChange={(v) => {
-                if (!readOnly) onContentChange(v || null);
-              }}
-              onBlur={onBlur}
-              disabled={readOnly}
-              placeholder={placeholder ?? `# ${title}\n\nEl contenido se genera aquí o puedes escribirlo manualmente...`}
-              className="min-h-0 w-full flex-1 bg-[color-mix(in_oklch,var(--muted)_50%,var(--card))] border border-[var(--border)] rounded-lg p-4 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent outline-none resize-none"
-              spellCheck={false}
+        isLoading ? (
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-4 py-8 text-center">
+            <AiDocumentBuildingPlaceholder
+              documentTitle={title}
+              progress={generationProgress ?? { percent: 0, detail: "Iniciando generación…" }}
             />
           </div>
-          {!content?.trim() && !hideGenerate && !readOnly && (
-            <div className="shrink-0 mt-4 flex min-h-[200px] w-full justify-center sm:justify-end">
-              {isLoading ? (
-                <AiDocumentBuildingPlaceholder documentTitle={title} />
-              ) : (
-                <Button
-                  type="button"
-                  variant="default"
-                  size="default"
-                  className={cn("w-full max-w-md sm:w-auto sm:min-w-[280px]", WORKSHOP_DOC_EMPTY_PRIMARY_BTN)}
-                  onClick={onGenerate}
-                  disabled={!canGenerate}
-                >
-                  <Sparkles className="h-4 w-4 shrink-0 opacity-95" strokeWidth={2} aria-hidden />
-                  {generateLabel ?? `Generar ${title} desde MDD`}
-                </Button>
-              )}
+        ) : (
+          previewSlot ?? (
+            <MddViewer content={content || ""} documentTimestamps={documentTimestamps} />
+          )
+        )
+      ) : (
+        <>
+          {isLoading && !content?.trim() && !hideGenerate && !readOnly ? (
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-4 py-8 text-center">
+              <AiDocumentBuildingPlaceholder documentTitle={title} progress={generationProgress} />
             </div>
+          ) : (
+            <>
+              <WorkshopDocumentStampBar timestamps={documentTimestamps} />
+              <div className="flex min-h-0 flex-1 flex-col gap-2">
+                <WorkshopDocSourceSaveBar
+                  onSave={onSave}
+                  disabled={!isDirty || readOnly}
+                  label={saveLabel}
+                />
+                <WorkshopDocTextarea
+                  value={content ?? ""}
+                  onChange={(v) => {
+                    if (!readOnly) onContentChange(v || null);
+                  }}
+                  onBlur={onBlur}
+                  disabled={readOnly}
+                  placeholder={placeholder ?? `# ${title}\n\nEl contenido se genera aquí o puedes escribirlo manualmente...`}
+                  className="min-h-0 w-full flex-1 bg-[color-mix(in_oklch,var(--muted)_50%,var(--card))] border border-[var(--border)] rounded-lg p-4 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent outline-none resize-none"
+                  spellCheck={false}
+                />
+              </div>
+              {!content?.trim() && !hideGenerate && !readOnly && (
+                <div className="shrink-0 mt-4 flex min-h-[200px] w-full items-center justify-center px-4">
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="default"
+                    className={cn("w-full max-w-md sm:w-auto sm:min-w-[280px]", WORKSHOP_DOC_EMPTY_PRIMARY_BTN)}
+                    onClick={onGenerate}
+                    disabled={!canGenerate}
+                  >
+                    <Sparkles className="h-4 w-4 shrink-0 opacity-95" strokeWidth={2} aria-hidden />
+                    {generateLabel ?? `Generar ${title} desde MDD`}
+                  </Button>
+                </div>
+              )}
+            </>
           )}
         </>
       )}

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { integrationHandoffItemSchema } from "./project-integration.js";
+import { normalizeAriadneChangePackHandoffItems } from "./ariadne-handoff-normalize.util.js";
 
 export const ariadneChangePackFileSchema = z.object({
   path: z.string().trim().min(1).max(500),
@@ -16,11 +17,12 @@ export const ariadneChangePackV1Schema = z.object({
   ariadneRepositoryId: z.string().uuid().optional(),
   filesToModify: z.array(ariadneChangePackFileSchema).max(200).optional(),
   questionsToRefine: z.array(z.string().trim().min(1).max(500)).max(30).optional(),
-  /** Ítems NEW-LEG embebidos (parity / handoff externo). */
+  /** Ítems NEW-LEG embebidos (parity / handoff externo). Ids se normalizan a `NEW-LEG-NN` si Ariadne envía otro formato. */
   handoffItems: z
-    .array(integrationHandoffItemSchema.omit({ legacyStageId: true }))
-    .max(50)
-    .optional(),
+    .preprocess(
+      normalizeAriadneChangePackHandoffItems,
+      z.array(integrationHandoffItemSchema.omit({ legacyStageId: true })).max(50).optional(),
+    ),
   linkedNewProjectId: z.string().uuid().optional(),
 });
 

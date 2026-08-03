@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   Param,
   Patch,
@@ -18,6 +19,7 @@ import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard.js";
 import { getRequestUserId, getRequestUserRole } from "../../common/request-user.store.js";
 import { requireAdmin, requireSuperAdmin } from "../../common/guards/role.helpers.js";
 import { UserProvidersService } from "../user-providers/user-providers.service.js";
+import { forgeOpsProvisionUserBodySchema } from "@theforge/shared-types";
 
 const requestOtpSchema = z.object({
   email: z.string().email(),
@@ -94,6 +96,21 @@ export class AuthController {
   ssoLogin(@Body() body: unknown) {
     const parsed = parseBody(ssoLoginSchema, body);
     return this.auth.ssoLogin(parsed.token);
+  }
+
+  /**
+   * POST /auth/forgeops/provision-user
+   * Alta M2M desde ForgeOps en instancia compartida. Requiere `Authorization: Bearer <FORGEOPS_PROVISION_SECRET>`.
+   */
+  @Post("forgeops/provision-user")
+  @Public()
+  @HttpCode(200)
+  provisionUserFromForgeOps(
+    @Headers("authorization") authorization: string | undefined,
+    @Body() body: unknown,
+  ) {
+    const parsed = parseBody(forgeOpsProvisionUserBodySchema, body);
+    return this.auth.provisionUserFromForgeOps(authorization, parsed);
   }
 
   // Protected endpoints (no @Public() → requires JWT via JwtAuthGuard at class level)

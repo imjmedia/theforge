@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Loader2, RefreshCw, RotateCcw, Save, SlidersHorizontal } from "lucide-react";
-import type { SystemConfigCategory, SystemConfigSnapshot } from "@theforge/shared-types";
+import { Check, Copy, Eye, EyeOff, Loader2, RefreshCw, RotateCcw, Save, SlidersHorizontal } from "lucide-react";
+import { SYSTEM_CONFIG_SECRET_MASK, type SystemConfigCategory, type SystemConfigSnapshot } from "@theforge/shared-types";
 import { UnderlineTabs, type UnderlineTabItem } from "./ui/UnderlineTabs";
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from "./ui";
+import { ListRowIconButton } from "./ListRowIconButton";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -14,6 +15,7 @@ const SOURCE_LABELS = {
 
 const CATEGORY_ORDER: SystemConfigCategory[] = [
   "integrations",
+  "auth",
   "llm",
   "queues",
   "mcp",
@@ -24,6 +26,7 @@ const CATEGORY_ORDER: SystemConfigCategory[] = [
 
 const CATEGORY_SHORT_LABELS: Partial<Record<SystemConfigCategory, string>> = {
   integrations: "Integ.",
+  auth: "Correo",
   llm: "LLM",
   queues: "Colas",
   mcp: "MCP",
@@ -39,6 +42,111 @@ function isTruthy(value: string): boolean {
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
+function isMaskedSecretValue(value: string): boolean {
+  return value === SYSTEM_CONFIG_SECRET_MASK;
+}
+
+function resolveForgeOpsProvisionWebhookUrl(webDomain: string): string {
+  const raw = webDomain.trim();
+  if (raw) {
+    const host = raw.replace(/^https?:\/\//i, "").split("/")[0]?.split(":")[0] ?? "";
+    if (host) return `https://${host}/api/auth/forgeops/provision-user`;
+  }
+  if (typeof window !== "undefined" && window.location.origin) {
+    return `${window.location.origin}/api/auth/forgeops/provision-user`;
+  }
+  return "/api/auth/forgeops/provision-user";
+}
+
+function buildForgeOpsProvisionExampleBody(webDomain: string): string {
+  const loginUrl = (() => {
+    const raw = webDomain.trim();
+    if (!raw) {
+      return typeof window !== "undefined" ? window.location.origin : "https://theforge.ejemplo.com";
+    }
+    if (/^https?:\/\//i.test(raw)) return raw.replace(/\/+$/, "");
+    const host = raw.replace(/^https?:\/\//i, "").split("/")[0]?.split(":")[0] ?? raw;
+    return `https://${host}`;
+  })();
+
+  return JSON.stringify(
+    {
+      email: "dev@cliente.com",
+      name: "Nombre Apellido",
+      role: "developer",
+      loginUrl,
+      resendIfExists: true,
+    },
+    null,
+    2,
+  );
+}
+
+function CopyableMonoBlock({
+  label,
+  text,
+  multiline = false,
+}: {
+  label: string;
+  text: string;
+  multiline?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-medium text-[var(--foreground-muted)]">{label}</p>
+        <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={() => void handleCopy()}>
+          {copied ? <Check className="h-3.5 w-3.5 text-[var(--success)]" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? "Copiado" : "Copiar"}
+        </Button>
+      </div>
+      <pre
+        className={cn(
+          "overflow-x-auto rounded-lg border border-[var(--border)] bg-[color-mix(in_oklch,var(--muted)_18%,var(--card))] p-3 font-mono text-xs leading-relaxed text-[var(--foreground)]",
+          multiline ? "whitespace-pre-wrap break-all" : "whitespace-nowrap",
+        )}
+      >
+        {text}
+      </pre>
+    </div>
+  );
+}
+
+function ForgeOpsProvisionWebhookHelp({ webDomain }: { webDomain: string }) {
+  const webhookUrl = useMemo(() => resolveForgeOpsProvisionWebhookUrl(webDomain), [webDomain]);
+  const exampleBody = useMemo(() => buildForgeOpsProvisionExampleBody(webDomain), [webDomain]);
+  const authHeader = "Authorization: Bearer <forgeops_provision_secret>";
+
+  return (
+    <div className="w-full rounded-xl border border-[var(--border)] bg-[color-mix(in_oklch,var(--muted)_12%,var(--card))] p-4">
+      <p className="mb-3 text-sm font-medium text-[var(--foreground)]">Webhook ForgeOps (provision-user)</p>
+      <div className="space-y-4">
+        <CopyableMonoBlock label="POST" text={webhookUrl} />
+        <CopyableMonoBlock label="Header" text={authHeader} />
+        <CopyableMonoBlock label="Body (JSON)" text={exampleBody} multiline />
+      </div>
+      <p className="mt-3 text-xs text-[var(--foreground-muted)]">
+        Crea o reactiva usuarios en instancias compartidas y envía acceso por correo (OTP + magic link).
+        Campos opcionales: <code className="font-mono">name</code>, <code className="font-mono">role</code> (
+        <code className="font-mono">developer</code> | <code className="font-mono">admin</code>),{" "}
+        <code className="font-mono">loginUrl</code>, <code className="font-mono">resendIfExists</code>.
+      </p>
+    </div>
+  );
+}
+
 function SystemConfigSettingField({
   setting,
   value,
@@ -50,6 +158,48 @@ function SystemConfigSettingField({
   changed: boolean;
   onChange: (key: string, value: string) => void;
 }) {
+  const [visible, setVisible] = useState(false);
+  const [revealedPlain, setRevealedPlain] = useState<string | null>(null);
+  const [revealLoading, setRevealLoading] = useState(false);
+  const [revealError, setRevealError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const isSecret = setting.secret || setting.type === "secret";
+  const displayValue =
+    isSecret && visible && revealedPlain !== null && isMaskedSecretValue(value)
+      ? revealedPlain
+      : value;
+
+  const handleToggleVisible = async () => {
+    if (!visible && isSecret && isMaskedSecretValue(value) && revealedPlain === null) {
+      setRevealLoading(true);
+      setRevealError("");
+      try {
+        const res = await api.get(`/api/admin/system-config/reveal/${encodeURIComponent(setting.key)}`);
+        if (!res.ok) throw new Error("No se pudo revelar el valor");
+        const data = (await res.json()) as { value?: string };
+        setRevealedPlain(data.value ?? "");
+      } catch {
+        setRevealError("No se pudo cargar el valor");
+        return;
+      } finally {
+        setRevealLoading(false);
+      }
+    }
+    setVisible((v) => !v);
+  };
+
+  const handleCopy = async () => {
+    if (!displayValue.trim()) return;
+    try {
+      await navigator.clipboard.writeText(displayValue);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* ignore */
+    }
+  };
+
   return (
     <div
       className="grid gap-2 border-b border-[var(--border)] pb-5 last:border-0 last:pb-0 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] sm:gap-4"
@@ -66,7 +216,7 @@ function SystemConfigSettingField({
         </p>
       </div>
 
-      <div className="min-w-0">
+      <div className="min-w-0 space-y-1">
         {setting.type === "boolean" ? (
           <label className="flex cursor-pointer items-center gap-2 text-sm">
             <input
@@ -77,18 +227,59 @@ function SystemConfigSettingField({
             />
             {isTruthy(value) ? "Activado" : "Desactivado"}
           </label>
+        ) : isSecret ? (
+          <div className="relative">
+            <Input
+              type={visible ? "text" : "password"}
+              value={displayValue}
+              placeholder={setting.defaultValue || setting.envKey}
+              autoComplete="off"
+              onChange={(e) => onChange(setting.key, e.target.value)}
+              className={cn("pr-[5.5rem] font-mono text-sm", changed && "ring-1 ring-[var(--primary)]")}
+            />
+            <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 gap-0.5">
+              <ListRowIconButton
+                tooltip={visible ? "Ocultar" : "Mostrar"}
+                variant="ghost"
+                className="h-8 w-8 border-0 bg-transparent shadow-none hover:bg-[var(--muted)]"
+                disabled={revealLoading || (!value && !setting.defaultValue)}
+                onClick={() => void handleToggleVisible()}
+              >
+                {revealLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                ) : visible ? (
+                  <EyeOff className="h-4 w-4" aria-hidden />
+                ) : (
+                  <Eye className="h-4 w-4" aria-hidden />
+                )}
+              </ListRowIconButton>
+              <ListRowIconButton
+                tooltip={copied ? "Copiado" : "Copiar"}
+                variant="ghost"
+                className="h-8 w-8 border-0 bg-transparent shadow-none hover:bg-[var(--muted)]"
+                disabled={!displayValue.trim() || revealLoading}
+                onClick={() => void handleCopy()}
+              >
+                {copied ? (
+                  <Check className="h-4 w-4 text-[var(--success)]" aria-hidden />
+                ) : (
+                  <Copy className="h-4 w-4" aria-hidden />
+                )}
+              </ListRowIconButton>
+            </div>
+          </div>
         ) : (
           <Input
-            type={setting.type === "secret" ? "password" : setting.type === "number" ? "number" : "text"}
+            type={setting.type === "number" ? "number" : "text"}
             value={value}
             placeholder={setting.defaultValue || setting.envKey}
             min={setting.min}
             max={setting.max}
-            autoComplete={setting.type === "secret" ? "off" : undefined}
             onChange={(e) => onChange(setting.key, e.target.value)}
             className={cn(changed && "ring-1 ring-[var(--primary)]")}
           />
         )}
+        {revealError ? <p className="text-xs text-red-500">{revealError}</p> : null}
       </div>
     </div>
   );
@@ -289,13 +480,17 @@ export function SystemConfigCard() {
           </CardHeader>
           <CardContent className="space-y-5">
             {activeCategoryData.settings.map((setting) => (
-              <SystemConfigSettingField
-                key={setting.key}
-                setting={setting}
-                value={draft[setting.key] ?? ""}
-                changed={changedKeys.includes(setting.key)}
-                onChange={handleDraftChange}
-              />
+              <div key={setting.key} className="space-y-3">
+                <SystemConfigSettingField
+                  setting={setting}
+                  value={draft[setting.key] ?? ""}
+                  changed={changedKeys.includes(setting.key)}
+                  onChange={handleDraftChange}
+                />
+                {setting.key === "forgeops_provision_secret" ? (
+                  <ForgeOpsProvisionWebhookHelp webDomain={draft.web_domain ?? ""} />
+                ) : null}
+              </div>
             ))}
           </CardContent>
         </Card>

@@ -4,43 +4,92 @@
 
 import type {
   ArtifactTypeDefinition,
+  PluginArtifactProgress,
   PluginInstallResult,
   PluginInstalledListResponse,
   PluginReloadResult,
+  PluginSettingsLayout,
   PluginSettingsPanelDefinition,
+  PluginSettingsPanelsResponse,
   PluginUninstallResult,
   PluginUserSettingsMap,
 } from "@theforge/shared-types";
 import { MIN_GENERATION_CONTENT_LEN } from "@theforge/shared-types";
+import { parseErrorMessageFromResponse } from "./httpError";
 import { apiFetch, API_BASE } from "./apiClient";
 
 let cachedArtifacts: ArtifactTypeDefinition[] | null = null;
-let cachedSettingsPanels: PluginSettingsPanelDefinition[] | null = null;
+
+export const PLUGIN_ARTIFACTS_CHANGED_EVENT = "theforge:plugin-artifacts-changed";
 
 const POLL_MAX_ATTEMPTS = 10_800;
 const POLL_INTERVAL_MS = 2_000;
 
-export async function fetchPluginArtifacts(): Promise<ArtifactTypeDefinition[]> {
-  if (cachedArtifacts) return cachedArtifacts;
+export async function fetchPluginArtifacts(options?: {
+  force?: boolean;
+}): Promise<ArtifactTypeDefinition[]> {
+  if (!options?.force && cachedArtifacts) return cachedArtifacts;
   const res = await apiFetch(`${API_BASE}/plugins/artifacts`);
-  if (!res.ok) return [];
+  if (!res.ok) return cachedArtifacts ?? [];
   const data: ArtifactTypeDefinition[] = await res.json();
-  cachedArtifacts = data;
+  if (data.length > 0 || !cachedArtifacts) {
+    cachedArtifacts = data;
+  }
   return data;
 }
 
-export async function fetchPluginSettingsPanels(): Promise<PluginSettingsPanelDefinition[]> {
-  if (cachedSettingsPanels) return cachedSettingsPanels;
+export function notifyPluginArtifactsChanged(): void {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(PLUGIN_ARTIFACTS_CHANGED_EVENT));
+  }
+}
+
+export async function fetchPluginSettingsPanels(): Promise<{
+  panels: PluginSettingsPanelDefinition[];
+  layouts: Record<string, PluginSettingsLayout>;
+}> {
   const res = await apiFetch(`${API_BASE}/plugins/settings-panels`);
-  if (!res.ok) return [];
-  const data: PluginSettingsPanelDefinition[] = await res.json();
-  cachedSettingsPanels = data;
-  return data;
+  if (!res.ok) return { panels: [], layouts: {} };
+  const data: PluginSettingsPanelsResponse | PluginSettingsPanelDefinition[] =
+    await res.json();
+  if (Array.isArray(data)) {
+    return { panels: data, layouts: {} };
+  }
+  return {
+    panels: data.panels ?? [],
+    layouts: data.layouts ?? {},
+  };
+}
+
+/** Descarga un artifact exportado por el plugin (format=pptx|pdf). */
+export async function downloadPluginArtifactExport(
+  projectId: string,
+  pluginId: string,
+  artifactId: string,
+  format: "pptx" | "pdf",
+): Promise<void> {
+  const params = new URLSearchParams({ format });
+  const res = await apiFetch(
+    `${API_BASE}/plugins/projects/${encodeURIComponent(projectId)}/export/${encodeURIComponent(pluginId)}/${encodeURIComponent(artifactId)}?${params}`,
+  );
+  if (!res.ok) {
+    throw new Error(await parseErrorMessageFromResponse(res, "Error al exportar artifact"));
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const match = /filename="([^"]+)"/i.exec(disposition);
+  const filename = match?.[1] ?? `export.${format}`;
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 export function clearPluginArtifactsCache(): void {
   cachedArtifacts = null;
-  cachedSettingsPanels = null;
+  notifyPluginArtifactsChanged();
 }
 
 export async function fetchInstalledPlugins(): Promise<PluginInstalledListResponse> {
@@ -82,7 +131,53 @@ export async function uninstallPlugin(pluginId: string): Promise<PluginUninstall
 
 export async function reloadPlugins(): Promise<PluginReloadResult> {
   const res = await apiFetch(`${API_BASE}/plugins/reload`, { method: "POST" });
-  if (!res.ok) throw new Error("Error al recargar plugins");
+  if (!res.ok) {
+    throw new Error(await parseErrorMessageFromResponse(res, "Error al recargar plugins"));
+  }
+  return res.json();
+}
+
+export type PluginInstanceSettingsResponse = {
+  pluginId: string;
+  relativePath: string;
+  settings: Record<string, unknown>;
+};
+
+export type PluginInstanceSettingsPatchResult = {
+  ok: boolean;
+  pluginId: string;
+  settings: Record<string, unknown>;
+  reloaded: boolean;
+  loaded: boolean;
+  degraded: boolean;
+};
+
+export async function fetchPluginInstanceSettings(
+  pluginId: string,
+): Promise<PluginInstanceSettingsResponse | null> {
+  const res = await apiFetch(
+    `${API_BASE}/plugins/installed/${encodeURIComponent(pluginId)}/instance-settings`,
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error("No se pudieron cargar los ajustes de instancia");
+  return res.json();
+}
+
+export async function patchPluginInstanceSettings(
+  pluginId: string,
+  patch: Record<string, unknown>,
+): Promise<PluginInstanceSettingsPatchResult> {
+  const res = await apiFetch(
+    `${API_BASE}/plugins/installed/${encodeURIComponent(pluginId)}/instance-settings`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(await parseErrorMessageFromResponse(res, "Error al guardar ajustes de instancia"));
+  }
   return res.json();
 }
 
@@ -120,6 +215,12 @@ export async function fetchAllPluginUserSettings(): Promise<PluginUserSettingsMa
   return res.json();
 }
 
+async function parseJsonResponseBody(res: Response): Promise<unknown> {
+  const text = await res.text();
+  if (!text.trim()) return null;
+  return JSON.parse(text) as unknown;
+}
+
 export async function getPluginData(
   projectId: string,
   pluginId: string,
@@ -128,7 +229,11 @@ export async function getPluginData(
     `${API_BASE}/plugins/projects/${projectId}/plugin-data/${pluginId}`,
   );
   if (!res.ok) return null;
-  return res.json();
+  try {
+    return await parseJsonResponseBody(res);
+  } catch {
+    return null;
+  }
 }
 
 export async function setPluginData(
@@ -141,8 +246,18 @@ export async function setPluginData(
     { method: "PUT", body: JSON.stringify(data), headers: { "Content-Type": "application/json" } },
   );
   if (!res.ok) throw new Error("Failed to save plugin data");
-  return res.json();
+  return parseJsonResponseBody(res);
 }
+
+/** Etiquetas legibles para campos de entregables en mensajes de requisitos. */
+const DELIVERABLE_FIELD_LABELS: Record<string, string> = {
+  phase0SummaryContent: "Benchmark",
+  dbgaContent: "Paso 0 / DBGA",
+  brdContent: "BRD",
+  specContent: "Spec",
+  architectureContent: "Arquitectura",
+  mddContent: "MDD",
+};
 
 /** Mensaje si faltan entregables core requeridos por el artifact (client-side guard). */
 export function pluginArtifactRequirementsMessage(
@@ -154,27 +269,57 @@ export function pluginArtifactRequirementsMessage(
     (field) => (deliverables[field] ?? "").trim().length < MIN_GENERATION_CONTENT_LEN,
   );
   if (missing.length === 0) return null;
-  return `Faltan entregables requeridos: ${missing.join(", ")}`;
+  const labels = missing.map((field) => DELIVERABLE_FIELD_LABELS[field] ?? field);
+  return `Faltan entregables requeridos: ${labels.join(", ")}`;
+}
+
+/** Estado público de un job de entregables (polling). */
+export async function fetchDeliverablesJobStatus(jobId: string): Promise<{
+  status: string;
+  progress?: PluginArtifactProgress | number | unknown;
+  result?: unknown;
+  error?: string;
+}> {
+  const res = await apiFetch(`${API_BASE}/projects/jobs/${jobId}`);
+  if (!res.ok) {
+    throw new Error(res.status === 404 ? "Job no encontrado" : "Error al consultar el job");
+  }
+  return res.json();
+}
+
+function parsePluginArtifactProgress(value: unknown): PluginArtifactProgress | null {
+  if (typeof value !== "object" || value === null || !("percent" in value)) return null;
+  const p = value as PluginArtifactProgress;
+  if (typeof p.percent !== "number" || Number.isNaN(p.percent)) return null;
+  return p;
 }
 
 /** Poll BullMQ / in-memory job hasta completed o failed. */
-export async function pollDeliverablesJob<T>(jobId: string, signal?: AbortSignal): Promise<T> {
+export async function pollDeliverablesJob<T>(
+  jobId: string,
+  opts?: { signal?: AbortSignal; onProgress?: (progress: PluginArtifactProgress) => void },
+): Promise<T> {
   const pollUrl = `${API_BASE}/projects/jobs/${jobId}`;
   for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
-    if (signal?.aborted) throw new Error("Cancelado por el usuario");
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    if (opts?.signal?.aborted) throw new Error("Cancelado por el usuario");
     const pr = await apiFetch(pollUrl);
     if (!pr.ok) {
       if (pr.status === 404) throw new Error("Job no encontrado");
-      continue;
+    } else {
+      const status = (await pr.json()) as {
+        status: string;
+        progress?: PluginArtifactProgress | number | unknown;
+        result?: T;
+        error?: string;
+      };
+      const parsed = parsePluginArtifactProgress(status.progress);
+      if (parsed && opts?.onProgress) {
+        opts.onProgress(parsed);
+      }
+      if (status.status === "completed") return status.result as T;
+      if (status.status === "failed") throw new Error(status.error ?? "Error en la generación");
     }
-    const status = (await pr.json()) as {
-      status: string;
-      result?: T;
-      error?: string;
-    };
-    if (status.status === "completed") return status.result as T;
-    if (status.status === "failed") throw new Error(status.error ?? "Error en la generación");
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
   throw new Error(
     "Tiempo de espera agotado (6 h). Recarga el proyecto; el job puede haber terminado en el servidor.",
@@ -197,11 +342,8 @@ export async function generatePluginArtifact(
     },
   );
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
     throw new Error(
-      typeof (err as { message?: string }).message === "string"
-        ? (err as { message: string }).message
-        : "Error al generar artifact del plugin",
+      await parseErrorMessageFromResponse(res, "Error al generar artifact del plugin"),
     );
   }
   return res.json();
@@ -212,7 +354,11 @@ export async function generateAndPollPluginArtifact(
   projectId: string,
   pluginId: string,
   artifactId: string,
-  opts?: { stageId?: string | null; signal?: AbortSignal },
+  opts?: {
+    stageId?: string | null;
+    signal?: AbortSignal;
+    onProgress?: (progress: PluginArtifactProgress) => void;
+  },
 ): Promise<unknown> {
   const res = await generatePluginArtifact(projectId, pluginId, artifactId, {
     queue: true,
@@ -221,6 +367,9 @@ export async function generateAndPollPluginArtifact(
   });
   if (!res.queued) return res.data;
   if (!res.jobId) throw new Error("Cola no devolvió jobId");
-  const result = await pollDeliverablesJob<{ data?: unknown }>(res.jobId, opts?.signal);
+  const result = await pollDeliverablesJob<{ data?: unknown }>(res.jobId, {
+    signal: opts?.signal,
+    onProgress: opts?.onProgress,
+  });
   return result?.data ?? result;
 }

@@ -4,7 +4,10 @@ import { PluginUserSettingsService } from "./plugin-user-settings.service.js";
 import { PluginDocumentPipelineService } from "./plugin-document-pipeline.service.js";
 import { PluginArtifactService } from "./plugin-artifact.service.js";
 import { PluginInstallService } from "./plugin-install.service.js";
+import { PluginInstanceSettingsService } from "./plugin-instance-settings.service.js";
+import { PluginWorkshopUiService } from "./plugin-workshop-ui.service.js";
 import { PrismaModule } from "../prisma/prisma.module.js";
+import { UserProvidersModule } from "../modules/user-providers/user-providers.module.js";
 
 /**
  * Módulo de plugins dinámicos de The Forge.
@@ -16,13 +19,15 @@ import { PrismaModule } from "../prisma/prisma.module.js";
  * Cero dependencias de lógica comercial. 100% agnóstico.
  */
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, UserProvidersModule],
   providers: [
     PluginLoaderService,
     PluginDocumentPipelineService,
     PluginArtifactService,
     PluginUserSettingsService,
     PluginInstallService,
+    PluginInstanceSettingsService,
+    PluginWorkshopUiService,
     {
       provide: PLUGIN_LOADER_SERVICE,
       useExisting: PluginLoaderService,
@@ -35,6 +40,8 @@ import { PrismaModule } from "../prisma/prisma.module.js";
     PluginArtifactService,
     PluginUserSettingsService,
     PluginInstallService,
+    PluginInstanceSettingsService,
+    PluginWorkshopUiService,
   ],
 })
 export class PluginModule {}

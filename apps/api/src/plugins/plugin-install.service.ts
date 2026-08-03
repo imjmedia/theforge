@@ -67,6 +67,7 @@ export class PluginInstallService {
           description: manifest?.description,
           installedAt: manifest?.builtAt,
           loaded: loadedIds.has(id),
+          degraded: this.pluginLoader.isPluginDegraded(id),
           path: pluginPath,
           manifest,
         });
@@ -345,7 +346,13 @@ export class PluginInstallService {
   async reloadAll(): Promise<PluginReloadResult> {
     await this.pluginLoader.reloadAll();
     const health = this.pluginLoader.getHealthSnapshot();
-    return { ok: true, loaded: health.loaded, pluginIds: health.pluginIds };
+    const loadErrors = this.pluginLoader.getLastLoadErrors();
+    return {
+      ok: true,
+      loaded: health.loaded,
+      pluginIds: health.pluginIds,
+      ...(Object.keys(loadErrors).length > 0 ? { loadErrors } : {}),
+    };
   }
 
   private folderNameForPlugin(pluginId: string): string {

@@ -7,6 +7,7 @@ import { BadRequestException, Injectable, Logger, OnModuleInit } from "@nestjs/c
 import {
   SYSTEM_CONFIG_CATEGORIES,
   SYSTEM_CONFIG_DEFINITIONS,
+  SYSTEM_CONFIG_SECRET_MASK,
   getSystemConfigDefinition,
   normalizePlatformBooleanInput,
   type SystemConfigDefinition,
@@ -23,7 +24,7 @@ import {
 } from "./platform-config.runtime.js";
 import { FxRateService } from "../fx-rate/fx-rate.service.js";
 
-const SECRET_MASK = "••••••••";
+const SECRET_MASK = SYSTEM_CONFIG_SECRET_MASK;
 const FX_CONFIG_KEY = "mxn_per_usd";
 
 export type PatchSystemConfigDto = {
@@ -53,6 +54,19 @@ export class SystemConfigService implements OnModuleInit {
         this.toSettingView(def, dbRows.get(def.key)),
       ),
     };
+  }
+
+  /** Devuelve el valor efectivo de un campo secret (super_admin). */
+  revealSecret(key: string): { key: string; value: string; configured: boolean } {
+    const def = getSystemConfigDefinition(key);
+    if (!def) {
+      throw new BadRequestException(`Clave desconocida: ${key}`);
+    }
+    if (!def.secret && def.type !== "secret") {
+      throw new BadRequestException(`${key} no es un campo secreto`);
+    }
+    const value = resolvePlatformConfigValue(def);
+    return { key, value, configured: value.trim() !== "" };
   }
 
   async patchSettings(dto: PatchSystemConfigDto): Promise<SystemConfigSnapshot> {

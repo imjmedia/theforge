@@ -24,7 +24,7 @@ import { ProjectComplexityService } from "./project-complexity.service.js";
 import { ProjectPhase0Service } from "./project-phase0.service.js";
 import { ProjectSddReconcileService } from "./project-sdd-reconcile.service.js";
 import { ProjectLifecycleService } from "./project-lifecycle.service.js";
-import { toApiProject } from "./project-api.util.js";
+import { summarizePluginDataPresence, toApiProject } from "./project-api.util.js";
 import { toApiProjectListItem } from "./project-list-item.util.js";
 
 @Injectable()
@@ -141,21 +141,18 @@ export class ProjectsService implements IOrchestratorProjectsPort {
     return { favorited: true };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, options?: { forHttpClient?: boolean }) {
     const project = await loadAccessibleProjectWithStages(this.prisma, id);
-    const withSessions = await this.prisma.project.findFirst({
-      where: { id },
-      include: { sessions: true },
-    });
     const userId = getRequestUserId();
     const fav = await this.prisma.favoriteProject.findUnique({
       where: { userId_projectId: { userId, projectId: id } },
     });
+    const apiProject = toApiProject(project);
     return {
-      ...toApiProject({
-        ...project,
-        sessions: withSessions?.sessions ?? [],
-      }),
+      ...apiProject,
+      ...(options?.forHttpClient
+        ? { pluginData: summarizePluginDataPresence(project.pluginData) }
+        : {}),
       isFavorite: fav !== null,
     };
   }

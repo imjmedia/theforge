@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   Injectable,
   Logger,
@@ -9,12 +10,14 @@ import { ModuleRef } from "@nestjs/core";
 import { ConfigService } from "@nestjs/config";
 import type { ITheForgePlugin } from "./interfaces/the-forge-plugin.interface.js";
 import type { ArtifactTypeDefinition, PluginSettingsPanelDefinition } from "@theforge/shared-types";
+import { THEFORGE_PLUGIN_MANIFEST_FILENAME } from "@theforge/shared-types";
 import type {
   BeforeDocumentRenderPayload,
   AfterDocumentRenderPayload,
   AfterDocumentPersistPayload,
   ProjectLifecyclePayload,
 } from "./types/plugin-payloads.js";
+import { parsePluginManifest } from "./plugin-packaging.util.js";
 
 /** Token DI para exponer PluginLoaderService */
 export const PLUGIN_LOADER_SERVICE = Symbol("PLUGIN_LOADER_SERVICE");
@@ -38,6 +41,12 @@ interface HookEntry<H> {
 @Injectable()
 export class PluginLoaderService implements OnModuleInit {
   private readonly logger = new Logger(PluginLoaderService.name);
+
+  /** Plugins cargados en modo degradado (init falló; solo ajustes, sin hooks). */
+  private readonly degradedPluginIds = new Set<string>();
+
+  /** Errores del último escaneo/reload por pluginId. */
+  private lastLoadErrors = new Map<string, string>();
 
   /** Mapa de plugins cargados: id → instancia */
   private readonly plugins = new Map<string, ITheForgePlugin>();
@@ -70,7 +79,7 @@ export class PluginLoaderService implements OnModuleInit {
   /** Ciclo de vida de NestJS: cargar plugins al arrancar */
   async onModuleInit(): Promise<void> {
     this.logger.log("[PluginLoaderService] onModuleInit start");
-    const directories = this.resolvePluginDirectories();
+    const directories = this.getPluginScanDirectories();
 
     for (const dir of directories) {
       if (!existsSync(dir)) {
@@ -102,21 +111,7 @@ export class PluginLoaderService implements OnModuleInit {
    * Si falla, loguea el error y continúa (graceful degradation).
    */
   private async tryLoadPlugin(pluginPath: string): Promise<void> {
-    // Try both .ts (dev) and .js (prod/compiled) entry points
-    const candidates = [
-      join(pluginPath, "index.ts"),
-      join(pluginPath, "index.js"),
-      join(pluginPath, "src", "index.ts"),
-      join(pluginPath, "src", "index.js"),
-    ];
-
-    let entryPoint: string | undefined;
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) {
-        entryPoint = candidate;
-        break;
-      }
-    }
+    const entryPoint = this.resolvePluginEntryPoint(pluginPath);
 
     if (!entryPoint) {
       this.logger.verbose(
@@ -126,15 +121,15 @@ export class PluginLoaderService implements OnModuleInit {
     }
 
     try {
-      // Dynamic import — el core NUNCA tiene static imports hacia plugins
-      const module = await import(entryPoint);
+      // Dynamic import — bust Node ESM cache so reload picks up replaced files on disk.
+      const importHref = `${pathToFileURL(entryPoint).href}?tfreload=${Date.now()}`;
+      const module = (await import(importHref)) as Record<string, unknown>;
 
-      // Soporta export default o export named
-      const PluginClass = module.default ?? module.TheForgePlugin;
+      const PluginClass = this.resolvePluginExportClass(module);
 
-      if (!PluginClass || typeof PluginClass !== "function") {
+      if (!PluginClass) {
         this.logger.warn(
-          `Plugin at ${pluginPath} does not export a class — skipping`,
+          `Plugin at ${pluginPath} does not export a class — skipping (entry=${entryPoint}, exports=${Object.keys(module).join(", ") || "none"})`,
         );
         return;
       }
@@ -159,30 +154,65 @@ export class PluginLoaderService implements OnModuleInit {
         return;
       }
 
-      // Evitar duplicados
+      // Evitar duplicados — el directorio primario (instalación) gana sobre copias embebidas en la imagen
       if (this.plugins.has(instance.id)) {
-        this.logger.warn(
-          `Plugin '${instance.id}' already loaded — skipping duplicate at ${pluginPath}`,
-        );
-        return;
+        const existingPath = this.pluginPaths.get(instance.id);
+        const primary = this.getPrimaryPluginDirectory();
+        const isPrimaryPath = (p: string) =>
+          resolve(p).startsWith(resolve(primary));
+        if (
+          isPrimaryPath(pluginPath) &&
+          existingPath &&
+          !isPrimaryPath(existingPath)
+        ) {
+          this.logger.warn(
+            `Plugin '${instance.id}' reemplazado: ${existingPath} → ${pluginPath} (directorio primario)`,
+          );
+          await this.unloadPlugin(instance.id);
+        } else {
+          this.logger.warn(
+            `Plugin '${instance.id}' already loaded — skipping duplicate at ${pluginPath}`,
+          );
+          return;
+        }
       }
 
       // Contexto de inyección limitado
       const context = this.buildPluginContext(instance.id);
 
       // Inicialización del plugin
-      await instance.onPluginInit(context);
+      try {
+        await instance.onPluginInit(context);
+      } catch (initErr) {
+        const initMsg =
+          initErr instanceof Error ? initErr.message : String(initErr);
+        if (typeof instance.getSettingsPanels === "function") {
+          this.plugins.set(instance.id, instance);
+          this.pluginPaths.set(instance.id, pluginPath);
+          this.degradedPluginIds.add(instance.id);
+          this.lastLoadErrors.delete(instance.id);
+          this.logger.warn(
+            `⚠️ Plugin '${instance.id}' en modo degradado (init falló: ${initMsg}). Ajustes disponibles; corrige configuración y recarga.`,
+          );
+          return;
+        }
+        throw initErr;
+      }
 
       // Registro en el sistema
       this.plugins.set(instance.id, instance);
       this.pluginPaths.set(instance.id, pluginPath);
+      this.degradedPluginIds.delete(instance.id);
+      this.lastLoadErrors.delete(instance.id);
       this.registerHooks(instance);
 
       this.logger.log(
-        `✅ Plugin loaded: ${instance.name} v${instance.version} (${instance.id})`,
+        `✅ Plugin loaded: ${instance.name} v${instance.version} (${instance.id}) from ${pluginPath}`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      const pluginId = this.readManifestIdFromDir(pluginPath) ?? pluginPath;
+      this.lastLoadErrors.set(pluginId, msg);
       this.logger.error(`❌ Failed to load plugin ${pluginPath}: ${msg}`);
 
       const failOnError = this.configService.get<boolean>(
@@ -198,7 +228,59 @@ export class PluginLoaderService implements OnModuleInit {
     }
   }
 
-  /** Construye el contexto limitado de inyección para un plugin */
+  /** Resuelve el entry point del plugin (manifest.entry o heurística). */
+  private resolvePluginEntryPoint(pluginPath: string): string | undefined {
+    const manifestPath = join(pluginPath, THEFORGE_PLUGIN_MANIFEST_FILENAME);
+    if (existsSync(manifestPath)) {
+      try {
+        const manifest = parsePluginManifest(
+          JSON.parse(readFileSync(manifestPath, "utf8")) as unknown,
+        );
+        const entry = manifest.entry?.trim() || "index.js";
+        const fromManifest = join(pluginPath, entry);
+        if (existsSync(fromManifest)) return fromManifest;
+        this.logger.debug(
+          `Manifest entry not found for ${pluginPath}: ${fromManifest}`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.debug(`Invalid manifest in ${pluginPath}: ${msg}`);
+      }
+    }
+
+    const candidates = [
+      join(pluginPath, "index.ts"),
+      join(pluginPath, "index.js"),
+      join(pluginPath, "src", "index.ts"),
+      join(pluginPath, "src", "index.js"),
+    ];
+
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) return candidate;
+    }
+
+    return undefined;
+  }
+
+  /** Soporta export default, TheForgePlugin y default anidado (interop). */
+  private resolvePluginExportClass(
+    module: Record<string, unknown>,
+  ): (new () => ITheForgePlugin) | undefined {
+    const candidates = [
+      module.default,
+      module.TheForgePlugin,
+      (module.default as Record<string, unknown> | undefined)?.default,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === "function") {
+        return candidate as new () => ITheForgePlugin;
+      }
+    }
+
+    return undefined;
+  }
+
   private buildPluginContext(pluginId: string): {
     getService: <T>(
       token: string | symbol | (new (...args: unknown[]) => T),
@@ -341,6 +423,19 @@ export class PluginLoaderService implements OnModuleInit {
     this.logger.error(`Hook '${hookName}' failed in plugin '${pluginId}': ${msg}`);
   }
 
+  /** Directorios a escanear al cargar/recargar (primario primero; en prod solo el primario). */
+  getPluginScanDirectories(): string[] {
+    const primary = this.getPrimaryPluginDirectory();
+    if (this.configService.get<string>("NODE_ENV") === "production") {
+      return [primary];
+    }
+    const all = this.resolvePluginDirectories();
+    return [
+      primary,
+      ...all.filter((dir) => resolve(dir) !== resolve(primary)),
+    ];
+  }
+
   /** Obtiene la lista de directorios donde escanear plugins */
   resolvePluginDirectories(): string[] {
     const fromEnv = this.configService.get<string>("plugins.directory");
@@ -394,6 +489,7 @@ export class PluginLoaderService implements OnModuleInit {
 
     this.plugins.delete(pluginId);
     this.pluginPaths.delete(pluginId);
+    this.degradedPluginIds.delete(pluginId);
     this.removeHooksForPlugin(pluginId);
     this.logger.log(`Plugin unloaded: ${pluginId}`);
   }
@@ -402,30 +498,27 @@ export class PluginLoaderService implements OnModuleInit {
   async reloadPlugin(pluginId: string): Promise<boolean> {
     const folderName = pluginId.replace(/[^a-zA-Z0-9._-]/g, "_");
     const primary = this.getPrimaryPluginDirectory();
-    const candidates = [
-      this.pluginPaths.get(pluginId),
-      join(primary, folderName),
-    ].filter((p): p is string => Boolean(p));
+    const pluginPath = join(primary, folderName);
 
     await this.unloadPlugin(pluginId);
 
-    for (const pluginPath of candidates) {
-      if (!existsSync(pluginPath)) continue;
-      await this.tryLoadPlugin(pluginPath);
-      return this.plugins.has(pluginId);
+    if (!existsSync(pluginPath)) {
+      return false;
     }
 
-    return false;
+    await this.tryLoadPlugin(pluginPath);
+    return this.plugins.has(pluginId);
   }
 
   /** Re-escanea todos los directorios de plugins. */
   async reloadAll(): Promise<void> {
+    this.lastLoadErrors.clear();
     const ids = [...this.plugins.keys()];
     for (const id of ids) {
       await this.unloadPlugin(id);
     }
 
-    const directories = this.resolvePluginDirectories();
+    const directories = this.getPluginScanDirectories();
     for (const dir of directories) {
       if (!existsSync(dir)) continue;
       const entries = readdirSync(dir, { withFileTypes: true })
@@ -488,10 +581,32 @@ export class PluginLoaderService implements OnModuleInit {
     return [...this.plugins.keys()];
   }
 
+  isPluginDegraded(pluginId: string): boolean {
+    return this.degradedPluginIds.has(pluginId);
+  }
+
+  getLastLoadErrors(): Record<string, string> {
+    return Object.fromEntries(this.lastLoadErrors);
+  }
+
+  private readManifestIdFromDir(pluginPath: string): string | undefined {
+    const manifestPath = join(pluginPath, THEFORGE_PLUGIN_MANIFEST_FILENAME);
+    if (!existsSync(manifestPath)) return undefined;
+    try {
+      const manifest = parsePluginManifest(
+        JSON.parse(readFileSync(manifestPath, "utf8")) as unknown,
+      );
+      return manifest.id;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Obtiene los artifact types registrados por todos los plugins */
   getArtifactTypes(): ArtifactTypeDefinition[] {
     const types: ArtifactTypeDefinition[] = [];
     for (const plugin of this.plugins.values()) {
+      if (this.degradedPluginIds.has(plugin.id)) continue;
       if (plugin.getArtifactTypes) {
         const pluginTypes = plugin.getArtifactTypes();
         if (Array.isArray(pluginTypes)) {
@@ -518,6 +633,22 @@ export class PluginLoaderService implements OnModuleInit {
     return { plugin, artifact };
   }
 
+  /** Versión declarada en theforge-plugin.manifest.json (disco), si existe. */
+  private readInstalledManifestVersion(pluginId: string): string | undefined {
+    const pluginPath = this.pluginPaths.get(pluginId);
+    if (!pluginPath) return undefined;
+    const manifestPath = join(pluginPath, THEFORGE_PLUGIN_MANIFEST_FILENAME);
+    if (!existsSync(manifestPath)) return undefined;
+    try {
+      const manifest = parsePluginManifest(
+        JSON.parse(readFileSync(manifestPath, "utf8")) as unknown,
+      );
+      return manifest.version?.trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Paneles de ajustes declarados por plugins cargados */
   getSettingsPanels(): PluginSettingsPanelDefinition[] {
     const panels: PluginSettingsPanelDefinition[] = [];
@@ -525,15 +656,32 @@ export class PluginLoaderService implements OnModuleInit {
       if (!plugin.getSettingsPanels) continue;
       const declared = plugin.getSettingsPanels();
       if (!Array.isArray(declared)) continue;
+      const displayVersion =
+        this.readInstalledManifestVersion(plugin.id) ?? plugin.version;
       for (const panel of declared) {
+        const label =
+          typeof panel.label === "string"
+            ? panel.label.replace(/\s·\sv[\d.]+$/, "") + ` · v${displayVersion}`
+            : panel.label;
         panels.push({
           ...panel,
+          label,
           pluginId: plugin.id,
           mountPoint: panel.mountPoint ?? "settings.plugins",
         });
       }
     }
     return panels.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }
+
+  /** Layout de ajustes por plugin (tabs vs stack). */
+  getSettingsLayouts(): Record<string, import("@theforge/shared-types").PluginSettingsLayout> {
+    const layouts: Record<string, import("@theforge/shared-types").PluginSettingsLayout> = {};
+    for (const plugin of this.plugins.values()) {
+      if (!plugin.getSettingsLayout) continue;
+      layouts[plugin.id] = plugin.getSettingsLayout();
+    }
+    return layouts;
   }
 
   /** Plugin cargado por id (para validación de ajustes) */
@@ -563,12 +711,14 @@ export class PluginLoaderService implements OnModuleInit {
   getHealthSnapshot(): {
     loaded: number;
     pluginIds: string[];
+    degradedPluginIds: string[];
     artifactCount: number;
     hooks: Record<string, number>;
   } {
     return {
       loaded: this.plugins.size,
       pluginIds: [...this.plugins.keys()],
+      degradedPluginIds: [...this.degradedPluginIds],
       artifactCount: this.getArtifactTypes().length,
       hooks: {
         beforeDocumentRender: this.beforeDocumentRenderHooks.length,

@@ -1,4 +1,32 @@
 import type { AriadneChangePackV1, CreateStageFromAriadneChangePackOutput } from "@theforge/shared-types";
+import {
+  normalizeAriadneHandoffItemsRaw,
+  type AriadneHandoffIdRemap,
+} from "@theforge/shared-types";
+
+/** Clona body MCP y normaliza `pack.handoffItems[].id` antes del parse Zod (log de remaps). */
+export function preprocessCreateStageFromAriadneChangePackBody(body: unknown): {
+  bodyForParse: unknown;
+  handoffIdRemaps: AriadneHandoffIdRemap[];
+} {
+  if (!body || typeof body !== "object") {
+    return { bodyForParse: body ?? {}, handoffIdRemaps: [] };
+  }
+  const root = { ...(body as Record<string, unknown>) };
+  const pack = root.pack;
+  if (!pack || typeof pack !== "object") {
+    return { bodyForParse: root, handoffIdRemaps: [] };
+  }
+  const packObj = { ...(pack as Record<string, unknown>) };
+  if (!Array.isArray(packObj.handoffItems)) {
+    return { bodyForParse: { ...root, pack: packObj }, handoffIdRemaps: [] };
+  }
+  const { items, remapped } = normalizeAriadneHandoffItemsRaw(packObj.handoffItems);
+  return {
+    bodyForParse: { ...root, pack: { ...packObj, handoffItems: items } },
+    handoffIdRemaps: remapped,
+  };
+}
 
 export function buildLegacyChangeStateFromAriadnePack(
   pack: AriadneChangePackV1,

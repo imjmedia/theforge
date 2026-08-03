@@ -53,7 +53,7 @@ import {
 import { WORKSHOP_EXIT_BLOCKED_TITLE, WORKSHOP_DOC_NAV_BLOCKED_TITLE } from "@/utils/workshopAgentsBusy";
 import { buildWorkshopDocNavItems, buildPluginDocNavItems, workshopTabDocHasContent } from "../utils/workshopDocNav";
 import { fetchUiMcpActive } from "@/lib/ui-mcp-api";
-import { fetchPluginArtifacts } from "@/utils/pluginApi";
+import { fetchPluginArtifacts, PLUGIN_ARTIFACTS_CHANGED_EVENT } from "@/utils/pluginApi";
 import { WorkshopAgentActivitySidebarSection } from "./WorkshopAgentActivitySidebarSection";
 
 /** Project row shown under a dashboard group header. */
@@ -410,7 +410,12 @@ export function DashboardSidebar({
   const documentationGapsRefreshNonce = useWorkshopStore((s) => s.documentationGapsRefreshNonce);
 
   useEffect(() => {
-    void fetchPluginArtifacts().then(setPluginArtifactTypes);
+    const refresh = () => {
+      void fetchPluginArtifacts({ force: true }).then(setPluginArtifactTypes);
+    };
+    refresh();
+    window.addEventListener(PLUGIN_ARTIFACTS_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(PLUGIN_ARTIFACTS_CHANGED_EVENT, refresh);
   }, []);
 
   const [uiMcpActive, setUiMcpActive] = useState(false);
@@ -529,6 +534,11 @@ export function DashboardSidebar({
   ]);
 
   const inWorkshop = !!workshopProject && typeof onExitWorkshop === "function";
+
+  useEffect(() => {
+    if (!inWorkshop) return;
+    void fetchPluginArtifacts({ force: true }).then(setPluginArtifactTypes);
+  }, [inWorkshop]);
 
   const workshopDeliverablesLoading =
     inWorkshop &&

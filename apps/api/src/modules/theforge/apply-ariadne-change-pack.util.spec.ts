@@ -4,8 +4,26 @@ import {
   buildLegacyChangeStateFromAriadnePack,
   buildRecommendedNextToolsAfterAriadnePack,
   defaultStageNameFromAriadnePack,
+  preprocessCreateStageFromAriadneChangePackBody,
   shouldRunLegacyStartForAriadnePack,
 } from "./apply-ariadne-change-pack.util.js";
+
+describe("preprocessCreateStageFromAriadneChangePackBody", () => {
+  it("remaps LEG-xx ids before parse", () => {
+    const { bodyForParse, handoffIdRemaps } = preprocessCreateStageFromAriadneChangePackBody({
+      forgeProjectId: "550e8400-e29b-41d4-a716-446655440099",
+      pack: {
+        version: "1",
+        changeDescription: "Batch",
+        handoffItems: [{ id: "LEG-04", title: "T", description: "D" }],
+      },
+    });
+    assert.equal(handoffIdRemaps.length, 1);
+    assert.equal(handoffIdRemaps[0]?.to, "NEW-LEG-04");
+    const items = (bodyForParse as { pack: { handoffItems: { id: string }[] } }).pack.handoffItems;
+    assert.equal(items[0]?.id, "NEW-LEG-04");
+  });
+});
 
 describe("buildLegacyChangeStateFromAriadnePack", () => {
   it("maps files and questions from pack", () => {

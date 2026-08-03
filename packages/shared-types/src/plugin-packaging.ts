@@ -36,6 +36,24 @@ export interface TheForgePluginManifest {
   envSchema?: { optional?: string[]; required?: string[] };
   /** HMAC-SHA256 hex del JSON canonical sin este campo (opcional). */
   signature?: string;
+  /**
+   * Ruta relativa al cwd del servidor para ajustes de instancia (licencia, etc.).
+   * Permite editar vía API aunque el plugin no haya cargado.
+   */
+  instanceSettingsPath?: string;
+  /**
+   * Bundle ESM de vista Workshop servido desde el `.tfplugin` instalado.
+   * El frontend lo carga con `import()` y llama `register(host)`.
+   */
+  workshopUi?: PluginWorkshopUiManifest;
+}
+
+/** UI embebida en el paquete `.tfplugin` — autocontenida, sin vendor en el core. */
+export interface PluginWorkshopUiManifest {
+  /** Ruta relativa dentro del ZIP, p. ej. `workshop-ui/workshop-preview.js`. */
+  entry: string;
+  /** Versión del contrato host↔plugin (default `"1"`). */
+  hostApiVersion?: "1" | string;
 }
 
 /** Plugin detectado en disco (instalado pero no necesariamente cargado). */
@@ -46,6 +64,8 @@ export interface InstalledPluginRecord {
   description?: string;
   installedAt?: string;
   loaded: boolean;
+  /** Init falló pero el plugin expone ajustes (recargar tras corregir config). */
+  degraded?: boolean;
   path: string;
   manifest?: TheForgePluginManifest;
 }
@@ -119,4 +139,6 @@ export interface PluginReloadResult {
   ok: true;
   loaded: number;
   pluginIds: string[];
+  /** pluginId → mensaje si no cargó en el último reload */
+  loadErrors?: Record<string, string>;
 }

@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import type { Prisma } from "@theforge/database";
-import type { ArtifactTypeDefinition, PluginArtifactContext } from "@theforge/shared-types";
+import type { ArtifactTypeDefinition, PluginArtifactContext, PluginArtifactProgress, PluginExportContext, PluginLlmRuntime } from "@theforge/shared-types";
 import { getRequestUserId } from "../common/request-user.store.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { PluginDocumentPipelineService } from "./plugin-document-pipeline.service.js";
@@ -14,9 +14,11 @@ import {
   projectMeetsArtifactRequirements,
 } from "./plugin-project-context.util.js";
 import { PluginUserSettingsService } from "./plugin-user-settings.service.js";
+import { UserProvidersService } from "../modules/user-providers/user-providers.service.js";
 
 export interface GeneratePluginArtifactOptions {
   stageId?: string | null;
+  onProgress?: (update: PluginArtifactProgress) => void;
 }
 
 export interface GeneratePluginArtifactResult {
@@ -38,6 +40,7 @@ export class PluginArtifactService {
     private readonly pluginLoader: PluginLoaderService,
     private readonly pluginPipeline: PluginDocumentPipelineService,
     private readonly pluginUserSettings: PluginUserSettingsService,
+    private readonly userProviders: UserProvidersService,
   ) {}
 
   resolveArtifactDefinition(
@@ -85,6 +88,7 @@ export class PluginArtifactService {
 
     const userId = getRequestUserId();
     const userSettings = await this.pluginUserSettings.getForPlugin(userId, pluginId);
+    const llmRuntime = await this.resolvePluginLlmRuntime(userId);
     const started = Date.now();
 
     const ctx: PluginArtifactContext = {
@@ -95,7 +99,17 @@ export class PluginArtifactService {
       stageId: options?.stageId ?? null,
       deliverables,
       userSettings,
+      llmRuntime,
       timestamp: new Date(),
+      reportProgress: options?.onProgress
+        ? (update) => {
+            try {
+              options.onProgress?.(update);
+            } catch {
+              /* progress must never abort generation */
+            }
+          }
+        : undefined,
     };
 
     const result = await plugin.generateArtifact(ctx);
@@ -134,5 +148,78 @@ export class PluginArtifactService {
       data: result.data,
       metadata,
     };
+  }
+
+  async export(
+    projectId: string,
+    pluginId: string,
+    artifactId: string,
+    format: "pptx" | "pdf",
+  ): Promise<{ data: Buffer; filename: string; mimeType: string }> {
+    this.resolveArtifactDefinition(pluginId, artifactId);
+    const plugin = this.pluginLoader.getPlugin(pluginId);
+    if (!plugin?.exportArtifact) {
+      throw new BadRequestException(
+        `El plugin '${pluginId}' no implementa exportArtifact`,
+      );
+    }
+
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { pluginData: true },
+    });
+    if (!project) throw new NotFoundException("Project not found");
+
+    const pluginData = (project.pluginData as Record<string, unknown>) ?? {};
+    const data = pluginData[pluginId];
+    if (data == null) {
+      throw new NotFoundException(
+        `No hay datos persistidos para el plugin '${pluginId}' en este proyecto`,
+      );
+    }
+
+    const userId = getRequestUserId();
+    const userSettings = await this.pluginUserSettings.getForPlugin(userId, pluginId);
+
+    const ctx: PluginExportContext = {
+      pluginId,
+      artifactId,
+      projectId,
+      userId,
+      data,
+      format,
+      userSettings,
+    };
+
+    const result = await plugin.exportArtifact(ctx);
+    const raw = result.data ?? (result as { buffer?: Buffer }).buffer;
+    if (!raw) {
+      throw new BadRequestException("El plugin no devolvió datos de exportación");
+    }
+    const buffer = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+
+    return {
+      data: buffer,
+      filename: result.filename,
+      mimeType: result.mimeType,
+    };
+  }
+
+  /** Runtime BYOK/tenant del usuario — plugins lo usan si no tienen claves en env. */
+  private async resolvePluginLlmRuntime(userId: string): Promise<PluginLlmRuntime | undefined> {
+    if (!userId?.trim()) return undefined;
+    try {
+      const runtime = await this.userProviders.resolveRuntime(userId.trim());
+      const imageRuntime = await this.userProviders.resolveImageRuntime(userId.trim());
+      return {
+        providerId: runtime.providerId,
+        model: runtime.chatModel,
+        apiKey: runtime.apiKey,
+        baseURL: runtime.baseURL,
+        imageModel: imageRuntime?.imageModel ?? runtime.imageModel ?? null,
+      };
+    } catch {
+      return undefined;
+    }
   }
 }
