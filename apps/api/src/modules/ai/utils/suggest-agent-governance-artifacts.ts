@@ -466,6 +466,33 @@ export function detectSddConflicts(text: string): string[] {
   return conflicts;
 }
 
+/** Filtra extractos de tasks que mencionan stack ajeno al MDD §2. */
+export function filterTaskExcerptsForProjectStack(
+  items: string[],
+  facts: Pick<ProjectGovernanceFacts, "backendStack">,
+): string[] {
+  const backend = (facts.backendStack ?? "").toLowerCase();
+  if (!backend) return items;
+
+  const rejectPatterns: RegExp[] = [];
+  if (/spring/i.test(backend)) {
+    rejectPatterns.push(/\bnestjs\b/i, /\bprisma\b/i, /schema\.prisma/i, /\bnest\//i);
+  }
+  if (/nestjs/i.test(backend)) {
+    rejectPatterns.push(/\bspring\s*boot\b/i, /\btypeorm\b/i);
+  }
+  if (/typeorm/i.test(backend)) {
+    rejectPatterns.push(/\bprisma\b/i, /schema\.prisma/i);
+  }
+  if (/prisma/i.test(backend)) {
+    rejectPatterns.push(/\btypeorm\b/i);
+  }
+
+  if (rejectPatterns.length === 0) return items;
+  const filtered = items.filter((line) => !rejectPatterns.some((re) => re.test(line)));
+  return filtered.length > 0 ? filtered : items;
+}
+
 /** Primeras tareas concretas (checkboxes o headings) para AGENT-PROMPT y PROMPT-INICIAL. */
 export function extractTaskCheckboxes(tasksMarkdown: string | null | undefined, limit = 5): string[] {
   const text = tasksMarkdown ?? "";
@@ -760,8 +787,13 @@ export function inferStacks(
     options?.blueprintMarkdown,
   );
 
-  const backend =
+  const backendFromAuthority =
     firstMatchLabel(stackAuthority, BACKEND_STACK_PATTERNS) ??
+    stackAuthority.match(/(?:backend|servidor|api)[:\s]+([A-Za-z][A-Za-z0-9.\s/]{1,48})/i)?.[1]
+      ?.trim()
+      .split(/\s/)[0];
+  const backend =
+    backendFromAuthority ??
     firstMatchLabel(text, BACKEND_STACK_PATTERNS);
 
   const mobile = uiSurface
@@ -794,9 +826,11 @@ export function inferStacks(
     firstMatchLabel(stackAuthority, INFRA_STACK_PATTERNS) ??
     firstMatchLabel(text, INFRA_STACK_PATTERNS);
 
-  const backendMatch = stackAuthority.match(
-    /(?:backend|servidor|api)[:\s]+([A-Za-z][A-Za-z0-9.\s/]{1,48})/i,
-  );
+  const backendMatch = backendFromAuthority
+    ? null
+    : stackAuthority.match(
+        /(?:backend|servidor|api)[:\s]+([A-Za-z][A-Za-z0-9.\s/]{1,48})/i,
+      );
   const frontendMatch = uiSurface
     ? stackAuthority.match(/(?:frontend|cliente|ui|mobile)[:\s]+([A-Za-z][A-Za-z0-9.\s/]{1,48})/i)
     : null;
@@ -1162,7 +1196,10 @@ export function extractProjectGovernanceFacts(
     extractBlueprintModules(input.blueprintMarkdown ?? ""),
   );
   const globs = inferCodebaseGlobs(blueprintModules, text);
-  const taskCheckboxes = extractTaskCheckboxes(input.tasksMarkdown);
+  const taskCheckboxes = filterTaskExcerptsForProjectStack(
+    extractTaskCheckboxes(input.tasksMarkdown),
+    { backendStack: stacks.backend },
+  );
   const sddConflicts = detectSddConflicts(text);
   const npmScriptCorpus = [authoritativeStackText, text].filter(Boolean).join("\n\n");
 

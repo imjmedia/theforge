@@ -1,4 +1,5 @@
 import { extractSection3Body } from "../ai-analysis/utils/mdd-sanitize.js";
+import { resolveStackPreset } from "@theforge/shared-types";
 import {
   heuristicUiComponentResolver,
   type UiComponentResolver,
@@ -47,6 +48,8 @@ export async function enrichBlueprintWithUiDesignSystem(
   const section3 = extractSection3Body(mddContent);
   const roles = extractRolesFromMdd(mddContent);
   const pantallas = options.pantallasContent ?? null;
+  const stackPreset = resolveStackPreset(mddContent, existingBlueprint);
+  const uiStackLabel = stackPreset.adapterLabel;
 
   const lines: string[] = [];
   lines.push("");
@@ -91,7 +94,7 @@ export async function enrichBlueprintWithUiDesignSystem(
     lines.push("");
     lines.push(
       "Implementación UI según tablas por rol en `pantallas.md` (Ruta, Página, US, Componentes UI, API, Estados). " +
-        "Componentes del MCP gráfico activo o convención shadcn/ui según `design-system.md`.",
+        `Componentes del MCP gráfico activo o convención **${uiStackLabel}** según \`design-system.md\`.`,
     );
     lines.push("");
   } else if (section3) {

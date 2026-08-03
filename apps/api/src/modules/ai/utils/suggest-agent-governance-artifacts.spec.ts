@@ -5,6 +5,7 @@ import {
   detectSddConflicts,
   extractProjectGovernanceFacts,
   extractProjectTitle,
+  filterTaskExcerptsForProjectStack,
   extractTaskCheckboxes,
   inferStacks,
   isValidBlueprintModulePath,
@@ -532,6 +533,19 @@ RUN yarn build
 `);
     assert.equal(boxes.length, 2);
     assert.match(boxes[0], /Configurar monorepo/);
+  });
+
+  it("filtra extractos NestJS/Prisma cuando MDD §2 es Spring Boot", () => {
+    const boxes = filterTaskExcerptsForProjectStack(
+      [
+        "- [ ] Crear módulo NestJS auth",
+        "- [ ] Migración schema.prisma",
+        "- [ ] Configurar Spring Security JWT",
+      ],
+      { backendStack: "Spring Boot" },
+    );
+    assert.equal(boxes.length, 1);
+    assert.match(boxes[0]!, /Spring Security/);
   });
 });
 
