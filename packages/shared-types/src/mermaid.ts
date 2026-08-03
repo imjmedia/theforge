@@ -809,6 +809,71 @@ export function quoteFlowchartLabelsWithParens(content: string): string {
   });
 }
 
+/** flowchart/graph: el LLM deja `]text` al pegar fences (` ```text `) en nodos o al fusionar líneas. */
+export function stripFlowchartTrailingTextGarbage(content: string): string {
+  if (!/^(flowchart|graph)\s/im.test((content ?? "").trim())) return content ?? "";
+  return content
+    .split("\n")
+    .flatMap((line) => {
+      let s = line.replace(/\]text(?=\s*Gateway\b)/gi, "]\n");
+      s = s.replace(/\]text\s*$/gi, "]");
+      if (s.includes("\n")) {
+        const [head, ...rest] = s.split("\n");
+        return [head!, ...rest.filter((part) => part.trim())];
+      }
+      return [s];
+    })
+    .join("\n");
+}
+
+/** flowchart/graph: labels con espacios o acentos sin comillas (`A[Módulo Tenants]`). */
+export function quoteFlowchartSpacedLabels(content: string): string {
+  if (!/^(flowchart|graph)\s/im.test((content ?? "").trim())) return content ?? "";
+  return content.replace(
+    /(\b[A-Za-z0-9_*][\w]*)\[([^\]"]+)\]/g,
+    (match, id: string, label: string) => {
+      if (!/\s/.test(label) && !/[^\x00-\x7F]/.test(label)) return match;
+      const cleaned = label.replace(/"/g, "'").trim();
+      return `${id}["${cleaned}"]`;
+    },
+  );
+}
+
+const ER_DIAGRAM_ATTR_TYPES =
+  "uuid|string|int|bool|boolean|datetime|date|text|json|float|double";
+
+/**
+ * erDiagram: atributos con tipo duplicado (`string original_request string`) rompen el parser.
+ */
+export function repairErDiagramDuplicateAttributeTypes(content: string): string {
+  if (!/^erDiagram\b/im.test((content ?? "").trim())) return content ?? "";
+  const dupRe = new RegExp(
+    `^(\\s*)(${ER_DIAGRAM_ATTR_TYPES})\\s+(\\w[\\w]*)\\s+(${ER_DIAGRAM_ATTR_TYPES})\\s*$`,
+    "i",
+  );
+  return content
+    .split("\n")
+    .map((line) => {
+      const m = line.match(dupRe);
+      if (!m) return line;
+      const [, indent, type1, name, type2] = m;
+      if (type2.toLowerCase() === "string" && /request|description|script|message|payload/i.test(name)) {
+        return `${indent}text ${name}`;
+      }
+      if (type1.toLowerCase() === type2.toLowerCase()) {
+        return `${indent}${type1} ${name}`;
+      }
+      return `${indent}${type1} ${name}_${type2}`;
+    })
+    .join("\n");
+}
+
+/** erDiagram: cierra entidad y abre la siguiente en la misma línea (`} llm_configs {`). */
+export function splitErDiagramEntityBlocksOnSameLine(content: string): string {
+  if (!/^erDiagram\b/im.test((content ?? "").trim())) return content ?? "";
+  return content.replace(/\}\s+(\w[\w]*)\s*\{/g, "}\n  $1 {");
+}
+
 const FLOWCHART_EDGE_ARROW_RE = /(?:--+(?:>|x|o)|==+>|-\.-+>|---)(?:\|[^|\n]+\|)?/;
 
 function slugFromFlowchartLabel(label: string): string {
@@ -2238,8 +2303,10 @@ export function normalizeMermaidDiagramBody(raw: string): string {
   const isClassDiagram = /^classDiagram\b/im.test(stripped.trim());
   const isStateDiagram = /^stateDiagram(?:-v2)?\b/im.test(stripped.trim());
   if (isErDiagram) {
+    stripped = splitErDiagramEntityBlocksOnSameLine(stripped);
     stripped = stripErDiagramSqlDefaultArtifacts(stripped);
     stripped = normalizeErDiagramPgTypes(stripped);
+    stripped = repairErDiagramDuplicateAttributeTypes(stripped);
     stripped = normalizeErCardinalityNotation(stripped);
   }
   if (isSequence) {
@@ -2379,10 +2446,12 @@ export function normalizeMermaidDiagramBody(raw: string): string {
 
   let result = out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   if (isFlowchart) {
+    result = stripFlowchartTrailingTextGarbage(result);
     result = splitFlowchartMultiEdgeLines(result);
     result = repairFlowchartMissingTargetNodeIds(result);
     result = sanitizeFlowchartNodeIds(result);
     result = quoteFlowchartLabelsWithParens(result);
+    result = quoteFlowchartSpacedLabels(result);
     result = quoteFlowchartEdgeLabels(result);
     result = quoteFlowchartChineseLabels(result);
     result = guardFlowchartSelfEdges(result);

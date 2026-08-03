@@ -11,6 +11,12 @@ import {
   guardFlowchartSelfEdges,
   assessMermaidFixStrategy,
   normalizeMermaidDiagramBody,
+  resolveMermaidBlockForRender,
+  validateMermaid,
+  stripFlowchartTrailingTextGarbage,
+  quoteFlowchartSpacedLabels,
+  repairErDiagramDuplicateAttributeTypes,
+  splitErDiagramEntityBlocksOnSameLine,
 } from "./mermaid.js";
 
 describe("stripMermaidComments", () => {
@@ -374,5 +380,66 @@ describe("normalizeMermaidDiagramBody — integration", () => {
     const out = normalizeMermaidDiagramBody(input);
     assert.match(out, /\+string name/);
     assert.match(out, /\+getAge\(\)/);
+  });
+});
+
+describe("micro-tutorials MDD fixture repairs", () => {
+  const brokenFlowchart = `flowchart TD
+    Client[Cliente Web - React + kreo-ui] -->|HTTPS /api/v1| Gateway[API Gateway - Express]
+Gateway -->|"JWT + Tenant Context"| TenantsModule[Módulo Tenants]text
+Gateway -->|"JWT + Tenant Context"| UsersModule[Módulo Usuarios]
+Scripting -->|"Strategy Pattern"| OpenRouter[OpenRouter API]text`;
+
+  it("stripFlowchartTrailingTextGarbage removes ]text and splits ]textGateway", () => {
+    const joined =
+      'Gateway -->|"JWT + Tenant Context"| TenantsModule[Módulo Tenants]textGateway -->|"JWT + Tenant Context"| UsersModule[Módulo Usuarios]';
+    const out = stripFlowchartTrailingTextGarbage(
+      `flowchart TD\n${joined}\nOpenRouter[OpenRouter API]text`,
+    );
+    assert.doesNotMatch(out, /\]text/i);
+    assert.match(out, /TenantsModule\[Módulo Tenants\]/);
+    assert.match(out, /Gateway -->/);
+  });
+
+  it("quoteFlowchartSpacedLabels quotes accent labels", () => {
+    const out = quoteFlowchartSpacedLabels(brokenFlowchart);
+    assert.match(out, /TenantsModule\["Módulo Tenants"\]/);
+    assert.match(out, /UsersModule\["Módulo Usuarios"\]/);
+  });
+
+  it("flowchart fixture validates after full repair pipeline", () => {
+    const repaired = resolveMermaidBlockForRender(brokenFlowchart);
+    assert.doesNotMatch(repaired, /\]text/i);
+    assert.equal(validateMermaid(repaired).length, 0);
+    assert.equal(assessMermaidFixStrategy(brokenFlowchart).strategy, "repair");
+  });
+
+  const brokenEr = `erDiagram
+  tutorials {
+    uuid id PK
+    string original_request string
+    bool downloadable
+    datetime created_at
+  } llm_configs {
+    uuid id PK
+  }`;
+
+  it("repairErDiagramDuplicateAttributeTypes fixes duplicate type tokens", () => {
+    const out = repairErDiagramDuplicateAttributeTypes(brokenEr);
+    assert.match(out, /text original_request/);
+    assert.doesNotMatch(out, /original_request string/);
+  });
+
+  it("splitErDiagramEntityBlocksOnSameLine splits entity headers", () => {
+    const out = splitErDiagramEntityBlocksOnSameLine(brokenEr);
+    assert.match(out, /}\n  llm_configs \{/);
+  });
+
+  it("erDiagram fixture validates after full repair pipeline", () => {
+    const repaired = resolveMermaidBlockForRender(brokenEr);
+    assert.match(repaired, /string original_request/);
+    assert.doesNotMatch(repaired, /original_request string/);
+    assert.match(repaired, /llm_configs \{/);
+    assert.equal(validateMermaid(repaired).length, 0);
   });
 });
