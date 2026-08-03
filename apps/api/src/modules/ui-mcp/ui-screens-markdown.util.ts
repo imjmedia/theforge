@@ -30,7 +30,7 @@ function implementationIntro(meta: UiScreensMarkdownMeta): string {
   }
   return (
     "> Mapa accionable pantalla → ruta → componente → API. Endpoints **solo** de api-contracts. " +
-      "Sin MCP gráfico: convención shadcn/ui + tokens de design-system.md; adapter `packages/ui`."
+      "Sin MCP gráfico: convención del stack declarado en MDD §2 + tokens de design-system.md; adapter `packages/ui`."
   );
 }
 function componentLabel(c: ScreenSpec["components"][number]): string {
@@ -170,12 +170,13 @@ export function buildUiScreensMarkdown(
   lines.push("| Componente | Rutas |");
   lines.push("|------------|-------|");
   const compRoutes = new Map<string, Set<string>>();
-  for (const item of plan) {
+  for (const item of v1Plan) {
+    const route = item.route?.replace(/\/+$/, "") ?? "";
+    if (!route || /^\/gestion-/i.test(route)) continue;
     const comps = componentsForPlanItem(item, screens)
       .replace(/`/g, "")
       .split(", ")
       .filter((c) => c && c !== "—");
-    const route = item.route ?? "/";
     for (const comp of comps) {
       const name = comp.replace(/\s+`.*$/, "").trim();
       if (!name) continue;

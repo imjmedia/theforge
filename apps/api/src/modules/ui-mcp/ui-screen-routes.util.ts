@@ -75,6 +75,10 @@ export function inferScreenRoute(screenName: string, uiHint?: string): string {
   if (/configuraci[oó]n|settings/.test(name)) return "/settings";
   const slug = slugifyRouteSegment(screenName);
   if (uiHint === "chat") return "/chat";
+  if (/^gesti[oó]n de /i.test(screenName)) {
+    const entitySlug = slugifyRouteSegment(screenName.replace(/^gesti[oó]n de /i, ""));
+    return entitySlug ? `/admin/${entitySlug}` : "/";
+  }
   return slug ? `/${slug}` : "/";
 }
 

@@ -166,11 +166,54 @@ describe("ui-screens-plan — buildPantallasPlan", () => {
     const login = plan.find((p) => p.route === "/login");
     assert.ok(login);
     assert.equal(login.uiHint, "form");
+    assert.equal(login.pageName, "LoginPage");
+    assert.match(login.primaryApi ?? "", /POST.*auth\/login/i);
+    assert.ok(!/GET.*users/i.test(login.primaryApi ?? ""));
 
-    assert.ok(plan.some((p) => p.name === "cryptographic_keys" && p.route === "/admin/keys"));
+    const keys = plan.find((p) => p.name === "cryptographic_keys");
+    assert.ok(keys);
+    assert.equal(keys.route, "/admin/keys");
+    assert.equal(keys.pageName, "KeysPage");
+    assert.match(keys.primaryApi ?? "", /GET.*\/keys/i);
+
     assert.ok(plan.some((p) => p.name === "sat_certificates" && p.route === "/admin/certificates"));
     assert.ok(plan.some((p) => p.name === "pade_tokens" && p.route === "/admin/tokens"));
     assert.ok(!plan.some((p) => p.route === "/chat"));
     assert.equal(mddDeclaresChatProduct(kmsMdd), false);
+  });
+
+  it("no añade /chat sin producto chat en MDD aunque la HU mencione mensajes", () => {
+    const mdd = [
+      "## 2. Stack",
+      "### 2.2 Frontend",
+      "React admin panel.",
+      "## 3. Modelo de Datos",
+      "CREATE TABLE notifications (id UUID PRIMARY KEY);",
+    ].join("\n");
+    const hu = [
+      "### Historia de usuario: [US-050] Ver mensajes",
+      "**Como:** Operador",
+      "**Quiero:** ver mensajes del sistema",
+      "**Para:** estar informado",
+    ].join("\n");
+    const plan = buildPantallasPlan(mdd, hu, "| GET | /api/v1/notifications | List |");
+    assert.ok(!plan.some((p) => p.route === "/chat"));
+  });
+
+  it("export_requests no comparte ruta /admin/keys con cryptographic_keys", () => {
+    const mdd = [
+      "## 3. Modelo de Datos",
+      "CREATE TABLE cryptographic_keys (id UUID PRIMARY KEY);",
+      "CREATE TABLE export_requests (id UUID PRIMARY KEY);",
+    ].join("\n");
+    const api = [
+      "| GET | /api/v1/keys | List keys |",
+      "| GET | /api/v1/export-requests | List exports |",
+    ].join("\n");
+    const plan = buildPantallasPlan(mdd, null, api);
+    const keys = plan.find((p) => p.name === "cryptographic_keys");
+    const exports = plan.find((p) => p.name === "export_requests");
+    assert.equal(keys?.route, "/admin/keys");
+    assert.equal(exports?.route, "/admin/export-requests");
   });
 });

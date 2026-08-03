@@ -81,25 +81,80 @@ export function entityPathTokens(entityOrSlug: string): string[] {
   return [...tokens].filter((t) => t.length >= 2);
 }
 
-/** Endpoints cuyo path menciona el token de entidad/pantalla. */
+/** Puntúa qué tan bien un endpoint corresponde a una entidad (segmento final > path > substring). */
+export function scoreEndpointEntityMatch(
+  entityOrSlug: string,
+  endpoint: HttpEndpointRef,
+): number {
+  const tokens = entityPathTokens(entityOrSlug);
+  const p = endpoint.path.toLowerCase();
+  const segments = p.split("/").filter(Boolean);
+  const lastSegment = segments[segments.length - 1] ?? "";
+  let best = 0;
+
+  for (const t of tokens) {
+    if (t.length < 2) continue;
+    const normLast = lastSegment.replace(/-/g, "_");
+    const normToken = t.replace(/-/g, "_");
+    if (normLast === normToken) {
+      best = Math.max(best, 100);
+      continue;
+    }
+    if (segments.some((s) => s.replace(/-/g, "_") === normToken)) {
+      best = Math.max(best, 60);
+      continue;
+    }
+    if (t.length >= 3 && (p.includes(`/${t}`) || p.includes(`-${t}`) || p.includes(`_${t}`))) {
+      best = Math.max(best, 20);
+    }
+  }
+  return best;
+}
+
+/** Endpoints cuyo path menciona el token de entidad/pantalla (ordenados por match determinista). */
 export function matchEndpointsForEntity(
   entityOrSlug: string,
   endpoints: HttpEndpointRef[],
 ): HttpEndpointRef[] {
-  const tokens = entityPathTokens(entityOrSlug);
+  const ranked = endpoints
+    .map((ep) => ({ ep, score: scoreEndpointEntityMatch(entityOrSlug, ep) }))
+    .filter((row) => row.score > 0)
+    .sort((a, b) => b.score - a.score || a.ep.path.localeCompare(b.ep.path));
 
-  return endpoints.filter((ep) => {
-    const p = ep.path.toLowerCase();
-    const segments = p.split("/").filter(Boolean);
-    const lastSegment = segments[segments.length - 1] ?? "";
-    return tokens.some(
-      (t) =>
-        t.length >= 3 &&
-        (p.includes(t) ||
-          lastSegment === t ||
-          lastSegment.replace(/-/g, "_") === t.replace(/-/g, "_")),
-    );
-  });
+  const seen = new Set<string>();
+  const out: HttpEndpointRef[] = [];
+  for (const { ep } of ranked) {
+    const key = `${ep.method} ${ep.path}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(ep);
+  }
+  return out;
+}
+
+/** Segmento REST → nombre de página React (p. ej. `keys` → `KeysPage`). */
+export function inferPageNameFromApiPathSegment(segment: string): string {
+  const normalized = segment.replace(/_/g, "-").toLowerCase().trim();
+  if (!normalized) return "ScreenPage";
+  if (/^(auth|login)$/.test(normalized)) return "LoginPage";
+  const label = normalized
+    .split("-")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join("");
+  return label ? `${label}Page` : "ScreenPage";
+}
+
+/** ¿La entidad tiene POST pero ningún GET de listado en contratos v1? */
+export function entityHasPostWithoutGetList(endpoints: HttpEndpointRef[]): boolean {
+  const hasPost = endpoints.some((e) => e.method === "POST");
+  const hasGetList = endpoints.some(
+    (e) =>
+      e.method === "GET" &&
+      !/\/\{[^}]+\}$/.test(e.path) &&
+      !/\/:[\w-]+$/.test(e.path),
+  );
+  return hasPost && !hasGetList;
 }
 
 /** Ruta SPA preferida desde el path REST (p. ej. `/api/v1/keys` → `/admin/keys`). */

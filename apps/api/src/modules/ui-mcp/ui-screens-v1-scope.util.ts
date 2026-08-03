@@ -4,9 +4,12 @@
 
 export type PantallaRowMeta = {
   route?: string;
+  pageName?: string;
   screenName: string;
   userStoryId?: string;
   primaryApi?: string;
+  layout?: string;
+  responsive?: string;
   v1InScope: boolean;
   /** When true, screen must have API + frontend task or be excluded from v1 table. */
   v1RequiresApi: boolean;
@@ -32,15 +35,25 @@ export function extractPantallaPlanMetaFromMarkdown(uiScreensMarkdown: string): 
       if (cells.length < 3) continue;
       const routeCell = cells.find((c) => c.startsWith("/"));
       const route = routeCell?.replace(/\/+$/, "") || undefined;
-      const screenName = cells[0] ?? "Pantalla";
+      const routeIdx = route ? cells.indexOf(routeCell!) : -1;
+      const pageName =
+        routeIdx >= 0 && cells[routeIdx + 1] && !/^US-/i.test(cells[routeIdx + 1]!)
+          ? cells[routeIdx + 1]
+          : undefined;
+      const screenName = pageName ?? cells[0] ?? "Pantalla";
       const usCell = cells.find((c) => /^US-/i.test(c));
       const apiCell = cells.find((c) => /^(GET|POST|PUT|PATCH|DELETE)\s+\//i.test(c));
       const primaryApi = apiCell && !/fuera de alcance/i.test(apiCell) ? apiCell : undefined;
+      const layoutCell = cells.find((c) => /shell|max-w|grid|column/i.test(c));
+      const responsiveCell = cells.find((c) => /sm\s|md\s|mobile-first/i.test(c));
       rows.push({
         route,
+        pageName,
         screenName,
         userStoryId: usCell?.match(/^(US-[A-Z0-9_-]+)/i)?.[1],
         primaryApi,
+        layout: layoutCell,
+        responsive: responsiveCell,
         v1InScope,
         v1RequiresApi: v1InScope && Boolean(route),
       });
@@ -51,11 +64,18 @@ export function extractPantallaPlanMetaFromMarkdown(uiScreensMarkdown: string): 
   return [...parseTable(inScopeBody, true), ...parseTable(outScopeBody, false)];
 }
 
+/** Rutas v1 con metadatos de fila (página, layout, responsive). */
+export function extractV1InScopePantallaRows(uiScreensMarkdown: string): PantallaRowMeta[] {
+  return extractPantallaPlanMetaFromMarkdown(uiScreensMarkdown).filter(
+    (row) => row.v1InScope && row.route,
+  );
+}
+
 /** Routes in v1 scope (excludes «Fuera de alcance v1» section). */
 export function extractV1InScopePantallaRoutes(uiScreensMarkdown: string): string[] {
   const routes = new Set<string>();
-  for (const row of extractPantallaPlanMetaFromMarkdown(uiScreensMarkdown)) {
-    if (row.v1InScope && row.route) routes.add(row.route);
+  for (const row of extractV1InScopePantallaRows(uiScreensMarkdown)) {
+    if (row.route) routes.add(row.route);
   }
   return [...routes];
 }

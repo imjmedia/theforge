@@ -8,9 +8,11 @@ import type { DomainInventory, EntityClassification, ListScreensEntity } from "@
 import { AUTH_ENTITY_FAMILY } from "@theforge/shared-types";
 import { extractEntityKeyFieldsFromMdd, extractEntityNamesFromMdd } from "./ui-screens-mdd.util.js";
 import {
+  entityHasPostWithoutGetList,
   extractHttpEndpointsFromMarkdown,
   formatEndpointList,
   inferAuthEndpoints,
+  inferPageNameFromApiPathSegment,
   inferRouteFromApiPath,
   matchEndpointsForEntity,
 } from "./api-contract-endpoints.util.js";
@@ -319,11 +321,14 @@ function resolveEntityScreenRoute(
   isAuthFlow: boolean,
   matchedEndpoints: ReturnType<typeof matchEndpointsForEntity>,
   routeFromMatrix?: string,
+  chatProductDeclared = false,
 ): string {
   if (isAuthFlow || /login|sign[\s-]?in|iniciar sesión/i.test(screenName)) {
     return "/login";
   }
-  if (uiHint === "chat") return "/chat";
+  if (uiHint === "chat") {
+    return chatProductDeclared ? "/chat" : inferScreenRoute(screenName, uiHint);
+  }
 
   const apiRoute = matchedEndpoints[0]?.path
     ? inferRouteFromApiPath(matchedEndpoints[0].path)
@@ -331,6 +336,27 @@ function resolveEntityScreenRoute(
   if (apiRoute) return apiRoute;
 
   return routeFromMatrix || inferScreenRoute(screenName, uiHint);
+}
+
+function resolvePageNameForPlanItem(
+  item: Pick<PantallaPlanItem, "screenName" | "route" | "name">,
+  matchedEndpoints: ReturnType<typeof matchEndpointsForEntity>,
+): string {
+  if (item.route === "/login") return "LoginPage";
+  const segment = matchedEndpoints[0]?.path.match(/\/api\/v\d+\/([^/?]+)/i)?.[1];
+  if (segment) return inferPageNameFromApiPathSegment(segment);
+  return inferPageComponentName(item.screenName);
+}
+
+function resolvePrimaryApiForPlanItem(
+  matched: ReturnType<typeof matchEndpointsForEntity>,
+  opts: { isAuthFlow: boolean; screenName: string; endpoints: ReturnType<typeof extractHttpEndpointsFromMarkdown> },
+): string | undefined {
+  if (opts.isAuthFlow || /login|sign[\s-]?in|otp|mfa|auth/i.test(opts.screenName)) {
+    const auth = inferAuthEndpoints(opts.endpoints);
+    return auth.length > 0 ? formatEndpointList(auth, 2) : undefined;
+  }
+  return matched.length > 0 ? formatEndpointList(matched, 2) : undefined;
 }
 
 function storyRef(story: ParsedUserStory): string {
@@ -476,12 +502,16 @@ export function buildPantallasPlan(
       uiHint = "chat";
     }
     const matched = matchEndpointsForEntity(entityName, endpoints);
-    const primaryApi =
-      matched.length > 0
-        ? formatEndpointList(matched, 2)
-        : /login|auth|otp|mfa/i.test(screenName)
-          ? formatEndpointList(inferAuthEndpoints(endpoints), 2)
-          : undefined;
+    const isPostActionOnly = entityHasPostWithoutGetList(matched);
+    const primaryApi = resolvePrimaryApiForPlanItem(matched, {
+      isAuthFlow,
+      screenName,
+      endpoints,
+    });
+
+    if (isPostActionOnly && !isAuthFlow) {
+      uiHint = "form";
+    }
 
     // Política v1: pantalla CRUD sin API ni HU → no generar (evita zombie screens)
     if (!primaryApi && linked.length === 0) continue;
@@ -494,7 +524,15 @@ export function buildPantallasPlan(
       isAuthFlow,
       matched,
       routeFromMatrix,
+      chatProductDeclared,
     );
+    if (uiHint === "chat" && !chatProductDeclared) {
+      uiHint = inferUiHintFromText(entityName) ?? "table";
+    }
+
+    const purposeSuffix = isPostActionOnly
+      ? " Pantalla de acción/detalle (sin listado GET v1)."
+      : "";
 
     plan.push({
       name: entityName,
@@ -506,13 +544,13 @@ export function buildPantallasPlan(
       classification: inferClassification(entityName, storyText),
       uiHint,
       screenName,
-      purpose: primary ? formatStoryPurpose(primary) : defaultEntityPurpose(entityName),
+      purpose: (primary ? formatStoryPurpose(primary) : defaultEntityPurpose(entityName)) + purposeSuffix,
       resolveContext: primary ? resolveContextFromStory(primary) : undefined,
       userStoryRefs: linked.length > 0 ? linked.map(storyRef) : undefined,
       source: primary ? "entity+hu" : "entity",
       role,
       route,
-      pageName: inferPageComponentName(screenName),
+      pageName: resolvePageNameForPlanItem({ screenName, route, name: entityName }, matched),
       uiStates: inferUiStates(screenName, uiHint),
       primaryApi: primaryApi && primaryApi !== "—" ? primaryApi : undefined,
       userStoryId: primary?.id,
@@ -596,17 +634,31 @@ export function buildPantallasPlan(
     const screenName = story.title;
     const authEps = inferAuthEndpoints(endpoints);
     const matched = matchEndpointsForEntity(slug, endpoints);
-    const primaryApi =
-      matched.length > 0
+    const isAuthStory = /login|auth|otp|mfa|iniciar sesi|inicio de sesi/i.test(screenName);
+    const primaryApi = isAuthStory
+      ? authEps.length > 0
+        ? formatEndpointList(authEps, 2)
+        : matched.length > 0
+          ? formatEndpointList(matched, 2)
+          : undefined
+      : matched.length > 0
         ? formatEndpointList(matched, 2)
-        : /login|auth|otp|mfa/i.test(screenName)
-          ? formatEndpointList(authEps, 2)
-          : undefined;
+        : undefined;
+
+    if (uiHint === "chat" && !chatProductDeclared) {
+      uiHint = inferUiHintFromText(story.searchText) === "chat" ? "form" : uiHint;
+    }
 
     plan.push({
       name: slug,
       keyFields: ["id"],
-      restEndpoint: matched[0] ? `${matched[0].method} ${matched[0].path}` : undefined,
+      restEndpoint: isAuthStory
+        ? authEps[0]
+          ? `${authEps[0].method} ${authEps[0].path}`
+          : undefined
+        : matched[0]
+          ? `${matched[0].method} ${matched[0].path}`
+          : undefined,
       classification: inferClassification(slug, story.searchText),
       uiHint,
       screenName,
@@ -615,13 +667,14 @@ export function buildPantallasPlan(
       userStoryRefs: [storyRef(story)],
       source: "hu-only",
       role: story.role ? normalizeRoleLabel(story.role) : defaultRole,
-      route:
-        /login|auth|otp|mfa|iniciar sesi|inicio de sesi/i.test(screenName)
+      route: isAuthStory
           ? "/login"
-          : uiHint === "chat"
+          : uiHint === "chat" && chatProductDeclared
             ? "/chat"
             : inferScreenRoute(screenName, uiHint),
-      pageName: inferPageComponentName(screenName),
+      pageName: isAuthStory
+        ? "LoginPage"
+        : resolvePageNameForPlanItem({ screenName, route: undefined, name: slug }, matched),
       uiStates: inferUiStates(screenName, uiHint),
       primaryApi: primaryApi && primaryApi !== "—" ? primaryApi : undefined,
       userStoryId: story.id,

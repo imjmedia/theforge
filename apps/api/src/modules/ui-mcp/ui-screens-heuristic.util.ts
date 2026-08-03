@@ -36,6 +36,20 @@ export function resolveUiStackHint(
   };
 }
 
+function isAuthScreen(item: PantallaPlanItem): boolean {
+  const route = item.route ?? "";
+  if (route === "/login" || route === "/register" || route === "/otp-verify") return true;
+  return (
+    item.uiHint === "form" &&
+    /login|sign[\s-]?in|iniciar sesi|otp|mfa|auth/i.test(`${item.screenName} ${item.purpose}`)
+  );
+}
+
+function componentsForPlanItem(item: PantallaPlanItem): string[] {
+  if (isAuthScreen(item)) return UI_HINT_COMPONENTS.form ?? DEFAULT_COMPONENTS;
+  return componentsForHint(item.uiHint);
+}
+
 function componentsForHint(uiHint?: string): string[] {
   if (!uiHint) return DEFAULT_COMPONENTS;
   return UI_HINT_COMPONENTS[uiHint] ?? DEFAULT_COMPONENTS;
@@ -70,7 +84,7 @@ export function buildHeuristicScreensFromPlan(
   const screens: ScreenSpec[] = [];
 
   for (const item of plan) {
-    const componentNames = componentsForHint(item.uiHint);
+    const componentNames = componentsForPlanItem(item);
     screens.push({
       name: item.screenName,
       purpose: item.purpose,
