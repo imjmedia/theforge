@@ -1,4 +1,8 @@
 import type { IntegrationHandoffItem } from "./project-integration.js";
+import type { AriadneTasksHydrationSource } from "./hydrate-tasks-from-ariadne-pack.util.js";
+import { hydrateTasksFromAriadnePack } from "./hydrate-tasks-from-ariadne-pack.util.js";
+
+export type { AriadneTasksHydrationSource };
 
 /** Deliverable keys not copied from baseline snapshot when seeding integration handoff stages. */
 export const INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS = [
@@ -9,12 +13,18 @@ export const INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS = [
 
 export type IntegrationHandoffSeedExcludeKey = (typeof INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS)[number];
 
-export type IntegrationHandoffTasksSource = "cursor_tasks_markdown" | "handoff_items";
+export type IntegrationHandoffTasksSource =
+  | "cursor_tasks_markdown"
+  | "handoff_items"
+  | "ariadne_tasks_json_seed"
+  | "ariadne_cursor_tasks_markdown";
 
 /** Metadata persisted on Stage.legacyChangeState after handoff tasks import. */
 export interface IntegrationHandoffTasksMeta {
   source: IntegrationHandoffTasksSource;
   importedAt: string;
+  /** Alias legible para MCP/UI (p. ej. ariadne_tasks_json_seed). */
+  tasksSource?: AriadneTasksHydrationSource;
 }
 
 /**
@@ -35,8 +45,10 @@ export function buildHandoffTasksMarkdown(
     "",
   ];
   for (const item of items) {
-    const desc = item.description.replace(/\s+/g, " ").trim();
-    lines.push(`- [ ] **${item.id}** — ${item.title}${desc ? `: ${desc}` : ""}`);
+    const kind = item.kind ?? "requirement";
+    if (kind !== "requirement") continue;
+    const desc = (item.description ?? "").replace(/\s+/g, " ").trim();
+    lines.push(`- [ ] **${item.id}** — ${item.title}${desc ? `: ${desc.slice(0, 240)}` : ""}`);
     if (item.acceptanceCriteria?.length) {
       for (const ac of item.acceptanceCriteria) {
         lines.push(`  - [ ] ${ac}`);
@@ -55,9 +67,12 @@ export function resolveIntegrationHandoffTasksMarkdown(input: {
   handoffItems?: IntegrationHandoffItem[];
   title?: string;
 }): { markdown: string; source: IntegrationHandoffTasksSource } | null {
-  const cursor = input.cursorTasksMarkdown?.trim();
-  if (cursor) {
-    return { markdown: cursor, source: "cursor_tasks_markdown" };
+  const hydrated = hydrateTasksFromAriadnePack({
+    handoffItems: input.handoffItems,
+    cursorTasksMarkdown: input.cursorTasksMarkdown,
+  });
+  if (hydrated) {
+    return { markdown: hydrated.tasksContent, source: hydrated.source };
   }
   const items = (input.handoffItems ?? []).filter((i) => i.id?.trim() && i.title?.trim());
   if (!items.length) return null;

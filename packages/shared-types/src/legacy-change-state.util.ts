@@ -17,6 +17,9 @@ export type LegacyChangeState = NonNullable<LegacyChangeGateInput["legacyChangeS
   routeCount?: number | null;
   /** Tasks importadas desde handoff NEW-LEG / Ariadne — omitir LLM tasks en cascada. */
   integrationHandoffTasks?: import("./integration-handoff-tasks.util.js").IntegrationHandoffTasksMeta | null;
+  /** SSOT Ariadne tasks (ariadne_tasks_json_seed | ariadne_cursor_tasks_markdown). */
+  tasksSource?: import("./integration-handoff-tasks.util.js").AriadneTasksHydrationSource | null;
+  integrationScope?: import("./hydrate-tasks-from-ariadne-pack.util.js").AriadneIntegrationScopePayload | null;
   ariadneChangePack?: {
     version?: string;
     ariadneChangeId?: string | null;

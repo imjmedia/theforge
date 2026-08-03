@@ -7,12 +7,12 @@ import {
 } from "./integration-handoff-tasks.util.js";
 
 describe("resolveIntegrationHandoffTasksMarkdown", () => {
-  it("prefers cursor_tasks_markdown over handoff items", () => {
+  it("prefers Ariadne hydration over handoff checklist", () => {
     const r = resolveIntegrationHandoffTasksMarkdown({
       cursorTasksMarkdown: "# Tasks\n- [ ] T-001",
       handoffItems: [{ id: "NEW-LEG-01", title: "X", description: "Y" }],
     });
-    assert.equal(r?.source, "cursor_tasks_markdown");
+    assert.equal(r?.source, "ariadne_cursor_tasks_markdown");
     assert.match(r?.markdown ?? "", /T-001/);
   });
 

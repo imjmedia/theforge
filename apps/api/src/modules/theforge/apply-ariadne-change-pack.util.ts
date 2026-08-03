@@ -79,6 +79,7 @@ export function buildRecommendedNextToolsAfterAriadnePack(input: {
   questionsCount: number;
   hasHandoffItems: boolean;
   migrationTasksMode?: boolean;
+  integrationHandoffWithHydratedTasks?: boolean;
 }): CreateStageFromAriadneChangePackOutput["recommendedNextTools"] {
   const steps: CreateStageFromAriadneChangePackOutput["recommendedNextTools"] = [];
   if (input.questionsCount > 0) {
@@ -87,6 +88,23 @@ export function buildRecommendedNextToolsAfterAriadnePack(input: {
       reason: "El pack incluye preguntas de refinamiento; persistir respuestas antes del MDD.",
     });
   }
+
+  if (input.integrationHandoffWithHydratedTasks) {
+    steps.push({
+      tool: "legacy_generate_mdd",
+      reason: "Generar MDD de cambio para la etapa creada/importada (incluir stageId).",
+    });
+    steps.push({
+      tool: "get_tasks_json",
+      reason: "Tasks hidratadas desde Ariadne (SSOT tasksJson v2).",
+    });
+    steps.push({
+      tool: "get_next_implementation_task",
+      reason: "Primera tarea abierta del seed — iniciar implementación Cursor.",
+    });
+    return steps;
+  }
+
   steps.push({
     tool: "legacy_generate_mdd",
     reason: "Generar MDD de cambio para la etapa creada/importada (incluir stageId).",

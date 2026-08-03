@@ -80,6 +80,7 @@ export * from "./workshop-fin-delimiter-covenant.js";
 export * from "./ariadne-forge-link.js";
 export * from "./ariadne-change-pack.js";
 export * from "./integration-handoff-tasks.util.js";
+export * from "./hydrate-tasks-from-ariadne-pack.util.js";
 export * from "./ariadne-handoff-normalize.util.js";
 export * from "./dbga-endpoint-catalog-merge.js";
 export * from "./ui-mcp-contract.js";

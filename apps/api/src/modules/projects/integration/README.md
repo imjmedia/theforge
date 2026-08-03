@@ -43,7 +43,9 @@ Body (`createStageFromAriadneChangePackInputSchema`):
 }
 ```
 
-- **`handoffPlanType`:** `migration_tasks` (default cuando hay `cursorTasksMarkdown` o `handoffItems`) importa tasks del handoff y Forge **omite LLM `tasks`** en `legacy_generate_deliverables`. `full_cascade` = cascada clásica.
+- **`handoffPlanType`:** `migration_tasks` (default cuando hay `cursorTasksMarkdown`, `tasks_json_seed` o `handoffItems`) importa tasks del handoff y Forge **omite LLM `tasks`** en `legacy_generate_deliverables`. `full_cascade` = cascada clásica.
+- **Handoff kinds Ariadne:** `integration_scope`, `tasks_json_seed`, `cursor_tasks_markdown` — ver `docs/contracts/theforge-tasks-hydration-from-ariadne-v1.md`.
+- Hidratación: `hydrateTasksFromAriadnePack` → `Stage.tasksJson` + `tasksContent`; `validateTasksJsonV2` exige `schemaVersion: "2"` y `files[]` por task.
 - **`cursorTasksMarkdown`** (alias snake_case `cursor_tasks_markdown`): SSOT Cursor-ready; si falta, Forge sintetiza checklist desde `handoffItems`.
 - Etapas de integración **no heredan** `tasksContent`, `userStoriesContent` ni `logicFlowsContent` del snapshot baseline (`INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS`).
 

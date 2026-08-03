@@ -29,11 +29,27 @@ export function resolveTasksSsotFromProjectApi(
   taskCount: number;
   tasksJson: unknown;
   deliverableBundleVersion: string | null;
+  /** Origen Ariadne (p. ej. ariadne_tasks_json_seed) cuando hidratado en import. */
+  ariadneTasksSource?: string | null;
 } {
   const resolved = resolveTasksForConsume({
     tasksContent: typeof project.tasksContent === "string" ? project.tasksContent : null,
     tasksJson: primaryStage?.tasksJson ?? project.tasksJson,
   });
+  const legacyState =
+    primaryStage?.legacyChangeState != null && typeof primaryStage.legacyChangeState === "object"
+      ? (primaryStage.legacyChangeState as Record<string, unknown>)
+      : null;
+  const handoffTasks =
+    legacyState?.integrationHandoffTasks != null &&
+    typeof legacyState.integrationHandoffTasks === "object"
+      ? (legacyState.integrationHandoffTasks as Record<string, unknown>)
+      : null;
+  const ariadneTasksSource =
+    (typeof legacyState?.tasksSource === "string" ? legacyState.tasksSource : null) ??
+    (typeof handoffTasks?.tasksSource === "string" ? handoffTasks.tasksSource : null) ??
+    (typeof handoffTasks?.source === "string" ? handoffTasks.source : null);
+
   const snapshot = readStageDeliverableSnapshot(primaryStage?.deliverableSnapshot);
   return {
     source: resolved.source,
@@ -41,6 +57,7 @@ export function resolveTasksSsotFromProjectApi(
     taskCount: resolved.taskCount,
     tasksJson: resolved.tasksJson,
     deliverableBundleVersion: snapshot?.bundleVersion ?? null,
+    ariadneTasksSource,
   };
 }
 
