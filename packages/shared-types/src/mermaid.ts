@@ -856,7 +856,11 @@ export function repairErDiagramDuplicateAttributeTypes(content: string): string 
     .map((line) => {
       const m = line.match(dupRe);
       if (!m) return line;
-      const [, indent, type1, name, type2] = m;
+      const indent = m[1] ?? "";
+      const type1 = m[2];
+      const name = m[3];
+      const type2 = m[4];
+      if (!type1 || !name || !type2) return line;
       if (type2.toLowerCase() === "string" && /request|description|script|message|payload/i.test(name)) {
         return `${indent}text ${name}`;
       }
