@@ -1,10 +1,11 @@
 /**
  * @fileoverview **UiScreensService** — genera el deliverable "Pantallas / UI Screens Spec" (texto)
- * a partir del MCP gráfico compatible activo.
+ * a partir del MCP gráfico compatible activo o fallback heurístico.
  *
  * Estrategia: cruza entidades §3 MDD con Historias de Usuario; `list_screens` con respaldo
- * por-entidad vía `resolve_component` cuando el MCP no soporta `list_screens`. Ensambla markdown
- * de texto (sin TSX ni preview) y lo persiste en `Project.uiScreensContent`.
+ * por-entidad vía `resolve_component` cuando el MCP no soporta `list_screens`. Sin MCP activo,
+ * `buildHeuristicScreensFromPlan` produce ScreenSpec[] desde el plan. Ensambla markdown de texto
+ * (sin TSX ni preview) y lo persiste en `Project.uiScreensContent`.
  *
  * @copyright 2026 Jorge Correa
  * @license Apache-2.0
@@ -22,6 +23,10 @@ import {
 import { resolveConstitutionMarkdown } from "./ui-screens-mdd.util.js";
 import { buildPantallasPlan, type PantallaPlanItem } from "./ui-screens-plan.util.js";
 import { prependDocumentTimestamps } from "../engine/document-date-header.util.js";
+import {
+  buildHeuristicScreensFromPlan,
+  resolveUiStackHint,
+} from "./ui-screens-heuristic.util.js";
 
 @Injectable()
 export class UiScreensService {
@@ -33,7 +38,7 @@ export class UiScreensService {
 
   /**
    * Genera y persiste el deliverable "Pantallas" para un proyecto.
-   * Requiere un MCP gráfico compatible activo; de lo contrario lanza `BadRequestException`.
+   * Con MCP activo enriquece componentes; sin MCP usa fallback heurístico.
    */
   async syncUiScreens(projectId: string): Promise<{ content: string; screens: number }> {
     const project = await this.prisma.project.findUnique({
@@ -46,6 +51,7 @@ export class UiScreensService {
         specContent: true,
         apiContractsContent: true,
         userStoriesContent: true,
+        blueprintContent: true,
         name: true,
         stages: {
           select: { ordinal: true, workflowStatus: true, mddContent: true },
@@ -55,13 +61,8 @@ export class UiScreensService {
     });
     if (!project) throw new NotFoundException("Proyecto no encontrado");
 
-    if (!(await this.uiMcpClient.isActive())) {
-      throw new BadRequestException(
-        "No hay un MCP gráfico compatible activo. Actívalo en Ajustes › MCP gráfico.",
-      );
-    }
-
     const mdd = resolveConstitutionMarkdown(project);
+    const stackHint = resolveUiStackHint(mdd, project.blueprintContent);
     const stage = await this.prisma.stage.findFirst({
       where: { projectId },
       orderBy: { ordinal: "asc" },
@@ -85,39 +86,54 @@ export class UiScreensService {
       project.apiContractsContent,
       inventory,
     );
-    const entityPlan = plan.filter((p) => p.source !== "hu-only");
 
-    if (entityPlan.length === 0) {
+    if (plan.length === 0) {
       throw new BadRequestException(
-        "El MDD del proyecto no tiene entidades en §3 (Modelo de Datos) para derivar pantallas.",
+        "El MDD del proyecto no tiene entidades en §3 (Modelo de Datos) ni journeys para derivar pantallas.",
       );
     }
 
-    const entities: ListScreensEntity[] = plan.map(({ name, classification, keyFields, restEndpoint }) => ({
-      name,
-      classification,
-      keyFields,
-      restEndpoint,
-    }));
+    const mcpActive = await this.uiMcpClient.isActive();
+    let screens: ScreenSpec[];
+    let libraryName: string | null | undefined = stackHint.adapterLabel;
+    let libraryVersion: string | null | undefined;
+    let contractVersion: string | null | undefined;
 
-    let screens = await this.uiMcpClient.listScreens({ entities });
-    if (!screens) {
-      screens = await this.buildScreensFromResolve(plan);
+    if (mcpActive) {
+      const entities: ListScreensEntity[] = plan.map(
+        ({ name, classification, keyFields, restEndpoint }) => ({
+          name,
+          classification,
+          keyFields,
+          restEndpoint,
+        }),
+      );
+
+      let mcpScreens = await this.uiMcpClient.listScreens({ entities });
+      if (!mcpScreens) {
+        mcpScreens = await this.buildScreensFromResolve(plan);
+      } else {
+        mcpScreens = await this.enrichScreensFromPlan(mcpScreens, plan);
+      }
+      if (!mcpScreens || mcpScreens.length === 0) {
+        screens = buildHeuristicScreensFromPlan(plan, stackHint);
+      } else {
+        screens = mcpScreens;
+      }
+      const meta = await this.uiMcp.getActiveCompatibleMeta();
+      libraryName = meta?.libraryName ?? stackHint.adapterLabel;
+      libraryVersion = meta?.libraryVersion;
+      contractVersion = meta?.contractVersion;
     } else {
-      screens = await this.enrichScreensFromPlan(screens, plan);
-    }
-    if (!screens || screens.length === 0) {
-      throw new BadRequestException(
-        "El MCP gráfico no devolvió pantallas para las entidades del proyecto.",
-      );
+      screens = buildHeuristicScreensFromPlan(plan, stackHint);
     }
 
-    const meta = await this.uiMcp.getActiveCompatibleMeta();
     const pantallasBody = buildUiScreensMarkdown(screens, plan, {
       projectName: project.name,
-      libraryName: meta?.libraryName,
-      libraryVersion: meta?.libraryVersion,
-      contractVersion: meta?.contractVersion,
+      libraryName,
+      libraryVersion,
+      contractVersion,
+      stackBase: stackHint.adapterLabel,
       generatedAt: new Date(),
     });
     if (!pantallasBody) {
@@ -125,7 +141,7 @@ export class UiScreensService {
     }
 
     let content = pantallasBody;
-    if (await this.uiMcp.supportsUiProjectInstructions()) {
+    if (mcpActive && (await this.uiMcp.supportsUiProjectInstructions())) {
       const uiProject = buildUiProjectInstructions({
         projectName: project.name,
         plan,

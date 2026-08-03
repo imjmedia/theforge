@@ -4,9 +4,39 @@ Estas reglas aplican al generar o regenerar entregables SDD con superficie UI (W
 
 ## Stack UI (sin hardcode de vendor)
 
-- **Con MCP gráfico activo:** nombres exactos del **catálogo del MCP conectado** (resuelto vía `resolve_component` / `pantallas.md`). No asumir Kreo ni otro vendor si no es el MCP activo.
+- **Con MCP gráfico activo:** nombres exactos del **catálogo del MCP conectado** (resuelvo vía `resolve_component` / `pantallas.md`). No asumir Kreo ni otro vendor si no es el MCP activo.
 - **Sin MCP gráfico:** base **shadcn/ui + Tailwind** (o stack declarado en MDD/Blueprint legacy); tokens en `design-system.md`; componentes genéricos documentados en `pantallas.md`.
+- **Stack fallback (orden):** MCP gráfico activo → librería declarada en MDD §2 → **MUI + adapter `packages/ui`** → **shadcn/Tailwind preset** (`colorSource: system-default`).
 - **Prohibido** mezclar tokens de fuentes distintas (Stitch, Ariadne, MCP externo, shadcn custom) sin declarar cuál manda en **## Tema canónico**.
+
+## Multi-superficie (producto + admin + tools)
+
+| Superficie | Shell | Notas |
+|------------|-------|-------|
+| Producto / app | `AppShell` | Nav por rol JWT; journeys de usuario final |
+| Admin / backoffice | `AdminShell` | Mismas tokens DS; nav densa; tablas admin |
+| Tools / internal | `ToolShell` opcional | Solo si MDD §2 lo declara |
+
+- **Mismo design system** en todas las superficies (`design-system.md` único).
+- Documentar shells en `pantallas.md` § Layout transversal y en tasks Frontend (`Surface:`).
+
+## Adapter `packages/ui` (monorepo generado)
+
+- **Prohibido** importar vendor UI (`@mui/material`, `@radix-ui/*`, etc.) directamente en `apps/*`.
+- **Obligatorio:** consumir solo `@scope/ui` (adapter documentado en Blueprint §2 / MDD §2).
+- El adapter re-exporta primitivos del stack elegido; tokens vienen de `design-system.md`.
+
+## Colores no determinados (sin marca)
+
+- Si el cliente **no** aporta paleta: `colorSource: system-default` en YAML frontmatter.
+- Aplicar **preset completo del stack** (shadcn zinc, MUI default, tailwind slate) — **prohibido** inventar hex sueltos.
+- Semánticos (`primary`, `destructive`, …) referencian primitivos (`{primitives.zinc900}`).
+
+## Tokens: primitivos + semánticos
+
+- **Primitivos:** paleta base del preset (`zinc50`, `blue700`, …).
+- **Semánticos:** `primary`, `background`, `foreground`, `muted`, `border`, `destructive`, `success`, `warning` — siempre referencian primitivos en YAML/components.
+- Un solo bloque activo en `design-system.md`; anexo catálogo **no** duplica tokens.
 
 ## Criterios de aceptación (regeneración exitosa)
 
@@ -62,11 +92,18 @@ Para login, dashboard, listados principales, formularios y flujos con side-effec
 - Rutas protegidas con guard JWT (`role`, `tenant_id`).
 - Banners/modales transversales documentados (impersonación, quota LLM 80%/100%).
 
-## Responsive
+## Responsive (obligatorio web)
 
-- Breakpoints: sm 640, md 768, lg 1024, xl 1280.
+- **Mobile-first**; breakpoints: sm 640, md 768, lg 1024, xl 1280.
 - Tablas densas → vista móvil en cards o stack bajo `md`.
-- Touch targets ≥ 44×44px; WCAG AA.
+- Touch targets ≥ 44×44px; WCAG AA; **sin scroll horizontal**.
+- Cada fila de `pantallas.md` incluye columnas **Layout** + **Responsive**.
+- Cada task Frontend incluye línea `Responsive:` y opcional `Surface: product|admin`.
+
+## Layout
+
+- Grid **8px**; shells documentados (`AppShell`, `AdminShell`).
+- Nav por rol; modales globales en § Layout transversal de pantallas.
 
 ## Prioridad entre artefactos (conflictos)
 
@@ -137,10 +174,12 @@ Sustituir tareas genéricas tipo «Implementar frontend» por tareas atómicas:
 
 ```markdown
 - [ ] [P] UI `/strategies` — DataTable + StrategyForm + PaginationBar (US-003)
+  - **Surface:** product
   - **Archivos:** apps/frontend/src/pages/StrategiesPage.tsx, ...
+  - **Responsive:** sm cards · md table · lg sidebar+content
   - **Estados:** empty, loading, error
   - **API:** GET/POST/PUT /strategies
-  - **DS:** tokens §design-system, componentes §pantallas
+  - **DS:** tokens §design-system; componentes vía `@scope/ui` §pantallas
 ```
 
 Una tarea = una pantalla o flujo modal acotado.
@@ -156,7 +195,7 @@ Entregable `{featureDir}/pantallas.md` + espejo `docs/sdd/pantallas.md`:
 
 ## {Rol} ({claims JWT})
 
-| Ruta | Página | US | Componentes UI | API principal | Estados |
+| Ruta | Página | US | Componentes UI | API principal | Estados | Layout | Responsive |
 |------|--------|-----|----------------|---------------|---------|
 | /login | LoginPage | US-001 | Form, Input, Button | POST /auth/login | loading, error, locked |
 

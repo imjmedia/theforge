@@ -8,9 +8,9 @@ import {
 import { ComplexityLevel } from "@theforge/database";
 import { Prisma } from "@theforge/database";
 import {
-  DELIVERABLE_WAVES_BY_COMPLEXITY,
   TASKS_PREFLIGHT_DOC_ACCURACY_BLOCK_THRESHOLD,
   flattenDeliverableWaves,
+  resolveDeliverableWaves,
   type DeliverableKind,
   type DeliverableWaveStep,
 } from "@theforge/shared-types";
@@ -49,7 +49,6 @@ import {
   filterSchedulerResearchPrecisionGaps,
   shouldRunAnotherCascadeW4Pass,
 } from "./cascade-w4-post-pass.util.js";
-import { UiMcpClientService } from "../ui-mcp/ui-mcp-client.service.js";
 import { UiScreensService } from "../ui-mcp/ui-screens.service.js";
 import { ConformanceService } from "../engine/conformance.service.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
@@ -93,18 +92,13 @@ export class DeliverablesCascadeService {
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => ProjectsService))
     private readonly projects: ProjectsService,
-    private readonly uiMcpClient: UiMcpClientService,
     private readonly uiScreens: UiScreensService,
     private readonly conformance: ConformanceService,
   ) {}
 
-  /** Sync pantallas tras W2; no falla la cascada si no hay MCP activo. */
+  /** Sync pantallas tras W2; MCP opcional (fallback heurístico). No falla la cascada. */
   async syncUiScreens(projectId: string): Promise<void> {
     try {
-      if (!(await this.uiMcpClient.isActive())) {
-        this.logger.debug("[Cascade] ui_screens_sync omitido — MCP gráfico inactivo");
-        return;
-      }
       await this.uiScreens.syncUiScreens(projectId);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -235,8 +229,13 @@ export class DeliverablesCascadeService {
       );
     }
     const c = project.complexity ?? ComplexityLevel.HIGH;
-    const waves = DELIVERABLE_WAVES_BY_COMPLEXITY[c];
-    const flatSteps = flattenDeliverableWaves(c);
+    const mddForWaves = buildConstitutionMarkdown(project);
+    const waveOpts = {
+      mddMarkdown: mddForWaves,
+      blueprintMarkdown: project.blueprintContent,
+    };
+    const waves = resolveDeliverableWaves(c, waveOpts);
+    const flatSteps = flattenDeliverableWaves(c, waveOpts);
     const total = flatSteps.length + 1;
     const errors: { step: string; error: string }[] = [];
 

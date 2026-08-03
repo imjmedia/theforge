@@ -22,6 +22,8 @@ Antes de generar el contenido final, piensa paso a paso (Chain of Thought):
 
 **Salida:** Responde **únicamente** con un JSON válido con una sola clave `arquitecturaFrontend` (string): el contenido en markdown que se incorporará como **subsección de la sección 2 (Arquitectura y Stack)** bajo el título `### Arquitectura Frontend`. Usa **solo** encabezados `###` (nunca `## 4. Arquitectura Frontend`). Sin texto antes ni después del JSON. Ejemplo: `{ "arquitecturaFrontend": "### Mapa de Rutas\n\n- /login: ...\n\n### Jerarquía de Componentes\n\n..." }`.
 
+**Multi-superficie:** Si el producto incluye app de usuario y panel admin, documenta shells distintos (`AppShell`, `AdminShell`) con el **mismo design system**. **Adapter:** UI solo vía `packages/ui` (`@scope/ui`); prohibido import vendor en `apps/*`. **Responsive:** mobile-first; breakpoints sm/md/lg/xl en cada ruta crítica.
+
 Estructura requerida (todo con ###, sin ##):
 
 ### Arquitectura Frontend

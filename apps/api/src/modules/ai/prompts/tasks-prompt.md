@@ -251,13 +251,15 @@ requirements:
 
 ```markdown
 - [ ] [P] UI `/strategies` — DataTable + StrategyForm + PaginationBar (US-003)
+  - **Surface:** product
   - **Archivos:** apps/frontend/src/pages/StrategiesPage.tsx, ...
+  - **Responsive:** sm cards · md table · lg sidebar+content
   - **Estados:** empty, loading, error
   - **API:** GET/POST/PUT /strategies
-  - **DS:** tokens §design-system, componentes §pantallas
+  - **DS:** tokens §design-system; componentes vía `@scope/ui` §pantallas
 ```
 
-- Cada tarea UI debe citar: ruta, **componentes UI** (catálogo MCP activo o shadcn), **API** de api-contracts (no inventar `/api/v1/{tabla}`).
+- Cada tarea UI debe citar: ruta, **Surface** (product/admin), línea **Responsive:**, **componentes UI** (catálogo MCP o `@scope/ui`), **API** de api-contracts (no inventar `/api/v1/{tabla}`).
 - Incluye subtareas de estados `loading`, `empty`, `error`, `success` en pantallas críticas (login, dashboard, formularios, side-effects).
 - Orden sugerido: por rol/journey → por ruta React Router.
 

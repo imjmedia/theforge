@@ -3,12 +3,14 @@
  */
 import type { ScreenSpec } from "@theforge/shared-types";
 import type { PantallaPlanItem } from "./ui-screens-plan.util.js";
+import { inferLayout, inferResponsive } from "./ui-screens-heuristic.util.js";
 
 export interface UiScreensMarkdownMeta {
   projectName?: string | null;
   libraryName?: string | null;
   libraryVersion?: string | null;
   contractVersion?: string | null;
+  stackBase?: string | null;
   generatedAt?: Date;
 }
 
@@ -18,16 +20,17 @@ function componentsColumnLabel(libraryName?: string | null): string {
 }
 
 function implementationIntro(meta: UiScreensMarkdownMeta): string {
-  const lib = (meta.libraryName ?? "").trim();
+  const lib = (meta.libraryName ?? meta.stackBase ?? "").trim();
   if (lib) {
     return (
       `> Mapa accionable pantalla → ruta → componente → API. Catálogo: **${lib}**` +
-      `${meta.libraryVersion ? ` ${meta.libraryVersion}` : ""}. Endpoints **solo** de api-contracts.`
+      `${meta.libraryVersion ? ` ${meta.libraryVersion}` : ""}. Endpoints **solo** de api-contracts. ` +
+      "Importar UI solo vía `packages/ui` (`@scope/ui`); prohibido vendor directo en `apps/*`."
     );
   }
   return (
     "> Mapa accionable pantalla → ruta → componente → API. Endpoints **solo** de api-contracts. " +
-      "Sin MCP gráfico: convención shadcn/ui + tokens de design-system.md."
+      "Sin MCP gráfico: convención shadcn/ui + tokens de design-system.md; adapter `packages/ui`."
   );
 }
 function componentLabel(c: ScreenSpec["components"][number]): string {
@@ -44,6 +47,18 @@ function componentsForPlanItem(item: PantallaPlanItem, screens: ScreenSpec[]): s
   );
   if (!screen || screen.components.length === 0) return "—";
   return screen.components.map(componentLabel).join(", ");
+}
+
+function layoutCell(item: PantallaPlanItem, screen?: ScreenSpec): string {
+  const fromProps = screen?.components[0]?.props?.layout;
+  if (fromProps?.trim()) return fromProps;
+  return inferLayout(item.uiHint, item.route);
+}
+
+function responsiveCell(item: PantallaPlanItem, screen?: ScreenSpec): string {
+  const fromProps = screen?.components[0]?.props?.responsive;
+  if (fromProps?.trim()) return fromProps;
+  return inferResponsive(item.uiHint);
 }
 
 function apiCell(item: PantallaPlanItem, screen?: ScreenSpec): string {
@@ -103,15 +118,15 @@ export function buildUiScreensMarkdown(
     lines.push(`## ${role}`);
     lines.push("");
     lines.push(
-      `| Ruta | Página | US | ${componentsCol} | API principal | Estados |`,
+      `| Ruta | Página | US | ${componentsCol} | API principal | Estados | Layout | Responsive |`,
     );
-    lines.push("|------|--------|-----|------------------|---------------|---------|");
+    lines.push("|------|--------|-----|------------------|---------------|---------|--------|------------|");
     for (const item of items) {
       const screen = screens.find((s) => s.name === item.screenName);
       const route = item.route ?? "/";
       const page = item.pageName ?? item.screenName;
       lines.push(
-        `| ${route} | ${page} | ${usCell(item)} | ${componentsForPlanItem(item, screens)} | ${apiCell(item, screen)} | ${item.uiStates ?? "loading, empty, error"} |`,
+        `| ${route} | ${page} | ${usCell(item)} | ${componentsForPlanItem(item, screens)} | ${apiCell(item, screen)} | ${item.uiStates ?? "loading, empty, error"} | ${layoutCell(item, screen)} | ${responsiveCell(item, screen)} |`,
       );
     }
     lines.push("");
@@ -119,9 +134,10 @@ export function buildUiScreensMarkdown(
 
   lines.push("## Layout transversal");
   lines.push("");
+  lines.push("- **AppShell / AdminShell:** producto y admin comparten DS; shells distintos (`AppShell` vs `AdminShell`).");
   lines.push("- **Layout shell:** nav por rol (ver tablas anteriores); iconos y orden según journey.");
   lines.push("- **Modales globales:** documentar impersonación, quota LLM 80%/100% en Tasks si aplican.");
-  lines.push("- **Responsive:** sm 640 / md 768 / lg 1024 / xl 1280; tablas → cards/stack bajo md.");
+  lines.push("- **Responsive (obligatorio):** mobile-first; sm 640 / md 768 / lg 1024 / xl 1280; tablas → cards/stack bajo md; sin scroll horizontal.");
   lines.push("");
 
   const outOfScope = [
