@@ -164,6 +164,14 @@ export function resolveStackPreset(
   if (/@mui\/material|material-ui|\bmui\b/i.test(corpus)) {
     return { ...muiDefaultPreset, hasWebSurfaces };
   }
+  if (/\bradix\b/i.test(corpus)) {
+    return {
+      ...tailwindSlatePreset,
+      adapterLabel: "Tailwind + Radix UI",
+      packageScope: "@radix-ui/react",
+      hasWebSurfaces,
+    };
+  }
   if (/tailwind/i.test(corpus) && !/shadcn/i.test(corpus)) {
     return { ...tailwindSlatePreset, hasWebSurfaces };
   }

@@ -14,8 +14,22 @@ describe("design-system-defaults", () => {
     assert.equal(detectWebSurfaces(mdd, null), true);
   });
 
+  it("detectWebSurfaces false when §2 niega frontend", () => {
+    assert.equal(
+      detectWebSurfaces("## 2. Stack\nBackend NestJS. API-only sin dashboard ni frontend.", null),
+      false,
+    );
+  });
+
   it("detectWebSurfaces false for API-only", () => {
     assert.equal(detectWebSurfaces("## 2. Stack\n\nNestJS API only", null), false);
+  });
+
+  it("resolveStackPreset picks Radix+Tailwind when declared", () => {
+    const preset = resolveStackPreset("## 2\nReact + Tailwind + Radix UI", "Blueprint: Tailwind + Radix");
+    assert.equal(preset.stackBase, "tailwind");
+    assert.match(preset.adapterLabel, /Radix/i);
+    assert.equal(preset.packageScope, "@radix-ui/react");
   });
 
   it("resolveStackPreset picks imj when declared", () => {
