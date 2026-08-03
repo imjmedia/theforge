@@ -15,7 +15,7 @@ import { extractSectionByNumber } from "../engine/mdd-markdown-parser.js";
 import {
   extractHttpEndpointsFromMarkdown,
 } from "../ui-mcp/api-contract-endpoints.util.js";
-import { extractV1InScopePantallaRoutes } from "../ui-mcp/ui-screens-v1-scope.util.js";
+import { extractV1InScopePantallaRoutes, extractV1InScopePantallaRows } from "../ui-mcp/ui-screens-v1-scope.util.js";
 import { extractPantallaRoutes } from "./tasks-generation-structure.util.js";
 
 export type HeuristicTasksPlanInput = {
@@ -39,6 +39,25 @@ function filterPlannerRoutes(routes: string[]): string[] {
       !/^\/gestion-/i.test(r) &&
       r.length >= 2,
   );
+}
+
+function inferSurfaceFromRoute(route: string): "admin" | "product" {
+  return /\/admin\b/i.test(route) ? "admin" : "product";
+}
+
+function defaultResponsiveForRoute(route: string): string {
+  if (route === "/login" || /otp|register/i.test(route)) {
+    return "sm single column · md max-w-md centered · lg max-w-lg";
+  }
+  if (/\/admin\b/i.test(route)) {
+    return "sm stack · md table 2-col · lg full grid · xl sidebar+main";
+  }
+  return "sm single column · md 2-col where applicable · lg sidebar nav";
+}
+
+function pageViewPath(pageName?: string): string {
+  const base = (pageName ?? "ScreenPage").replace(/Page$/, "Page");
+  return `apps/web/src/views/${base}.tsx`;
 }
 
 /** Extract phase/roadmap headings from blueprint markdown. */
@@ -156,14 +175,18 @@ export function buildHeuristicTasksPlan(input: HeuristicTasksPlanInput): TasksGe
 
   // --- Pantallas v1 con API → mínimo 1 task Frontend por ruta ---
   const uiMd = input.uiScreensMarkdown ?? "";
+  const pantallaRows = uiMd.trim().length > 0 ? extractV1InScopePantallaRows(uiMd) : [];
   const rawRoutes =
-    uiMd.trim().length > 0
-      ? extractV1InScopePantallaRoutes(uiMd)
-      : extractPantallaRoutes(uiMd);
+    pantallaRows.length > 0
+      ? pantallaRows.map((r) => r.route!).filter(Boolean)
+      : uiMd.trim().length > 0
+        ? extractV1InScopePantallaRoutes(uiMd)
+        : extractPantallaRoutes(uiMd);
   const routes = filterPlannerRoutes(rawRoutes);
   const hasWebSurfaces = detectWebSurfaces(input.mddMarkdown, input.blueprintMarkdown);
   if (routes.length > 0 || input.hasUxTeam || hasWebSurfaces) {
     sections.add("Frontend");
+    const rowByRoute = new Map(pantallaRows.map((r) => [r.route!, r] as const));
     const routesToCover =
       routes.length > 0
         ? routes
@@ -171,15 +194,29 @@ export function buildHeuristicTasksPlan(input: HeuristicTasksPlanInput): TasksGe
           ? ["/"]
           : [];
     for (const route of routesToCover) {
+      const row = rowByRoute.get(route);
+      const surface = inferSurfaceFromRoute(route);
+      const responsive = row?.responsive?.trim() || defaultResponsiveForRoute(route);
+      const pageName = row?.pageName?.trim() || "ScreenPage";
       items.push({
         id: nextTaskId(counter),
-        title: `Implementar pantalla ${route}`,
+        title: `Implementar pantalla ${route} (${pageName})`,
         layer: "Frontend",
         mddRefs: ["§2 Frontend"],
-        storyRefs: [],
-        upstreamRefs: [`pantallas:${route}`],
+        storyRefs: row?.userStoryId ? [row.userStoryId] : [],
+        upstreamRefs: [
+          `pantallas:${route}`,
+          `surface:${surface}`,
+          `responsive:${responsive}`,
+          "ds:design-system.md+pantallas.md",
+          ...(row?.primaryApi ? [`api:${row.primaryApi}`] : []),
+        ],
         dependsOn: [],
-        targetFilesHint: [`apps/web/src/views/`],
+        targetFilesHint: [
+          pageViewPath(pageName),
+          "apps/web/src/routes/",
+          "apps/web/src/components/",
+        ],
       });
     }
   }
