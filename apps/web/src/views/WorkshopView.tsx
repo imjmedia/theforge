@@ -24,7 +24,6 @@ import { projectCascadeWaveDeliverablesReady } from "../utils/cascadeDeliverable
 import { MDD_JOB_MODE_LABELS } from "@theforge/shared-types";
 import type { ArtifactTypeDefinition, ClarifyableDocumentField, GenerationJobType, AemMarketScope } from "@theforge/shared-types";
 import ChatContainer from "../components/ChatContainer";
-import { WorkshopAgentProgressPanel } from "../components/WorkshopAgentProgressPanel";
 import ComplexityPendingBanner from "../components/ComplexityPendingBanner";
 import MddUpstreamSyncBanner from "../components/MddUpstreamSyncBanner";
 import { AIProviderBanner } from "../components/AIProviderBanner";
@@ -473,7 +472,9 @@ export default function WorkshopView({
   const backgroundBannerLabel = cascadeJobPostProcessing
     ? "Finalizando post-proceso (precisión y conformidad)… Puedes cerrar el navegador; al volver, recarga el proyecto para ver el resultado."
     : cascadeRunning
-      ? "Generación de entregables en curso… Puedes cerrar el navegador; al volver, recarga el proyecto para ver el resultado."
+      ? loadingReason === "repair-sdd-gaps"
+        ? "Corrección de brechas SDD en curso…"
+        : "La cascada en curso…"
       : backgroundGenerationLabel
         ? `${backgroundGenerationLabel} Puedes cerrar el navegador; al volver, recarga el proyecto para ver el resultado.`
         : null;
@@ -2574,21 +2575,6 @@ export default function WorkshopView({
                 </p>
               ) : null}
             </div>
-            {(agentProgress.length > 0 ||
-              (cascadeRunning &&
-                (loadingReason === "deliverables-cascade" ||
-                  loadingReason === "legacy-deliverables" ||
-                  loadingReason === "repair-sdd-gaps"))) && (
-              <WorkshopAgentProgressPanel
-                title={
-                  loadingReason === "repair-sdd-gaps"
-                    ? "Corrigiendo brechas SDD…"
-                    : "Generando entregables…"
-                }
-                loading={cascadeRunning}
-                className="mt-2 w-full max-w-xl"
-              />
-            )}
             {cancellableJobId && projectId ? (
               <button
                 type="button"
