@@ -15,7 +15,7 @@ export const createStageBodySchema = z.object({
   activate: z.boolean().optional().default(true),
   /**
    * Campos de entregables que no se copian del snapshot baseline al activar la etapa.
-   * Integración handoff usa `tasksContent` + `userStoriesContent` por defecto.
+   * Integración handoff usa `tasksContent`, `userStoriesContent` y `logicFlowsContent` por defecto.
    */
   seedExcludeDeliverableKeys: z
     .array(z.enum(INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS))
