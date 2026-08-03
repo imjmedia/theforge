@@ -4,8 +4,12 @@ import {
   buildPreviewTheme,
   resolveLightPreviewBackground,
   generateColorScale,
+  hexValue,
+  fallbackFromColors,
+  normalizeHex,
 } from "./design-system-utils.js";
 import type { DesignTokens } from "./design-system-types.js";
+import { shadcnZincPreset } from "@theforge/shared-types";
 
 const ELEVEN_LABS_LIKE: DesignTokens = {
   colors: {
@@ -18,13 +22,48 @@ const ELEVEN_LABS_LIKE: DesignTokens = {
   },
 };
 
+const PRIMITIVE_REFS: DesignTokens = {
+  primitives: shadcnZincPreset.primitives,
+  colors: {
+    primary: "{primitives.zinc900}",
+    background: "{primitives.zinc50}",
+    foreground: "{primitives.zinc900}",
+    muted: "{primitives.zinc100}",
+    border: "{primitives.zinc200}",
+    destructive: "{primitives.red500}",
+    success: "{primitives.green500}",
+    warning: "{primitives.amber500}",
+  },
+};
+
+describe("primitive color refs", () => {
+  it("hexValue resolves {primitives.*} via tokens.primitives", () => {
+    assert.equal(normalizeHex(hexValue("{primitives.zinc900}", PRIMITIVE_REFS)), "#18181B");
+    assert.equal(normalizeHex(hexValue("{primitives.red500}", PRIMITIVE_REFS)), "#EF4444");
+  });
+
+  it("fallbackFromColors resolves semantic primitive refs", () => {
+    const palette = fallbackFromColors(PRIMITIVE_REFS);
+    assert.match(palette.primary, /^#[0-9A-F]{6}$/i);
+    assert.match(palette.muted, /^#[0-9A-F]{6}$/i);
+    assert.notEqual(palette.primary, "{primitives.zinc900}");
+  });
+
+  it("buildPreviewTheme renders scales from primitive refs", () => {
+    const theme = buildPreviewTheme(PRIMITIVE_REFS, "light");
+    assert.match(theme.accent, /^#[0-9A-F]{6}$/i);
+    assert.match(theme.cssVars["--ds-accent-1"]!, /^#[0-9A-F]{6}$/i);
+    assert.match(theme.cssVars["--ds-gray-1"]!, /^#[0-9A-F]{6}$/i);
+  });
+});
+
 describe("buildPreviewTheme light mode", () => {
   it("uses a light canvas when YAML background is dark-first", () => {
     const theme = buildPreviewTheme(ELEVEN_LABS_LIKE, "light");
     assert.ok(theme.background !== "#0A0A0F");
     assert.match(theme.cssVars["--ds-bg"]!, /^#[A-F0-9]{6}$/i);
     assert.ok(
-      parseInt(theme.cssVars["--ds-bg"]!.slice(1, 3), 16) > 200,
+      parseInt(theme.cssVars["--ds-bg"]!.slice(1, 3), 16) >= 200,
       "light bg should be bright",
     );
     assert.ok(

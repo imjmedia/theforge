@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import type { ComponentToken, DesignTokens, TypographyToken } from "@/components/design-system-types";
 import {
   ELEVATION_PRESETS,
+  hexValue,
   mergeTypographyTokens,
   normalizeElevationTokens,
   parseInlineTokenProps,
@@ -468,27 +469,39 @@ export function fillDesignMdDefaults(tokens: DesignTokens | null): DesignTokens 
       typography: t.typography as Record<string, unknown> | undefined,
       spacing: t.spacing,
       rounded: t.rounded,
+      primitives: t.primitives,
     },
     shadcnZincPreset,
   );
 
+  if (sharedFilled.primitives) {
+    t.primitives = sharedFilled.primitives;
+  }
+
+  const previewCtx: DesignTokens = {
+    colors: sharedFilled.colors ?? t.colors,
+    primitives: t.primitives,
+  };
+
   if (sharedFilled.colors) {
     const c = { ...sharedFilled.colors };
-    const p = c["primary"] || c["brand"] || pickBrandColor(c) || "#18181b";
+    const p =
+      hexValue(c["primary"] || c["brand"] || pickBrandColor(c) || "#18181b", previewCtx);
     c["primary"] ??= p;
-    const accent = c["accent"] || c["secondary"] || pickBrandColor(c, [p]);
+    const accent =
+      c["accent"] || c["secondary"] || pickBrandColor(c, [p]);
     c["secondary"] ??= accent ?? p;
-    c["destructive"] ??= c["danger"] ?? "#ef4444";
-    c["foreground"] ??= c["foreground"] ?? darken(p, 0.8) || "#18181b";
-    c["background"] ??= c["background"] ?? "#fafafa";
-    c["muted"] ??= c["muted"] ?? lighten(p, 0.85);
-    c["border"] ??= c["border"] ?? lighten(p, 0.7);
-    c["success"] ??= c["success"] ?? "#22c55e";
-    c["warning"] ??= c["warning"] ?? "#f59e0b";
-    c["neutral"] ??= c["neutral"] ?? c["muted"] ?? lighten(p, 0.8);
+    c["destructive"] ??= hexValue(c["danger"] ?? "#ef4444", previewCtx);
+    c["foreground"] ??= darken(p, 0.8) || "#18181b";
+    c["background"] ??= hexValue(c["background"] ?? "#fafafa", previewCtx);
+    c["muted"] ??= lighten(p, 0.85);
+    c["border"] ??= lighten(p, 0.7);
+    c["success"] ??= hexValue(c["success"] ?? "#22c55e", previewCtx);
+    c["warning"] ??= hexValue(c["warning"] ?? "#f59e0b", previewCtx);
+    c["neutral"] ??= hexValue(c["muted"] ?? lighten(p, 0.8), previewCtx);
     c["accent"] ??= accent ?? p;
     c["danger"] ??= c["destructive"];
-    c["info"] ??= c["info"] ?? "#3B82F6";
+    c["info"] ??= "#3B82F6";
     t.colors = c;
   } else if (t.colors && Object.keys(t.colors).length > 0) {
     const c = { ...t.colors };
@@ -498,7 +511,7 @@ export function fillDesignMdDefaults(tokens: DesignTokens | null): DesignTokens 
       c["accent"] || c["secondary"] || pickBrandColor(c, [p]);
     c["secondary"] ??= accent ?? p;
     c["destructive"] ??= c["danger"] ?? "#DC2626";
-    c["foreground"] ??= darken(p, 0.8) || "#1A1A2E";
+    c["foreground"] ??= (darken(p, 0.8) || "#1A1A2E");
     c["background"] ??= "#FFFFFF";
     c["muted"] ??= lighten(p, 0.85);
     c["border"] ??= lighten(p, 0.7);

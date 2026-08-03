@@ -25,7 +25,7 @@ import {
   Target,
 } from "lucide-react";
 import type { ArtifactTypeDefinition } from "@theforge/shared-types";
-import { agentGovernanceScaffoldHasContent } from "@theforge/shared-types";
+import { agentGovernanceScaffoldHasContent, detectWebSurfaces } from "@theforge/shared-types";
 import { isTabVisibleForComplexity, type ProjectTypeForTabs, type WorkshopDocTab } from "./complexityTabs";
 
 /** Greenfield (NEW) steps required before generating downstream deliverables. */
@@ -171,7 +171,7 @@ export interface WorkshopDocNavBuildContext {
   adrs: unknown[] | null | undefined;
   /** Deliverable "Pantallas" (texto) generado vía MCP gráfico. */
   uiScreensContent: string | null | undefined;
-  /** Hay un MCP gráfico compatible activo (gate de visibilidad de la pestaña "Pantallas"). */
+  /** Hay un MCP gráfico compatible activo (una de las señales para mostrar «Pantallas»). */
   uiMcpActive: boolean;
   /** Tipos de artifact registrados por plugins (para paneles dinámicos). */
   pluginArtifactTypes?: ArtifactTypeDefinition[];
@@ -183,6 +183,13 @@ export function workshopTabDocHasContent(tabId: string, content: unknown): boole
   if (tabId === "adrs") return Array.isArray(content) && content.length > 0;
   if (tabId === "agent-governance") return agentGovernanceScaffoldHasContent(content as string | null);
   return !!String(content ?? "").trim();
+}
+
+/** Pantallas tab: MCP activo, contenido persistido o superficies web en MDD/Blueprint. */
+export function shouldShowUiScreensTab(ctx: WorkshopDocNavBuildContext): boolean {
+  if (ctx.uiMcpActive) return true;
+  if (!!(ctx.uiScreensContent ?? "").trim()) return true;
+  return detectWebSurfaces(ctx.mddContent, ctx.blueprintContent);
 }
 
 function agentGovernanceNavItem(ctx: WorkshopDocNavBuildContext): WorkshopDocNavItem {
@@ -305,12 +312,12 @@ export function buildWorkshopDocNavItems(ctx: WorkshopDocNavBuildContext): Works
       content: ctx.uxUiGuideContent,
     });
   }
-  // Pantallas: solo visible cuando hay un MCP gráfico compatible activo.
-  if (ctx.uiMcpActive && visible("ui-screens")) {
+  // Pantallas: MCP activo, contenido ya generado o proyecto con superficie web (heurística / W2b).
+  if (shouldShowUiScreensTab(ctx)) {
     items.push({
       id: "ui-screens",
       label: "Pantallas",
-      title: "Pantallas / UI Screens Spec — componentes reales del MCP gráfico conectado",
+      title: "Pantallas / UI Screens Spec — rutas, componentes y binding a API",
       Icon: MonitorSmartphone,
       content: ctx.uiScreensContent,
     });
