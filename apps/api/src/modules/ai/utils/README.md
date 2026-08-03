@@ -7,3 +7,4 @@ Utilidades compartidas del módulo AI: gobernanza de agentes, extracción BRD, v
 - **`brd-extract.util.ts`** — extracción de contenido BRD desde documentos.
 - **`chat-image-attachments.util.ts`** — procesamiento de imágenes adjuntas en chat (multimodal).
 - **`dbga-prompt-context.util.ts`** — construcción de contexto para prompts DBGA.
+- **`legacy-as-is-logic-flows-ariadne.util.ts`** — mapeo determinista AS-IS de `business_logic` Ariadne / MDD §5 a Flujos de lógica mínimos válidos (sin depender solo del LLM; evita stubs changelog vacío en etapa 1 legacy).

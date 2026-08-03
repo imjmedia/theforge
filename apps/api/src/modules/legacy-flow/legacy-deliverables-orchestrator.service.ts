@@ -255,12 +255,13 @@ export class LegacyDeliverablesOrchestratorService {
       outChars: theforgeContext.length,
       detail: theforgeContext.trim() ? "non_empty" : "empty_string",
     });
-    const legacyOpts: { theforgeContext?: string; contractSpecs?: string; legacyBaselineStage?: boolean } | undefined =
+    const legacyOpts: { theforgeContext?: string; contractSpecs?: string; legacyBaselineStage?: boolean; codebaseDoc?: string } | undefined =
       theforgeContext.trim() || contractSpecs.trim() || legacyBaselineStage
         ? {
             ...(theforgeContext.trim() ? { theforgeContext } : {}),
             ...(contractSpecs.trim() ? { contractSpecs } : {}),
             ...(legacyBaselineStage ? { legacyBaselineStage: true } : {}),
+            ...(codebaseDoc ? { codebaseDoc } : {}),
           }
         : undefined;
 
@@ -483,7 +484,9 @@ export class LegacyDeliverablesOrchestratorService {
             }
           }
           const logicFlowsContent = await this.ai.generateLogicFlows(mddForLlm, undefined, legacyOpts);
-          const cleaned = cleanDocumentContent(logicFlowsContent);
+          const cleaned = cleanDocumentContent(
+            this.ai.resolveLogicFlowsLlmFallback(mddForLlm, logicFlowsContent, legacyOpts),
+          );
           if (legacyBaselineStage) {
             const services = extractSection5Services(mddForLlm);
             const batchSize = readLogicFlowsBatchSize();

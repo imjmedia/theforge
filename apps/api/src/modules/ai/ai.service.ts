@@ -100,6 +100,10 @@ import {
   stripLogicFlowsFragmentWrapper,
   type MddSection5ServiceRow,
 } from "./utils/legacy-as-is-logic-flows.util.js";
+import {
+  isLogicFlowsInsufficientContent,
+  resolveLegacyAsIsLogicFlowsDeterministic,
+} from "./utils/legacy-as-is-logic-flows-ariadne.util.js";
 import type { MddDeliverableContextOptions } from "./utils/mdd-deliverable-context.util.js";
 import {
   appendCoverageChecklistToPrompt,
@@ -276,6 +280,8 @@ export interface LegacyGenerateOptions {
   hookContext?: Record<string, string | null | undefined>;
   /** Cancelación cooperativa (jobs BullMQ / cascada). */
   abortSignal?: AbortSignal;
+  /** Doc. partida Ariadne (legacyFlowState.codebaseDoc) — mapeo determinista de Flujos etapa 1. */
+  codebaseDoc?: string | null;
 }
 
 export interface AgentGovernanceGenerateOptions extends LegacyGenerateOptions {
@@ -1296,6 +1302,14 @@ export class AiService {
     const mddRaw = mddContent?.trim() ?? "";
     const legacyAsIsLogicFlows = options?.legacyBaselineStage === true && mddRaw.length > 0;
 
+    if (legacyAsIsLogicFlows) {
+      const deterministic = resolveLegacyAsIsLogicFlowsDeterministic({
+        codebaseDoc: options?.codebaseDoc,
+        mddMarkdown: mddRaw,
+      });
+      if (deterministic) return deterministic;
+    }
+
     if (legacyAsIsLogicFlows && isLegacyAsIsLogicFlowsBatchEnabled()) {
       const services = extractSection5Services(mddRaw);
       const batchSize = readLogicFlowsBatchSize();
@@ -1305,6 +1319,23 @@ export class AiService {
     }
 
     return this.invokeLogicFlowsLlm(mddRaw, options, gapsFeedback, {});
+  }
+
+  /** Tras LLM: si el resultado es stub/changelog vacío en etapa 1, usa mapeo Ariadne. */
+  resolveLogicFlowsLlmFallback(
+    mddRaw: string,
+    llmOutput: string,
+    options?: LegacyGenerateOptions,
+  ): string {
+    const cleaned = llmOutput.trim();
+    if (options?.legacyBaselineStage !== true || !isLogicFlowsInsufficientContent(cleaned)) {
+      return cleaned;
+    }
+    const fallback = resolveLegacyAsIsLogicFlowsDeterministic({
+      codebaseDoc: options?.codebaseDoc,
+      mddMarkdown: mddRaw,
+    });
+    return fallback ?? cleaned;
   }
 
   private async generateLogicFlowsBatched(
