@@ -106,6 +106,7 @@ import {
 import { mddStreamDeliveryGateFields } from "./utils/mdd-delivery-gate.util.js";
 import { cleanDocumentContent } from "../sessions/document-content.util.js";
 import type { MddJobData, MddJobProgress, MddJobResult } from "./mdd/mdd-queue.service.js";
+import { isMddUserCancellationError } from "./mdd/mdd-job-error.util.js";
 import { MddUpstreamSyncService } from "./mdd/mdd-upstream-sync.service.js";
 import {
   listProjectAdrsFromGovernance,
@@ -852,7 +853,9 @@ export class AiAnalysisService {
         mddAgentEditLog: editLogTracker.log.length > 0 ? editLogTracker.log : undefined,
       };
     } catch (err) {
-      if (projectId?.trim()) this.estimationService.clearLiveDraft(projectId.trim(), estimationStage);
+      if (projectId?.trim() && !isMddUserCancellationError(err)) {
+        this.estimationService.clearLiveDraft(projectId.trim(), estimationStage);
+      }
       const formatted = formatDbgaStreamError(err);
       yield { type: "error", message: formatted.message, code: formatted.code };
     }
@@ -910,7 +913,7 @@ export class AiAnalysisService {
         projectId: projectId.trim(),
         mddStageId: mddStageKey,
       },
-      update: { threadId: randomUUID() },
+      update: {},
     });
     const threadId = row.threadId;
 
@@ -1229,7 +1232,9 @@ export class AiAnalysisService {
         };
         return;
       }
-      this.estimationService.clearLiveDraft(projectId.trim(), estimationStageId);
+      if (!isMddUserCancellationError(err)) {
+        this.estimationService.clearLiveDraft(projectId.trim(), estimationStageId);
+      }
       const formatted = formatDbgaStreamError(err);
       const message = formatted.message;
       this.logger.error(`[MDD stream/manager] error: ${message}`, err instanceof Error ? err.stack : String(err));
@@ -1593,7 +1598,9 @@ export class AiAnalysisService {
         };
       }
     } catch (err) {
-      if (projectId?.trim()) this.estimationService.clearLiveDraft(projectId.trim(), estimationStage);
+      if (projectId?.trim() && !isMddUserCancellationError(err)) {
+        this.estimationService.clearLiveDraft(projectId.trim(), estimationStage);
+      }
       if (isGraphInterrupt(err) && err.interrupts?.length > 0) {
         const value = err.interrupts[0]?.value as {
           type?: string;

@@ -43,7 +43,7 @@ El Workshop ya no depende de `persistMddContent` tras encolar.
 | `GET` | `/projects/:id/mdd-jobs/:jobId` | Alias polling (web) |
 | `DELETE` | `/projects/:id/mdd-jobs/:jobId` | Cancela job encolado o aborta pipeline activo (flag Redis + `AbortSignal` entre nodos; poll 500 ms) |
 
-Al cancelar un job **activo**: el banner y `generation-status.busy` se liberan de inmediato (job en estado «cancelling»); el worker termina el paso LLM en curso y aborta entre nodos. Tras abort, `assertCanEnqueue` permite una nueva generación. Si encolas de inmediato sin esperar, el nuevo job **preempt** al anterior (ver arriba).
+Al cancelar un job **activo**: abort cooperativo entre nodos; el banner se libera cuando el worker termina de abortar. **No** se borra `AgentStateCheckpoint` / LangGraph ni se rota `threadId` (cancelación → `UnrecoverableError`, sin reintentos BullMQ). Tras detener, reanuda con `mdd/stream/resume` y el `threadId` del proyecto.
 | `GET` | `/projects/:id/generation-status` | Incluye `mddJobs[]` y `mddUpstreamSync` (banner Workshop) |
 | `POST` | `/projects/:id/legacy/generate-mdd` | Encola legacy por defecto (`?queue=false` sync) |
 | `GET` | `/projects/:id/legacy/mdd-jobs/:jobId` | Polling legacy |

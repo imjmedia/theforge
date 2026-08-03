@@ -42,6 +42,7 @@ import { ProjectGenerationGuardService } from "../../projects/project-generation
 import { LegacyCoordinatorService } from "../../legacy-flow/legacy-coordinator.service.js";
 import { AiAnalysisService } from "../ai-analysis.service.js";
 import { runWithTokenUsageContext } from "../token-usage/token-usage.context.js";
+import { toMddJobError } from "./mdd-job-error.util.js";
 
 export const MDD_QUEUE_NAME = "theforge-mdd";
 
@@ -399,7 +400,6 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
       if (mem.status === "active") {
         await this.markCancelRequested(jobId);
         this.jobAbortControllers.get(jobId)?.abort();
-        this.generationGuard.unregisterMddStream(projectId);
         this.logger.log(`In-memory MDD job ${jobId} cancelación solicitada (active) projectId=${projectId}`);
         return { cancelled: true, status: "cancelling" };
       }
@@ -449,7 +449,6 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
           return { cancelled: true, status: "cancelled" };
         }
       }
-      this.generationGuard.unregisterMddStream(projectId);
       this.logger.log(
         `BullMQ MDD job ${jobId} cancelación solicitada (active) projectId=${projectId}`,
       );
@@ -820,6 +819,8 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
             signal: abortController.signal,
           }),
       );
+    } catch (err) {
+      throw toMddJobError(err);
     } finally {
       stopCancelPoll();
       this.jobAbortControllers.delete(jobId);
@@ -899,5 +900,35 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
       createdAt: job.timestamp ?? Date.now(),
       finishedAt: job.finishedOn ?? undefined,
     };
+  }
+
+  async describeAdminRuntime(): Promise<import("@theforge/shared-types").AdminQueueRuntime> {
+    const { describeBullmqAdminRuntime } = await import("../../../common/bullmq-admin-runtime.util.js");
+    return describeBullmqAdminRuntime({
+      queueKey: "mdd",
+      queueName: MDD_QUEUE_NAME,
+      queue: this.queue,
+      localWorkerRunning: this.worker !== null,
+      inMemoryActiveCount: () => {
+        let count = 0;
+        for (const mem of this.inMemoryJobs.values()) {
+          if (mem.status === "queued" || mem.status === "active") count += 1;
+        }
+        return count;
+      },
+    });
+  }
+
+  usesInMemoryBackend(): boolean {
+    return this.queue === null;
+  }
+
+  async isActiveJobLockHeld(jobId: string): Promise<boolean | null> {
+    if (!this.queue) return null;
+    try {
+      return await isBullMqJobLockHeld(this.queue, jobId);
+    } catch {
+      return null;
+    }
   }
 }

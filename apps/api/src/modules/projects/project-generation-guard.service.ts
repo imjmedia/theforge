@@ -59,6 +59,10 @@ export class ProjectGenerationGuardService {
     return this.mddStreams.has(projectId);
   }
 
+  listActiveMddStreamProjectIds(): string[] {
+    return [...this.mddStreams];
+  }
+
   registerBackgroundJob(jobId: string, projectId: string, type: GenerationJobType): void {
     this.bgJobs.set(jobId, { projectId, type, status: "queued" });
   }
