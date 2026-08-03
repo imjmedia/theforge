@@ -19,10 +19,12 @@ import { isWorkshopSemaphoreGreen } from "@/utils/workshopSemaphoreStatus";
 import { apiFetch, API_BASE, getOfflineQueue } from "../utils/apiClient";
 import { isWorkshopConnectionError, isSsotPatternsNotice } from "../utils/workshopSyncStatus";
 import { activeGenerationLabel, generationJobAllowed, primaryMddJob } from "../utils/projectGenerationGate";
+import { isDeliverablesCascadeUiActive } from "../utils/deliverablesCascadeUi";
 import { projectCascadeWaveDeliverablesReady } from "../utils/cascadeDeliverablesReady";
 import { MDD_JOB_MODE_LABELS } from "@theforge/shared-types";
 import type { ArtifactTypeDefinition, ClarifyableDocumentField, GenerationJobType, AemMarketScope } from "@theforge/shared-types";
 import ChatContainer from "../components/ChatContainer";
+import { WorkshopAgentProgressPanel } from "../components/WorkshopAgentProgressPanel";
 import ComplexityPendingBanner from "../components/ComplexityPendingBanner";
 import MddUpstreamSyncBanner from "../components/MddUpstreamSyncBanner";
 import { AIProviderBanner } from "../components/AIProviderBanner";
@@ -426,7 +428,12 @@ export default function WorkshopView({
   const synced = useWorkshopStore((s) => s.synced);
   const loading = useWorkshopStore((s) => s.loading);
   const loadingReason = useWorkshopStore((s) => s.loadingReason);
-  const cascadeRunning = loading && (loadingReason === "deliverables-cascade" || loadingReason === "legacy-deliverables");
+  const generationStatus = useWorkshopStore((s) => s.generationStatus);
+  const cascadeRunning = isDeliverablesCascadeUiActive({
+    loading,
+    loadingReason,
+    generationStatus,
+  });
   const mddBackgroundJob =
     loading &&
     (loadingReason === "mdd" || loadingReason === "legacy-mdd" || loadingReason === "mdd-section");
@@ -445,7 +452,6 @@ export default function WorkshopView({
     );
   const error = useWorkshopStore((s) => s.error);
   const notice = useWorkshopStore((s) => s.notice);
-  const generationStatus = useWorkshopStore((s) => s.generationStatus);
   const activeDeliverablesJobId = useWorkshopStore((s) => s.activeDeliverablesJobId);
   const cancelMddJob = useWorkshopStore((s) => s.cancelMddJob);
   const cancelDeliverablesJob = useWorkshopStore((s) => s.cancelDeliverablesJob);
@@ -2568,6 +2574,21 @@ export default function WorkshopView({
                 </p>
               ) : null}
             </div>
+            {(agentProgress.length > 0 ||
+              (cascadeRunning &&
+                (loadingReason === "deliverables-cascade" ||
+                  loadingReason === "legacy-deliverables" ||
+                  loadingReason === "repair-sdd-gaps"))) && (
+              <WorkshopAgentProgressPanel
+                title={
+                  loadingReason === "repair-sdd-gaps"
+                    ? "Corrigiendo brechas SDD…"
+                    : "Generando entregables…"
+                }
+                loading={cascadeRunning}
+                className="mt-2 w-full max-w-xl"
+              />
+            )}
             {cancellableJobId && projectId ? (
               <button
                 type="button"

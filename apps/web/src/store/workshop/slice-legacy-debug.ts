@@ -26,6 +26,8 @@ import {
 import { applyMddFromFetchedProject } from "./helpers/mdd-editor";
 import { legacyDebugFromStages } from "./helpers/stage-focus";
 import { patchAgentProgressFromMddEvent } from "./helpers/agent-progress-patch";
+import { attachToActiveDeliverablesJob } from "./helpers/deliverables-job-sync";
+import { activeDeliverablesGenerationJob } from "../../utils/deliverablesCascadeUi";
 import type { LegacyDeliverablesDebugReport, LegacyMcpDebugEntry } from "./types";
 import type { WorkshopState } from "./workshop-state.types";
 
@@ -116,6 +118,16 @@ export const createLegacyDebugSlice: StateCreator<
             phaseGroup: mddJob.progressPhaseGroup ?? null,
           }),
         }));
+      }
+      const deliverablesJob = activeDeliverablesGenerationJob(status);
+      if (deliverablesJob?.jobId) {
+        attachToActiveDeliverablesJob(
+          requestedId,
+          deliverablesJob.jobId,
+          deliverablesJob.type,
+          get,
+          set,
+        );
       }
       if (status.busy) {
         if (generationStatusPoll.projectId !== requestedId) {

@@ -32,6 +32,7 @@ import { TokenUsageCard } from "@/components/TokenUsageCard";
 import type { SddAnalyzeReport, MddDeliveryGateResult } from "@theforge/shared-types";
 import { agentGovernanceScaffoldHasContent } from "@theforge/shared-types";
 import { useWorkshopStore, type Status } from "../store/workshopStore";
+import { isDeliverablesCascadeUiActive } from "../utils/deliverablesCascadeUi";
 import { calculateCostFromMdd } from "../utils/costCalculator";
 import { apiFetch, API_BASE } from "@/utils/apiClient";
 
@@ -243,8 +244,13 @@ export function WorkshopMetricsColumnInner({
 
   const loading = useWorkshopStore((s) => s.loading);
   const loadingReason = useWorkshopStore((s) => s.loadingReason);
+  const generationStatus = useWorkshopStore((s) => s.generationStatus);
   const mddReviewing = useWorkshopStore((s) => s.mddReviewing);
-  const cascadeRunning = loading && (loadingReason === "deliverables-cascade" || loadingReason === "legacy-deliverables");
+  const cascadeRunning = isDeliverablesCascadeUiActive({
+    loading,
+    loadingReason,
+    generationStatus,
+  });
   const repairSddRunning = loading && loadingReason === "repair-sdd-gaps";
   const brechasBusy = cascadeRunning || repairSddRunning || mddReviewing;
   const setError = useWorkshopStore((s) => s.setError);
