@@ -35,10 +35,17 @@ Body (`createStageFromAriadneChangePackInputSchema`):
   "pack": {
     "version": "1",
     "changeDescription": "Añadir módulo de descuentos",
+    "handoffPlanType": "migration_tasks",
+    "cursorTasksMarkdown": "# Tasks\n- [ ] T-001 …",
+    "handoffItems": [{ "id": "NEW-LEG-01", "title": "…", "description": "…" }],
     "filesToModify": [{ "path": "src/discount.ts" }]
   }
 }
 ```
+
+- **`handoffPlanType`:** `migration_tasks` (default cuando hay `cursorTasksMarkdown` o `handoffItems`) importa tasks del handoff y Forge **omite LLM `tasks`** en `legacy_generate_deliverables`. `full_cascade` = cascada clásica.
+- **`cursorTasksMarkdown`** (alias snake_case `cursor_tasks_markdown`): SSOT Cursor-ready; si falta, Forge sintetiza checklist desde `handoffItems`.
+- Etapas de integración **no heredan** `tasksContent` / `userStoriesContent` del snapshot baseline (`INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS`).
 
 - LEGACY only; sin `stageId` → crea etapa; con `stageId` → importa en existente (ordinal ≥ 2)
 - **`handoffItems[].id`:** Ariadne puede enviar `LEG-01`, `NEW-LEG-1`, UUID, etc.; Forge normaliza a `NEW-LEG-NN` antes del parse Zod (`ariadne-handoff-normalize.util.ts`). Log en API: `[Integration] Ariadne handoff id remap`.
@@ -55,6 +62,7 @@ Body (`promoteHandoffToStageBodySchema` in `@theforge/shared-types`):
 - LEGACY only; requires `linkedNewProjectId`
 - Default items: SENT traces without `legacyStageId`, else all SENT
 - Creates stage via `ProjectsService.createStage`, applies `handoffSnapshot` + `legacyChangeState.description` (`buildHandoffImportDescription`)
+- **Tasks SSOT:** no copia tasks/US del baseline; persiste markdown desde handoff items (`buildHandoffTasksMarkdown`) o Ariadne `cursorTasksMarkdown`
 - After import/promote: **`legacy/start`** (Ariadne `get_modification_plan`) when `LEGACY_HANDOFF_AUTO_LEGACY_START` is enabled (default)
 - **Retroactive:** `POST …/stages/:stageId/reconcile-handoff` with `{ wireAriadne?, legacyStart? }` (default both true) — for stages promoted before auto-start or failed wire/analyze
 

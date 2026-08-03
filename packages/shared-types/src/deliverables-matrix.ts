@@ -61,9 +61,13 @@ export function deliverableStepLabelsForComplexity(
 export function planLegacyDeliverablesToGenerate(params: {
   complexity: ComplexityLevel;
   hasMddContent: boolean;
+  /** Kinds to omit from the cascade (e.g. tasks pre-imported from integration handoff). */
+  skipKinds?: readonly DeliverableKind[];
 }): DeliverableKind[] {
+  const skip = new Set(params.skipKinds ?? []);
   return DELIVERABLES_BY_COMPLEXITY[params.complexity].filter((kind) => {
     if (kind === "mdd_canonical") return !params.hasMddContent;
+    if (skip.has(kind)) return false;
     return true;
   });
 }

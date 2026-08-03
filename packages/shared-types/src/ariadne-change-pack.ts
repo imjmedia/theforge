@@ -2,6 +2,23 @@ import { z } from "zod";
 import { integrationHandoffItemSchema } from "./project-integration.js";
 import { normalizeAriadneChangePackHandoffItems } from "./ariadne-handoff-normalize.util.js";
 
+export const ariadneHandoffPlanTypeSchema = z.enum(["migration_tasks", "full_cascade"]);
+export type AriadneHandoffPlanType = z.infer<typeof ariadneHandoffPlanTypeSchema>;
+
+function normalizeAriadneChangePackV1Fields(raw: unknown): unknown {
+  if (raw == null || typeof raw !== "object") return raw;
+  const obj = { ...(raw as Record<string, unknown>) };
+  if (obj.cursorTasksMarkdown == null && typeof obj.cursor_tasks_markdown === "string") {
+    obj.cursorTasksMarkdown = obj.cursor_tasks_markdown;
+  }
+  delete obj.cursor_tasks_markdown;
+  if (obj.handoffPlanType == null && typeof obj.handoff_plan_type === "string") {
+    obj.handoffPlanType = obj.handoff_plan_type;
+  }
+  delete obj.handoff_plan_type;
+  return obj;
+}
+
 export const ariadneChangePackFileSchema = z.object({
   path: z.string().trim().min(1).max(500),
   repoId: z.string().uuid().optional(),
@@ -10,23 +27,43 @@ export const ariadneChangePackFileSchema = z.object({
 export type AriadneChangePackFile = z.infer<typeof ariadneChangePackFileSchema>;
 
 /** Payload que Ariadne envía al importar un cambio brownfield en Forge. */
-export const ariadneChangePackV1Schema = z.object({
-  version: z.literal("1"),
-  changeDescription: z.string().trim().min(1).max(8000),
-  ariadneChangeId: z.string().trim().max(120).optional(),
-  ariadneRepositoryId: z.string().uuid().optional(),
-  filesToModify: z.array(ariadneChangePackFileSchema).max(200).optional(),
-  questionsToRefine: z.array(z.string().trim().min(1).max(500)).max(30).optional(),
-  /** Ítems NEW-LEG embebidos (parity / handoff externo). Ids se normalizan a `NEW-LEG-NN` si Ariadne envía otro formato. */
-  handoffItems: z
-    .preprocess(
-      normalizeAriadneChangePackHandoffItems,
-      z.array(integrationHandoffItemSchema.omit({ legacyStageId: true })).max(50).optional(),
-    ),
-  linkedNewProjectId: z.string().uuid().optional(),
-});
+export const ariadneChangePackV1Schema = z.preprocess(
+  normalizeAriadneChangePackV1Fields,
+  z.object({
+    version: z.literal("1"),
+    changeDescription: z.string().trim().min(1).max(8000),
+    ariadneChangeId: z.string().trim().max(120).optional(),
+    ariadneRepositoryId: z.string().uuid().optional(),
+    filesToModify: z.array(ariadneChangePackFileSchema).max(200).optional(),
+    questionsToRefine: z.array(z.string().trim().min(1).max(500)).max(30).optional(),
+    /** Ítems NEW-LEG embebidos (parity / handoff externo). Ids se normalizan a `NEW-LEG-NN` si Ariadne envía otro formato. */
+    handoffItems: z
+      .preprocess(
+        normalizeAriadneChangePackHandoffItems,
+        z.array(integrationHandoffItemSchema.omit({ legacyStageId: true })).max(50).optional(),
+      ),
+    linkedNewProjectId: z.string().uuid().optional(),
+    /**
+     * `migration_tasks`: Forge importa tasks del handoff y omite LLM `tasks` en cascada legacy.
+     * `full_cascade`: comportamiento clásico (legacy_generate_deliverables incluye tasks).
+     */
+    handoffPlanType: ariadneHandoffPlanTypeSchema.optional(),
+    /** Markdown Cursor-ready (alias snake_case: cursor_tasks_markdown). SSOT de tasks cuando migration_tasks. */
+    cursorTasksMarkdown: z.string().trim().min(1).max(200_000).optional(),
+  }),
+);
 
 export type AriadneChangePackV1 = z.infer<typeof ariadneChangePackV1Schema>;
+
+/** True when the pack supplies handoff tasks and Forge must skip LLM task generation. */
+export function isAriadneMigrationTasksPack(
+  pack: Pick<AriadneChangePackV1, "handoffPlanType" | "cursorTasksMarkdown" | "handoffItems">,
+): boolean {
+  if (pack.handoffPlanType === "full_cascade") return false;
+  if (pack.handoffPlanType === "migration_tasks") return true;
+  if (pack.cursorTasksMarkdown?.trim()) return true;
+  return (pack.handoffItems?.length ?? 0) > 0;
+}
 
 export const createStageFromAriadneChangePackInputSchema = z.object({
   forgeProjectId: z.string().uuid(),
@@ -47,6 +84,8 @@ export type CreateStageFromAriadneChangePackInput = z.infer<
 export const ariadneChangePackRecommendedToolSchema = z.object({
   tool: z.string(),
   reason: z.string(),
+  /** Entregables a omitir en cascada legacy (p. ej. tasks ya importadas del handoff). */
+  skipDeliverableKinds: z.array(z.string()).optional(),
 });
 
 export const createStageFromAriadneChangePackOutputSchema = z.object({
