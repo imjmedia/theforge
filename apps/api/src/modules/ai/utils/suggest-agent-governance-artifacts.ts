@@ -1,5 +1,5 @@
 import type { ComplexityLevel, ProjectType } from "@theforge/shared-types";
-import { GOVERNANCE_DOCS_PREFIX } from "@theforge/shared-types";
+import { GOVERNANCE_DOCS_PREFIX, detectWebSurfaces } from "@theforge/shared-types";
 import { selectedPatternIdsFromMdd } from "@theforge/shared-types/mdd-governance-patterns";
 import {
   complexityAtLeast,
@@ -507,10 +507,24 @@ function detectCliSurface(authority: string): boolean {
   return /\bCLI\b/.test(authority) && NO_UI_SURFACE_PATTERN.test(authority);
 }
 
-function hasUiSurface(text: string, authoritativeText?: string): boolean {
+function hasUiSurface(
+  text: string,
+  authoritativeText?: string,
+  mddMarkdown?: string | null,
+  blueprintMarkdown?: string | null,
+): boolean {
   const authority = authoritativeText ?? text;
-  if (NO_UI_SURFACE_PATTERN.test(authority)) return false;
-  return /react|vue|svelte|angular|next\.js|dashboard|frontend|\bui\b|mobile|expo|storybook|vite/i.test(
+  const noUiDeclared = NO_UI_SURFACE_PATTERN.test(authority);
+  const mddSec2 = mddMarkdown ? extractMddSection(mddMarkdown, 2) : "";
+  const webSurfacesDeclared = detectWebSurfaces(
+    mddSec2 || mddMarkdown || "",
+    blueprintMarkdown,
+  );
+
+  if (webSurfacesDeclared) return true;
+  if (noUiDeclared) return false;
+
+  return /react|vue|svelte|angular|next\.js|dashboard|frontend|\bui\b|mobile|expo|storybook|vite|tailwind|radix|shadcn/i.test(
     text,
   );
 }
@@ -637,6 +651,7 @@ function detectArchetypes(
   projectType: ProjectType | null | undefined,
   authoritativeUiText?: string,
   mddMarkdown?: string,
+  blueprintMarkdown?: string | null,
 ): string[] {
   const found = new Set<string>();
 
@@ -644,7 +659,12 @@ function detectArchetypes(
     /nestjs|express|fastify|fastapi|django|laravel|spring|hono|cloudflare\s+workers?|workers?\s+api/i.test(
       text,
     );
-  const uiSurface = hasUiSurface(text, authoritativeUiText);
+  const uiSurface = hasUiSurface(
+    text,
+    authoritativeUiText,
+    mddMarkdown,
+    blueprintMarkdown,
+  );
   const hasFrontend = uiSurface && /react|vue|svelte|angular|next\.js/i.test(text);
   const hasMobile = uiSurface && /expo|react\s*native|react-native/i.test(text);
   const isMonorepo = /monorepo|lerna|pnpm\s+workspace|turborepo|packages\//i.test(text);
@@ -656,7 +676,11 @@ function detectArchetypes(
   if ((hasFrontend || hasMobile) && !hasBackend) found.add("spa-only");
   if (
     uiSurface &&
-    /design\s+system|paquete\s+ui|@\w+\/ui\b|storybook/i.test(text)
+    (/design\s+system|paquete\s+ui|@\w+\/ui\b|storybook/i.test(text) ||
+      detectWebSurfaces(
+        extractMddSection(mddMarkdown ?? text, 2) || mddMarkdown || "",
+        blueprintMarkdown,
+      ))
   ) {
     found.add("design-system-ui");
   }
@@ -715,7 +739,12 @@ const INFRA_STACK_PATTERNS: Array<[RegExp, string]> = [
 
 export function inferStacks(
   text: string,
-  options?: { authoritativeUiText?: string; authoritativeStackText?: string },
+  options?: {
+    authoritativeUiText?: string;
+    authoritativeStackText?: string;
+    mddMarkdown?: string | null;
+    blueprintMarkdown?: string | null;
+  },
 ): {
   backend?: string;
   frontend?: string;
@@ -724,7 +753,12 @@ export function inferStacks(
 } {
   const authority = options?.authoritativeUiText ?? text;
   const stackAuthority = options?.authoritativeStackText?.trim() || text;
-  const uiSurface = hasUiSurface(text, authority);
+  const uiSurface = hasUiSurface(
+    text,
+    authority,
+    options?.mddMarkdown,
+    options?.blueprintMarkdown,
+  );
 
   const backend =
     firstMatchLabel(stackAuthority, BACKEND_STACK_PATTERNS) ??
@@ -743,6 +777,9 @@ export function inferStacks(
     frontend = mobile
       ? undefined
       : firstMatchLabel(text, [
+          [/tailwind\s*\+\s*radix|radix\s*ui/i, "Tailwind + Radix UI"],
+          [/tailwind/i, "Tailwind CSS"],
+          [/shadcn/i, "shadcn/ui"],
           [/next\.js/i, "Next.js"],
           [/react/i, "React"],
           [/\bvue\b/i, "Vue"],
@@ -1114,7 +1151,12 @@ export function extractProjectGovernanceFacts(
   const text = corpus(input);
   const authoritativeUiText = [input.mddMarkdown, input.specMarkdown].filter(Boolean).join("\n\n");
   const authoritativeStackText = extractMddSection(input.mddMarkdown ?? "", 2);
-  const stacks = inferStacks(text, { authoritativeUiText, authoritativeStackText });
+  const stacks = inferStacks(text, {
+    authoritativeUiText,
+    authoritativeStackText,
+    mddMarkdown: input.mddMarkdown,
+    blueprintMarkdown: input.blueprintMarkdown,
+  });
   const projectTitle = extractProjectTitle(input);
   const blueprintModules = blueprintModulesForOverlay(
     extractBlueprintModules(input.blueprintMarkdown ?? ""),
@@ -1180,7 +1222,12 @@ export function extractProjectGovernanceFacts(
     frontendGlobs: globs.frontend,
     npmScripts: inferNpmScripts(npmScriptCorpus),
     sddConflicts,
-    hasUiSurface: hasUiSurface(text, authoritativeUiText),
+    hasUiSurface: hasUiSurface(
+      text,
+      authoritativeUiText,
+      input.mddMarkdown,
+      input.blueprintMarkdown,
+    ),
   };
 }
 
@@ -1210,17 +1257,24 @@ function ruleStrength(
   projectType: ProjectType | null | undefined,
   authoritativeUiText?: string,
   uiScreensMarkdown?: string | null,
+  mddMarkdown?: string | null,
+  blueprintMarkdown?: string | null,
 ): GovernanceArtifactStrength | null {
   if (!complexityAtLeast(complexity, rule.minComplexity)) return null;
 
   if (rule.id === "git-commits") return "strong";
   if (rule.id === "orchestrator" && complexity !== "LOW") return "weak";
 
-  if (rule.id === "stack-frontend" && !hasUiSurface(text, authoritativeUiText)) return null;
+  if (
+    rule.id === "stack-frontend" &&
+    !hasUiSurface(text, authoritativeUiText, mddMarkdown, blueprintMarkdown)
+  ) {
+    return null;
+  }
 
   if (rule.id === "ui-pantallas") {
     if (uiScreensMarkdown?.trim()) return "strong";
-    if (!hasUiSurface(text, authoritativeUiText)) return null;
+    if (!hasUiSurface(text, authoritativeUiText, mddMarkdown, blueprintMarkdown)) return null;
     return matchesSignals(text, rule.signals) ? "weak" : null;
   }
 
@@ -1250,22 +1304,36 @@ function skillStrength(
   projectType: ProjectType | null | undefined,
   authoritativeUiText?: string,
   uiScreensMarkdown?: string | null,
+  mddMarkdown?: string | null,
+  blueprintMarkdown?: string | null,
 ): GovernanceArtifactStrength | null {
   if (!complexityAtLeast(complexity, skill.minComplexity)) return null;
 
-  if (skill.id === "design-system-ui" && !hasUiSurface(text, authoritativeUiText)) return null;
+  if (
+    skill.id === "design-system-ui" &&
+    !hasUiSurface(text, authoritativeUiText, mddMarkdown, blueprintMarkdown)
+  ) {
+    return null;
+  }
   if (skill.id === "mcp-ariadne") {
     if (projectType !== "LEGACY" || !hasLegacyAriadneSignals(text)) return null;
   }
 
   if (skill.id === "ui-pantallas") {
     if (uiScreensMarkdown?.trim()) return "strong";
-    if (!hasUiSurface(text, authoritativeUiText)) return null;
+    if (!hasUiSurface(text, authoritativeUiText, mddMarkdown, blueprintMarkdown)) return null;
     return matchesSignals(text, skill.signals) ? "weak" : null;
   }
 
   const signalHit = matchesSignals(text, skill.signals);
   const archetypeHit = skill.archetypes?.some((a) => archetypes.includes(a)) ?? false;
+
+  if (skill.id === "design-system-ui" && detectWebSurfaces(
+    extractMddSection(mddMarkdown ?? text, 2) || mddMarkdown || "",
+    blueprintMarkdown,
+  )) {
+    return archetypeHit || signalHit ? "strong" : "weak";
+  }
 
   if (skill.id === "domain-package" && complexity !== "LOW") {
     return complexity === "HIGH" || signalHit ? "strong" : "weak";
@@ -1305,9 +1373,13 @@ function capByComplexity(
     };
   }
   if (complexity === "MEDIUM") {
+    const uiPantallasSkill = skills.find((s) => s.id === "ui-pantallas");
+    const otherSkills = skills.filter((s) => s.id !== "ui-pantallas");
+    const capped = otherSkills.slice(0, uiPantallasSkill ? 1 : 2);
+    if (uiPantallasSkill) capped.unshift(uiPantallasSkill);
     return {
       rules: rules.slice(0, 5),
-      skills: skills.slice(0, 2),
+      skills: capped.slice(0, 2),
     };
   }
   return {
@@ -1338,6 +1410,7 @@ export function suggestAgentGovernanceArtifacts(
     projectType,
     authoritativeUiText,
     input.mddMarkdown,
+    input.blueprintMarkdown,
   );
   const rationale: string[] = [];
   const facts = extractProjectGovernanceFacts(input);
@@ -1348,7 +1421,12 @@ export function suggestAgentGovernanceArtifacts(
   }
 
   const authoritativeStackText = extractMddSection(input.mddMarkdown ?? "", 2);
-  const stacks = inferStacks(text, { authoritativeUiText, authoritativeStackText });
+  const stacks = inferStacks(text, {
+    authoritativeUiText,
+    authoritativeStackText,
+    mddMarkdown: input.mddMarkdown,
+    blueprintMarkdown: input.blueprintMarkdown,
+  });
   const stackParts = [stacks.backend, stacks.frontend, stacks.mobile, stacks.infra].filter(Boolean);
   if (stackParts.length > 0) {
     rationale.push(`Stack (MDD §2): ${stackParts.join(", ")}.`);
@@ -1364,6 +1442,8 @@ export function suggestAgentGovernanceArtifacts(
       projectType,
       authoritativeUiText,
       input.uiScreensMarkdown,
+      input.mddMarkdown,
+      input.blueprintMarkdown,
     );
     if (!strength) continue;
     suggestedRules.push({
@@ -1387,6 +1467,8 @@ export function suggestAgentGovernanceArtifacts(
       projectType,
       authoritativeUiText,
       input.uiScreensMarkdown,
+      input.mddMarkdown,
+      input.blueprintMarkdown,
     );
     if (!strength) continue;
     const folder = skill.dynamicFolder && domainFolder ? domainFolder : skill.folder;
@@ -1477,7 +1559,12 @@ export function buildArtifactTemplateContext(
   const text = corpus(input);
   const authoritativeUiText = [input.mddMarkdown, input.specMarkdown].filter(Boolean).join("\n\n");
   const authoritativeStackText = extractMddSection(input.mddMarkdown ?? "", 2);
-  const stacks = inferStacks(text, { authoritativeUiText, authoritativeStackText });
+  const stacks = inferStacks(text, {
+    authoritativeUiText,
+    authoritativeStackText,
+    mddMarkdown: input.mddMarkdown,
+    blueprintMarkdown: input.blueprintMarkdown,
+  });
   const facts = extractProjectGovernanceFacts(input);
   return {
     complexity,

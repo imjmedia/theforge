@@ -66,10 +66,13 @@ export function resolvePantallaV1InScope(item: {
   primaryApi?: string;
   userStoryId?: string;
   route?: string;
+  purpose?: string;
 }): boolean {
   const api = (item.primaryApi ?? "").trim();
   if (api.length > 0 && !/fuera de alcance/i.test(api)) return true;
   if (item.source === "hu-only" && item.userStoryId?.trim()) return true;
+  if (item.source === "hu-only" && /MDD §2\.2/i.test(item.purpose ?? "")) return true;
   if (item.source === "entity+hu" && item.userStoryId?.trim() && api.length > 0) return true;
+  if (item.source === "entity" && api.length > 0) return true;
   return false;
 }

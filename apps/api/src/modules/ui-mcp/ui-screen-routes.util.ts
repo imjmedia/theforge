@@ -68,12 +68,13 @@ export function slugifyRouteSegment(value: string): string {
 /** Infiere ruta React Router desde nombre de pantalla / hint. */
 export function inferScreenRoute(screenName: string, uiHint?: string): string {
   const name = screenName.toLowerCase();
-  if (/login|sign[\s-]?in|iniciar sesión/.test(name)) return "/login";
-  if (/dashboard|panel|inicio|home/.test(name) || uiHint === "dashboard") return "/dashboard";
+  if (/login|sign[\s-]?in|iniciar sesi[oó]n|inicio de sesi[oó]n/.test(name)) return "/login";
+  if (/dashboard|panel(?!\s+admin)|^home$/.test(name)) return "/dashboard";
   if (/registro|sign[\s-]?up|register/.test(name)) return "/register";
   if (/otp|verificaci[oó]n|2fa|mfa/.test(name)) return "/otp-verify";
   if (/configuraci[oó]n|settings/.test(name)) return "/settings";
   const slug = slugifyRouteSegment(screenName);
+  if (uiHint === "chat") return "/chat";
   return slug ? `/${slug}` : "/";
 }
 

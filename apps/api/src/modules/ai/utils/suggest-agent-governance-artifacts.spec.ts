@@ -735,6 +735,24 @@ Mensajería con RabbitMQ para workers asíncronos.
     assert.equal(stacks.mobile, undefined);
   });
 
+  it("inferStacks prioriza React en MDD §2 sobre CLI en §1", () => {
+    const mdd = `
+## 1. Contexto
+MVP incluye CLI para operaciones batch.
+## 2. Arquitectura y Stack
+Frontend React 18 + Vite + Tailwind + Radix UI (apps/web).
+Backend NestJS API.
+`;
+    const stacks = inferStacks(`${mdd}\nCLI Commander para scripts.`, {
+      authoritativeUiText: "MVP incluye CLI para operaciones batch.",
+      authoritativeStackText:
+        "Frontend React 18 + Vite + Tailwind + Radix UI (apps/web).\nBackend NestJS API.",
+      mddMarkdown: mdd,
+    });
+    assert.match(stacks.frontend ?? "", /React|Tailwind \+ Radix/i);
+    assert.notEqual(stacks.frontend, CLI_FRONTEND_STACK_LABEL);
+  });
+
   it("prioriza Fastify+Railway de MDD §2 sobre FastAPI/Kubernetes en Blueprint", () => {
     const mdd = `
 ## 2. Arquitectura y Stack

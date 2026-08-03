@@ -53,21 +53,69 @@ export function extractHttpEndpointsFromMarkdown(markdown: string): HttpEndpoint
   return out;
 }
 
+/** Tokens de entidad/slug para matching contra paths API (incl. segmento final). */
+export function entityPathTokens(entityOrSlug: string): string[] {
+  const lower = entityOrSlug.toLowerCase().trim();
+  const tokens = new Set<string>([
+    lower,
+    lower.replace(/_/g, "-"),
+    lower.replace(/-/g, "_"),
+  ]);
+
+  for (const part of lower.split(/[_-]/).filter((p) => p.length >= 2)) {
+    tokens.add(part);
+    if (part.endsWith("ies") && part.length > 4) {
+      tokens.add(part.slice(0, -3) + "y");
+    } else if (part.endsWith("ses") && part.length > 4) {
+      tokens.add(part.slice(0, -2));
+    } else if (part.endsWith("es") && part.length > 3) {
+      tokens.add(part.slice(0, -2));
+      tokens.add(part.slice(0, -1));
+    } else if (part.endsWith("s") && part.length > 2) {
+      tokens.add(part.slice(0, -1));
+    } else if (part.length >= 3) {
+      tokens.add(`${part}s`);
+    }
+  }
+
+  return [...tokens].filter((t) => t.length >= 2);
+}
+
 /** Endpoints cuyo path menciona el token de entidad/pantalla. */
 export function matchEndpointsForEntity(
   entityOrSlug: string,
   endpoints: HttpEndpointRef[],
 ): HttpEndpointRef[] {
-  const tokens = [
-    entityOrSlug.toLowerCase(),
-    entityOrSlug.toLowerCase().replace(/_/g, "-"),
-    entityOrSlug.toLowerCase().replace(/-/g, "_"),
-  ].filter((t, i, arr) => t.length >= 3 && arr.indexOf(t) === i);
+  const tokens = entityPathTokens(entityOrSlug);
 
   return endpoints.filter((ep) => {
     const p = ep.path.toLowerCase();
-    return tokens.some((t) => p.includes(t));
+    const segments = p.split("/").filter(Boolean);
+    const lastSegment = segments[segments.length - 1] ?? "";
+    return tokens.some(
+      (t) =>
+        t.length >= 3 &&
+        (p.includes(t) ||
+          lastSegment === t ||
+          lastSegment.replace(/-/g, "_") === t.replace(/-/g, "_")),
+    );
   });
+}
+
+/** Ruta SPA preferida desde el path REST (p. ej. `/api/v1/keys` → `/admin/keys`). */
+export function inferRouteFromApiPath(
+  endpointPath: string,
+  opts?: { admin?: boolean },
+): string | undefined {
+  const normalized = normalizeApiPath(endpointPath);
+  const match = normalized.match(/^\/api\/v\d+\/([^/?]+)/i);
+  if (!match?.[1]) return undefined;
+  const segment = match[1].replace(/_/g, "-").toLowerCase();
+  if (!segment) return undefined;
+  if (/^(auth|login|health|public|status)$/i.test(segment)) {
+    return segment === "auth" || segment === "login" ? "/login" : `/${segment}`;
+  }
+  return opts?.admin === false ? `/${segment}` : `/admin/${segment}`;
 }
 
 export function formatEndpointList(endpoints: HttpEndpointRef[], max = 3): string {

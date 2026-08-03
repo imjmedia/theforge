@@ -11,6 +11,7 @@ import {
   extractHttpEndpointsFromMarkdown,
   formatEndpointList,
   inferAuthEndpoints,
+  inferRouteFromApiPath,
   matchEndpointsForEntity,
 } from "./api-contract-endpoints.util.js";
 import { resolvePantallaV1InScope } from "./ui-screens-v1-scope.util.js";
@@ -89,8 +90,20 @@ export const INFRA_ONLY_SCREEN_ENTITIES = new Set(
   ),
 );
 
-/** Entities that get auth screens (login/MFA) instead of gestión-CRUD. */
-export const AUTH_FLOW_ENTITIES = new Set(["users", "sessions"]);
+/** Entidades que get auth screens (login/MFA) instead of gestión-CRUD. */
+export const AUTH_FLOW_ENTITIES = new Set(["sessions"]);
+
+/** §1/§2 o producto declara chat/copilot/WhatsApp (no inferir solo por HU). */
+export function mddDeclaresChatProduct(mddMarkdown: string): boolean {
+  const mdd = mddMarkdown ?? "";
+  const feBlock = mdd.match(
+    /(?:###\s*2\.2\s+Frontend|###\s+Frontend)[\s\S]*?(?=\n###\s|\n##\s+[3-9]|$)/i,
+  )?.[0] ?? "";
+  const corpus = `${mdd.slice(0, 6000)}\n${feBlock}`;
+  return /whatsapp|wasender|chat\s+del\s+copiloto|copiloto|mensajer[ií]a\s+instant|conversaci[oó]n\s+multi.?turno|\bmcp\s+chat\b/i.test(
+    corpus,
+  );
+}
 
 /** Historia de usuario parseada del markdown de backlog. */
 export interface ParsedUserStory {
@@ -238,6 +251,7 @@ export function parseUserStoriesMarkdown(content: string): ParsedUserStory[] {
 /** Infiere hint de UI a partir del texto de la HU o del nombre de entidad. */
 export function inferUiHintFromText(text: string): string | undefined {
   const t = text.toLowerCase();
+  if (/login|sign[\s-]?in|iniciar sesi|otp|mfa|2fa|autentic/i.test(t)) return "form";
   if (/whatsapp|wasender|chat|conversaci|mensaje|copiloto|composer/.test(t)) return "chat";
   if (/kanban|pipeline|tablero|embudo|funnel|etapas?/.test(t)) return "kanban";
   if (/formulario|registrar|crear|editar|alta|capturar|inscribir/.test(t)) return "form";
@@ -298,6 +312,27 @@ function defaultEntityPurpose(entityName: string): string {
   return `Pantalla para administrar la entidad \`${entityName}\`.`;
 }
 
+function resolveEntityScreenRoute(
+  _entityName: string,
+  screenName: string,
+  uiHint: string | undefined,
+  isAuthFlow: boolean,
+  matchedEndpoints: ReturnType<typeof matchEndpointsForEntity>,
+  routeFromMatrix?: string,
+): string {
+  if (isAuthFlow || /login|sign[\s-]?in|iniciar sesión/i.test(screenName)) {
+    return "/login";
+  }
+  if (uiHint === "chat") return "/chat";
+
+  const apiRoute = matchedEndpoints[0]?.path
+    ? inferRouteFromApiPath(matchedEndpoints[0].path)
+    : undefined;
+  if (apiRoute) return apiRoute;
+
+  return routeFromMatrix || inferScreenRoute(screenName, uiHint);
+}
+
 function storyRef(story: ParsedUserStory): string {
   return story.id ? `${story.id} — ${story.title}` : story.title;
 }
@@ -351,6 +386,7 @@ export function buildPantallasPlan(
   const defaultRoles = extractRolesFromMdd(mddMarkdown);
   const defaultRole = defaultRoles[0] ?? "Usuario autenticado";
   const domainCorpus = `${mddMarkdown}\n${userStoriesMarkdown ?? ""}\n${JSON.stringify(inventory?.processes ?? [])}`.toLowerCase();
+  const chatProductDeclared = mddDeclaresChatProduct(mddMarkdown);
 
   const screenHintByEntity = new Map(
     (inventory?.crudMatrix ?? [])
@@ -393,7 +429,10 @@ export function buildPantallasPlan(
       purpose: `Vista administrativa del MDD §2.2: ${viewLabel}.`,
       source: "hu-only",
       role: normalizeRoleLabel(role),
-      route: inferScreenRoute(viewLabel, uiHint),
+      route:
+        uiHint === "dashboard" && /dashboard|panel/i.test(viewLabel)
+          ? inferScreenRoute(viewLabel, uiHint)
+          : `/admin/${slug || "view"}`,
       pageName: inferPageComponentName(viewLabel),
       uiStates: inferUiStates(viewLabel, uiHint),
       primaryApi:
@@ -419,14 +458,21 @@ export function buildPantallasPlan(
     const primary = linked[0];
     const storyText = linked.map((s) => s.searchText).join(" ");
     const role = primary?.role ? normalizeRoleLabel(primary.role) : defaultRole;
-    const isAuthFlow = AUTH_FLOW_ENTITIES.has(entityName.toLowerCase()) && /login|mfa|auth/i.test(storyText || primary?.title || "");
+    const isAuthFlow =
+      AUTH_FLOW_ENTITIES.has(entityName.toLowerCase()) &&
+      /login|mfa|auth|otp|iniciar sesi/i.test(storyText || primary?.title || "");
     const screenName = isAuthFlow
       ? primary?.title?.trim() || "Inicio de sesión"
       : primary?.title?.trim() || defaultEntityScreenName(entityName);
-    let uiHint = primary
-      ? inferUiHintFromText(`${primary.want ?? ""} ${primary.title}`)
-      : inferUiHintFromText(entityName);
-    if (/convers|mensaje|whatsapp|chat|copiloto/i.test(entityName + storyText)) {
+    let uiHint = isAuthFlow
+      ? "form"
+      : primary
+        ? inferUiHintFromText(`${primary.want ?? ""} ${primary.title}`)
+        : inferUiHintFromText(entityName);
+    if (
+      chatProductDeclared &&
+      /convers|mensaje|whatsapp|chat|copiloto/i.test(entityName + storyText)
+    ) {
       uiHint = "chat";
     }
     const matched = matchEndpointsForEntity(entityName, endpoints);
@@ -441,12 +487,14 @@ export function buildPantallasPlan(
     if (!primaryApi && linked.length === 0) continue;
 
     const routeFromMatrix = screenHintByEntity.get(entityName.toLowerCase());
-    const route =
-      uiHint === "chat"
-        ? "/chat"
-        : isAuthFlow
-          ? "/login"
-          : routeFromMatrix || inferScreenRoute(screenName, uiHint);
+    const route = resolveEntityScreenRoute(
+      entityName,
+      screenName,
+      uiHint,
+      isAuthFlow,
+      matched,
+      routeFromMatrix,
+    );
 
     plan.push({
       name: entityName,
@@ -472,8 +520,12 @@ export function buildPantallasPlan(
     });
   }
 
-  // Complex surfaces from domain corpus when missing in plan
-  if (/whatsapp|wasender|conversaci[oó]n|mensaje/i.test(domainCorpus) && !plan.some((p) => p.route === "/chat" || p.uiHint === "chat")) {
+  // Complex surfaces from domain corpus when missing in plan (solo si MDD declara producto chat)
+  if (
+    chatProductDeclared &&
+    /whatsapp|wasender|conversaci[oó]n|mensaje/i.test(domainCorpus) &&
+    !plan.some((p) => p.route === "/chat" || p.uiHint === "chat")
+  ) {
     plan.push({
       name: "chat-shell",
       keyFields: ["id"],
@@ -538,7 +590,9 @@ export function buildPantallasPlan(
     if (matchedStoryIndexes.has(idx)) return;
     const slug = huOnlyEntitySlug(story);
     let uiHint = inferUiHintFromText(story.searchText);
-    if (/whatsapp|chat|mensaje|convers/i.test(story.searchText)) uiHint = "chat";
+    if (chatProductDeclared && /whatsapp|chat|mensaje|convers/i.test(story.searchText)) {
+      uiHint = "chat";
+    }
     const screenName = story.title;
     const authEps = inferAuthEndpoints(endpoints);
     const matched = matchEndpointsForEntity(slug, endpoints);
@@ -561,7 +615,12 @@ export function buildPantallasPlan(
       userStoryRefs: [storyRef(story)],
       source: "hu-only",
       role: story.role ? normalizeRoleLabel(story.role) : defaultRole,
-      route: uiHint === "chat" ? "/chat" : inferScreenRoute(screenName, uiHint),
+      route:
+        /login|auth|otp|mfa|iniciar sesi|inicio de sesi/i.test(screenName)
+          ? "/login"
+          : uiHint === "chat"
+            ? "/chat"
+            : inferScreenRoute(screenName, uiHint),
       pageName: inferPageComponentName(screenName),
       uiStates: inferUiStates(screenName, uiHint),
       primaryApi: primaryApi && primaryApi !== "—" ? primaryApi : undefined,
@@ -573,8 +632,9 @@ export function buildPantallasPlan(
   // ProcessInventory surfaces (chat, admin, etc.) when not already covered
   for (const proc of inventory?.processes ?? []) {
     for (const hint of proc.screenHints ?? []) {
+      if (hint === "chat" && !chatProductDeclared) continue;
       const route =
-        hint === "chat" || /whatsapp|mensaje/i.test(proc.name)
+        hint === "chat" || (/whatsapp|mensaje/i.test(proc.name) && chatProductDeclared)
           ? "/chat"
           : hint === "admin" || /admin|bit[aá]cora/i.test(proc.name)
             ? `/admin/${proc.id.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`
