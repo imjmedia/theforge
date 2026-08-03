@@ -38,7 +38,8 @@ export function convertTasksJsonV2ToTasksMdV1(tasksJson: unknown): string {
       }
       for (const task of cpTasks) {
         const parallel = task.parallel ? "[P] " : "";
-        lines.push(`- [ ] ${parallel}${task.id}: ${task.title}`);
+        const done = String(task.status ?? "").toLowerCase() === "done";
+        lines.push(`- [${done ? "x" : " "}] ${parallel}${task.id}: ${task.title}`);
         if (Array.isArray(task.targetFiles) && task.targetFiles.length) {
           lines.push(`  - **Files:** ${task.targetFiles.map((f: string) => "`" + f + "`").join(", ")}`);
         }

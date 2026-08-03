@@ -1,6 +1,10 @@
 import { z } from "zod";
-import { integrationHandoffItemSchema } from "./project-integration.js";
+import { integrationHandoffItemCoreSchema } from "./project-integration.js";
 import { normalizeAriadneChangePackHandoffItems } from "./ariadne-handoff-normalize.util.js";
+import {
+  extractIntegrationScopeFromHandoff,
+  packHasAriadneTasksHydration,
+} from "./hydrate-tasks-from-ariadne-pack.util.js";
 
 export const ariadneHandoffPlanTypeSchema = z.enum(["migration_tasks", "full_cascade"]);
 export type AriadneHandoffPlanType = z.infer<typeof ariadneHandoffPlanTypeSchema>;
@@ -40,7 +44,7 @@ export const ariadneChangePackV1Schema = z.preprocess(
     handoffItems: z
       .preprocess(
         normalizeAriadneChangePackHandoffItems,
-        z.array(integrationHandoffItemSchema.omit({ legacyStageId: true })).max(50).optional(),
+        z.array(integrationHandoffItemCoreSchema).max(50).optional(),
       ),
     linkedNewProjectId: z.string().uuid().optional(),
     /**
@@ -60,6 +64,9 @@ export function isAriadneMigrationTasksPack(
   pack: Pick<AriadneChangePackV1, "handoffPlanType" | "cursorTasksMarkdown" | "handoffItems">,
 ): boolean {
   if (pack.handoffPlanType === "full_cascade") return false;
+  const scope = extractIntegrationScopeFromHandoff(pack.handoffItems ?? []);
+  if (scope?.mode === "integration_handoff") return true;
+  if (packHasAriadneTasksHydration(pack)) return true;
   if (pack.handoffPlanType === "migration_tasks") return true;
   if (pack.cursorTasksMarkdown?.trim()) return true;
   return (pack.handoffItems?.length ?? 0) > 0;

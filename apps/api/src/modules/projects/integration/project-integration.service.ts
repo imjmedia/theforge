@@ -23,9 +23,12 @@ import {
   type CreateStageFromAriadneChangePackOutput,
   INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS,
   isAriadneMigrationTasksPack,
+  hydrateTasksFromAriadnePack,
+  isIntegrationHandoffScope,
   resolveIntegrationHandoffTasksMarkdown,
+  hasValidTasksJson,
 } from "@theforge/shared-types";
-import { StageStatus } from "@theforge/database";
+import { StageStatus, Prisma } from "@theforge/database";
 import { PrismaService } from "../../../prisma/prisma.service.js";
 import { getRequestUserId } from "../../../common/request-user.store.js";
 import { ChangeLogService } from "../../change-log/change-log.service.js";
@@ -473,6 +476,10 @@ export class ProjectIntegrationService {
     const linkedNewProjectId = pack.linkedNewProjectId?.trim() || project.linkedNewProjectId;
     let handoffDesc = pack.changeDescription.trim();
     const migrationTasksMode = isAriadneMigrationTasksPack(pack);
+    const hydratedTasksPreview = hydrateTasksFromAriadnePack({
+      handoffItems,
+      cursorTasksMarkdown: pack.cursorTasksMarkdown,
+    });
 
     if (handoffItems.length) {
       const snapshot = {
@@ -494,7 +501,7 @@ export class ProjectIntegrationService {
       await this.prisma.stage.update({
         where: { id: stageId },
         data: {
-          handoffSnapshot: snapshot,
+          handoffSnapshot: snapshot as Prisma.InputJsonValue,
           handoffImportedAt: new Date(),
           linkedNewProjectId: linkedNewProjectId ?? null,
           legacyChangeState: {
@@ -605,6 +612,9 @@ export class ProjectIntegrationService {
         questionsCount,
         hasHandoffItems: handoffItems.length > 0,
         migrationTasksMode,
+        integrationHandoffWithHydratedTasks:
+          !!hydratedTasksPreview &&
+          isIntegrationHandoffScope(hydratedTasksPreview.integrationScope),
       }),
     };
   }
@@ -973,6 +983,7 @@ export class ProjectIntegrationService {
     await persistStageAndProjectDeliverables(this.prisma, stageId, projectId, {
       tasksContent: null,
       userStoriesContent: null,
+      tasksJson: null,
     });
   }
 
@@ -984,44 +995,74 @@ export class ProjectIntegrationService {
       handoffItems: IntegrationHandoffItem[];
       stageName?: string;
     },
-  ): Promise<{ applied: boolean; source?: string }> {
-    const resolved = resolveIntegrationHandoffTasksMarkdown({
-      cursorTasksMarkdown: input.cursorTasksMarkdown,
+  ): Promise<{ applied: boolean; source?: string; hasTasksJson?: boolean }> {
+    const hydrated = hydrateTasksFromAriadnePack({
       handoffItems: input.handoffItems,
-      title: input.stageName,
+      cursorTasksMarkdown: input.cursorTasksMarkdown,
     });
+
+    const resolved =
+      hydrated ??
+      (() => {
+        const legacy = resolveIntegrationHandoffTasksMarkdown({
+          cursorTasksMarkdown: input.cursorTasksMarkdown,
+          handoffItems: input.handoffItems,
+          title: input.stageName,
+        });
+        return legacy
+          ? {
+              tasksContent: legacy.markdown,
+              source: legacy.source,
+              integrationScope: null,
+              skipBaselineDeliverables: [] as string[],
+            }
+          : null;
+      })();
+
     if (!resolved) return { applied: false };
 
     await persistStageAndProjectDeliverables(this.prisma, stageId, projectId, {
-      tasksContent: resolved.markdown,
+      tasksContent: resolved.tasksContent,
+      ...(hydrated?.tasksJson ? { tasksJson: hydrated.tasksJson } : {}),
     });
 
     const stageRow = await this.prisma.stage.findUnique({
       where: { id: stageId },
-      select: { legacyChangeState: true },
+      select: { legacyChangeState: true, tasksJson: true },
     });
     const existing =
       stageRow?.legacyChangeState != null && typeof stageRow.legacyChangeState === "object"
         ? (stageRow.legacyChangeState as Record<string, unknown>)
         : {};
 
+    const tasksSource = hydrated?.source ?? resolved.source;
     await this.prisma.stage.update({
       where: { id: stageId },
       data: {
         legacyChangeState: {
           ...existing,
+          tasksSource,
           integrationHandoffTasks: {
-            source: resolved.source,
+            source: tasksSource,
+            tasksSource,
             importedAt: new Date().toISOString(),
           },
-        },
+          ...(hydrated?.integrationScope
+            ? { integrationScope: hydrated.integrationScope }
+            : {}),
+        } as object,
       },
     });
 
+    const refreshed = await this.prisma.stage.findUnique({
+      where: { id: stageId },
+      select: { tasksJson: true },
+    });
+    const hasTasksJson = hasValidTasksJson(hydrated?.tasksJson ?? refreshed?.tasksJson);
     this.logger.log(
-      `[Integration] handoff tasks imported (stage=${stageId.slice(0, 8)} source=${resolved.source})`,
+      `[Integration] handoff tasks imported (stage=${stageId.slice(0, 8)} source=${tasksSource} hasTasksJson=${hasTasksJson})`,
     );
-    return { applied: true, source: resolved.source };
+    return { applied: true, source: tasksSource, hasTasksJson };
   }
 
   private async applyHandoffPayloadToStage(
@@ -1043,7 +1084,7 @@ export class ProjectIntegrationService {
     await this.prisma.stage.update({
       where: { id: stageId },
       data: {
-        handoffSnapshot: snapshot,
+        handoffSnapshot: snapshot as Prisma.InputJsonValue,
         handoffImportedAt: new Date(),
         linkedNewProjectId: newProjectId,
         legacyChangeState: {

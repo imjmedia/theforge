@@ -226,6 +226,7 @@ export interface WorkshopStage {
   userStoriesContent?: string | null;
   blueprintContent?: string | null;
   tasksContent?: string | null;
+  tasksJson?: unknown;
   apiContractsContent?: string | null;
   logicFlowsContent?: string | null;
   infraContent?: string | null;
@@ -275,6 +276,7 @@ export interface Project {
   uxGuideDesignRef?: string | null;
   blueprintContent: string | null;
   tasksContent: string | null;
+  tasksJson?: unknown;
   apiContractsContent: string | null;
   logicFlowsContent: string | null;
   architectureContent: string | null;

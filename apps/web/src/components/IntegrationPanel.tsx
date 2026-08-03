@@ -1403,7 +1403,7 @@ function HandoffItemEditForm({
   }) => Promise<void>;
 }) {
   const [title, setTitle] = useState(item.title);
-  const [description, setDescription] = useState(item.description);
+  const [description, setDescription] = useState(item.description ?? "");
   const [actor, setActor] = useState(item.actor ?? "");
   const [criteriaText, setCriteriaText] = useState((item.acceptanceCriteria ?? []).join("\n"));
   const canSave = title.trim().length > 0 && description.trim().length > 0;

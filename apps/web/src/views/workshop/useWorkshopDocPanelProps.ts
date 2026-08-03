@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useWorkshopStore } from "@/store/workshopStore";
+import { resolveWorkshopTasksPreviewContent } from "@/utils/workshopTasksPreview.util";
 import type { WorkshopDocPanelContentProps } from "./workshopDocPanelContent.types";
 import type { UseWorkshopDocPanelPropsArgs } from "./useWorkshopDocPanelProps.types";
 
@@ -222,6 +223,16 @@ export function useWorkshopDocPanelProps(
 
   const uxUiGuideDirty = (uxUiGuideContent ?? "") !== (project?.uxUiGuideContent ?? "");
 
+  const tasksPanelContent = useMemo(() => {
+    const preview = resolveWorkshopTasksPreviewContent({
+      tasksContent,
+      tasksJson: project?.tasksJson,
+      stageTasksJson: activeWorkshopStage?.tasksJson,
+    });
+    if (tasksViewMode === "preview") return preview ?? tasksContent;
+    return tasksContent;
+  }, [tasksContent, tasksViewMode, project?.tasksJson, activeWorkshopStage?.tasksJson]);
+
   const workshopStandardDocPanelsProps = useMemo(
     (): import("./workshopStandardDocPanels.types").WorkshopStandardDocPanelsProps => ({
       centralPanel,
@@ -289,7 +300,7 @@ export function useWorkshopDocPanelProps(
         clarifyField: "blueprintContent",
       },
       tasks: {
-        content: tasksContent,
+        content: tasksPanelContent,
         onContentChange: setTasksContent,
         onSave: () => void persistTasksContent(tasksContent ?? ""),
         isDirty: tasksDirty,
@@ -377,7 +388,7 @@ export function useWorkshopDocPanelProps(
       blueprintViewMode,
       generateBlueprint,
       handleBlueprintBlur,
-      tasksContent,
+      tasksPanelContent,
       setTasksContent,
       persistTasksContent,
       tasksDirty,

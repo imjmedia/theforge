@@ -18,6 +18,7 @@ import {
   parseIntegrationHandoff,
   parseTasksMarkdown,
   readStageDeliverableSnapshot,
+  getLegacyChangeState,
   sectionToIssueLabel,
   specHasPendingClarificationSection,
   specKitFeatureDir,
@@ -824,10 +825,42 @@ export class SddIntegrationService {
   }
 
   /** Next open task for MCP implement (lightweight `/speckit.implement` hint). */
-  getNextImplementationTask(tasksMarkdown: string): {
+  getNextImplementationTask(
+    tasksMarkdown: string,
+    tasksJson?: unknown,
+  ): {
     task: ReturnType<typeof getNextOpenTask>;
     openCount: number;
   } {
+    if (tasksJson != null && typeof tasksJson === "object") {
+      const root = tasksJson as { tasks?: unknown[] };
+      const rows = Array.isArray(root.tasks) ? root.tasks : [];
+      const openRows = rows.filter((raw) => {
+        if (!raw || typeof raw !== "object") return false;
+        return String((raw as { status?: string }).status ?? "").toLowerCase() !== "done";
+      });
+      const first = openRows[0] as { id?: string; title?: string; targetFiles?: string[]; files?: string[] } | undefined;
+      if (first?.id && first?.title) {
+        const files = Array.isArray(first.targetFiles)
+          ? first.targetFiles
+          : Array.isArray(first.files)
+            ? first.files
+            : [];
+        return {
+          task: {
+            line: 0,
+            title: `${first.id}: ${first.title}`,
+            cleanTitle: first.title,
+            section: "Integration",
+            done: false,
+            parallel: false,
+            filePaths: files.map(String),
+            checkpoint: null,
+          },
+          openCount: openRows.length,
+        };
+      }
+    }
     const items = parseTasksMarkdown(tasksMarkdown);
     const open = filterOpenTasks(items);
     return { task: getNextOpenTask(items), openCount: open.length };
@@ -844,6 +877,7 @@ export class SddIntegrationService {
     hasTasksJson: boolean;
     taskCount: number;
     deliverableBundleVersion: string | null;
+    ariadneTasksSource?: string | null;
   } & NextTaskDocumentLayout> {
     const project = await this.loadProject(projectId);
     const stage = pickPrimaryStage(project.stages);
@@ -856,10 +890,15 @@ export class SddIntegrationService {
       stageTasksJson: stage?.tasksJson,
     });
     const tasksMd = tasksSsot.markdown ?? "";
-    const { task, openCount } = this.getNextImplementationTask(tasksMd);
+    const { task, openCount } = this.getNextImplementationTask(tasksMd, tasksSsot.tasksJson ?? undefined);
     const featureDir = specKitFeatureDir(stage?.ordinal ?? 1, project.name);
     const governancePresent = !!(project.agentGovernanceContent?.trim());
     const snapshot = readStageDeliverableSnapshot(stage?.deliverableSnapshot);
+    const legacyState = getLegacyChangeState(stage);
+    const ariadneTasksSource =
+      (legacyState as { tasksSource?: string }).tasksSource ??
+      legacyState.integrationHandoffTasks?.source ??
+      null;
     return {
       projectId: project.id,
       projectName: project.name,
@@ -869,6 +908,7 @@ export class SddIntegrationService {
       hasTasksJson: tasksSsot.hasTasksJson,
       taskCount: tasksSsot.taskCount,
       deliverableBundleVersion: snapshot?.bundleVersion ?? null,
+      ariadneTasksSource,
       ...buildNextTaskDocumentLayout(featureDir, governancePresent),
       implementHint:
         "Lee IMPLEMENT.md → .specify/memory/constitution.md → tasks en specs/NNN-slug/tasks.md",

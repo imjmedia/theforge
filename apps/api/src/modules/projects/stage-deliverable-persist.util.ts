@@ -13,6 +13,11 @@ import { stampMarkdownIfBodyChanged } from "../engine/document-date-header.util.
 
 type PrismaStageWriter = Pick<PrismaService, "stage" | "project" | "$transaction">;
 
+export type PersistStageDeliverablesInput = ProjectDeliverableSource & {
+  /** SSOT explícito (p. ej. hidratación Ariadne); evita re-parse cuando ya está validado. */
+  tasksJson?: unknown | null;
+};
+
 export type StageDeliverableRow = ProjectDeliverableSource;
 
 const DELIVERABLE_KEYS = [
@@ -65,10 +70,11 @@ export async function persistStageAndProjectDeliverables(
   prisma: PrismaStageWriter,
   stageId: string,
   projectId: string,
-  fields: ProjectDeliverableSource,
+  fields: PersistStageDeliverablesInput,
 ): Promise<void> {
-  const picked = pickDeliverableFieldsFromSource(fields);
-  if (Object.keys(picked).length === 0) return;
+  const { tasksJson: explicitTasksJson, ...deliverableFields } = fields;
+  const picked = pickDeliverableFieldsFromSource(deliverableFields);
+  if (Object.keys(picked).length === 0 && explicitTasksJson === undefined) return;
 
   const [stageRow, projectRow] = await Promise.all([
     prisma.stage.findUnique({
@@ -110,7 +116,15 @@ export async function persistStageAndProjectDeliverables(
   }
 
   // Auto-parse tasks v2 into structured JSON (SSOT); fallback leaves tasksContent as markdown source
-  if (picked.tasksContent === null) {
+  if (explicitTasksJson !== undefined) {
+    if (explicitTasksJson === null) {
+      stageData.tasksJson = Prisma.JsonNull;
+      projectData.tasksJson = Prisma.JsonNull;
+    } else {
+      stageData.tasksJson = explicitTasksJson as Prisma.InputJsonValue;
+      projectData.tasksJson = explicitTasksJson as Prisma.InputJsonValue;
+    }
+  } else if (picked.tasksContent === null) {
     stageData.tasksJson = Prisma.JsonNull;
     projectData.tasksJson = Prisma.JsonNull;
   } else if (typeof picked.tasksContent === "string" && picked.tasksContent.trim().length > 0) {
