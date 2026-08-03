@@ -156,10 +156,11 @@ export function buildHeuristicTasksPlan(input: HeuristicTasksPlanInput): TasksGe
 
   // --- Pantallas v1 con API → mínimo 1 task Frontend por ruta ---
   const uiMd = input.uiScreensMarkdown ?? "";
-  const routes =
+  const rawRoutes =
     uiMd.trim().length > 0
       ? extractV1InScopePantallaRoutes(uiMd)
-      : filterPlannerRoutes(extractPantallaRoutes(uiMd));
+      : extractPantallaRoutes(uiMd);
+  const routes = filterPlannerRoutes(rawRoutes);
   const hasWebSurfaces = detectWebSurfaces(input.mddMarkdown, input.blueprintMarkdown);
   if (routes.length > 0 || input.hasUxTeam || hasWebSurfaces) {
     sections.add("Frontend");
