@@ -45,7 +45,10 @@ sólo lo necesario (turbo cache hit si no cambió nada).
 - **`us-id-registry.ts`:** IDs estables `US-CRUD-*` / `US-JRN-*` (sin re-numerar por orden CrudMatrix).
 - **`tasks-resolve.ts`:** `resolveTasksForConsume`, `hasValidTasksJson` — SSOT tasks para Workshop/spec-kit/MCP.
 - **`deliverable-bundle.ts`:** `buildDeliverableBundleVersion` — versión atómica US+pantallas+API+tasks.
-- **`tasks-parse.ts`:** parseo spec-kit de `tasks.md` (`[P]`, rutas, checkpoints); `getNextOpenTask` para MCP.
+- **`integration-handoff-tasks.util.ts`:** `INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS`, `resolveIntegrationHandoffTasksMarkdown`, `shouldSkipLegacyTasksGeneration` — handoff NEW→LEG sin entregables fantasma del baseline.
+- **`hydrate-tasks-from-ariadne-pack.util.ts`:** `validateTasksJsonV2`, `hydrateTasksFromAriadnePack`, `buildTasksPreviewMarkdownFromTasksJson` — SSOT tasks desde pack Ariadne.
+- **`parse-ariadne-cursor-tasks-markdown.util.ts`**, **`change-plan-seed-to-tasks-json.util.ts`**, **`merge-tasks-json-idempotent.util.ts`**, **`skip-baseline-deliverables.util.ts`** — parsers, idempotencia y skip cascada.
+- **`ariadne-change-pack.ts`:** change pack v1 + `handoffPlanType`, `cursorTasksMarkdown` (alias `cursor_tasks_markdown`).
 - **`sdd-analyze.ts`:** tipos del reporte `GET /projects/:id/analyze`.
 - **`readiness-audit.util.ts`:** semáforo compuesto, clasificación de gaps (auto/LLM/humano), plan de convergencia post-cascada.
 - **`external-integration-registry.ts`:** registro extensible de integraciones externas (WebSocket, Banxico, Polygon, Stripe, RabbitMQ).

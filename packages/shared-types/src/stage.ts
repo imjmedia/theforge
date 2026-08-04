@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS } from "./integration-handoff-tasks.util.js";
 
 /** POST /projects/:projectId/stages */
 export const createStageBodySchema = z.object({
@@ -12,6 +13,13 @@ export const createStageBodySchema = z.object({
   copyLegacyChangeFromStageId: z.string().uuid().optional(),
   /** Si true (default), esta etapa pasa a ACTIVE y las demás ACTIVE → SUPERSEDED */
   activate: z.boolean().optional().default(true),
+  /**
+   * Campos de entregables que no se copian del snapshot baseline al activar la etapa.
+   * Integración handoff usa `tasksContent`, `userStoriesContent` y `logicFlowsContent` por defecto.
+   */
+  seedExcludeDeliverableKeys: z
+    .array(z.enum(INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS))
+    .optional(),
 });
 
 /** PATCH /projects/:projectId/stages/:stageId */

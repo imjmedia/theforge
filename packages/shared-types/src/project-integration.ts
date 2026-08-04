@@ -10,16 +10,44 @@ export const integrationHandoffItemStatusSchema = z.enum([
 
 export type IntegrationHandoffItemStatus = z.infer<typeof integrationHandoffItemStatusSchema>;
 
-export const integrationHandoffItemSchema = z.object({
+export const integrationHandoffItemKindSchema = z.enum([
+  "requirement",
+  "tasks_json_seed",
+  "cursor_tasks_markdown",
+  "integration_scope",
+  "change_plan_seed",
+]);
+
+export type IntegrationHandoffItemKind = z.infer<typeof integrationHandoffItemKindSchema>;
+
+export const integrationHandoffItemCoreSchema = z.object({
   id: z.string().regex(/^NEW-LEG-\d{2,}$/),
   title: z.string().min(1).max(200),
-  description: z.string().min(1).max(4000),
+  /** Vacío permitido en ítems seed/scope; obligatorio (trim) en `requirement`. */
+  description: z.string().max(200_000).default(""),
+  kind: integrationHandoffItemKindSchema.optional().default("requirement"),
+  /** JSON embebido (seed, scope) cuando Ariadne no usa solo description. */
+  payload: z.unknown().optional(),
   actor: z.string().max(120).optional(),
   acceptanceCriteria: z.array(z.string().max(500)).max(12).optional(),
   status: integrationHandoffItemStatusSchema.default("draft"),
   legacyStoryId: z.string().max(40).optional(),
-  legacyStageId: z.string().uuid().optional(),
 });
+
+export const integrationHandoffItemSchema = integrationHandoffItemCoreSchema
+  .extend({
+    legacyStageId: z.string().uuid().optional(),
+  })
+  .superRefine((item, ctx) => {
+    const kind = item.kind ?? "requirement";
+    if (kind === "requirement" && !(item.description?.trim().length ?? 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "description is required for requirement handoff items",
+        path: ["description"],
+      });
+    }
+  });
 
 export type IntegrationHandoffItem = z.infer<typeof integrationHandoffItemSchema>;
 
@@ -118,7 +146,7 @@ export function formatIntegrationHandoffPreviewStory(
   if (item.actor?.trim()) {
     lines.push(`**Como:** ${item.actor.trim()}`, "");
   }
-  lines.push(item.description.trim(), "");
+  lines.push((item.description ?? "").trim(), "");
   if (item.acceptanceCriteria?.length) {
     lines.push("**Criterios de aceptación:**", "");
     for (const ac of item.acceptanceCriteria) lines.push(`- ${ac}`);
@@ -230,7 +258,8 @@ export function buildHandoffImportDescription(
     "",
   ];
   for (const item of items) {
-    lines.push(`- **${item.id}** — ${item.title}: ${item.description.replace(/\n/g, " ")}`);
+    const desc = (item.description ?? "").replace(/\n/g, " ").trim();
+    lines.push(`- **${item.id}** — ${item.title}${desc ? `: ${desc.slice(0, 200)}` : ""}`);
   }
   return lines.join("\n");
 }

@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useWorkshopStore } from "@/store/workshopStore";
+import { resolveWorkshopTasksPreviewContent, workshopHasHydratedTasksJson } from "@/utils/workshopTasksPreview.util";
 import type { WorkshopDocPanelContentProps } from "./workshopDocPanelContent.types";
 import type { UseWorkshopDocPanelPropsArgs } from "./useWorkshopDocPanelProps.types";
 
@@ -222,6 +223,35 @@ export function useWorkshopDocPanelProps(
 
   const uxUiGuideDirty = (uxUiGuideContent ?? "") !== (project?.uxUiGuideContent ?? "");
 
+  const tasksPrerequisitesResolved = useMemo(() => {
+    const hydrated = workshopHasHydratedTasksJson({
+      tasksJson: activeWorkshopStage?.tasksJson ?? project?.tasksJson,
+    });
+    const source = activeLegacyState?.tasksSource;
+    if (hydrated && source?.startsWith("ariadne_")) {
+      return {
+        ready: true,
+        hint: `Tasks hidratadas desde Ariadne (${source}). No regenerar migration_tasks.`,
+      };
+    }
+    return tasksPrerequisites;
+  }, [
+    activeWorkshopStage?.tasksJson,
+    project?.tasksJson,
+    activeLegacyState?.tasksSource,
+    tasksPrerequisites,
+  ]);
+
+  const tasksPanelContent = useMemo(() => {
+    const preview = resolveWorkshopTasksPreviewContent({
+      tasksContent,
+      tasksJson: project?.tasksJson,
+      stageTasksJson: activeWorkshopStage?.tasksJson,
+    });
+    if (tasksViewMode === "preview") return preview ?? tasksContent;
+    return tasksContent;
+  }, [tasksContent, tasksViewMode, project?.tasksJson, activeWorkshopStage?.tasksJson]);
+
   const workshopStandardDocPanelsProps = useMemo(
     (): import("./workshopStandardDocPanels.types").WorkshopStandardDocPanelsProps => ({
       centralPanel,
@@ -232,7 +262,7 @@ export function useWorkshopDocPanelProps(
       canGenerateFromCodebase,
       activeStageId,
       deliverablesReadOnly,
-      tasksPrerequisites,
+      tasksPrerequisites: tasksPrerequisitesResolved,
       apiBlueprintDmBlocked,
       apiBlueprintBlockedHint,
       docTs,
@@ -289,7 +319,7 @@ export function useWorkshopDocPanelProps(
         clarifyField: "blueprintContent",
       },
       tasks: {
-        content: tasksContent,
+        content: tasksPanelContent,
         onContentChange: setTasksContent,
         onSave: () => void persistTasksContent(tasksContent ?? ""),
         isDirty: tasksDirty,
@@ -342,7 +372,7 @@ export function useWorkshopDocPanelProps(
       canGenerateFromCodebase,
       activeStageId,
       deliverablesReadOnly,
-      tasksPrerequisites,
+      tasksPrerequisitesResolved,
       apiBlueprintDmBlocked,
       apiBlueprintBlockedHint,
       docTs,
@@ -377,7 +407,7 @@ export function useWorkshopDocPanelProps(
       blueprintViewMode,
       generateBlueprint,
       handleBlueprintBlur,
-      tasksContent,
+      tasksPanelContent,
       setTasksContent,
       persistTasksContent,
       tasksDirty,
@@ -439,6 +469,13 @@ export function useWorkshopDocPanelProps(
       workshopStagesList,
       activeStageHandoffImportedAt: activeWorkshopStage?.handoffImportedAt ?? null,
       activeStageWorkflowStatus: activeWorkshopStage?.workflowStatus ?? null,
+      activeStageHandoffSnapshot:
+        (activeWorkshopStage?.handoffSnapshot as { items?: import("@theforge/shared-types").IntegrationHandoffItem[] }) ??
+        null,
+      tasksHydrated: workshopHasHydratedTasksJson({
+        tasksJson: activeWorkshopStage?.tasksJson ?? project?.tasksJson,
+      }),
+      tasksSource: activeLegacyState?.tasksSource ?? null,
       docTs,
       onCopyMddInicialMarkdown: copyMddInicialMarkdown,
       onMddInicialContentChange: setMddInicialLocalContent,

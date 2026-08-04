@@ -2,6 +2,8 @@
 
 Workshop tab for NEW ↔ LEGACY integration (`IntegrationPanel.tsx`).
 
+After handoff import on LEGACY stages: badges per handoff `kind`, collapsible markdown preview for `cursor_tasks_markdown`, **Ver tareas** opens Tasks tab when `tasksJson` is hydrated.
+
 ## UX
 
 1. **Enlazar proyectos** — picker dialog (`GET …/integration/picker`)

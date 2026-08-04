@@ -64,7 +64,13 @@ export interface IntegrationPanelProps {
   /** Active stage handoff import timestamp (preferred over global integration status). */
   activeStageHandoffImportedAt?: string | null;
   activeStageWorkflowStatus?: string | null;
+  /** Handoff snapshot de la etapa activa (LEGACY post-import). */
+  activeStageHandoffSnapshot?: { items?: IntegrationHandoffItem[] } | null;
+  tasksHydrated?: boolean;
+  tasksSource?: string | null;
   onOpenModification?: () => void;
+  /** Abre pestaña Tasks del Workshop. */
+  onOpenTasks?: () => void;
   onProjectRefresh: () => void | Promise<void>;
 }
 
@@ -80,7 +86,11 @@ export function IntegrationPanel({
   legacyAnalyzeDone = false,
   activeStageHandoffImportedAt = null,
   activeStageWorkflowStatus = null,
+  activeStageHandoffSnapshot = null,
+  tasksHydrated = false,
+  tasksSource = null,
   onOpenModification,
+  onOpenTasks,
   onProjectRefresh,
 }: IntegrationPanelProps) {
   const [status, setStatus] = useState<IntegrationStatusResponse | null>(null);
@@ -622,7 +632,15 @@ export function IntegrationPanel({
                 <p className="flex items-center gap-2.5 text-sm leading-relaxed text-[color-mix(in_oklch,var(--success)_88%,var(--foreground))]">
                   <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden />
                   Importado: {new Date(handoffImportedOnActiveStage).toLocaleString()}
+                  {tasksHydrated && tasksSource ? (
+                    <Badge variant="secondary" className="ml-1 font-normal">
+                      Tasks: {tasksSource.replace(/^ariadne_/, "")}
+                    </Badge>
+                  ) : null}
                 </p>
+              ) : null}
+              {handoffImportedOnActiveStage && activeStageHandoffSnapshot?.items?.length ? (
+                <HandoffImportedItemsPreview items={activeStageHandoffSnapshot.items} />
               ) : null}
               {handoffImportedOnActiveStage && legacyAnalyzeDone ? (
                 <p className="text-sm leading-relaxed text-[var(--foreground-muted)]">
@@ -679,6 +697,16 @@ export function IntegrationPanel({
                   >
                     <Sparkles className="h-3.5 w-3.5" aria-hidden />
                     Ir a Modificación
+                  </WorkshopPanelButton>
+                ) : null}
+                {tasksHydrated && onOpenTasks ? (
+                  <WorkshopPanelButton
+                    tone="secondary"
+                    className="inline-flex items-center gap-2"
+                    onClick={onOpenTasks}
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+                    Ver tareas
                   </WorkshopPanelButton>
                 ) : null}
               </div>
@@ -1322,11 +1350,20 @@ function HandoffEditor({
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-xs text-[var(--primary)]">{item.id}</span>
                       <HandoffStatusBadge status={item.status} />
+                      {item.kind && item.kind !== "requirement" ? (
+                        <HandoffKindBadge kind={item.kind} />
+                      ) : null}
                     </div>
                     <p className="mt-1.5 font-medium text-[var(--foreground)]">{item.title}</p>
+                    {item.kind === "cursor_tasks_markdown" ? (
+                      <HandoffMarkdownPreview item={item} />
+                    ) : item.kind === "requirement" ? (
                     <p className="mt-1 text-sm leading-relaxed text-[var(--foreground-muted)]">
                       {item.description}
                     </p>
+                    ) : (
+                      <HandoffSeedItemSummary item={item} />
+                    )}
                     {item.actor?.trim() ? (
                       <p className="mt-1 text-xs text-[var(--foreground-muted)]">
                         <span className="font-medium text-[var(--foreground)]">Actor:</span> {item.actor}
@@ -1403,7 +1440,7 @@ function HandoffItemEditForm({
   }) => Promise<void>;
 }) {
   const [title, setTitle] = useState(item.title);
-  const [description, setDescription] = useState(item.description);
+  const [description, setDescription] = useState(item.description ?? "");
   const [actor, setActor] = useState(item.actor ?? "");
   const [criteriaText, setCriteriaText] = useState((item.acceptanceCriteria ?? []).join("\n"));
   const canSave = title.trim().length > 0 && description.trim().length > 0;
@@ -1567,5 +1604,89 @@ function TraceMatrix({
         </table>
       </CardContent>
     </Card>
+  );
+}
+
+const HANDOFF_KIND_LABELS: Record<string, string> = {
+  requirement: "Requisito",
+  tasks_json_seed: "Tasks JSON",
+  cursor_tasks_markdown: "Tasks MD",
+  integration_scope: "Alcance",
+  change_plan_seed: "ChangePlan",
+};
+
+function HandoffKindBadge({ kind }: { kind: string }) {
+  return (
+    <Badge variant="outline" className="text-[10px] font-normal uppercase tracking-wide">
+      {HANDOFF_KIND_LABELS[kind] ?? kind}
+    </Badge>
+  );
+}
+
+function readHandoffItemMarkdown(item: IntegrationHandoffItem): string {
+  const payload = (item as IntegrationHandoffItem & { payload?: unknown }).payload;
+  if (typeof payload === "string" && payload.trim()) return payload.trim();
+  if (item.description?.trim()) return item.description.trim();
+  return "";
+}
+
+function HandoffMarkdownPreview({ item }: { item: IntegrationHandoffItem }) {
+  const md = readHandoffItemMarkdown(item);
+  const [open, setOpen] = useState(false);
+  if (!md) return null;
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        className="text-xs font-medium text-[var(--primary)] underline-offset-2 hover:underline"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? "Ocultar preview" : "Ver markdown # Tasks"}
+      </button>
+      {open ? (
+        <div className="prose prose-sm mt-2 max-h-64 max-w-none overflow-auto rounded-md border border-[var(--border)] bg-[color-mix(in_oklch,var(--muted)_12%,var(--card))] p-3 dark:prose-invert">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{md.slice(0, 12000)}</ReactMarkdown>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function HandoffSeedItemSummary({ item }: { item: IntegrationHandoffItem }) {
+  const raw = readHandoffItemMarkdown(item);
+  const summary =
+    raw.startsWith("{") || raw.startsWith("[")
+      ? "JSON embebido (seed/scope)"
+      : raw.slice(0, 160) || "—";
+  return (
+    <p className="mt-1 text-xs leading-relaxed text-[var(--foreground-muted)] font-mono">{summary}</p>
+  );
+}
+
+function HandoffImportedItemsPreview({ items }: { items: IntegrationHandoffItem[] }) {
+  const seedItems = items.filter((i) => (i.kind ?? "requirement") !== "requirement");
+  if (!seedItems.length) return null;
+  return (
+    <details className="rounded-lg border border-[var(--border)] bg-[color-mix(in_oklch,var(--muted)_10%,var(--card))] px-3 py-2 text-sm">
+      <summary className="cursor-pointer font-medium text-[var(--foreground)]">
+        Ítems handoff Ariadne ({seedItems.length})
+      </summary>
+      <ul className="mt-2 space-y-2" role="list">
+        {seedItems.map((item) => (
+          <li key={item.id} className="rounded border border-[var(--border)] px-2 py-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-mono text-xs text-[var(--primary)]">{item.id}</span>
+              <HandoffKindBadge kind={item.kind ?? "requirement"} />
+            </div>
+            <p className="mt-1 text-xs font-medium">{item.title}</p>
+            {item.kind === "cursor_tasks_markdown" ? (
+              <HandoffMarkdownPreview item={item} />
+            ) : (
+              <HandoffSeedItemSummary item={item} />
+            )}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }

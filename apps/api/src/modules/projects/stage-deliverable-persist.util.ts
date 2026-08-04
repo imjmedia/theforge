@@ -4,6 +4,7 @@ import {
   resolveLiveStageDeliverables,
   type ProjectDeliverableSource,
   type StageDeliverableSnapshot,
+  type IntegrationHandoffSeedExcludeKey,
 } from "@theforge/shared-types";
 import { Prisma } from "@theforge/database";
 import type { PrismaService } from "../../prisma/prisma.service.js";
@@ -11,6 +12,11 @@ import { parseTasksV2 } from "../engine/task-v2/tasks-parser-v2.js";
 import { stampMarkdownIfBodyChanged } from "../engine/document-date-header.util.js";
 
 type PrismaStageWriter = Pick<PrismaService, "stage" | "project" | "$transaction">;
+
+export type PersistStageDeliverablesInput = ProjectDeliverableSource & {
+  /** SSOT explícito (p. ej. hidratación Ariadne); evita re-parse cuando ya está validado. */
+  tasksJson?: unknown | null;
+};
 
 export type StageDeliverableRow = ProjectDeliverableSource;
 
@@ -64,10 +70,11 @@ export async function persistStageAndProjectDeliverables(
   prisma: PrismaStageWriter,
   stageId: string,
   projectId: string,
-  fields: ProjectDeliverableSource,
+  fields: PersistStageDeliverablesInput,
 ): Promise<void> {
-  const picked = pickDeliverableFieldsFromSource(fields);
-  if (Object.keys(picked).length === 0) return;
+  const { tasksJson: explicitTasksJson, ...deliverableFields } = fields;
+  const picked = pickDeliverableFieldsFromSource(deliverableFields);
+  if (Object.keys(picked).length === 0 && explicitTasksJson === undefined) return;
 
   const [stageRow, projectRow] = await Promise.all([
     prisma.stage.findUnique({
@@ -109,7 +116,18 @@ export async function persistStageAndProjectDeliverables(
   }
 
   // Auto-parse tasks v2 into structured JSON (SSOT); fallback leaves tasksContent as markdown source
-  if (typeof picked.tasksContent === "string" && picked.tasksContent.trim().length > 0) {
+  if (explicitTasksJson !== undefined) {
+    if (explicitTasksJson === null) {
+      stageData.tasksJson = Prisma.JsonNull;
+      projectData.tasksJson = Prisma.JsonNull;
+    } else {
+      stageData.tasksJson = explicitTasksJson as Prisma.InputJsonValue;
+      projectData.tasksJson = explicitTasksJson as Prisma.InputJsonValue;
+    }
+  } else if (picked.tasksContent === null) {
+    stageData.tasksJson = Prisma.JsonNull;
+    projectData.tasksJson = Prisma.JsonNull;
+  } else if (typeof picked.tasksContent === "string" && picked.tasksContent.trim().length > 0) {
     try {
       const parsed = parseTasksV2(picked.tasksContent);
       if (parsed.tasks.length > 0) {
@@ -138,7 +156,10 @@ export async function seedActiveStageDeliverables(
   prisma: PrismaStageWriter,
   stageId: string,
   projectId: string,
-  options?: { previousStageId?: string | null },
+  options?: {
+    previousStageId?: string | null;
+    excludeDeliverableKeys?: readonly IntegrationHandoffSeedExcludeKey[];
+  },
 ): Promise<void> {
   const [stage, project, previousStage] = await Promise.all([
     prisma.stage.findUnique({
@@ -176,13 +197,31 @@ export async function seedActiveStageDeliverables(
   });
   if (hasAnyStageContent) return;
 
+  const exclude = new Set(options?.excludeDeliverableKeys ?? []);
   const snapshot = readStageDeliverableSnapshot(previousStage?.deliverableSnapshot);
-  const source: ProjectDeliverableSource = snapshot
-    ? [...STAGE_DELIVERABLE_KEYS, ...PROJECT_ONLY_DELIVERABLE_KEYS].reduce<ProjectDeliverableSource>((acc, key) => {
+  let source: ProjectDeliverableSource;
+  if (snapshot) {
+    source = [...STAGE_DELIVERABLE_KEYS, ...PROJECT_ONLY_DELIVERABLE_KEYS].reduce<ProjectDeliverableSource>(
+      (acc, key) => {
+        if (exclude.has(key as IntegrationHandoffSeedExcludeKey)) {
+          acc[key] = null;
+          return acc;
+        }
         acc[key] = snapshot[key] ?? project[key] ?? null;
         return acc;
-      }, {})
-    : pickDeliverableFieldsFromSource(project);
+      },
+      {},
+    );
+  } else {
+    source = pickDeliverableFieldsFromSource(project);
+    for (const key of exclude) {
+      source[key] = null;
+    }
+  }
+
+  if (exclude.has("tasksContent")) {
+    source.tasksContent = null;
+  }
 
   await persistStageAndProjectDeliverables(prisma, stageId, projectId, source);
 }

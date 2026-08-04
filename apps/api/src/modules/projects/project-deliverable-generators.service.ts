@@ -38,6 +38,7 @@ import {
   runApiConformanceCheck,
 } from "../engine/api-conformance-repair.util.js";
 import { repairLogicFlowsProgrammaticGaps } from "../engine/logic-flows-conformance-repair.util.js";
+import { isLogicFlowsInsufficientContent } from "../ai/utils/legacy-as-is-logic-flows-ariadne.util.js";
 import {
   buildInfraConformanceGapFeedback,
   extractEntities,
@@ -163,6 +164,12 @@ export class ProjectDeliverableGeneratorsService {
     preferThinLiteraryDocs: true,
     omitLiteraryUcUs: (project.complexity ?? ComplexityLevel.HIGH) === ComplexityLevel.HIGH,
     domainInventory: this.resolveStageDomainInventory(project, stage),
+    codebaseDoc:
+      stage?.legacyChangeState != null &&
+      typeof stage.legacyChangeState === "object" &&
+      typeof (stage.legacyChangeState as { codebaseDoc?: unknown }).codebaseDoc === "string"
+        ? ((stage.legacyChangeState as { codebaseDoc: string }).codebaseDoc ?? null)
+        : null,
   };
   return domainAware;
   }
@@ -1191,14 +1198,22 @@ export class ProjectDeliverableGeneratorsService {
   );
   const mdd = buildConstitutionMarkdown(project);
   let content = await this.ai.generateLogicFlows(mdd, gapsFeedback, legacyOpts);
-  let cleaned = cleanDocumentContent(content);
+  let cleaned = cleanDocumentContent(this.ai.resolveLogicFlowsLlmFallback(mdd, content, legacyOpts));
+
+  const deterministicBaseline =
+    legacyOpts.legacyBaselineStage === true &&
+    !isLogicFlowsInsufficientContent(cleaned) &&
+    /mapeo determinista|mapeo Ariadne business_logic/i.test(cleaned);
 
   const MAX_LOGIC_FLOWS_QUALITY_RETRIES = 1;
   let qualityRetries = 0;
   cleaned = repairLogicFlowsProgrammaticGaps(mdd, cleaned);
   let lfCheck = this.conformance.checkLogicFlows(mdd, cleaned);
-
-  while (!lfCheck.ok && qualityRetries < MAX_LOGIC_FLOWS_QUALITY_RETRIES) {
+  while (
+    !lfCheck.ok &&
+    qualityRetries < MAX_LOGIC_FLOWS_QUALITY_RETRIES &&
+    !deterministicBaseline
+  ) {
     this.throwIfAborted(signal);
     qualityRetries += 1;
     const internalFeedback = lfCheck.gaps.join("; ");
@@ -1206,7 +1221,8 @@ export class ProjectDeliverableGeneratorsService {
     this.logger.warn(
       `[Flujos] Conformidad insuficiente — reintento ${qualityRetries}/${MAX_LOGIC_FLOWS_QUALITY_RETRIES}: ${internalFeedback.slice(0, 200)}`,
     );
-    cleaned = cleanDocumentContent(await this.ai.generateLogicFlows(mdd, combinedFeedback, legacyOpts));
+    content = await this.ai.generateLogicFlows(mdd, combinedFeedback, legacyOpts);
+    cleaned = cleanDocumentContent(this.ai.resolveLogicFlowsLlmFallback(mdd, content, legacyOpts));
     cleaned = repairLogicFlowsProgrammaticGaps(mdd, cleaned);
     lfCheck = this.conformance.checkLogicFlows(mdd, cleaned);
   }

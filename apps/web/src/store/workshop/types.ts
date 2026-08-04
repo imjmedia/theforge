@@ -202,6 +202,10 @@ export interface LegacyFlowState {
   answers?: Record<string, string>;
   /** Documentación de partida del codebase (opcional, generada vía MCP). */
   codebaseDoc?: string;
+  /** SSOT tasks Ariadne (ariadne_tasks_json_seed | ariadne_cursor_tasks_markdown | …). */
+  tasksSource?: string;
+  integrationScope?: { skipBaselineDeliverables?: string[] } | null;
+  skipBaselineDeliverables?: string[];
   /** Última traza de `generate-deliverables` (persistida en el servidor). */
   lastDeliverablesDebug?: LegacyDeliverablesDebugReport;
 }
@@ -226,6 +230,7 @@ export interface WorkshopStage {
   userStoriesContent?: string | null;
   blueprintContent?: string | null;
   tasksContent?: string | null;
+  tasksJson?: unknown;
   apiContractsContent?: string | null;
   logicFlowsContent?: string | null;
   infraContent?: string | null;
@@ -275,6 +280,7 @@ export interface Project {
   uxGuideDesignRef?: string | null;
   blueprintContent: string | null;
   tasksContent: string | null;
+  tasksJson?: unknown;
   apiContractsContent: string | null;
   logicFlowsContent: string | null;
   architectureContent: string | null;

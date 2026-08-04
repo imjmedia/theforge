@@ -4,6 +4,7 @@ import {
   deliverableStepLabelsForComplexity,
   deliverableStepLabelsForKinds,
   planLegacyDeliverablesToGenerate,
+  resolveLegacyCascadeSkipKindsFromStage,
 } from "@theforge/shared-types";
 import { apiFetch, API_BASE } from "../../utils/apiClient";
 import { enqueueAndPollLegacyMdd } from "../../utils/pollMddJob";
@@ -603,9 +604,14 @@ export const createLegacyDebugSlice: StateCreator<
     const stageId = get().activeStageId?.trim() || undefined;
     const project = get().project;
     const complexity = project?.complexity ?? "HIGH";
+    const activeStage = project?.stages?.find((s) => s.id === stageId);
+    const skipKinds = activeStage
+      ? resolveLegacyCascadeSkipKindsFromStage(activeStage)
+      : undefined;
     const plannedKinds = planLegacyDeliverablesToGenerate({
       complexity,
       hasMddContent: !!project?.mddContent?.trim(),
+      skipKinds: skipKinds?.length ? skipKinds : undefined,
     });
     const stepLabels = deliverableStepLabelsForKinds(plannedKinds);
 

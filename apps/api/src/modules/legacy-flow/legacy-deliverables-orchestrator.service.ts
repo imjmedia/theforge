@@ -11,6 +11,8 @@ import {
   DELIVERABLES_BY_COMPLEXITY,
   DELIVERABLE_STEP_LABELS,
   planLegacyDeliverablesToGenerate,
+  resolveLegacyCascadeSkipKindsFromStage,
+  shouldSkipLegacyTasksGeneration,
   type DeliverableKind,
 } from "@theforge/shared-types";
 import { PrismaService } from "../../prisma/prisma.service.js";
@@ -185,6 +187,12 @@ export class LegacyDeliverablesOrchestratorService {
 
     // enforceLegacyBrdTobeGate eliminado — To-Be y As-Is removidos
     const gateState = this.stageContext.readLegacyChangeState(gateStage);
+    const skipTasksFromHandoff = shouldSkipLegacyTasksGeneration({
+      legacyChangeState: gateStage?.legacyChangeState,
+    });
+    const cascadeSkipKinds = resolveLegacyCascadeSkipKindsFromStage({
+      legacyChangeState: gateStage?.legacyChangeState,
+    });
     const codebaseDoc = String(gateState.codebaseDoc ?? "").trim();
     const mddContent = String(project.mddContent ?? "").trim();
     const legacyBaselineStage = resolveLegacyBaselineStageFlag(gateStage, mddContent);
@@ -251,12 +259,13 @@ export class LegacyDeliverablesOrchestratorService {
       outChars: theforgeContext.length,
       detail: theforgeContext.trim() ? "non_empty" : "empty_string",
     });
-    const legacyOpts: { theforgeContext?: string; contractSpecs?: string; legacyBaselineStage?: boolean } | undefined =
+    const legacyOpts: { theforgeContext?: string; contractSpecs?: string; legacyBaselineStage?: boolean; codebaseDoc?: string } | undefined =
       theforgeContext.trim() || contractSpecs.trim() || legacyBaselineStage
         ? {
             ...(theforgeContext.trim() ? { theforgeContext } : {}),
             ...(contractSpecs.trim() ? { contractSpecs } : {}),
             ...(legacyBaselineStage ? { legacyBaselineStage: true } : {}),
+            ...(codebaseDoc ? { codebaseDoc } : {}),
           }
         : undefined;
 
@@ -479,7 +488,9 @@ export class LegacyDeliverablesOrchestratorService {
             }
           }
           const logicFlowsContent = await this.ai.generateLogicFlows(mddForLlm, undefined, legacyOpts);
-          const cleaned = cleanDocumentContent(logicFlowsContent);
+          const cleaned = cleanDocumentContent(
+            this.ai.resolveLogicFlowsLlmFallback(mddForLlm, logicFlowsContent, legacyOpts),
+          );
           if (legacyBaselineStage) {
             const services = extractSection5Services(mddForLlm);
             const batchSize = readLogicFlowsBatchSize();
@@ -648,6 +659,15 @@ export class LegacyDeliverablesOrchestratorService {
           return;
         }
         case "tasks": {
+          if (skipTasksFromHandoff) {
+            pushStep({
+              kind: "tasks",
+              durationMs: 0,
+              ok: true,
+              detail: "skipped_handoff_ssot",
+            });
+            return;
+          }
           const bpTasks = p.blueprintContent?.trim();
           const smTk = await trySectionMergeDeliverable(
             this.ai,
@@ -744,6 +764,7 @@ export class LegacyDeliverablesOrchestratorService {
     const deliverablesPlanned = planLegacyDeliverablesToGenerate({
       complexity,
       hasMddContent: !!mddContent,
+      skipKinds: cascadeSkipKinds.length ? cascadeSkipKinds : skipTasksFromHandoff ? (["tasks"] as const) : undefined,
     });
     report.deliverablesOrder = [...deliverablesPlanned];
 

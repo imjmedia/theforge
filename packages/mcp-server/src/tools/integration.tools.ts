@@ -205,6 +205,19 @@ export const INTEGRATION_TOOLS: McpTool[] = [
             questionsToRefine: { type: "array", items: { type: "string" } },
             handoffItems: { type: "array", items: { type: "object" } },
             linkedNewProjectId: { type: "string" },
+            handoffPlanType: {
+              type: "string",
+              enum: ["migration_tasks", "full_cascade"],
+              description: "migration_tasks: importa tasks del handoff; Forge omite LLM tasks en cascada.",
+            },
+            cursorTasksMarkdown: {
+              type: "string",
+              description: "Markdown Cursor-ready (alias snake_case: cursor_tasks_markdown). SSOT de tasks.",
+            },
+            cursor_tasks_markdown: {
+              type: "string",
+              description: "Alias snake_case de cursorTasksMarkdown.",
+            },
           },
           required: ["version", "changeDescription"],
         },
