@@ -4,7 +4,10 @@ import {
   normalizeAriadneHandoffItemsRaw,
   resolveSkipBaselineDeliverableKinds,
   shouldSkipLegacyGenerateDeliverables,
+  extractIntegrationScopeFromHandoff,
+  resolveStageOriginFromIntegrationScope,
   type AriadneHandoffIdRemap,
+  type StageOrigin,
 } from "@theforge/shared-types";
 
 /** Clona body MCP y normaliza `pack.handoffItems[].id` antes del parse Zod (log de remaps). */
@@ -31,6 +34,13 @@ export function preprocessCreateStageFromAriadneChangePackBody(body: unknown): {
   };
 }
 
+export function resolveStageOriginForAriadnePack(
+  pack: AriadneChangePackV1,
+): StageOrigin {
+  const scope = extractIntegrationScopeFromHandoff(pack.handoffItems ?? []);
+  return resolveStageOriginFromIntegrationScope(scope) ?? "ariadne_change_pack";
+}
+
 export function buildLegacyChangeStateFromAriadnePack(
   pack: AriadneChangePackV1,
   defaultRepoId: string | null,
@@ -44,6 +54,7 @@ export function buildLegacyChangeStateFromAriadnePack(
 
   return {
     description: pack.changeDescription.trim(),
+    stageOrigin: resolveStageOriginForAriadnePack(pack),
     ...(filesToModify.length ? { filesToModify } : {}),
     ...(pack.questionsToRefine?.length ? { questions: pack.questionsToRefine } : {}),
     ariadneChangePack: {
@@ -106,6 +117,11 @@ export function buildRecommendedNextToolsAfterAriadnePack(input: {
     steps.push({
       tool: "get_next_implementation_task",
       reason: "Primera tarea abierta del seed — iniciar implementación Cursor.",
+    });
+    steps.push({
+      tool: "generate_agent_governance",
+      reason:
+        "Generar gobernanza IA desde documentos Ariadne (tasks, plan, alcance) — no esperes cascada legacy completa.",
     });
     return steps;
   }

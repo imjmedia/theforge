@@ -234,6 +234,7 @@ export function WorkshopLegacyPanels({
                       activeStageHandoffSnapshot={activeStageHandoffSnapshot}
                       tasksHydrated={tasksHydrated}
                       tasksSource={tasksSource}
+                      stageOrigin={activeLegacyState?.stageOrigin ?? null}
                       onOpenModification={() => onNavigatePanel("legacy")}
                       onOpenTasks={() => onNavigatePanel("tasks")}
                       onProjectRefresh={() => {

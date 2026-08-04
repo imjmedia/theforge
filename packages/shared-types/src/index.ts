@@ -86,6 +86,8 @@ export * from "./merge-tasks-json-idempotent.util.js";
 export * from "./parse-ariadne-cursor-tasks-markdown.util.js";
 export * from "./change-plan-seed-to-tasks-json.util.js";
 export * from "./ariadne-handoff-normalize.util.js";
+export * from "./stage-origin.util.js";
+export * from "./ariadne-handoff-artifacts.util.js";
 export * from "./dbga-endpoint-catalog-merge.js";
 export * from "./ui-mcp-contract.js";
 export * from "./technology-docs/index.js";

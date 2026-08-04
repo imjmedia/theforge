@@ -13,6 +13,12 @@ export const INTEGRATION_HANDOFF_ITEM_KINDS = [
   "cursor_tasks_markdown",
   "integration_scope",
   "change_plan_seed",
+  "mdd_evidence",
+  "modification_plan_enriched",
+  "change_work_description",
+  "er_diagram",
+  "deliverable_request",
+  "post_deliverable_gate",
 ] as const satisfies readonly IntegrationHandoffItemKind[];
 
 export interface AriadneIntegrationScopePayload {

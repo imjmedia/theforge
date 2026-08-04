@@ -204,6 +204,8 @@ export interface LegacyFlowState {
   codebaseDoc?: string;
   /** SSOT tasks Ariadne (ariadne_tasks_json_seed | ariadne_cursor_tasks_markdown | …). */
   tasksSource?: string;
+  /** Provenance: forge_native | ariadne_change_pack | ariadne_integration_handoff | integration_promote */
+  stageOrigin?: string;
   integrationScope?: { skipBaselineDeliverables?: string[] } | null;
   skipBaselineDeliverables?: string[];
   /** Última traza de `generate-deliverables` (persistida en el servidor). */

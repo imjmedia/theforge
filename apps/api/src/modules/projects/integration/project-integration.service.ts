@@ -1185,6 +1185,7 @@ export class ProjectIntegrationService {
         legacyChangeState: {
           ...(existingState && typeof existingState === "object" ? existingState : {}),
           description: mergedDescription,
+          stageOrigin: "integration_promote",
         },
       },
     });

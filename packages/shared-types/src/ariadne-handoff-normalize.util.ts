@@ -99,6 +99,21 @@ export function normalizeAriadneHandoffItemsRaw(
     const { id, remapped: map } = normalizeHandoffItemIdForForge(rawId, index + 1, usedIds);
     row.id = id;
     if (map) remapped.push(map);
+    // Ariadne packs use `content` for document body; Forge schema uses description/payload.
+    const content = typeof row.content === "string" ? row.content.trim() : "";
+    const description = typeof row.description === "string" ? row.description.trim() : "";
+    if (content && (!description || description === String(row.title ?? "").trim())) {
+      row.description = content.slice(0, 200_000);
+      if ((content.startsWith("{") || content.startsWith("[")) && row.payload == null) {
+        try {
+          row.payload = JSON.parse(content) as unknown;
+        } catch {
+          /* keep description only */
+        }
+      }
+    }
+    delete row.content;
+    delete row.mimeType;
     items.push(row);
   });
 
