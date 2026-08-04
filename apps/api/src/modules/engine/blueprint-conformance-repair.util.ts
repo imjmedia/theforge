@@ -1,3 +1,4 @@
+import { repairMarkdownTableSeparators } from "./markdown-table-repair.util.js";
 import {
   checkBlueprintApiTableFormat,
   checkBlueprintDataModelVsMdd,
@@ -205,12 +206,18 @@ export function injectMissingBlueprintStackKeywords(
   return stackBlock + blueprintContent;
 }
 
+/** Repara tablas markdown (separador |---|) antes del quality gate. */
+export function repairBlueprintMarkdownTables(blueprintContent: string): string {
+  return repairMarkdownTableSeparators(blueprintContent);
+}
+
 /** Reparaciones deterministas tras la IA (entidades, stack §2, cabeceras obligatorias). */
 export function repairBlueprintProgrammaticGaps(
   mddContent: string,
   blueprintContent: string,
 ): string {
-  let out = injectMissingBlueprintEntities(mddContent, blueprintContent);
+  let out = repairBlueprintMarkdownTables(blueprintContent);
+  out = injectMissingBlueprintEntities(mddContent, out);
   out = injectMissingBlueprintStackKeywords(mddContent, out);
   out = injectMissingBlueprintSectionHeaders(out);
   return out;

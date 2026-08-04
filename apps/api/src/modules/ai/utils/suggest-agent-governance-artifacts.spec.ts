@@ -5,6 +5,7 @@ import {
   detectSddConflicts,
   extractProjectGovernanceFacts,
   extractProjectTitle,
+  filterTaskExcerptsForProjectStack,
   extractTaskCheckboxes,
   inferStacks,
   isValidBlueprintModulePath,
@@ -533,6 +534,19 @@ RUN yarn build
     assert.equal(boxes.length, 2);
     assert.match(boxes[0], /Configurar monorepo/);
   });
+
+  it("filtra extractos NestJS/Prisma cuando MDD §2 es Spring Boot", () => {
+    const boxes = filterTaskExcerptsForProjectStack(
+      [
+        "- [ ] Crear módulo NestJS auth",
+        "- [ ] Migración schema.prisma",
+        "- [ ] Configurar Spring Security JWT",
+      ],
+      { backendStack: "Spring Boot" },
+    );
+    assert.equal(boxes.length, 1);
+    assert.match(boxes[0]!, /Spring Security/);
+  });
 });
 
 describe("isValidBlueprintModulePath", () => {
@@ -733,6 +747,24 @@ Mensajería con RabbitMQ para workers asíncronos.
     );
     assert.equal(stacks.frontend, CLI_FRONTEND_STACK_LABEL);
     assert.equal(stacks.mobile, undefined);
+  });
+
+  it("inferStacks prioriza React en MDD §2 sobre CLI en §1", () => {
+    const mdd = `
+## 1. Contexto
+MVP incluye CLI para operaciones batch.
+## 2. Arquitectura y Stack
+Frontend React 18 + Vite + Tailwind + Radix UI (apps/web).
+Backend NestJS API.
+`;
+    const stacks = inferStacks(`${mdd}\nCLI Commander para scripts.`, {
+      authoritativeUiText: "MVP incluye CLI para operaciones batch.",
+      authoritativeStackText:
+        "Frontend React 18 + Vite + Tailwind + Radix UI (apps/web).\nBackend NestJS API.",
+      mddMarkdown: mdd,
+    });
+    assert.match(stacks.frontend ?? "", /React|Tailwind \+ Radix/i);
+    assert.notEqual(stacks.frontend, CLI_FRONTEND_STACK_LABEL);
   });
 
   it("prioriza Fastify+Railway de MDD §2 sobre FastAPI/Kubernetes en Blueprint", () => {

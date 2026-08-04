@@ -19,6 +19,7 @@ import {
   type DeliverableKind,
   type TasksPipelineProgress,
   type TasksPipelineQualitySnapshot,
+  detectWebSurfaces,
 } from "@theforge/shared-types";
 import { loadProjectBorrador, hasBorradorContent } from "../ai-analysis/phase0/phase0-load-borrador.util.js";
 import { phase0ToMarkdown } from "../ai-analysis/phase0/phase0-to-markdown.js";
@@ -27,6 +28,7 @@ import { enrichBlueprintWithUiDesignSystem } from "../engine/blueprint-enrich-ui
 import {
   buildBlueprintQualityRetryFeedback,
   collectBlueprintHardQualityGaps,
+  repairBlueprintMarkdownTables,
   repairBlueprintProgrammaticGaps,
   runBlueprintQualityChecks,
 } from "../engine/blueprint-conformance-repair.util.js";
@@ -654,6 +656,7 @@ export class ProjectDeliverableGeneratorsService {
 
   const mdd = buildConstitutionMarkdown(project);
   const hasUxTeam = project.hasUxTeam === true;
+  const hasWebSurfaces = detectWebSurfaces(mdd, project.blueprintContent);
   const stage = pickPrimaryStage(project.stages ?? []);
   const inventory = resolveDomainInventory({
     persisted: stage?.domainInventory,
@@ -671,11 +674,13 @@ export class ProjectDeliverableGeneratorsService {
     logicFlowsMarkdown: project.logicFlowsContent,
     uiScreensMarkdown: project.uiScreensContent,
     inventory,
-    uiScreensRequired: hasUxTeam,
+    uiScreensRequired: hasUxTeam || hasWebSurfaces,
   });
 
   const actions = deriveTasksUpstreamActions(docAcc, {
     hasUxTeam,
+    mddMarkdown: mdd,
+    blueprintMarkdown: project.blueprintContent,
     specMarkdown: spec,
     apiContractsMarkdown: project.apiContractsContent,
     logicFlowsMarkdown: project.logicFlowsContent,
@@ -685,8 +690,8 @@ export class ProjectDeliverableGeneratorsService {
 
   for (const action of actions) {
     try {
-      if (action.artifact === "ui_screens" && hasUxTeam) {
-        this.logger.log("[Tasks upstream] sync pantallas MCP");
+      if (action.artifact === "ui_screens" && (hasUxTeam || hasWebSurfaces)) {
+        this.logger.log("[Tasks upstream] sync pantallas (MCP o heurístico)");
         await this.deliverablesCascade.syncUiScreens(projectId);
         project = await this.projects.findOne(projectId);
         continue;
@@ -950,6 +955,7 @@ export class ProjectDeliverableGeneratorsService {
   );
   let blueprintContent = await this.ai.generateBlueprint(enrichedMdd, gapsFeedback, legacyOpts);
   blueprintContent = cleanDocumentContent(blueprintContent);
+  blueprintContent = repairBlueprintMarkdownTables(blueprintContent);
 
   // GUARD: Si gapsFeedback provocó un resultado vacío/corto, reintentar SIN gaps
   if (gapsFeedback && blueprintContent.length < 80) {
@@ -957,6 +963,7 @@ export class ProjectDeliverableGeneratorsService {
     this.logger.warn(`[Blueprint] Resultado vacío/corto (${blueprintContent.length} chars) con gapsFeedback — reintentando sin gaps`);
     blueprintContent = await this.ai.generateBlueprint(enrichedMdd, null, legacyOpts);
     blueprintContent = cleanDocumentContent(blueprintContent);
+    blueprintContent = repairBlueprintMarkdownTables(blueprintContent);
   }
 
   // GUARD: No persistir si sigue vacío — preservar el Blueprint anterior
@@ -965,26 +972,33 @@ export class ProjectDeliverableGeneratorsService {
     throw new BadRequestException("No se pudo generar el Blueprint. Intenta de nuevo.");
   }
 
-  // Verificación multi-capa + un reintento LLM solo ante gaps "duros" (entidades, secciones, tablas…).
-  // Autocontenido es soft: evita ~80s de retry cuando el blueprint ya es sustancial.
-  let qualityRetried = false;
+  // Verificación multi-capa + reintento LLM acotado ante gaps "duros" (entidades, secciones, tablas…).
+  const MAX_BLUEPRINT_QUALITY_RETRIES = 1;
+  let qualityRetries = 0;
   let checks = runBlueprintQualityChecks(mddContent, blueprintContent);
   let hardGaps = collectBlueprintHardQualityGaps(checks);
 
-  if (hardGaps.length > 0 && !qualityRetried) {
+  while (hardGaps.length > 0 && qualityRetries < MAX_BLUEPRINT_QUALITY_RETRIES) {
     this.throwIfAborted(signal);
-    qualityRetried = true;
+    qualityRetries += 1;
     const internalFeedback = buildBlueprintQualityRetryFeedback(checks);
     const combinedFeedback = [gapsFeedback?.trim(), internalFeedback].filter(Boolean).join("\n\n");
     this.logger.warn(
       `[Blueprint] Calidad insuficiente (${checks.entity.gaps.length} entidades, ${checks.section.gaps.length} secciones, ` +
-        `${checks.generalTable.gaps.length} tablaGral, ${checks.spanish.gaps.length} español, ` +
-        `${checks.selfContained.gaps.length} autocontenido) — reintentando: ${hardGaps[0]?.slice(0, 140)}`,
+        `${checks.generalTable.gaps.length} tablaGral, ${checks.apiTable.gaps.length} tablaApi, ${checks.spanish.gaps.length} español, ` +
+        `${checks.selfContained.gaps.length} autocontenido) — reintento ${qualityRetries}/${MAX_BLUEPRINT_QUALITY_RETRIES}: ${hardGaps[0]?.slice(0, 140)}`,
     );
     blueprintContent = await this.ai.generateBlueprint(enrichedMdd, combinedFeedback, legacyOpts);
     blueprintContent = cleanDocumentContent(blueprintContent);
+    blueprintContent = repairBlueprintMarkdownTables(blueprintContent);
     checks = runBlueprintQualityChecks(mddContent, blueprintContent);
     hardGaps = collectBlueprintHardQualityGaps(checks);
+  }
+
+  if (hardGaps.length > 0) {
+    this.logger.warn(
+      `[Blueprint] Persistiendo con ${hardGaps.length} gap(s) de calidad tras ${qualityRetries} reintento(s): ${hardGaps.slice(0, 3).join("; ")}`,
+    );
   } else if (checks.selfContained.gaps.length > 0) {
     this.logger.warn(
       `[Blueprint] Referencias al MDD (${checks.selfContained.gaps.length} autocontenido) — sin retry LLM: ` +
@@ -1017,6 +1031,9 @@ export class ProjectDeliverableGeneratorsService {
   }
 
   const updated = await this.projects.update(projectId, { blueprintContent });
+  this.logger.log(
+    `[Blueprint] Blueprint completado (${blueprintContent.length} chars, hardGaps=${hardGaps.length})`,
+  );
   this.notifyPluginAfterDocumentPersist(
     "blueprint",
     projectId,
@@ -1101,15 +1118,19 @@ export class ProjectDeliverableGeneratorsService {
     throw new BadRequestException("No se pudo generar Contratos API. Intenta de nuevo.");
   }
 
-  let qualityRetried = false;
+  // Reparación determinista antes del quality gate (extras §4 → sin retry LLM de ~7 min).
+  const MAX_API_QUALITY_RETRIES = 1;
+  let qualityRetries = 0;
+  apiContent = repairApiProgrammaticGaps(mddContent, apiContent);
   let apiCheck = runApiConformanceCheck(mddContent, apiContent);
-  if (!apiCheck.ok && !qualityRetried) {
+
+  while (!apiCheck.ok && qualityRetries < MAX_API_QUALITY_RETRIES) {
     this.throwIfAborted(signal);
-    qualityRetried = true;
+    qualityRetries += 1;
     const internalFeedback = buildApiRetryFeedback(apiCheck);
     const combinedFeedback = [gapsFeedback?.trim(), internalFeedback].filter(Boolean).join("\n\n");
     this.logger.warn(
-      `[API] Conformidad insuficiente (${apiCheck.missingInApi.length} faltantes, ${apiCheck.extraInApi.length} extra) — reintentando`,
+      `[API] Conformidad insuficiente (${apiCheck.missingInApi.length} faltantes, ${apiCheck.extraInApi.length} extra) — reintento ${qualityRetries}/${MAX_API_QUALITY_RETRIES}`,
     );
     apiContent = cleanDocumentContent(
       await this.ai.generateApiContracts(
@@ -1120,7 +1141,14 @@ export class ProjectDeliverableGeneratorsService {
         legacyOpts,
       ),
     );
+    apiContent = repairApiProgrammaticGaps(mddContent, apiContent);
     apiCheck = runApiConformanceCheck(mddContent, apiContent);
+  }
+
+  if (!apiCheck.ok) {
+    this.logger.warn(
+      `[API] Persistiendo con ${apiCheck.missingInApi.length + apiCheck.extraInApi.length} gap(s) de conformidad tras ${qualityRetries} reintento(s)`,
+    );
   }
 
   apiContent = repairApiProgrammaticGaps(mddContent, apiContent);
@@ -1149,6 +1177,9 @@ export class ProjectDeliverableGeneratorsService {
   }
 
   const updated = await this.projects.update(projectId, { apiContractsContent: apiContent });
+  this.logger.log(
+    `[API] Contratos API completados (${apiContent.length} chars, conformidad=${postCheck.ok})`,
+  );
   this.notifyPluginAfterDocumentPersist(
     "api-contracts",
     projectId,
@@ -1174,17 +1205,32 @@ export class ProjectDeliverableGeneratorsService {
     !isLogicFlowsInsufficientContent(cleaned) &&
     /mapeo determinista|mapeo Ariadne business_logic/i.test(cleaned);
 
-  let qualityRetried = false;
+  const MAX_LOGIC_FLOWS_QUALITY_RETRIES = 1;
+  let qualityRetries = 0;
+  cleaned = repairLogicFlowsProgrammaticGaps(mdd, cleaned);
   let lfCheck = this.conformance.checkLogicFlows(mdd, cleaned);
-  if (!lfCheck.ok && !qualityRetried && !deterministicBaseline) {
+  while (
+    !lfCheck.ok &&
+    qualityRetries < MAX_LOGIC_FLOWS_QUALITY_RETRIES &&
+    !deterministicBaseline
+  ) {
     this.throwIfAborted(signal);
-    qualityRetried = true;
+    qualityRetries += 1;
     const internalFeedback = lfCheck.gaps.join("; ");
     const combinedFeedback = [gapsFeedback?.trim(), internalFeedback].filter(Boolean).join("\n\n");
-    this.logger.warn(`[Flujos] Conformidad insuficiente — reintentando: ${internalFeedback.slice(0, 200)}`);
+    this.logger.warn(
+      `[Flujos] Conformidad insuficiente — reintento ${qualityRetries}/${MAX_LOGIC_FLOWS_QUALITY_RETRIES}: ${internalFeedback.slice(0, 200)}`,
+    );
     content = await this.ai.generateLogicFlows(mdd, combinedFeedback, legacyOpts);
     cleaned = cleanDocumentContent(this.ai.resolveLogicFlowsLlmFallback(mdd, content, legacyOpts));
+    cleaned = repairLogicFlowsProgrammaticGaps(mdd, cleaned);
     lfCheck = this.conformance.checkLogicFlows(mdd, cleaned);
+  }
+
+  if (!lfCheck.ok) {
+    this.logger.warn(
+      `[Flujos] Persistiendo con ${lfCheck.gaps.length} gap(s) tras ${qualityRetries} reintento(s)`,
+    );
   }
 
   cleaned = repairLogicFlowsProgrammaticGaps(mdd, cleaned);
@@ -1203,6 +1249,9 @@ export class ProjectDeliverableGeneratorsService {
   }
 
   const updated = await this.projects.update(projectId, { logicFlowsContent: cleaned });
+  this.logger.log(
+    `[Flujos] Flujos de lógica completados (${cleaned.length} chars, conformidad=${postCheck.ok})`,
+  );
   this.notifyPluginAfterDocumentPersist(
     "logic-flows",
     projectId,

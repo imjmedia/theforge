@@ -31,8 +31,8 @@ Cuando TheForge generaba solo documentos sueltos en `docs/sdd/<proyecto>/`:
 | **`logic-flows.md`** | Diagramas de flujo de lógica de negocio — auth, pagos, video pipeline, expiración | Guía para implementar servicios complejos con múltiples pasos y condiciones |
 | **`infra.md`** | Infraestructura — Docker, Dokploy, dominios, redes, S3, backups | Configura el despliegue y la infraestructura según lo especificado |
 | **`tasks.md`** | Lista de tareas priorizadas — desglose de implementación paso a paso | Úsalo como checklist, pero **no** como única fuente — contrasta siempre contra MDD y Blueprint. Ver [TASKS-ROL-EN-SDD.md](./TASKS-ROL-EN-SDD.md) |
-| **`design-system.md`** | Guía de diseño — paleta, tipografía, espaciado, componentes UI autorizados | Si el proyecto usa Kreo UI, aquí están los tokens de diseño. Si no, define la guía visual |
-| **`pantallas.md`** | Pantallas / UI Screens Spec (MCP gráfico) — vistas, componentes **reales** (nombre + paquete@versión), entidad y binding a endpoints | **Distinto de design-system.md.** Léelo **antes** de implementar pantallas cuando exista; gana sobre Blueprint §8 heurístico |
+| **`design-system.md`** | Guía de diseño — paleta, tipografía, espaciado, componentes UI autorizados. `colorSource: system-default` cuando no hay marca | Tokens primitivos + semánticos; mismo DS en producto y admin |
+| **`pantallas.md`** | Pantallas / UI Screens Spec — vistas, rutas, componentes (MCP o heurístico), columnas Layout + Responsive | **Distinto de design-system.md.** Gana sobre Blueprint §8; import UI solo vía `packages/ui` (`@scope/ui`) |
 | **`aem.md`** | Análisis y Estrategia de Mercado (opcional) — contexto de negocio | Contexto para entender el "por qué" del producto |
 | **`phase0-deep-research.md`** | Investigación profunda — benchmark, análisis de competencia | Contexto adicional, no vinculante para implementación |
 | **`benchmark.md`** | Benchmark contra competidores | Referencia, no vinculante |
@@ -54,7 +54,7 @@ MDD §6 → Arquitectura (módulos, flujos, integraciones)
 
 ### Regla 2: Blueprint §8 vs pantallas.md
 
-**Si existe `pantallas.md` (MCP gráfico), gana sobre heurísticas de Blueprint §8.** Sin pantallas, sigue Blueprint §8 y `design-system.md`.
+**Si existe `pantallas.md`, gana sobre heurísticas de Blueprint §8.** Sin pantallas, sigue Blueprint §8 y `design-system.md`. Multi-superficie: `AppShell` (producto) y `AdminShell` (admin) comparten DS; responsive mobile-first (sm–xl) en pantallas y Tasks Frontend.
 
 | Tipo de Entidad | Componente a Usar | Ejemplo |
 |-----------------|-------------------|---------|

@@ -63,3 +63,5 @@ El pipeline de TheForge **normaliza automáticamente** tablas y diagramas despu�
 - **No te preocupes** por líneas en blanco después del separador, guiones extras, o espacios en IDs de mermaid — el sistema lo limpia.
 
 Esto aplica a **todos** los documentos (MDD, Blueprint, Spec, API Contracts, UX/UI Guide, etc.).
+
+**Superficies UI (MDD §2):** Si el stack declara React/SPA, admin panel o `packages/ui`, documenta journeys por rol, shells (`AppShell`/`AdminShell`), adapter `@scope/ui` y responsive mobile-first en §2 Frontend y entregables downstream (`design-system.md`, `pantallas.md`, Tasks Frontend).

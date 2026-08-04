@@ -23,6 +23,8 @@ export interface DesignTokens {
   name?: string;
   version?: string;
   description?: string;
+  /** Raw palette hex values referenced by semantic colors (`{primitives.zinc900}`). */
+  primitives?: Record<string, string>;
   colors?: Record<string, string>;
   typography?: Record<string, TypographyToken>;
   rounded?: Record<string, string>;

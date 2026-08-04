@@ -20,6 +20,11 @@ import {
   formatLintSummary,
   type DesignMdLintResult,
 } from "../design-ref/design-md-lint.util.js";
+import {
+  formatDesignSystemLintSummary,
+  lintDesignSystemTokens,
+} from "../design-ref/design-system-lint.util.js";
+import { postProcessUxGuideDesignTokens } from "../design-ref/design-system-postprocess.util.js";
 import { scanUrlForDesignTokens } from "../design-ref/scan-url.util.js";
 import { UiMcpClientService } from "../ui-mcp/ui-mcp-client.service.js";
 import { UiMcpService } from "../ui-mcp/ui-mcp.service.js";
@@ -96,8 +101,15 @@ name: ${JSON.stringify(name)}
 
 ${finalContent}`;
     }
+    finalContent = postProcessUxGuideDesignTokens(finalContent, mdd, bp);
     finalContent = await this.appendUiMcpDesignSystem(finalContent);
     finalContent = appendUxGuideDesignAttribution(finalContent, project.uxGuideDesignRef, mdd);
+    const tokenLint = lintDesignSystemTokens(finalContent, mdd, bp);
+    if (tokenLint.findings.length > 0) {
+      this.logger.log(
+        `[generateUxUiGuide] ${formatDesignSystemLintSummary(tokenLint)} project=${projectId}`,
+      );
+    }
     const updated = await this.projects.update(projectId, { uxUiGuideContent: finalContent });
     this.notifyPluginAfterDocumentPersist(
       "ux-ui-guide",

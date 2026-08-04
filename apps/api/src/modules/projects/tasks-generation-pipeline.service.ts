@@ -343,7 +343,7 @@ export class TasksGenerationPipelineService {
     append("Logic Flows", input.taskOpts.logicFlowsContent, 12_000);
     append("Infra", input.taskOpts.infraContent, 10_000);
     append("Architecture", input.taskOpts.architectureContent, 12_000);
-    if (input.hasUxTeam) {
+    if (input.taskOpts.uxUiGuideContent?.trim()) {
       append("UX Guide", input.taskOpts.uxUiGuideContent, 8_000);
     }
     append("Pantallas", input.taskOpts.uiScreensContent, 20_000);

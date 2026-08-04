@@ -4,6 +4,7 @@ import {
   DELIVERABLES_BY_COMPLEXITY,
   DELIVERABLE_WAVES_BY_COMPLEXITY,
   flattenDeliverableWaves,
+  resolveDeliverableWaves,
   planLegacyDeliverablesToGenerate,
 } from "./deliverables-matrix.js";
 
@@ -64,5 +65,12 @@ describe("DELIVERABLE_WAVES_BY_COMPLEXITY", () => {
     const flat = flattenDeliverableWaves("HIGH");
     assert.ok(flat.includes("ui_screens_sync"));
     assert.ok(flat.indexOf("blueprint") < flat.indexOf("tasks"));
+  });
+
+  it("MEDIUM injects ui_screens_sync when web surface declared", () => {
+    const mdd = "## 2. Stack\n\nReact 18 + Vite";
+    const flat = flattenDeliverableWaves("MEDIUM", { hasWebSurfaces: true, mddMarkdown: mdd });
+    assert.ok(flat.includes("ui_screens_sync"));
+    assert.ok(flat.indexOf("ui_screens_sync") < flat.indexOf("tasks"));
   });
 });

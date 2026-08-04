@@ -1,4 +1,5 @@
 import type { ComplexityLevel } from "./project.js";
+import { detectWebSurfaces } from "./web-surfaces.util.js";
 
 /** Claves de entregables para despacho dinámico (backend). */
 export type DeliverableKind =
@@ -124,9 +125,38 @@ export const DELIVERABLE_WAVES_BY_COMPLEXITY: Record<ComplexityLevel, Deliverabl
   ],
 };
 
+export type DeliverableWaveOptions = {
+  /** When true, MEDIUM complexity includes W2b ui_screens_sync before tasks. */
+  hasWebSurfaces?: boolean;
+  mddMarkdown?: string | null;
+  blueprintMarkdown?: string | null;
+};
+
+/** Resolves oleadas; MEDIUM + web surface injects ui_screens_sync before tasks. */
+export function resolveDeliverableWaves(
+  complexity: ComplexityLevel,
+  opts?: DeliverableWaveOptions,
+): DeliverableWaveStep[][] {
+  const base = DELIVERABLE_WAVES_BY_COMPLEXITY[complexity].map((w) => [...w]);
+  const hasWeb =
+    opts?.hasWebSurfaces ??
+    detectWebSurfaces(opts?.mddMarkdown, opts?.blueprintMarkdown);
+  if (complexity === "MEDIUM" && hasWeb) {
+    const tasksIdx = base.findIndex((w) => w.includes("tasks"));
+    const alreadyHas = base.some((w) => w.includes(DELIVERABLE_UI_SCREENS_SYNC_STEP));
+    if (tasksIdx >= 0 && !alreadyHas) {
+      base.splice(tasksIdx, 0, [DELIVERABLE_UI_SCREENS_SYNC_STEP]);
+    }
+  }
+  return base;
+}
+
 /** Aplanado de oleadas (orden de progreso UI). */
-export function flattenDeliverableWaves(complexity: ComplexityLevel): DeliverableWaveStep[] {
-  return DELIVERABLE_WAVES_BY_COMPLEXITY[complexity].flat();
+export function flattenDeliverableWaves(
+  complexity: ComplexityLevel,
+  opts?: DeliverableWaveOptions,
+): DeliverableWaveStep[] {
+  return resolveDeliverableWaves(complexity, opts).flat();
 }
 
 export function deliverableWaveStepLabel(

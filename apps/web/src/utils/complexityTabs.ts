@@ -65,8 +65,8 @@ export function isTabVisibleForComplexity(
   // lados, igual que la pestaña Integración.
   if (tab === "handoff-spec") return true;
 
-  // Pantallas: gate real es "hay MCP gráfico compatible activo" (se aplica en buildWorkshopDocNavItems).
-  // A nivel de complejidad no se oculta.
+  // Pantallas: gate principal en shouldShowUiScreensTab (MCP, contenido o detectWebSurfaces).
+  // A nivel de complejidad no se oculta; buildWorkshopDocNavItems omite visible() para ui-screens.
   if (tab === "ui-screens") return true;
 
   if (c === "HIGH") return true;

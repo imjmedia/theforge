@@ -10,7 +10,8 @@ export interface PreviewTheme {
   cssVars: Record<string, string>;
 }
 
-export function resolveRef(value: string, tokens: DesignTokens): string {
+export function resolveRef(value: string, tokens: DesignTokens, depth = 0): string {
+  if (depth > 8) return value;
   const match = value.match(/^\{([\w.]+)\}$/);
   if (!match) return value;
   const parts = match[1]!.split(".");
@@ -22,13 +23,15 @@ export function resolveRef(value: string, tokens: DesignTokens): string {
       return value;
     }
   }
-  return typeof obj === "string" ? obj : value;
+  if (typeof obj !== "string") return value;
+  if (/^\{[\w.]+\}$/.test(obj)) return resolveRef(obj, tokens, depth + 1);
+  return obj;
 }
 
 export function hexValue(value: string, tokens: DesignTokens): string {
   const resolved = resolveRef(value, tokens);
   if (resolved.startsWith("#")) return resolved;
-  if (/^[A-Fa-f0-9]{6}$/.test(resolved)) return `#${resolved}`;
+  if (/^[A-Fa-f0-9]{6}$/.test(resolved)) return `#${resolved.toUpperCase()}`;
   return resolved;
 }
 
@@ -181,26 +184,33 @@ export function fallbackFromColors(tokens: DesignTokens): {
   border: string;
 } {
   const c = tokens.colors ?? {};
+  const asHex = (raw: string | undefined) =>
+    raw ? normalizeHex(hexValue(raw, tokens)) : undefined;
   const interactive =
-    pickChromatic(c.primary, c.tertiary, c.accent, c.secondary, c.brand) ??
-    normalizeHex(c.primary ?? c.tertiary ?? "#3D63DD");
+    pickChromatic(
+      asHex(c.primary),
+      asHex(c.tertiary),
+      asHex(c.accent),
+      asHex(c.secondary),
+      asHex(c.brand),
+    ) ?? normalizeHex(hexValue(c.primary ?? c.tertiary ?? "#3D63DD", tokens));
 
   let foreground: string;
-  if (c["on-surface"]) foreground = normalizeHex(c["on-surface"]);
-  else if (c.foreground) foreground = normalizeHex(c.foreground);
+  if (c["on-surface"]) foreground = normalizeHex(hexValue(c["on-surface"], tokens));
+  else if (c.foreground) foreground = normalizeHex(hexValue(c.foreground, tokens));
   else {
-    const p = c.primary ? normalizeHex(c.primary) : null;
+    const p = c.primary ? normalizeHex(hexValue(c.primary, tokens)) : null;
     foreground = p && !isLightColor(p) && colorChroma(p) < 0.2 ? p : "#1C1B1F";
   }
 
   return {
     primary: normalizeHex(interactive),
-    secondary: normalizeHex(c.secondary ?? c.primary ?? "#1A5F7A"),
+    secondary: normalizeHex(hexValue(c.secondary ?? c.primary ?? "#1A5F7A", tokens)),
     foreground,
-    surface: normalizeHex(c.surface ?? c.background ?? c.neutral ?? "#FAF9F6"),
-    muted: normalizeHex(c.muted ?? c["surface-alt"] ?? c.neutral ?? "#E8ECF0"),
-    accent: normalizeHex(c.tertiary ?? c.accent ?? interactive),
-    border: normalizeHex(c.border ?? c.muted ?? "#E0E0E0"),
+    surface: normalizeHex(hexValue(c.surface ?? c.background ?? c.neutral ?? "#FAF9F6", tokens)),
+    muted: normalizeHex(hexValue(c.muted ?? c["surface-alt"] ?? c.neutral ?? "#E8ECF0", tokens)),
+    accent: normalizeHex(hexValue(c.tertiary ?? c.accent ?? interactive, tokens)),
+    border: normalizeHex(hexValue(c.border ?? c.muted ?? "#E0E0E0", tokens)),
   };
 }
 
@@ -761,10 +771,10 @@ export function brandPalette(tokens: DesignTokens): string[] {
   const c = tokens.colors ?? {};
   const candidates = [
     palette.primary,
-    normalizeHex(c.secondary ?? palette.secondary),
-    normalizeHex(c.tertiary ?? palette.accent),
-    normalizeHex(c.accent ?? palette.accent),
-    normalizeHex(c["surface-alt"] ?? palette.muted),
+    normalizeHex(hexValue(c.secondary ?? palette.secondary, tokens)),
+    normalizeHex(hexValue(c.tertiary ?? palette.accent, tokens)),
+    normalizeHex(hexValue(c.accent ?? palette.accent, tokens)),
+    normalizeHex(hexValue(c["surface-alt"] ?? palette.muted, tokens)),
   ];
   const seen = new Set<string>();
   return candidates.filter((hex) => {

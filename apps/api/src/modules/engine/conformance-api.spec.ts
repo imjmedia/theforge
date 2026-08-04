@@ -169,19 +169,46 @@ describe("api-conformance-repair", () => {
     assert.equal(checkApiVsMdd(MDD, out).ok, true);
   });
 
-  it("elimina endpoints extra no declarados en MDD §4", () => {
-    const api = `# Contratos API
+  it("reconcile pre-check evita retry LLM por extras masivos (KMS-like)", () => {
+    const mdd = `# MDD
+
+## 4. Contratos de API
+
+| Método | Ruta |
+|--------|------|
+| GET | /api/v1/health |
+| GET | /api/v1/kms-keys |
+| POST | /api/v1/auth/login |
+`;
+
+    const apiWithExtras = `# Contratos API
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| GET | \`/health\` | ok |
-| GET | \`/api/v1/phantom\` | inventado |
-| POST | \`/api/auth/login\` | login |
+| GET | \`/api/v1/health\` | ok |
+| GET | \`/api/v1/kms-keys\` | keys |
+| POST | \`/api/v1/auth/login\` | login |
+| GET | \`/api/v1/extra-1\` | e1 |
+| GET | \`/api/v1/extra-2\` | e2 |
+| GET | \`/api/v1/extra-3\` | e3 |
+| GET | \`/api/v1/extra-4\` | e4 |
+| GET | \`/api/v1/extra-5\` | e5 |
+| GET | \`/api/v1/extra-6\` | e6 |
+| GET | \`/api/v1/extra-7\` | e7 |
+| GET | \`/api/v1/extra-8\` | e8 |
+| GET | \`/api/v1/extra-9\` | e9 |
+| GET | \`/api/v1/extra-10\` | e10 |
+| GET | \`/api/v1/extra-11\` | e11 |
+| GET | \`/api/v1/extra-12\` | e12 |
 `;
-    const out = repairApiProgrammaticGaps(MDD, api);
-    const r = checkApiVsMdd(MDD, out);
-    assert.equal(r.ok, true, [...r.missingInApi, ...r.extraInApi].join("; "));
-    assert.equal(r.extraInApi.length, 0);
-    assert.ok(!out.includes("phantom"));
+
+    const before = checkApiVsMdd(mdd, apiWithExtras);
+    assert.equal(before.ok, false);
+    assert.equal(before.extraInApi.length, 12);
+
+    const repaired = repairApiProgrammaticGaps(mdd, apiWithExtras);
+    const after = checkApiVsMdd(mdd, repaired);
+    assert.equal(after.ok, true, [...after.missingInApi, ...after.extraInApi].join("; "));
+    assert.equal(after.extraInApi.length, 0);
   });
 });

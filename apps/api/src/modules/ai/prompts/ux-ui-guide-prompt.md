@@ -187,7 +187,8 @@ Documento DESIGN.md listo para handoff a desarrollo y agentes de IA. Sirve como:
 
 - Este documento es la **única SSOT de tokens** visuales. No dupliques paleta en MDD ni Blueprint.
 - Frontmatter YAML válido al inicio (sin bloques ``` rotos). **Una sola paleta canónica.**
-- Tras el YAML, incluye en orden: **## Tema canónico** (`mode`, preset del stack si aplica, `stackBase`: MCP gráfico activo o `shadcn/ui`, `productionNote` opcional), **## Tokens** (tabla Token|Valor|Uso), **## Tipografía**, **## Spacing** (grid 8px), **## Radii**, **## Elevation**, **## Componentes base** (Button, Card, Input, Badge con `{colors.*}`), **## Do's and Don'ts**, **## Accesibilidad** (WCAG AA).
+- Tras el YAML, incluye en orden: **## Tema canónico** (`mode`, `colorSource`, preset del stack, `stackBase`: MCP gráfico activo o `shadcn/ui`, `productionNote` opcional), **## Tokens** (tabla Token|Valor|Uso; primitivos + semánticos), **## Tipografía**, **## Spacing** (grid 8px), **## Radii**, **## Elevation**, **## Componentes base** (Button, Card, Input, Badge con `{colors.*}`), **## Layout & Responsive** (mobile-first, breakpoints, shells AppShell/AdminShell), **## Do's and Don'ts**, **## Accesibilidad** (WCAG AA).
+- Si no hay marca: `colorSource: system-default` y preset completo del stack (shadcn/MUI/tailwind).
 - Tokens obligatorios: `primary`, `background`, `foreground`, `destructive`, `success`, `warning`, `muted`, `border`.
 - **Prohibido** mezclar tokens de fuentes distintas sin declarar cuál manda en Tema canónico.
 - No listes mapeo entidad→componente aquí; eso vive en `pantallas.md`.

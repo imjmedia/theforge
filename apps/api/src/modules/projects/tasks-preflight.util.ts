@@ -6,6 +6,7 @@ import {
   CASCADE_ACCURACY_THRESHOLD,
   TASKS_PREFLIGHT_DOC_ACCURACY_BLOCK_THRESHOLD,
   type DomainInventory,
+  detectWebSurfaces,
 } from "@theforge/shared-types";
 import { evaluateMddDeliveryGatePrepared } from "../ai-analysis/utils/mdd-delivery-gate-guard.util.js";
 import { computeDocAccuracy } from "../engine/cascade-accuracy.util.js";
@@ -33,6 +34,8 @@ export function runTasksPreflight(params: {
 }): TasksPreflightResult {
   const blockers: string[] = [];
   const warnings: string[] = [];
+  const hasWebSurfaces = detectWebSurfaces(params.mddMarkdown, params.blueprintMarkdown);
+  const uiScreensRequired = hasWebSurfaces || params.hasUxTeam === true;
 
   const mdd = (params.mddMarkdown ?? "").trim();
   if (mdd.length < 200) {
@@ -57,8 +60,12 @@ export function runTasksPreflight(params: {
     warnings.push("MDD describe §4 API pero api-contracts está vacío; revisa coherencia upstream.");
   }
 
-  if (params.hasUxTeam && (params.uiScreensMarkdown ?? "").trim().length < 80) {
-    warnings.push("Proyecto con UX team pero sin pantallas MCP; Frontend tasks serán heurísticas.");
+  if (uiScreensRequired && (params.uiScreensMarkdown ?? "").trim().length < 80) {
+    warnings.push(
+      hasWebSurfaces
+        ? "Superficie web declarada pero sin pantallas; Frontend tasks serán heurísticas hasta sync W2b."
+        : "Proyecto con UX team pero sin pantallas MCP; Frontend tasks serán heurísticas.",
+    );
   }
 
   return {
@@ -70,6 +77,7 @@ export function runTasksPreflight(params: {
 
 function evaluateDocAccuracyForTasksPreflight(params: {
   mddMarkdown: string;
+  blueprintMarkdown?: string | null;
   specMarkdown?: string | null;
   apiContractsMarkdown?: string | null;
   logicFlowsMarkdown?: string | null;
@@ -80,6 +88,9 @@ function evaluateDocAccuracyForTasksPreflight(params: {
   hasUxTeam?: boolean;
 }): ReturnType<typeof computeDocAccuracy> {
   const specPrep = prepareSpecMarkdownForTasks(params.specMarkdown);
+  const uiScreensRequired =
+    detectWebSurfaces(params.mddMarkdown, params.blueprintMarkdown) ||
+    params.hasUxTeam === true;
   return computeDocAccuracy({
     mddMarkdown: params.mddMarkdown,
     specMarkdown: specPrep.normalized || params.specMarkdown,
@@ -89,7 +100,7 @@ function evaluateDocAccuracyForTasksPreflight(params: {
     brdMarkdown: params.brdMarkdown,
     dbgaMarkdown: params.dbgaMarkdown,
     inventory: params.inventory ?? undefined,
-    uiScreensRequired: params.hasUxTeam === true,
+    uiScreensRequired,
   });
 }
 
@@ -103,6 +114,7 @@ function applyDocAccuracyPreflightGates(
     uiScreensMarkdown?: string | null;
     hasUxTeam?: boolean;
     mddMarkdown: string;
+    blueprintMarkdown?: string | null;
   },
   blockers: string[],
   warnings: string[],
@@ -110,6 +122,8 @@ function applyDocAccuracyPreflightGates(
   const mddHasApiSection = /##\s*4[\.\s]/i.test(params.mddMarkdown);
   const upstreamActions = deriveTasksUpstreamActions(docAcc, {
     hasUxTeam: params.hasUxTeam,
+    mddMarkdown: params.mddMarkdown,
+    blueprintMarkdown: params.blueprintMarkdown,
     specMarkdown: params.specMarkdown,
     apiContractsMarkdown: params.apiContractsMarkdown,
     logicFlowsMarkdown: params.logicFlowsMarkdown,
@@ -218,6 +232,7 @@ export async function runTasksPreflightStrict(params: {
         uiScreensMarkdown: params.uiScreensMarkdown,
         hasUxTeam: params.hasUxTeam,
         mddMarkdown: params.mddMarkdown,
+        blueprintMarkdown: params.blueprintMarkdown,
       },
       blockers,
       warnings,

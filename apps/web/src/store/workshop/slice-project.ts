@@ -310,7 +310,7 @@ export const createProjectSlice: StateCreator<WorkshopState, [], [], ProjectSlic
   fetchProject: async (projectId, options) => {
     const requestedId = projectId.trim();
     if (!requestedId) return null;
-    void get().fetchGenerationStatus(requestedId, undefined, { light: true }).catch(() => {});
+    await get().fetchGenerationStatus(requestedId, undefined, { light: true }).catch(() => null);
     try {
       const switchingProject =
         !!get().projectId?.trim() && get().projectId!.trim() !== requestedId;

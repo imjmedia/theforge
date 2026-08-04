@@ -7,6 +7,10 @@ import type { UiMcpClientService } from "./ui-mcp-client.service.js";
 import type { UiMcpService } from "./ui-mcp.service.js";
 
 const SAMPLE_MDD = [
+  "## 2. Stack",
+  "",
+  "React 18 + Vite + Tailwind + shadcn/ui",
+  "",
   "## 3. Modelo de Datos",
   "",
   "CREATE TABLE orders (id UUID PRIMARY KEY, status TEXT NOT NULL, total NUMERIC);",
@@ -21,8 +25,9 @@ function makeService(mcpClient: Partial<UiMcpClientService>, uiMcp: Partial<UiMc
         dbgaContent: null,
         phase0SummaryContent: null,
         specContent: null,
-        apiContractsContent: null,
+        apiContractsContent: "GET /api/v1/orders",
         userStoriesContent: null,
+        blueprintContent: "# Blueprint\n\nReact SPA",
         name: "Demo",
         stages: [
           {
@@ -33,6 +38,13 @@ function makeService(mcpClient: Partial<UiMcpClientService>, uiMcp: Partial<UiMc
         ],
       }),
       update: async () => ({}),
+    },
+    stage: {
+      findFirst: async () => ({
+        domainInventory: null,
+        brdContent: null,
+        mddContent: SAMPLE_MDD,
+      }),
     },
   };
   return new UiScreensService(
@@ -77,7 +89,27 @@ describe("UiScreensService — syncUiScreens", () => {
     assert.deepEqual(resolveCalls[0].keyFields, ["id", "status", "total"]);
   });
 
-  it("400 cuando resolve_component no devuelve ninguna pantalla", async () => {
+  it("persiste pantallas heurísticas cuando MCP inactivo", async () => {
+    const service = makeService(
+      {
+        isActive: async () => false,
+        listScreens: async () => null,
+        resolveComponent: async () => null,
+      },
+      {
+        getActiveCompatibleMeta: async () => null,
+        supportsUiProjectInstructions: async () => false,
+      },
+    );
+
+    const result = await service.syncUiScreens("proj-1");
+    assert.ok(result.screens >= 1);
+    assert.match(result.content, /\/orders|Gestión de orders/i);
+    assert.match(result.content, /Layout \| Responsive/);
+    assert.match(result.content, /shadcn|DataTable/i);
+  });
+
+  it("400 cuando MCP activo y resolve_component no devuelve ninguna pantalla y plan vacío", async () => {
     const service = makeService(
       {
         isActive: async () => true,
@@ -94,13 +126,8 @@ describe("UiScreensService — syncUiScreens", () => {
       },
     );
 
-    await assert.rejects(
-      () => service.syncUiScreens("proj-1"),
-      (err: unknown) => {
-        assert.ok(err instanceof BadRequestException);
-        assert.match(err.message, /no devolvió pantallas/i);
-        return true;
-      },
-    );
+    const result = await service.syncUiScreens("proj-1");
+    assert.ok(result.screens >= 1);
+    assert.match(result.content, /orders/i);
   });
 });

@@ -22,6 +22,10 @@ import { MessageSquare, Send, Loader2, Trash2, Target, Play, Pencil, X, RefreshC
 import { apiFetch } from "../utils/apiClient";
 import { useInterview } from "../hooks/useInterview";
 import { useWorkshopStore } from "../store/workshopStore";
+import {
+  isDeliverablesCascadeLoadingReason,
+  isDeliverablesCascadeUiActive,
+} from "../utils/deliverablesCascadeUi";
 import { cn } from "@/lib/utils";
 import type { ChatImagePart } from "@theforge/shared-types";
 import { filterChatForWorkshopView } from "@theforge/shared-types";
@@ -525,6 +529,7 @@ export default function ChatContainer({
   const evaluatorCritique = useWorkshopStore((s) => s.evaluatorCritique);
   const clearEvaluatorCritique = useWorkshopStore((s) => s.clearEvaluatorCritique);
   const loadingReason = useWorkshopStore((s) => s.loadingReason);
+  const generationStatus = useWorkshopStore((s) => s.generationStatus);
   const agentProgress = useWorkshopStore((s) => s.agentProgress);
   const pendingPlanApproval = useWorkshopStore((s) => s.pendingPlanApproval);
   const phase0AssistedActive = useWorkshopStore((s) => s.phase0AssistedActive);
@@ -537,9 +542,9 @@ export default function ChatContainer({
   const showAgentProgress =
     isBenchmarkStreaming ||
     isMddStreaming ||
-    loadingReason === "deliverables-cascade" ||
-    loadingReason === "repair-sdd-gaps" ||
-    loadingReason === "legacy-deliverables" ||
+    isDeliverablesCascadeLoadingReason(loadingReason) ||
+    (isDeliverablesCascadeUiActive({ loading, loadingReason, generationStatus }) &&
+      agentProgress.length > 0) ||
     loadingReason === "agent-governance" ||
     loadingReason === "tasks";
   /** Generación larga en segundo plano (mismo criterio que el panel central en WorkshopView). */
@@ -552,9 +557,11 @@ export default function ChatContainer({
       loadingReason === "legacy-deliverables" ||
       loadingReason === "brd-from-dbga");
   /** Cascada BullMQ: el usuario puede redactar mientras corre; solo el envío queda bloqueado. */
-  const isDeliverablesCascadeRun =
-    loading &&
-    (loadingReason === "deliverables-cascade" || loadingReason === "legacy-deliverables");
+  const isDeliverablesCascadeRun = isDeliverablesCascadeUiActive({
+    loading,
+    loadingReason,
+    generationStatus,
+  });
   const composerTextareaDisabled = loading && !isDeliverablesCascadeRun;
   const legacyRotatingSteps = useMemo(() => {
     if (loadingReason === "legacy-codebase-doc") return LEGACY_CODEBASE_DOC_STEPS;

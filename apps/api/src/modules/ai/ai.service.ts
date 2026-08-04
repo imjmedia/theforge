@@ -35,6 +35,7 @@ import { VERIFY_DELIVERABLE_PROMPT } from "./prompts/verify-deliverable-prompt.j
 import { CONFORMANCE_CHECK_PROMPT } from "./prompts/conformance-check-prompt.js";
 import { MDD_DOC_GAP_PATCH_PROMPT } from "./prompts/mdd-doc-gap-patch-prompt.js";
 import { parseJsonOrThrow } from "../ai-analysis/utils/parse-json.js";
+import { resolveLlmHardTimeoutMs } from "../ai-analysis/utils/mdd-llm-timeout.util.js";
 import { z } from "zod";
 import { appendMddGovernancePatternsToPrompt } from "./utils/mdd-governance-prompt.util.js";
 import {
@@ -413,6 +414,14 @@ export class AiService {
     return options?.abortSignal ?? generateOptions?.abortSignal;
   }
 
+  /** Wall-clock cap por entregable LLM cuando no hay otro tope (env LANGGRAPH_LLM_HARD_TIMEOUT_MS). */
+  private resolveDeliverableLlmAbortSignal(existing?: AbortSignal): AbortSignal {
+    const timeoutMs = resolveLlmHardTimeoutMs();
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    if (!existing) return timeoutSignal;
+    return AbortSignal.any([existing, timeoutSignal]);
+  }
+
   private async finishDocumentGeneration(
     documentType: string,
     options: LegacyGenerateOptions | undefined,
@@ -420,7 +429,9 @@ export class AiService {
     systemPrompt: string,
     generateOptions?: GenerateResponseOptions,
   ): Promise<string> {
-    const abortSignal = this.resolveAbortSignal(options, generateOptions);
+    const abortSignal = this.resolveDeliverableLlmAbortSignal(
+      this.resolveAbortSignal(options, generateOptions),
+    );
     if (options?.projectId) {
       return this.generateWithDocumentHooks({
         documentType,

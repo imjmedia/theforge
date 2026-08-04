@@ -1,0 +1,52 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import {
+  fillSemanticTokens,
+  resolveStackPreset,
+  shadcnZincPreset,
+  findLooseHexColors,
+} from "./design-system-defaults.js";
+import { detectWebSurfaces } from "./web-surfaces.util.js";
+
+describe("design-system-defaults", () => {
+  it("detectWebSurfaces true for React SPA MDD", () => {
+    const mdd = "## 2. Stack\n\nReact 18 + Vite + Tailwind";
+    assert.equal(detectWebSurfaces(mdd, null), true);
+  });
+
+  it("detectWebSurfaces false when §2 niega frontend", () => {
+    assert.equal(
+      detectWebSurfaces("## 2. Stack\nBackend NestJS. API-only sin dashboard ni frontend.", null),
+      false,
+    );
+  });
+
+  it("detectWebSurfaces false for API-only", () => {
+    assert.equal(detectWebSurfaces("## 2. Stack\n\nNestJS API only", null), false);
+  });
+
+  it("resolveStackPreset picks Radix+Tailwind when declared", () => {
+    const preset = resolveStackPreset("## 2\nReact + Tailwind + Radix UI", "Blueprint: Tailwind + Radix");
+    assert.equal(preset.stackBase, "tailwind");
+    assert.match(preset.adapterLabel, /Radix/i);
+    assert.equal(preset.packageScope, "@radix-ui/react");
+  });
+
+  it("resolveStackPreset picks imj when declared", () => {
+    const preset = resolveStackPreset("## 2\n@imj_media/ui", null);
+    assert.equal(preset.stackBase, "imj");
+    assert.equal(preset.adapterLabel, "@imj_media/ui");
+  });
+
+  it("fillSemanticTokens sets colorSource system-default", () => {
+    const filled = fillSemanticTokens({}, shadcnZincPreset);
+    assert.equal(filled.colorSource, "system-default");
+    assert.ok(filled.colors?.primary);
+    assert.ok(filled.colors?.destructive);
+  });
+
+  it("findLooseHexColors flags unknown hex", () => {
+    const loose = findLooseHexColors("color: #ABCDEF", shadcnZincPreset);
+    assert.ok(loose.includes("#abcdef") || loose.includes("#ABCDEF"));
+  });
+});

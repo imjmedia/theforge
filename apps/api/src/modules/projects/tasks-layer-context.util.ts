@@ -8,6 +8,7 @@ import type {
   TasksContextAnchor,
   TasksGenerationLayer,
 } from "@theforge/shared-types";
+import { detectWebSurfaces } from "@theforge/shared-types";
 import { extractSectionByNumber } from "../engine/mdd-markdown-parser.js";
 import {
   extractHttpEndpointsFromMarkdown,
@@ -145,6 +146,13 @@ export function buildTasksLayerPromptContext(input: TasksLayerContextInput): str
     for (const s of experience!.screens.slice(0, 24)) {
       parts.push(`- ${s.route} (${s.name ?? "?"}) US=${s.userStoryId ?? "?"} API=${s.primaryApi ?? "?"}`);
     }
+  }
+
+  const webSurfaces = detectWebSurfaces(input.mddMarkdown, input.blueprintMarkdown);
+  if (input.layer === "Frontend" && webSurfaces) {
+    parts.push(
+      "\n\n**Obligatorio Frontend:** incluir `Surface:`, `Responsive:`, referencias a design-system.md + pantallas.md, y target_files bajo `apps/web/`.",
+    );
   }
 
   if (input.layer === "Infra" && architecture?.infraServices?.length) {

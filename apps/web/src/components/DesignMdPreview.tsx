@@ -3,11 +3,13 @@ import { useMemo } from "react";
 import type { ComponentToken, DesignTokens, TypographyToken } from "@/components/design-system-types";
 import {
   ELEVATION_PRESETS,
+  hexValue,
   mergeTypographyTokens,
   normalizeElevationTokens,
   parseInlineTokenProps,
 } from "@/components/design-system-utils";
 import { DesignSystemCustomizer } from "@/components/DesignSystemCustomizer";
+import { fillSemanticTokens, shadcnZincPreset } from "@theforge/shared-types";
 
 export type { ComponentToken, DesignTokens, TypographyToken };
 
@@ -461,24 +463,58 @@ export function fillDesignMdDefaults(tokens: DesignTokens | null): DesignTokens 
   if (!tokens) return null;
   const t = { ...tokens };
 
-  // Fill colors — deriva primary/accent de la paleta de marca disponible
-  // antes de recurrir a defaults genéricos (evita azul/naranja en DESIGN.md
-  // con tokens de nombre específico como `stripe-indigo`, `google-blue`).
-  if (t.colors && Object.keys(t.colors).length > 0) {
+  const sharedFilled = fillSemanticTokens(
+    {
+      colors: t.colors,
+      typography: t.typography as Record<string, unknown> | undefined,
+      spacing: t.spacing,
+      rounded: t.rounded,
+      primitives: t.primitives,
+    },
+    shadcnZincPreset,
+  );
+
+  if (sharedFilled.primitives) {
+    t.primitives = sharedFilled.primitives;
+  }
+
+  const previewCtx: DesignTokens = {
+    colors: sharedFilled.colors ?? t.colors,
+    primitives: t.primitives,
+  };
+
+  if (sharedFilled.colors) {
+    const c = { ...sharedFilled.colors };
+    const p =
+      hexValue(c["primary"] || c["brand"] || pickBrandColor(c) || "#18181b", previewCtx);
+    c["primary"] ??= p;
+    const accent =
+      c["accent"] || c["secondary"] || pickBrandColor(c, [p]);
+    c["secondary"] ??= accent ?? p;
+    c["destructive"] ??= hexValue(c["danger"] ?? "#ef4444", previewCtx);
+    c["foreground"] ??= darken(p, 0.8) || "#18181b";
+    c["background"] ??= hexValue(c["background"] ?? "#fafafa", previewCtx);
+    c["muted"] ??= lighten(p, 0.85);
+    c["border"] ??= lighten(p, 0.7);
+    c["success"] ??= hexValue(c["success"] ?? "#22c55e", previewCtx);
+    c["warning"] ??= hexValue(c["warning"] ?? "#f59e0b", previewCtx);
+    c["neutral"] ??= hexValue(c["muted"] ?? lighten(p, 0.8), previewCtx);
+    c["accent"] ??= accent ?? p;
+    c["danger"] ??= c["destructive"];
+    c["info"] ??= "#3B82F6";
+    t.colors = c;
+  } else if (t.colors && Object.keys(t.colors).length > 0) {
     const c = { ...t.colors };
     const p = c["primary"] || c["brand"] || pickBrandColor(c) || "#3B82F6";
     c["primary"] ??= p;
     const accent =
       c["accent"] || c["secondary"] || pickBrandColor(c, [p]);
     c["secondary"] ??= accent ?? p;
-    c["tertiary"] ??= accent ?? (p !== "#F4A261" ? "#F4A261" : lighten(p, 0.3));
-    c["accent"] ??= accent ?? p;
-    c["neutral"] ??= lighten(p, 0.8);
-    c["foreground"] ??= darken(p, 0.8) || "#1A1A2E";
+    c["destructive"] ??= c["danger"] ?? "#DC2626";
+    c["foreground"] ??= (darken(p, 0.8) || "#1A1A2E");
     c["background"] ??= "#FFFFFF";
     c["muted"] ??= lighten(p, 0.85);
     c["border"] ??= lighten(p, 0.7);
-    c["danger"] ??= "#DC2626";
     c["success"] ??= "#16A34A";
     c["warning"] ??= "#F59E0B";
     c["info"] ??= "#3B82F6";
@@ -486,16 +522,19 @@ export function fillDesignMdDefaults(tokens: DesignTokens | null): DesignTokens 
   }
 
   // Fill typography — merge defaults so preview always has a visible scale
-  t.typography = mergeTypographyTokens(DEFAULT_TYPOGRAPHY, t.typography);
+  t.typography = mergeTypographyTokens(
+    DEFAULT_TYPOGRAPHY,
+    (sharedFilled.typography as typeof t.typography) ?? t.typography,
+  );
 
   // Fill rounded
   if (!t.rounded || Object.keys(t.rounded).length === 0) {
-    t.rounded = { ...DEFAULT_ROUNDED };
+    t.rounded = { ...(sharedFilled.rounded ?? DEFAULT_ROUNDED) };
   }
 
   // Fill spacing
   if (!t.spacing || Object.keys(t.spacing).length === 0) {
-    t.spacing = { ...DEFAULT_SPACING };
+    t.spacing = { ...(sharedFilled.spacing ?? DEFAULT_SPACING) };
   }
 
   // Fill elevation

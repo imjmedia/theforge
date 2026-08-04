@@ -60,4 +60,28 @@ describe("enrichBlueprintWithUiDesignSystem", () => {
     const out = await enrichBlueprintWithUiDesignSystem(MDD_WITH_SECTION3, withSection);
     assert.equal(out, withSection);
   });
+
+  it("usa Tailwind + Radix en §9 cuando el MDD lo declara", async () => {
+    const radixMdd = `# MDD
+
+## 1. Contexto
+
+Producto admin.
+
+## 2. Stack
+
+React 18 + Vite + Tailwind + Radix UI.
+
+## 3. Modelo de Datos
+
+\`\`\`sql
+CREATE TABLE orders (id UUID PRIMARY KEY);
+\`\`\`
+`;
+    const out = await enrichBlueprintWithUiDesignSystem(radixMdd, BASE_BLUEPRINT, undefined, {
+      pantallasContent: PANTALLAS,
+    });
+    assert.match(out, /Tailwind \+ Radix UI/);
+    assert.ok(!out.includes("shadcn/ui"));
+  });
 });

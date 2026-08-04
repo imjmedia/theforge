@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { contentHasMarkdownTableSeparator } from "./markdown-table-repair.util.js";
 import { checkInfraManifestConformance } from "./mdd-quality-audit.util.js";
 
 /**
@@ -580,8 +581,8 @@ export function checkBlueprintApiTableFormat(blueprintContent: string | null): C
       gaps.push("El Blueprint menciona rutas API pero no las presenta en una tabla markdown con formato | Método | Ruta | Módulo | Notas |");
     }
   }
-  // Verificar que la tabla tiene la fila de separación (|---|---|---|)
-  const hasSeparator = /^\|[-:]+\|[-:]+\|[-:]+\|/.test(blueprintContent);
+  // Verificar separador GFM en cualquier tabla (no solo al inicio del doc).
+  const hasSeparator = contentHasMarkdownTableSeparator(blueprintContent);
   if (hasApiTable && !hasSeparator) {
     gaps.push("La tabla de rutas API no tiene una fila de separación después de las cabeceras (formato markdown: |---|---:|---|)");
   }
