@@ -27,7 +27,7 @@ export const integrationHandoffItemKindSchema = z.enum([
 export type IntegrationHandoffItemKind = z.infer<typeof integrationHandoffItemKindSchema>;
 
 export const integrationHandoffItemCoreSchema = z.object({
-  id: z.string().regex(/^NEW-LEG-\d{2,}$/),
+  id: z.string().regex(/^(NEW-LEG|ARIADNE-ART)-\d{2,}$/),
   title: z.string().min(1).max(200),
   /** Vacío permitido en ítems seed/scope; obligatorio (trim) en `requirement`. */
   description: z.string().max(200_000).default(""),

@@ -25,6 +25,7 @@ export interface AriadneIntegrationScopePayload {
   mode?: string;
   taskSource?: string;
   taskSourceFallback?: string;
+  taskSourceGraph?: string;
   skipBaselineDeliverables?: string[];
 }
 
@@ -138,6 +139,7 @@ export function extractIntegrationScopeFromHandoff(
     mode: typeof o.mode === "string" ? o.mode : undefined,
     taskSource: typeof o.taskSource === "string" ? o.taskSource : undefined,
     taskSourceFallback: typeof o.taskSourceFallback === "string" ? o.taskSourceFallback : undefined,
+    taskSourceGraph: typeof o.taskSourceGraph === "string" ? o.taskSourceGraph : undefined,
     skipBaselineDeliverables: Array.isArray(o.skipBaselineDeliverables)
       ? o.skipBaselineDeliverables.map(String)
       : undefined,
@@ -328,8 +330,12 @@ export function hydrateTasksFromAriadnePack(input: {
   const items = input.handoffItems ?? [];
   const scope = extractIntegrationScopeFromHandoff(items);
   const skipBaseline = scope?.skipBaselineDeliverables ?? [];
-  const primarySource = scope?.taskSource ?? "tasks_json_seed";
-  const fallbackSource = scope?.taskSourceFallback ?? "cursor_tasks_markdown";
+  const isIntegration = scope?.mode === "integration_handoff";
+  const primarySource =
+    scope?.taskSource ?? (isIntegration ? "cursor_tasks_markdown" : "tasks_json_seed");
+  const fallbackSource =
+    scope?.taskSourceFallback ?? (isIntegration ? "tasks_json_seed" : "cursor_tasks_markdown");
+  const graphSource = scope?.taskSourceGraph ?? "change_plan_seed";
   const meta = input.packMeta;
 
   const trySeed = (): HydrateTasksFromAriadnePackResult | null => {
@@ -409,7 +415,7 @@ export function hydrateTasksFromAriadnePack(input: {
   };
 
   if (scope?.mode === "integration_handoff") {
-    const fromPrimary = chain([primarySource, fallbackSource, "change_plan_seed"]);
+    const fromPrimary = chain([primarySource, fallbackSource, graphSource]);
     if (fromPrimary) return fromPrimary;
   }
 

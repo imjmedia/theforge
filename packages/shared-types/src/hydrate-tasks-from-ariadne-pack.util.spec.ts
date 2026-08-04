@@ -11,7 +11,7 @@ import {
 const SEED_PAYLOAD = {
   schemaVersion: "2",
   source: "ariadne",
-  projectId: "11111111-1111-1111-1111-111111111111",
+  projectId: "11111111-1111-4111-8111-111111111111",
   changeDescription: "Integración costos",
   ariadneChangeId: "INT_COSTOS_V1",
   promotionScope: "integration_handoff",
@@ -44,7 +44,7 @@ describe("validateTasksJsonV2", () => {
     const r = validateTasksJsonV2({
       schemaVersion: "2",
       source: "ariadne",
-      projectId: "11111111-1111-1111-1111-111111111111",
+      projectId: "11111111-1111-4111-8111-111111111111",
       tasks: [{ id: "T-001", title: "X" }],
     });
     assert.equal(r.ok, false);
@@ -61,32 +61,78 @@ describe("validateTasksJsonV2", () => {
 
 describe("hydrateTasksFromAriadnePack", () => {
   const scopeItem: IntegrationHandoffItem = {
-    id: "NEW-LEG-01",
+    id: "ARIADNE-ART-01",
     kind: "integration_scope",
     title: "Integration scope",
     description: JSON.stringify({
       mode: "integration_handoff",
-      taskSource: "tasks_json_seed",
-      taskSourceFallback: "cursor_tasks_markdown",
+      taskSource: "cursor_tasks_markdown",
+      taskSourceFallback: "tasks_json_seed",
+      taskSourceGraph: "change_plan_seed",
       skipBaselineDeliverables: ["migration_tasks", "change_spec"],
     }),
   };
 
+  const cursorMd = `# Tasks
+
+## Frontend tasks
+---
+id: T-010
+title: Wire costos UI
+files:
+  - src/pages/Catalogo.tsx
+---
+- [ ] T-010
+
+## Backend tasks
+_Sin tareas._
+
+## Infraestructura tasks
+_Sin tareas._
+
+## Testing tasks
+_Sin tareas._
+
+## Deploy tasks
+_Sin tareas._
+`;
+
+  const cursorItem: IntegrationHandoffItem = {
+    id: "ARIADNE-ART-07",
+    kind: "cursor_tasks_markdown",
+    title: "Cursor tasks",
+    description: cursorMd,
+  };
+
   const seedItem: IntegrationHandoffItem = {
-    id: "NEW-LEG-05",
+    id: "ARIADNE-ART-05",
     kind: "tasks_json_seed",
     title: "Tasks JSON seed",
     description: JSON.stringify(SEED_PAYLOAD),
   };
 
-  it("hydrates tasks_json_seed via integration_scope", () => {
-    const r = hydrateTasksFromAriadnePack({ handoffItems: [scopeItem, seedItem] });
+  it("hydrates cursor_tasks_markdown first via integration_scope", () => {
+    const r = hydrateTasksFromAriadnePack({ handoffItems: [scopeItem, seedItem, cursorItem] });
+    assert.ok(r);
+    assert.equal(r!.source, "ariadne_cursor_tasks_markdown");
+    assert.ok(r!.tasksJson?.tasks?.length);
+    assert.equal((r!.tasksJson!.tasks[0] as { id: string }).id, "T-010");
+    assert.deepEqual(r!.skipBaselineDeliverables, ["migration_tasks", "change_spec"]);
+  });
+
+  it("falls back to tasks_json_seed when markdown missing", () => {
+    const scopeSeedFirst: IntegrationHandoffItem = {
+      ...scopeItem,
+      description: JSON.stringify({
+        mode: "integration_handoff",
+        taskSource: "tasks_json_seed",
+        taskSourceFallback: "cursor_tasks_markdown",
+      }),
+    };
+    const r = hydrateTasksFromAriadnePack({ handoffItems: [scopeSeedFirst, seedItem] });
     assert.ok(r);
     assert.equal(r!.source, "ariadne_tasks_json_seed");
-    assert.ok(r!.tasksJson?.tasks?.length);
-    assert.match(r!.tasksContent, /T-001/);
-    assert.match(r!.tasksContent, /Catalogo\.tsx/);
-    assert.deepEqual(r!.skipBaselineDeliverables, ["migration_tasks", "change_spec"]);
+    assert.equal((r!.tasksJson!.tasks[0] as { id: string }).id, "T-001");
   });
 
   it("fallback to cursor_tasks_markdown when seed invalid", () => {
@@ -94,13 +140,13 @@ describe("hydrateTasksFromAriadnePack", () => {
       ...seedItem,
       description: JSON.stringify({ schemaVersion: "2", source: "ariadne", projectId: SEED_PAYLOAD.projectId, tasks: [] }),
     };
-    const cursorItem: IntegrationHandoffItem = {
-      id: "NEW-LEG-06",
+    const cursorFallback: IntegrationHandoffItem = {
+      id: "ARIADNE-ART-07",
       kind: "cursor_tasks_markdown",
       title: "Cursor tasks",
       description: `# Tasks\n\n---\nid: T-002\ntitle: Fallback\nfiles:\n  - src/a.ts\n---\n`,
     };
-    const r = hydrateTasksFromAriadnePack({ handoffItems: [scopeItem, badSeed, cursorItem] });
+    const r = hydrateTasksFromAriadnePack({ handoffItems: [scopeItem, badSeed, cursorFallback] });
     assert.ok(r);
     assert.equal(r!.source, "ariadne_cursor_tasks_markdown");
     assert.ok(r!.tasksJson?.tasks?.length);
