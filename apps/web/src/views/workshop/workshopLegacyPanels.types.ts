@@ -1,3 +1,4 @@
+import type { IntegrationHandoffItem } from "@theforge/shared-types";
 import type { LegacyFlowState, LegacyMcpDebugEntry } from "@/store/workshopStore";
 import type { WorkshopDocumentTimestamps } from "@/utils/workshop-document-content.util";
 
@@ -44,6 +45,9 @@ export interface WorkshopLegacyPanelsProps {
   workshopStagesList: WorkshopLegacyStageSummary[];
   activeStageHandoffImportedAt: string | null;
   activeStageWorkflowStatus: string | null;
+  activeStageHandoffSnapshot?: { items?: IntegrationHandoffItem[] } | null;
+  tasksHydrated?: boolean;
+  tasksSource?: string | null;
   docTs: (field: string) => WorkshopDocumentTimestamps | null;
   onCopyMddInicialMarkdown: () => void | Promise<void>;
   onMddInicialContentChange: (value: string) => void;

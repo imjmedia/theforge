@@ -27,12 +27,15 @@ import {
   isIntegrationHandoffScope,
   resolveIntegrationHandoffTasksMarkdown,
   hasValidTasksJson,
+  mergeTasksJsonIdempotent,
+  type StoredTasksJsonV2,
 } from "@theforge/shared-types";
 import { StageStatus, Prisma } from "@theforge/database";
 import { PrismaService } from "../../../prisma/prisma.service.js";
 import { getRequestUserId } from "../../../common/request-user.store.js";
 import { ChangeLogService } from "../../change-log/change-log.service.js";
 import { TheForgeService } from "../../theforge/theforge.service.js";
+import { validateTasksJsonWithAriadneGate2 } from "../../theforge/ariadne-validate-tasks-json.util.js";
 import { LegacyCoordinatorService } from "../../legacy-flow/legacy-coordinator.service.js";
 import { ProjectsService } from "../projects.service.js";
 import { prependDocumentTimestamps } from "../../engine/document-date-header.util.js";
@@ -479,6 +482,12 @@ export class ProjectIntegrationService {
     const hydratedTasksPreview = hydrateTasksFromAriadnePack({
       handoffItems,
       cursorTasksMarkdown: pack.cursorTasksMarkdown,
+      packMeta: {
+        projectId: project.theforgeProjectId ?? pack.linkedNewProjectId ?? undefined,
+        changeDescription: pack.changeDescription,
+        ariadneChangeId: pack.ariadneChangeId,
+        generatedAt: pack.generatedAt,
+      },
     });
 
     if (handoffItems.length) {
@@ -529,6 +538,14 @@ export class ProjectIntegrationService {
       await this.finalizeHandoffStageSetup(project.id, stageId, linkedNewProjectId ?? project.id, handoffItems, {
         cursorTasksMarkdown: pack.cursorTasksMarkdown,
         migrationTasksMode,
+        packMeta: {
+          projectId: project.theforgeProjectId ?? pack.linkedNewProjectId ?? undefined,
+          changeDescription: pack.changeDescription,
+          ariadneChangeId: pack.ariadneChangeId,
+          generatedAt: pack.generatedAt,
+        },
+        forceTasksRefresh: dto.forceTasksRefresh,
+        idempotencyKey: pack.idempotencyKey,
       });
     } else {
       await this.prisma.stage.update({
@@ -615,6 +632,7 @@ export class ProjectIntegrationService {
         integrationHandoffWithHydratedTasks:
           !!hydratedTasksPreview &&
           isIntegrationHandoffScope(hydratedTasksPreview.integrationScope),
+        skipBaselineDeliverables: hydratedTasksPreview?.skipBaselineDeliverables,
       }),
     };
   }
@@ -923,6 +941,14 @@ export class ProjectIntegrationService {
     options?: {
       cursorTasksMarkdown?: string | null;
       migrationTasksMode?: boolean;
+      packMeta?: {
+        projectId?: string;
+        changeDescription?: string;
+        ariadneChangeId?: string;
+        generatedAt?: string;
+      };
+      forceTasksRefresh?: boolean;
+      idempotencyKey?: string;
     },
   ): Promise<void> {
     const [stage, _projectRow] = await Promise.all([
@@ -937,6 +963,10 @@ export class ProjectIntegrationService {
         cursorTasksMarkdown: options?.cursorTasksMarkdown,
         handoffItems: activeItems,
         stageName: stage.name ?? undefined,
+        packMeta: options?.packMeta,
+        forceTasksRefresh: options?.forceTasksRefresh,
+        idempotencyKey: options?.idempotencyKey,
+        generatedAt: options?.packMeta?.generatedAt,
       });
     }
 
@@ -994,11 +1024,45 @@ export class ProjectIntegrationService {
       cursorTasksMarkdown?: string | null;
       handoffItems: IntegrationHandoffItem[];
       stageName?: string;
+      packMeta?: {
+        projectId?: string;
+        changeDescription?: string;
+        ariadneChangeId?: string;
+        generatedAt?: string;
+      };
+      forceTasksRefresh?: boolean;
+      idempotencyKey?: string;
+      generatedAt?: string;
     },
-  ): Promise<{ applied: boolean; source?: string; hasTasksJson?: boolean }> {
+  ): Promise<{ applied: boolean; source?: string; hasTasksJson?: boolean; skippedReason?: string }> {
+    const stageBefore = await this.prisma.stage.findUnique({
+      where: { id: stageId },
+      select: { legacyChangeState: true, tasksJson: true },
+    });
+    const existingState =
+      stageBefore?.legacyChangeState != null && typeof stageBefore.legacyChangeState === "object"
+        ? (stageBefore.legacyChangeState as Record<string, unknown>)
+        : {};
+    const existingHandoffTasks = existingState.integrationHandoffTasks as
+      | { idempotencyKey?: string; packGeneratedAt?: string }
+      | undefined;
+
+    if (
+      input.idempotencyKey?.trim() &&
+      existingHandoffTasks?.idempotencyKey === input.idempotencyKey.trim() &&
+      !input.forceTasksRefresh
+    ) {
+      const incomingAt = input.generatedAt?.trim();
+      const existingAt = existingHandoffTasks.packGeneratedAt?.trim();
+      if (!incomingAt || (existingAt && incomingAt <= existingAt)) {
+        return { applied: false, skippedReason: "idempotent_noop" };
+      }
+    }
+
     const hydrated = hydrateTasksFromAriadnePack({
       handoffItems: input.handoffItems,
       cursorTasksMarkdown: input.cursorTasksMarkdown,
+      packMeta: input.packMeta,
     });
 
     const resolved =
@@ -1021,35 +1085,66 @@ export class ProjectIntegrationService {
 
     if (!resolved) return { applied: false };
 
+    let tasksJsonToStore: StoredTasksJsonV2 | null | undefined = hydrated?.tasksJson ?? undefined;
+    const existingTasksJson = stageBefore?.tasksJson as StoredTasksJsonV2 | null;
+    if (tasksJsonToStore) {
+      if (input.packMeta?.generatedAt) {
+        tasksJsonToStore = {
+          ...tasksJsonToStore,
+          generatedAt: input.packMeta.generatedAt,
+        } as StoredTasksJsonV2 & { generatedAt?: string };
+      }
+      if (existingTasksJson?.tasks?.length) {
+        tasksJsonToStore = mergeTasksJsonIdempotent(existingTasksJson, tasksJsonToStore, {
+          forceRefresh: input.forceTasksRefresh,
+          incomingGeneratedAt: input.generatedAt ?? input.packMeta?.generatedAt,
+          existingGeneratedAt:
+            typeof (existingTasksJson as { generatedAt?: string }).generatedAt === "string"
+              ? (existingTasksJson as { generatedAt?: string }).generatedAt
+              : existingHandoffTasks?.packGeneratedAt,
+        });
+      }
+    }
+
+    const validationWarnings: string[] = [...(hydrated?.validationWarnings ?? [])];
+    const ariadneProjectId =
+      tasksJsonToStore && typeof tasksJsonToStore.projectId === "string"
+        ? tasksJsonToStore.projectId
+        : input.packMeta?.projectId;
+    if (tasksJsonToStore && ariadneProjectId?.trim()) {
+      const gate = await validateTasksJsonWithAriadneGate2({
+        projectId: ariadneProjectId.trim(),
+        tasksJson: tasksJsonToStore,
+      });
+      validationWarnings.push(...gate.warnings);
+      if (gate.skippedReason) {
+        this.logger.debug(`[Integration] Ariadne validate-tasks-json skipped: ${gate.skippedReason}`);
+      }
+    }
+
     await persistStageAndProjectDeliverables(this.prisma, stageId, projectId, {
       tasksContent: resolved.tasksContent,
-      ...(hydrated?.tasksJson ? { tasksJson: hydrated.tasksJson } : {}),
+      ...(tasksJsonToStore ? { tasksJson: tasksJsonToStore } : {}),
     });
-
-    const stageRow = await this.prisma.stage.findUnique({
-      where: { id: stageId },
-      select: { legacyChangeState: true, tasksJson: true },
-    });
-    const existing =
-      stageRow?.legacyChangeState != null && typeof stageRow.legacyChangeState === "object"
-        ? (stageRow.legacyChangeState as Record<string, unknown>)
-        : {};
 
     const tasksSource = hydrated?.source ?? resolved.source;
+    const skipBaseline = hydrated?.skipBaselineDeliverables ?? [];
     await this.prisma.stage.update({
       where: { id: stageId },
       data: {
         legacyChangeState: {
-          ...existing,
+          ...existingState,
           tasksSource,
+          skipBaselineDeliverables: skipBaseline,
           integrationHandoffTasks: {
             source: tasksSource,
             tasksSource,
             importedAt: new Date().toISOString(),
+            ...(input.idempotencyKey?.trim() ? { idempotencyKey: input.idempotencyKey.trim() } : {}),
+            ...(input.generatedAt?.trim() ? { packGeneratedAt: input.generatedAt.trim() } : {}),
+            ...(validationWarnings.length ? { validationWarnings } : {}),
           },
-          ...(hydrated?.integrationScope
-            ? { integrationScope: hydrated.integrationScope }
-            : {}),
+          ...(hydrated?.integrationScope ? { integrationScope: hydrated.integrationScope } : {}),
         } as object,
       },
     });
@@ -1058,7 +1153,7 @@ export class ProjectIntegrationService {
       where: { id: stageId },
       select: { tasksJson: true },
     });
-    const hasTasksJson = hasValidTasksJson(hydrated?.tasksJson ?? refreshed?.tasksJson);
+    const hasTasksJson = hasValidTasksJson(tasksJsonToStore ?? refreshed?.tasksJson);
     this.logger.log(
       `[Integration] handoff tasks imported (stage=${stageId.slice(0, 8)} source=${tasksSource} hasTasksJson=${hasTasksJson})`,
     );

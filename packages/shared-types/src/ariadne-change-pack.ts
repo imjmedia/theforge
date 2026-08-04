@@ -54,6 +54,10 @@ export const ariadneChangePackV1Schema = z.preprocess(
     handoffPlanType: ariadneHandoffPlanTypeSchema.optional(),
     /** Markdown Cursor-ready (alias snake_case: cursor_tasks_markdown). SSOT de tasks cuando migration_tasks. */
     cursorTasksMarkdown: z.string().trim().min(1).max(200_000).optional(),
+    /** Clave idempotente para re-import del mismo pack (merge tasks por id). */
+    idempotencyKey: z.string().trim().min(1).max(120).optional(),
+    /** Timestamp del pack; re-import reemplaza tasksJson si es más reciente. */
+    generatedAt: z.string().datetime().optional(),
   }),
 );
 
@@ -82,6 +86,8 @@ export const createStageFromAriadneChangePackInputSchema = z.object({
   /** Si null, Forge decide: false cuando el pack trae filesToModify; si no, respeta LEGACY_HANDOFF_AUTO_LEGACY_START. */
   runLegacyStart: z.boolean().optional(),
   wireAriadne: z.boolean().optional().default(true),
+  /** Fuerza reemplazo de tasksJson aunque el pack no sea más reciente. */
+  forceTasksRefresh: z.boolean().optional(),
 });
 
 export type CreateStageFromAriadneChangePackInput = z.infer<

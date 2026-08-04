@@ -11,6 +11,7 @@ import {
   DELIVERABLES_BY_COMPLEXITY,
   DELIVERABLE_STEP_LABELS,
   planLegacyDeliverablesToGenerate,
+  resolveLegacyCascadeSkipKindsFromStage,
   shouldSkipLegacyTasksGeneration,
   type DeliverableKind,
 } from "@theforge/shared-types";
@@ -187,6 +188,9 @@ export class LegacyDeliverablesOrchestratorService {
     // enforceLegacyBrdTobeGate eliminado — To-Be y As-Is removidos
     const gateState = this.stageContext.readLegacyChangeState(gateStage);
     const skipTasksFromHandoff = shouldSkipLegacyTasksGeneration({
+      legacyChangeState: gateStage?.legacyChangeState,
+    });
+    const cascadeSkipKinds = resolveLegacyCascadeSkipKindsFromStage({
       legacyChangeState: gateStage?.legacyChangeState,
     });
     const codebaseDoc = String(gateState.codebaseDoc ?? "").trim();
@@ -760,7 +764,7 @@ export class LegacyDeliverablesOrchestratorService {
     const deliverablesPlanned = planLegacyDeliverablesToGenerate({
       complexity,
       hasMddContent: !!mddContent,
-      skipKinds: skipTasksFromHandoff ? (["tasks"] as const) : undefined,
+      skipKinds: cascadeSkipKinds.length ? cascadeSkipKinds : skipTasksFromHandoff ? (["tasks"] as const) : undefined,
     });
     report.deliverablesOrder = [...deliverablesPlanned];
 

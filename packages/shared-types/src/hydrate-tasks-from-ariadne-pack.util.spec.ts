@@ -43,7 +43,17 @@ describe("validateTasksJsonV2", () => {
   it("rejects task without files", () => {
     const r = validateTasksJsonV2({
       schemaVersion: "2",
+      source: "ariadne",
+      projectId: "11111111-1111-1111-1111-111111111111",
       tasks: [{ id: "T-001", title: "X" }],
+    });
+    assert.equal(r.ok, false);
+  });
+
+  it("rejects missing source and projectId", () => {
+    const r = validateTasksJsonV2({
+      schemaVersion: "2",
+      tasks: [{ id: "T-001", title: "X", files: ["a.ts"] }],
     });
     assert.equal(r.ok, false);
   });
@@ -82,18 +92,19 @@ describe("hydrateTasksFromAriadnePack", () => {
   it("fallback to cursor_tasks_markdown when seed invalid", () => {
     const badSeed: IntegrationHandoffItem = {
       ...seedItem,
-      description: JSON.stringify({ schemaVersion: "2", tasks: [] }),
+      description: JSON.stringify({ schemaVersion: "2", source: "ariadne", projectId: SEED_PAYLOAD.projectId, tasks: [] }),
     };
     const cursorItem: IntegrationHandoffItem = {
       id: "NEW-LEG-06",
       kind: "cursor_tasks_markdown",
       title: "Cursor tasks",
-      description: "# Tasks\n\n---\nid: T-002\ntitle: Fallback\nfiles:\n  - src/a.ts\n---\n",
+      description: `# Tasks\n\n---\nid: T-002\ntitle: Fallback\nfiles:\n  - src/a.ts\n---\n`,
     };
     const r = hydrateTasksFromAriadnePack({ handoffItems: [scopeItem, badSeed, cursorItem] });
     assert.ok(r);
     assert.equal(r!.source, "ariadne_cursor_tasks_markdown");
-    assert.match(r!.tasksContent, /T-002|Fallback/);
+    assert.ok(r!.tasksJson?.tasks?.length);
+    assert.equal((r!.tasksJson!.tasks[0] as { id: string }).id, "T-002");
   });
 });
 

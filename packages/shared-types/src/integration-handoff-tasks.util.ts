@@ -17,7 +17,8 @@ export type IntegrationHandoffTasksSource =
   | "cursor_tasks_markdown"
   | "handoff_items"
   | "ariadne_tasks_json_seed"
-  | "ariadne_cursor_tasks_markdown";
+  | "ariadne_cursor_tasks_markdown"
+  | "ariadne_change_plan_seed";
 
 /** Metadata persisted on Stage.legacyChangeState after handoff tasks import. */
 export interface IntegrationHandoffTasksMeta {
@@ -25,6 +26,9 @@ export interface IntegrationHandoffTasksMeta {
   importedAt: string;
   /** Alias legible para MCP/UI (p. ej. ariadne_tasks_json_seed). */
   tasksSource?: AriadneTasksHydrationSource;
+  idempotencyKey?: string;
+  packGeneratedAt?: string;
+  validationWarnings?: string[];
 }
 
 /**
