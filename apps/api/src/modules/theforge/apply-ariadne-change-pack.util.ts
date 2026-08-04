@@ -4,13 +4,11 @@ import {
   normalizeAriadneHandoffItemsRaw,
   resolveSkipBaselineDeliverableKinds,
   shouldSkipLegacyGenerateDeliverables,
-  type AriadneHandoffIdRemap,
-} from "@theforge/shared-types";
-import { extractIntegrationScopeFromHandoff } from "@theforge/shared-types/hydrate-tasks-from-ariadne-pack.util.js";
-import {
+  extractIntegrationScopeFromHandoff,
   resolveStageOriginFromIntegrationScope,
+  type AriadneHandoffIdRemap,
   type StageOrigin,
-} from "@theforge/shared-types/stage-origin.util.js";
+} from "@theforge/shared-types";
 
 /** Clona body MCP y normaliza `pack.handoffItems[].id` antes del parse Zod (log de remaps). */
 export function preprocessCreateStageFromAriadneChangePackBody(body: unknown): {

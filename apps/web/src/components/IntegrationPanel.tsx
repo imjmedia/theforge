@@ -28,6 +28,9 @@ import type {
 import { buildHandoffImportDescription, formatIntegrationHandoffPreviewStory } from "@theforge/shared-types";
 import {
   HandoffImportedItemsPreview,
+  HandoffKindBadge,
+  HandoffMarkdownPreview,
+  HandoffSeedItemSummary,
   StageOriginBadge,
 } from "@/components/HandoffArtifactViewer";
 import {

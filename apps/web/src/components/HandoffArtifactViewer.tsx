@@ -14,8 +14,8 @@ import {
   readHandoffItemBody,
 } from "@theforge/shared-types";
 import type { IntegrationHandoffItem } from "@theforge/shared-types";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 
 function downloadTextFile(filename: string, body: string, mime = "text/plain;charset=utf-8") {
   const blob = new Blob([body], { type: mime });
@@ -34,6 +34,38 @@ function HandoffKindBadge({ kind }: { kind: string }) {
     </Badge>
   );
 }
+
+function HandoffMarkdownPreview({ item }: { item: IntegrationHandoffItem }) {
+  const md = readHandoffItemBody(item);
+  const [open, setOpen] = useState(false);
+  if (!md) return null;
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        className="text-xs font-medium text-[var(--primary)] underline-offset-2 hover:underline"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? "Ocultar preview" : "Ver markdown"}
+      </button>
+      {open ? (
+        <div className="prose prose-sm mt-2 max-h-64 max-w-none overflow-auto rounded-md border border-[var(--border)] bg-[color-mix(in_oklch,var(--muted)_12%,var(--card))] p-3 dark:prose-invert">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{md.slice(0, 12000)}</ReactMarkdown>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function HandoffSeedItemSummary({ item }: { item: IntegrationHandoffItem }) {
+  return (
+    <p className="mt-1 text-xs leading-relaxed text-[var(--foreground-muted)] font-mono">
+      {formatHandoffItemPreview(item)}
+    </p>
+  );
+}
+
+export { HandoffKindBadge, HandoffMarkdownPreview, HandoffSeedItemSummary };
 
 function HandoffArtifactBody({ item }: { item: IntegrationHandoffItem }) {
   const body = readHandoffItemBody(item);

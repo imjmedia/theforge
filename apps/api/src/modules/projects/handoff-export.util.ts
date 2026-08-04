@@ -16,10 +16,10 @@ import {
 } from "../ai/utils/suggest-agent-governance-artifacts.js";
 import {
   buildAriadneHandoffGovernanceCorpus,
-} from "@theforge/shared-types/ariadne-handoff-artifacts.util.js";
-import { getLegacyChangeState } from "@theforge/shared-types/legacy-change-state.util.js";
-import { isAriadneSourcedStageOrigin } from "@theforge/shared-types/stage-origin.util.js";
-import type { IntegrationHandoffItem } from "@theforge/shared-types/project-integration.js";
+  getLegacyChangeState,
+  isAriadneSourcedStageOrigin,
+  type IntegrationHandoffItem,
+} from "@theforge/shared-types";
 import { resolveStageDeliverables } from "./stage-deliverables.util.js";
 import {
   ensurePostMvpUiSurfaceBanner,
