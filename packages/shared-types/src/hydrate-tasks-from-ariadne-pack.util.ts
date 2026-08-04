@@ -4,18 +4,16 @@
  */
 
 import type { IntegrationHandoffItem, IntegrationHandoffItemKind } from "./project-integration.js";
+import { mapChangePlanSeedToTasksJsonPayload } from "./change-plan-seed-to-tasks-json.util.js";
+import { parseAriadneCursorTasksMarkdown } from "./parse-ariadne-cursor-tasks-markdown.util.js";
 
 export const INTEGRATION_HANDOFF_ITEM_KINDS = [
   "requirement",
   "tasks_json_seed",
   "cursor_tasks_markdown",
   "integration_scope",
+  "change_plan_seed",
 ] as const satisfies readonly IntegrationHandoffItemKind[];
-
-export type AriadneTasksHydrationSource =
-  | "ariadne_tasks_json_seed"
-  | "ariadne_cursor_tasks_markdown"
-  | "handoff_items";
 
 export interface AriadneIntegrationScopePayload {
   mode?: string;
@@ -34,6 +32,9 @@ export interface AriadneTasksJsonSeedTask {
   status?: string;
   source?: string;
   description?: string;
+  dependsOn?: string[];
+  depends_on?: string[];
+  evidence?: unknown[];
 }
 
 export interface AriadneTasksJsonSeedPayload {
@@ -55,6 +56,7 @@ export type StoredTasksJsonV2 = {
   changeDescription?: string;
   ariadneChangeId?: string;
   promotionScope?: string;
+  generatedAt?: string;
   tasks: Array<Record<string, unknown>>;
   files?: unknown[];
 };
@@ -63,13 +65,20 @@ export type ValidateTasksJsonV2Result =
   | { ok: true; payload: AriadneTasksJsonSeedPayload }
   | { ok: false; errors: string[] };
 
+export type AriadneTasksHydrationSource =
+  | "ariadne_tasks_json_seed"
+  | "ariadne_cursor_tasks_markdown"
+  | "ariadne_change_plan_seed"
+  | "handoff_items";
+
 export type HydrateTasksFromAriadnePackResult = {
-  /** Present when seed JSON validated; markdown-only fallback omits (auto-parse on persist). */
   tasksJson?: StoredTasksJsonV2 | null;
   tasksContent: string;
   source: AriadneTasksHydrationSource;
   integrationScope: AriadneIntegrationScopePayload | null;
   skipBaselineDeliverables: string[];
+  /** Non-fatal validation messages (e.g. Ariadne Gate 2 warn-only). */
+  validationWarnings?: string[];
 };
 
 function handoffKind(item: IntegrationHandoffItem): IntegrationHandoffItemKind {
@@ -140,6 +149,17 @@ export function validateTasksJsonV2(raw: unknown): ValidateTasksJsonV2Result {
   if (schemaVersion !== "2" && schemaVersion !== "2.0") {
     errors.push(`schemaVersion must be "2" (got "${schemaVersion || "missing"}")`);
   }
+  const source = typeof o.source === "string" ? o.source.trim() : "";
+  if (!source) errors.push('source is required (expected "ariadne")');
+  else if (source !== "ariadne") errors.push(`source must be "ariadne" (got "${source}")`);
+  const projectId = typeof o.projectId === "string" ? o.projectId.trim() : "";
+  if (!projectId) errors.push("projectId is required");
+  else if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(projectId)
+  ) {
+    errors.push("projectId must be a UUID");
+  }
+
   if (!Array.isArray(o.tasks) || o.tasks.length === 0) {
     errors.push("tasks[] must be non-empty");
   } else {
@@ -177,30 +197,35 @@ export function normalizeAriadneTasksJsonSeedToStore(
     ariadneChangeId: payload.ariadneChangeId,
     promotionScope: payload.promotionScope,
     files: payload.files,
-    tasks: payload.tasks.map((task) => ({
-      id: task.id.trim(),
-      title: task.title.trim(),
-      description: (task.criterion ?? task.description ?? "").trim(),
-      status: task.status ?? "pending",
-      targetFiles: [...(task.files ?? [])],
-      files: [...(task.files ?? [])],
-      symbols: task.symbols ?? [],
-      phase: task.phase,
-      criterion: task.criterion,
-      source: task.source ?? "ariadne_change_plan_seed",
-      section: task.phase?.trim() || "Integration",
-      checkpoint: "Handoff",
-      changeType: "modify",
-      scopeInclude: [],
-      scopeExclude: [],
-      dependencies: [],
-      parallel: false,
-      requirements: task.criterion ? [task.criterion] : [],
-      constraints: [],
-      doneWhen: [],
-      inferenceRules: [],
-      verification: {},
-    })),
+    tasks: payload.tasks.map((task) => {
+      const dependsOn = [...(task.dependsOn ?? task.depends_on ?? [])].map(String).filter(Boolean);
+      return {
+        id: task.id.trim(),
+        title: task.title.trim(),
+        description: (task.criterion ?? task.description ?? "").trim(),
+        status: task.status ?? "pending",
+        targetFiles: [...(task.files ?? [])],
+        files: [...(task.files ?? [])],
+        symbols: task.symbols ?? [],
+        phase: task.phase,
+        criterion: task.criterion,
+        source: task.source ?? "ariadne_change_plan_seed",
+        section: task.phase?.trim() || "Integration",
+        checkpoint: "Handoff",
+        changeType: "modify",
+        scopeInclude: [],
+        scopeExclude: [],
+        dependencies: dependsOn,
+        dependsOn,
+        evidence: Array.isArray(task.evidence) ? task.evidence : [],
+        parallel: false,
+        requirements: task.criterion ? [task.criterion] : [],
+        constraints: [],
+        doneWhen: [],
+        inferenceRules: [],
+        verification: {},
+      };
+    }),
   };
 }
 
@@ -273,19 +298,33 @@ export function isIntegrationHandoffScope(
   return scope?.mode === "integration_handoff";
 }
 
+function extractChangePlanSeedFromHandoff(items: IntegrationHandoffItem[]): ValidateTasksJsonV2Result {
+  const item = findHandoffItemByKind(items, "change_plan_seed");
+  if (!item) return { ok: false, errors: ["missing change_plan_seed handoff item"] };
+  const raw = readHandoffPayload(item);
+  return mapChangePlanSeedToTasksJsonPayload(raw);
+}
+
 /**
  * Resuelve tasksJson + tasksContent desde handoff Ariadne.
- * Prioridad: integration_scope.taskSource → fallback → pack.cursorTasksMarkdown.
+ * Prioridad: integration_scope.taskSource → fallback → change_plan_seed → markdown parse.
  */
 export function hydrateTasksFromAriadnePack(input: {
   handoffItems?: IntegrationHandoffItem[];
   cursorTasksMarkdown?: string | null;
+  packMeta?: {
+    projectId?: string;
+    changeDescription?: string;
+    ariadneChangeId?: string;
+    generatedAt?: string;
+  };
 }): HydrateTasksFromAriadnePackResult | null {
   const items = input.handoffItems ?? [];
   const scope = extractIntegrationScopeFromHandoff(items);
   const skipBaseline = scope?.skipBaselineDeliverables ?? [];
   const primarySource = scope?.taskSource ?? "tasks_json_seed";
   const fallbackSource = scope?.taskSourceFallback ?? "cursor_tasks_markdown";
+  const meta = input.packMeta;
 
   const trySeed = (): HydrateTasksFromAriadnePackResult | null => {
     const validated = extractTasksJsonSeedFromHandoff(items);
@@ -303,40 +342,76 @@ export function hydrateTasksFromAriadnePack(input: {
     };
   };
 
-  const tryCursorMarkdown = (): HydrateTasksFromAriadnePackResult | null => {
-    const md = extractCursorTasksMarkdownFromHandoff(items, input.cursorTasksMarkdown);
-    if (!md) return null;
+  const tryChangePlanSeed = (): HydrateTasksFromAriadnePackResult | null => {
+    const validated = extractChangePlanSeedFromHandoff(items);
+    if (!validated.ok) return null;
+    const tasksJson = normalizeAriadneTasksJsonSeedToStore(validated.payload);
+    const cursorMd = extractCursorTasksMarkdownFromHandoff(items, input.cursorTasksMarkdown);
+    const tasksContent =
+      cursorMd?.trim() || buildTasksPreviewMarkdownFromTasksJson(tasksJson);
     return {
-      tasksContent: md,
-      source: "ariadne_cursor_tasks_markdown",
+      tasksJson,
+      tasksContent,
+      source: "ariadne_change_plan_seed",
       integrationScope: scope,
       skipBaselineDeliverables: skipBaseline,
     };
   };
 
-  if (primarySource === "tasks_json_seed") {
-    const fromSeed = trySeed();
-    if (fromSeed) return fromSeed;
-    if (fallbackSource === "cursor_tasks_markdown") {
-      const fromMd = tryCursorMarkdown();
-      if (fromMd) return fromMd;
+  const tryCursorMarkdown = (): HydrateTasksFromAriadnePackResult | null => {
+    const md = extractCursorTasksMarkdownFromHandoff(items, input.cursorTasksMarkdown);
+    if (!md) return null;
+    const parsed = parseAriadneCursorTasksMarkdown(md, {
+      projectId: meta?.projectId,
+      changeDescription: meta?.changeDescription,
+      ariadneChangeId: meta?.ariadneChangeId,
+      generatedAt: meta?.generatedAt,
+    });
+    if (parsed.ok) {
+      return {
+        tasksJson: parsed.payload,
+        tasksContent: md,
+        source: "ariadne_cursor_tasks_markdown",
+        integrationScope: scope,
+        skipBaselineDeliverables: skipBaseline,
+        validationWarnings: [],
+      };
     }
-  } else if (primarySource === "cursor_tasks_markdown") {
-    const fromMd = tryCursorMarkdown();
-    if (fromMd) return fromMd;
-    if (fallbackSource === "tasks_json_seed") {
-      const fromSeed = trySeed();
-      if (fromSeed) return fromSeed;
+    return {
+      tasksContent: md,
+      source: "ariadne_cursor_tasks_markdown",
+      integrationScope: scope,
+      skipBaselineDeliverables: skipBaseline,
+      validationWarnings: parsed.errors,
+    };
+  };
+
+  const chain = (sources: string[]): HydrateTasksFromAriadnePackResult | null => {
+    for (const src of sources) {
+      if (src === "tasks_json_seed") {
+        const r = trySeed();
+        if (r) return r;
+      } else if (src === "cursor_tasks_markdown") {
+        const r = tryCursorMarkdown();
+        if (r?.tasksJson || r?.tasksContent) return r;
+      } else if (src === "change_plan_seed") {
+        const r = tryChangePlanSeed();
+        if (r) return r;
+      }
     }
+    return null;
+  };
+
+  if (scope?.mode === "integration_handoff") {
+    const fromPrimary = chain([primarySource, fallbackSource, "change_plan_seed"]);
+    if (fromPrimary) return fromPrimary;
   }
 
-  // Sin integration_scope: intentar seed directo, luego markdown empaquetado
-  const directSeed = trySeed();
-  if (directSeed) return directSeed;
-  const directMd = tryCursorMarkdown();
-  if (directMd) return directMd;
-
-  return null;
+  return (
+    chain(["tasks_json_seed", "cursor_tasks_markdown", "change_plan_seed"]) ??
+    tryChangePlanSeed() ??
+    null
+  );
 }
 
 /** True cuando el pack incluye scope de integración o ítems seed de tasks. */

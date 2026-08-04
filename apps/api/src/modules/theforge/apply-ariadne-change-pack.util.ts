@@ -2,6 +2,8 @@ import type { AriadneChangePackV1, CreateStageFromAriadneChangePackOutput } from
 import {
   isAriadneMigrationTasksPack,
   normalizeAriadneHandoffItemsRaw,
+  resolveSkipBaselineDeliverableKinds,
+  shouldSkipLegacyGenerateDeliverables,
   type AriadneHandoffIdRemap,
 } from "@theforge/shared-types";
 
@@ -80,8 +82,15 @@ export function buildRecommendedNextToolsAfterAriadnePack(input: {
   hasHandoffItems: boolean;
   migrationTasksMode?: boolean;
   integrationHandoffWithHydratedTasks?: boolean;
+  skipBaselineDeliverables?: readonly string[];
 }): CreateStageFromAriadneChangePackOutput["recommendedNextTools"] {
   const steps: CreateStageFromAriadneChangePackOutput["recommendedNextTools"] = [];
+  const skipBaseline = input.skipBaselineDeliverables ?? [];
+  const skipDeliverablesDefault = shouldSkipLegacyGenerateDeliverables(skipBaseline);
+  const skipKinds = resolveSkipBaselineDeliverableKinds(skipBaseline, {
+    skipTasksFromHandoff: skipDeliverablesDefault || !!input.migrationTasksMode,
+  });
+
   if (input.questionsCount > 0) {
     steps.push({
       tool: "legacy_answer",
@@ -90,10 +99,6 @@ export function buildRecommendedNextToolsAfterAriadnePack(input: {
   }
 
   if (input.integrationHandoffWithHydratedTasks) {
-    steps.push({
-      tool: "legacy_generate_mdd",
-      reason: "Generar MDD de cambio para la etapa creada/importada (incluir stageId).",
-    });
     steps.push({
       tool: "get_tasks_json",
       reason: "Tasks hidratadas desde Ariadne (SSOT tasksJson v2).",
@@ -115,20 +120,21 @@ export function buildRecommendedNextToolsAfterAriadnePack(input: {
       reason: "Opcional: POST …/integration/stages/:stageId/sync-handoff-spec si hay ítems NEW-LEG.",
     });
   }
-  if (input.migrationTasksMode) {
+  if (input.migrationTasksMode && !skipDeliverablesDefault) {
     steps.push({
       tool: "legacy_generate_deliverables",
-      reason: "Tras MDD en VERDE, cascada legacy excepto tasks (ya importadas del handoff).",
-      skipDeliverableKinds: ["tasks"],
+      reason: "Tras MDD en VERDE, cascada legacy excepto entregables del handoff.",
+      skipDeliverableKinds: skipKinds.length ? [...skipKinds] : ["tasks"],
     });
     steps.push({
       tool: "get_next_implementation_task",
       reason: "Tasks del handoff listas — iniciar implementación Cursor.",
     });
-  } else {
+  } else if (!skipDeliverablesDefault) {
     steps.push({
       tool: "legacy_generate_deliverables",
       reason: "Tras MDD en VERDE, cascada legacy de entregables para la etapa activa.",
+      ...(skipKinds.length ? { skipDeliverableKinds: [...skipKinds] } : {}),
     });
   }
   return steps;

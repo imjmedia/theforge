@@ -44,6 +44,9 @@ export function WorkshopLegacyPanels({
   workshopStagesList,
   activeStageHandoffImportedAt,
   activeStageWorkflowStatus,
+  activeStageHandoffSnapshot,
+  tasksHydrated,
+  tasksSource,
   docTs,
   onCopyMddInicialMarkdown,
   onMddInicialContentChange,
@@ -228,7 +231,11 @@ export function WorkshopLegacyPanels({
                       legacyAnalyzeDone={legacyAnalyzeDone}
                       activeStageHandoffImportedAt={activeStageHandoffImportedAt}
                       activeStageWorkflowStatus={activeStageWorkflowStatus}
+                      activeStageHandoffSnapshot={activeStageHandoffSnapshot}
+                      tasksHydrated={tasksHydrated}
+                      tasksSource={tasksSource}
                       onOpenModification={() => onNavigatePanel("legacy")}
+                      onOpenTasks={() => onNavigatePanel("tasks")}
                       onProjectRefresh={() => {
                         void onFetchProject(projectId);
                       }}

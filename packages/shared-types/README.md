@@ -46,7 +46,8 @@ sólo lo necesario (turbo cache hit si no cambió nada).
 - **`tasks-resolve.ts`:** `resolveTasksForConsume`, `hasValidTasksJson` — SSOT tasks para Workshop/spec-kit/MCP.
 - **`deliverable-bundle.ts`:** `buildDeliverableBundleVersion` — versión atómica US+pantallas+API+tasks.
 - **`integration-handoff-tasks.util.ts`:** `INTEGRATION_HANDOFF_SEED_EXCLUDE_KEYS`, `resolveIntegrationHandoffTasksMarkdown`, `shouldSkipLegacyTasksGeneration` — handoff NEW→LEG sin entregables fantasma del baseline.
-- **`hydrate-tasks-from-ariadne-pack.util.ts`:** `validateTasksJsonV2`, `hydrateTasksFromAriadnePack`, `buildTasksPreviewMarkdownFromTasksJson` — SSOT tasks desde pack Ariadne (`tasks_json_seed` / markdown fallback).
+- **`hydrate-tasks-from-ariadne-pack.util.ts`:** `validateTasksJsonV2`, `hydrateTasksFromAriadnePack`, `buildTasksPreviewMarkdownFromTasksJson` — SSOT tasks desde pack Ariadne.
+- **`parse-ariadne-cursor-tasks-markdown.util.ts`**, **`change-plan-seed-to-tasks-json.util.ts`**, **`merge-tasks-json-idempotent.util.ts`**, **`skip-baseline-deliverables.util.ts`** — parsers, idempotencia y skip cascada.
 - **`ariadne-change-pack.ts`:** change pack v1 + `handoffPlanType`, `cursorTasksMarkdown` (alias `cursor_tasks_markdown`).
 - **`sdd-analyze.ts`:** tipos del reporte `GET /projects/:id/analyze`.
 - **`readiness-audit.util.ts`:** semáforo compuesto, clasificación de gaps (auto/LLM/humano), plan de convergencia post-cascada.
