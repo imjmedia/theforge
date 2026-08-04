@@ -14,6 +14,12 @@ import {
   extractProjectGovernanceFacts,
   type SuggestAgentGovernanceInput,
 } from "../ai/utils/suggest-agent-governance-artifacts.js";
+import {
+  buildAriadneHandoffGovernanceCorpus,
+} from "@theforge/shared-types/ariadne-handoff-artifacts.util.js";
+import { getLegacyChangeState } from "@theforge/shared-types/legacy-change-state.util.js";
+import { isAriadneSourcedStageOrigin } from "@theforge/shared-types/stage-origin.util.js";
+import type { IntegrationHandoffItem } from "@theforge/shared-types/project-integration.js";
 import { resolveStageDeliverables } from "./stage-deliverables.util.js";
 import {
   ensurePostMvpUiSurfaceBanner,
@@ -231,14 +237,40 @@ export function buildAgentGovernanceInput(
     infraContent?: string | null;
   },
 ): SuggestAgentGovernanceInput {
+  const legacyState = getLegacyChangeState(stage ?? null);
+  const snap = stage?.handoffSnapshot as { items?: IntegrationHandoffItem[] } | null | undefined;
+  const handoffItems = snap?.items ?? [];
+  const ariadneCorpus =
+    isAriadneSourcedStageOrigin(legacyState.stageOrigin) && handoffItems.length > 0
+      ? buildAriadneHandoffGovernanceCorpus(
+          handoffItems,
+          typeof legacyState.description === "string" ? legacyState.description : null,
+        )
+      : "";
+
+  const tasksFromStage =
+    deliverableOverrides?.tasksContent ?? stage?.tasksContent ?? project.tasksContent;
+  const tasksMarkdown = tasksFromStage?.trim()
+    ? tasksFromStage
+    : ariadneCorpus.includes("# Tasks") || ariadneCorpus.includes("## Tareas Cursor")
+      ? ariadneCorpus
+      : tasksFromStage;
+
   const mdd = mddMarkdown.trim();
-  const sddPendingGaps =
+  const mddForGovernance =
     mdd.length > 200
+      ? mdd
+      : ariadneCorpus.trim()
+        ? `# Cambio brownfield (Ariadne → The Forge)\n\n${ariadneCorpus}`
+        : mdd;
+
+  const sddPendingGaps =
+    mddForGovernance.length > 200
       ? collectSddPrecisionGaps({
-          mdd,
+          mdd: mddForGovernance,
           architecture: project.architectureContent,
           blueprint: deliverableOverrides?.blueprintContent ?? project.blueprintContent,
-          tasks: deliverableOverrides?.tasksContent ?? project.tasksContent,
+          tasks: tasksMarkdown,
           logicFlows: project.logicFlowsContent,
           userStories: deliverableOverrides?.userStoriesContent ?? project.userStoriesContent,
           useCases: project.useCasesContent,
@@ -248,9 +280,9 @@ export function buildAgentGovernanceInput(
         })
       : [];
   return {
-    mddMarkdown,
+    mddMarkdown: mddForGovernance,
     blueprintMarkdown: deliverableOverrides?.blueprintContent ?? project.blueprintContent,
-    tasksMarkdown: deliverableOverrides?.tasksContent ?? project.tasksContent,
+    tasksMarkdown,
     architectureMarkdown: project.architectureContent,
     specMarkdown: project.specContent,
     apiContractsMarkdown: project.apiContractsContent,

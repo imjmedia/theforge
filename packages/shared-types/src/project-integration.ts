@@ -16,6 +16,12 @@ export const integrationHandoffItemKindSchema = z.enum([
   "cursor_tasks_markdown",
   "integration_scope",
   "change_plan_seed",
+  "mdd_evidence",
+  "modification_plan_enriched",
+  "change_work_description",
+  "er_diagram",
+  "deliverable_request",
+  "post_deliverable_gate",
 ]);
 
 export type IntegrationHandoffItemKind = z.infer<typeof integrationHandoffItemKindSchema>;

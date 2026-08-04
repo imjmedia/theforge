@@ -1,7 +1,10 @@
 import type { LegacyChangeGateInput } from "./legacy-change-gate.js";
+import type { StageOrigin } from "./stage-origin.util.js";
 
 /** Legacy flow / change state persisted on Stage.legacyChangeState. */
 export type LegacyChangeState = NonNullable<LegacyChangeGateInput["legacyChangeState"]> & {
+  /** Provenance: Forge-native vs Ariadne-sourced stage. */
+  stageOrigin?: StageOrigin | null;
   codebaseDoc?: string | null;
   suggestedAnswers?: Record<string, string> | null;
   answers?: Record<string, string> | null;
