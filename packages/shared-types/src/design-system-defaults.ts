@@ -55,7 +55,7 @@ const TAILWIND_SLATE_PRIMITIVES: Record<string, string> = {
 };
 
 function semanticFromPrimitives(
-  p: Record<string, string>,
+  _p: Record<string, string>,
   mapping: Record<string, string>,
 ): Record<string, string> {
   const out: Record<string, string> = {};
