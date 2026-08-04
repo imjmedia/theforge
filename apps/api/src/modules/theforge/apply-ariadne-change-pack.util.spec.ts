@@ -9,19 +9,34 @@ import {
 } from "./apply-ariadne-change-pack.util.js";
 
 describe("preprocessCreateStageFromAriadneChangePackBody", () => {
-  it("remaps LEG-xx ids before parse", () => {
+  it("remaps LEG-xx requirement ids before parse", () => {
     const { bodyForParse, handoffIdRemaps } = preprocessCreateStageFromAriadneChangePackBody({
       forgeProjectId: "550e8400-e29b-41d4-a716-446655440099",
       pack: {
         version: "1",
         changeDescription: "Batch",
-        handoffItems: [{ id: "LEG-04", title: "T", description: "D" }],
+        handoffItems: [{ id: "LEG-04", kind: "requirement", title: "T", description: "D" }],
       },
     });
     assert.equal(handoffIdRemaps.length, 1);
     assert.equal(handoffIdRemaps[0]?.to, "NEW-LEG-04");
     const items = (bodyForParse as { pack: { handoffItems: { id: string }[] } }).pack.handoffItems;
     assert.equal(items[0]?.id, "NEW-LEG-04");
+  });
+
+  it("remaps pack artifacts to ARIADNE-ART-NN", () => {
+    const { bodyForParse } = preprocessCreateStageFromAriadneChangePackBody({
+      forgeProjectId: "550e8400-e29b-41d4-a716-446655440099",
+      pack: {
+        version: "1",
+        changeDescription: "Batch",
+        handoffItems: [
+          { id: "pack-1", kind: "integration_scope", title: "Scope", description: "{}" },
+        ],
+      },
+    });
+    const items = (bodyForParse as { pack: { handoffItems: { id: string }[] } }).pack.handoffItems;
+    assert.equal(items[0]?.id, "ARIADNE-ART-01");
   });
 });
 
@@ -82,6 +97,17 @@ describe("buildRecommendedNextToolsAfterAriadnePack", () => {
     const tools = buildRecommendedNextToolsAfterAriadnePack({ questionsCount: 2, hasHandoffItems: false });
     assert.ok(tools.some((t) => t.tool === "legacy_answer"));
     assert.ok(tools.some((t) => t.tool === "legacy_generate_mdd"));
+  });
+
+  it("suggests tasks MCP tools when integration handoff hydrated", () => {
+    const tools = buildRecommendedNextToolsAfterAriadnePack({
+      questionsCount: 0,
+      hasHandoffItems: true,
+      integrationHandoffWithHydratedTasks: true,
+    });
+    assert.ok(tools.some((t) => t.tool === "get_tasks_json"));
+    assert.ok(tools.some((t) => t.tool === "get_next_implementation_task"));
+    assert.ok(!tools.some((t) => t.tool === "legacy_generate_deliverables"));
   });
 
   it("suggests get_next_implementation_task when migrationTasksMode", () => {

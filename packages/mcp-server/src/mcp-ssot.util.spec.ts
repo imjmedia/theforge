@@ -15,6 +15,29 @@ describe("mcp-ssot.util", () => {
     assert.equal(picked?.ordinal, 1);
   });
 
+  it("pickPrimaryStageFromApi prefers integration stage when baseline ACTIVE lacks Ariadne tasks", () => {
+    const picked = pickPrimaryStageFromApi([
+      {
+        id: "stage-1",
+        ordinal: 1,
+        workflowStatus: "ACTIVE",
+        tasksJson: { tasks: [{ id: "T-login" }] },
+        legacyChangeState: {},
+      },
+      {
+        id: "stage-9",
+        ordinal: 9,
+        workflowStatus: "DRAFT",
+        tasksJson: { tasks: [{ id: "T-010" }] },
+        legacyChangeState: {
+          tasksSource: "ariadne_cursor_tasks_markdown",
+        },
+      },
+    ]);
+    assert.equal(picked?.ordinal, 9);
+    assert.equal(picked?.id, "stage-9");
+  });
+
   it("resolveTasksSsotFromProjectApi reads bundle version from snapshot", () => {
     const ssot = resolveTasksSsotFromProjectApi(
       { tasksContent: "# Tasks\n- [ ] T-001", tasksJson: null },

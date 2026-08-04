@@ -3,10 +3,28 @@
  */
 
 import {
+  getLegacyChangeState,
+  hasValidTasksJson,
   readStageDeliverableSnapshot,
   resolveTasksForConsume,
   type ResolvedTasksSource,
 } from "@theforge/shared-types";
+
+function isLegacyBaselineStage(stage: Record<string, unknown>): boolean {
+  return Number(stage.ordinal ?? 1) === 1;
+}
+
+function hasAriadneHydratedTasks(stage: Record<string, unknown>): boolean {
+  const state = getLegacyChangeState(stage as { legacyChangeState?: unknown });
+  const source =
+    (state as { tasksSource?: string }).tasksSource ??
+    state.integrationHandoffTasks?.source;
+  return (
+    typeof source === "string" &&
+    source.startsWith("ariadne_") &&
+    hasValidTasksJson(stage.tasksJson)
+  );
+}
 
 export function pickPrimaryStageFromApi(stages: unknown[]): Record<string, unknown> | null {
   if (!Array.isArray(stages) || stages.length === 0) return null;
@@ -16,8 +34,25 @@ export function pickPrimaryStageFromApi(stages: unknown[]): Record<string, unkno
   const active = typed
     .filter((s) => s.workflowStatus === "ACTIVE")
     .sort((a, b) => Number(a.ordinal ?? 0) - Number(b.ordinal ?? 0));
-  if (active[0]) return active[0];
-  return [...typed].sort((a, b) => Number(a.ordinal ?? 0) - Number(b.ordinal ?? 0))[0] ?? null;
+  const primary = active[0] ?? [...typed].sort((a, b) => Number(a.ordinal ?? 0) - Number(b.ordinal ?? 0))[0];
+
+  if (
+    primary &&
+    isLegacyBaselineStage(primary) &&
+    !hasAriadneHydratedTasks(primary)
+  ) {
+    const integrationStage = [...typed]
+      .filter(
+        (s) =>
+          Number(s.ordinal ?? 0) >= 2 &&
+          s.workflowStatus !== "ARCHIVED" &&
+          hasAriadneHydratedTasks(s),
+      )
+      .sort((a, b) => Number(b.ordinal ?? 0) - Number(a.ordinal ?? 0))[0];
+    if (integrationStage) return integrationStage;
+  }
+
+  return primary ?? null;
 }
 
 export function resolveTasksSsotFromProjectApi(
@@ -31,6 +66,9 @@ export function resolveTasksSsotFromProjectApi(
   deliverableBundleVersion: string | null;
   /** Origen Ariadne (p. ej. ariadne_tasks_json_seed) cuando hidratado en import. */
   ariadneTasksSource?: string | null;
+  /** Etapa usada para resolver SSOT (puede diferir de ACTIVE si baseline sin tasks Ariadne). */
+  stageId?: string | null;
+  stageOrdinal?: number | null;
 } {
   const resolved = resolveTasksForConsume({
     tasksContent: typeof project.tasksContent === "string" ? project.tasksContent : null,
@@ -58,6 +96,8 @@ export function resolveTasksSsotFromProjectApi(
     tasksJson: resolved.tasksJson,
     deliverableBundleVersion: snapshot?.bundleVersion ?? null,
     ariadneTasksSource,
+    stageId: typeof primaryStage?.id === "string" ? primaryStage.id : null,
+    stageOrdinal: typeof primaryStage?.ordinal === "number" ? primaryStage.ordinal : null,
   };
 }
 
