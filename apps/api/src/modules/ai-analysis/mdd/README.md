@@ -39,6 +39,7 @@ El Workshop ya no depende de `persistMddContent` tras encolar.
 |--------|------|-------------|
 | `POST` | `/ai-analysis/mdd/jobs` | Encola greenfield (`pipeline` \| `manager` \| `section` \| `upstream-sync`) |
 | `GET` | `/ai-analysis/mdd/upstream-sync/analysis?projectId=&stageId=` | Diff upstream vs baseline MDD (secciones recomendadas) |
+| `POST` | `/ai-analysis/mdd/upstream-sync/accept-baseline?projectId=&stageId=` | Re-ancla baseline sin regenerar MDD (acknowledge humano) |
 | `GET` | `/ai-analysis/mdd/jobs/:jobId` | Estado del job |
 | `GET` | `/projects/:id/mdd-jobs/:jobId` | Alias polling (web) |
 | `DELETE` | `/projects/:id/mdd-jobs/:jobId` | Cancela job encolado o aborta pipeline activo (flag Redis + `AbortSignal` entre nodos; poll 500 ms) |
@@ -63,6 +64,8 @@ El job guarda `MddJobProgressState` (`steps[]` completados + `active` en curso).
 ## Baseline upstream
 
 Tras `pipeline`, `section`, `upstream-sync` o restauración desde caché upstream exitosa, `MddUpstreamSyncService.captureBaseline` persiste en `Stage.mddUpstreamBaseline` (hashes + snapshots 32k de DBGA/BRD/Benchmark) para detectar cambios posteriores. Los hashes ignoran la cabecera de fechas (`theforge-doc`) para no marcar desincronización por metadatos solamente.
+
+**Acknowledge sin regenerar:** `POST /ai-analysis/mdd/upstream-sync/accept-baseline?projectId=&stageId=` (`acceptBaseline`) re-ancla el baseline al upstream actual **sin** modificar `mddContent`. Lo usa el banner Workshop «Marcar MDD como sincronizado» tras paste/alineación manual. No hay auto-accept al guardar el MDD.
 
 ## Caché documento (upstream sin cambios)
 

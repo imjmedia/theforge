@@ -350,6 +350,14 @@ export interface WorkshopState {
     projectId: string,
     opts?: { sections?: number[]; stageId?: string | null },
   ) => Promise<Project | null>;
+  /**
+   * Re-ancla `mddUpstreamBaseline` al upstream actual sin regenerar el MDD
+   * (acknowledge humano tras paste/alineación manual).
+   */
+  acceptMddUpstreamBaseline: (
+    projectId: string,
+    opts?: { stageId?: string | null },
+  ) => Promise<boolean>;
   clearMddJustGeneratedFromBenchmark: () => void;
   setAgentProgress: (progress: Array<{ agent: string; message: string }>) => void;
   setPhase0SummaryContent: (content: string | null) => void;

@@ -13,7 +13,7 @@ Extracción incremental de `workshopStore.ts` (Fase 5a del [GOD-REFACTOR](../../
 | **slice-ui.ts** | `createUiSlice` — setters de UI (loading, error, notice, modales, legacy debug). |
 | **slice-project.ts** | `createProjectSlice` — proyecto, etapas, `fetchProject`, plugin data. |
 | **slice-session-chat.ts** | `createSessionChatSlice` — sesión, chat, `/formatear`, `sendMessage` (intercepta modo asistido en tab benchmark). |
-| **slice-mdd.ts** | `createMddSlice` — editor MDD, persist, jobs benchmark/upstream, review/format. |
+| **slice-mdd.ts** | `createMddSlice` — editor MDD, persist, jobs benchmark/upstream, `acceptMddUpstreamBaseline`, review/format. |
 | **slice-deliverables.ts** | `createDeliverablesSlice` — entregables (UX, Blueprint, API, …), cascada, conformance, Phase 0, **modo asistido** (`startPhase0Assisted` / `stopPhase0Assisted`), estimación. |
 | **slice-legacy-debug.ts** | `createLegacyDebugSlice` — generation-status (reconcilia jobs ya terminados para evitar banner colgado), plan validation, flujos legacy MCP y cascada legacy. |
 | **slice-clarify.ts** | `createClarifySlice` — ADRs, governance, traceability, clarify/resolve, converge/tasks, `reset`. |

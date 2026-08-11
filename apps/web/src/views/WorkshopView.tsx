@@ -144,6 +144,7 @@ export default function WorkshopView({
   const patchWorkshopStage = useWorkshopStore((s) => s.patchWorkshopStage);
   const generateMddFromBenchmark = useWorkshopStore((s) => s.generateMddFromBenchmark);
   const generateMddUpstreamSync = useWorkshopStore((s) => s.generateMddUpstreamSync);
+  const acceptMddUpstreamBaseline = useWorkshopStore((s) => s.acceptMddUpstreamBaseline);
   const persistMddContent = useWorkshopStore((s) => s.persistMddContent);
   const [mddPatternsWizardOpen, setMddPatternsWizardOpen] = useState(false);
   const [mddRegenerateDialogOpen, setMddRegenerateDialogOpen] = useState(false);
@@ -681,6 +682,13 @@ export default function WorkshopView({
     setMddRegenerateInitialMode("upstream-sync");
     setMddRegenerateDialogOpen(true);
   }, []);
+
+  const handleAcceptMddUpstreamSynced = useCallback(async () => {
+    if (!projectId?.trim()) return;
+    await acceptMddUpstreamBaseline(projectId.trim(), {
+      stageId: activeStageId ?? undefined,
+    });
+  }, [projectId, activeStageId, acceptMddUpstreamBaseline]);
 
   const openEditMddPatterns = useCallback(() => {
     setMddPatternsWizardMode("edit");
@@ -2650,6 +2658,7 @@ export default function WorkshopView({
             generationStatus={generationStatus}
             disabled={loading || generationStatus?.busy === true}
             onOpenSyncDialog={openMddSyncDialog}
+            onAcceptSynced={handleAcceptMddUpstreamSynced}
           />
         ) : null}
       </div>

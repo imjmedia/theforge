@@ -58,6 +58,7 @@ type MddSliceActions = Pick<
   | "updateMddContent"
   | "generateMddFromBenchmark"
   | "generateMddUpstreamSync"
+  | "acceptMddUpstreamBaseline"
   | "clearMddJustGeneratedFromBenchmark"
   | "persistMddContent"
   | "revertMddContent"
@@ -222,6 +223,42 @@ export const createMddSlice: StateCreator<WorkshopState, [], [], MddSliceActions
       }
       void get().fetchGenerationStatus(pid);
       return null;
+    }
+  },
+
+  acceptMddUpstreamBaseline: async (projectId, opts) => {
+    if (!projectId?.trim()) return false;
+    const pid = projectId.trim();
+    const stageId = opts?.stageId ?? get().activeStageId ?? undefined;
+    const qs = new URLSearchParams({ projectId: pid });
+    if (stageId?.trim()) qs.set("stageId", stageId.trim());
+    try {
+      const res = await apiFetch(`${API_BASE}/ai-analysis/mdd/upstream-sync/accept-baseline?${qs}`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const msg = await parseErrorMessageFromResponse(
+          res,
+          "No se pudo marcar el MDD como sincronizado.",
+        );
+        set({ error: msg });
+        return false;
+      }
+      const body = (await res.json()) as {
+        syncStatus?: MddUpstreamSyncStatus;
+        pendingSync?: boolean;
+      };
+      if (body.syncStatus) {
+        set((s) => ({
+          error: null,
+          generationStatus: mergeGenerationStatusWithMddUpstreamSync(s.generationStatus, body.syncStatus!),
+        }));
+      }
+      await get().fetchGenerationStatus(pid, stageId);
+      return body.pendingSync !== true;
+    } catch (e) {
+      set({ ...errorStateFromCaught(e) });
+      return false;
     }
   },
 
