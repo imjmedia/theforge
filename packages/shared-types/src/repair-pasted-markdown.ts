@@ -599,6 +599,8 @@ export function repairTableBoundaries(text: string): string {
   let out = text.replace(/^(#{1,6}\s+[^\n]+)\n(\|)/gm, "$1\n\n$2");
   out = out.replace(/(\n\|[^\n]+\|)\n(#{1,6}\s+)/g, "$1\n\n$2");
   out = out.replace(/^(contexto:[^\n]+)\n(\|)/gim, "$1\n\n$2");
+  out = out.replace(/^(>\s+[^\n|]+)\n(\|)/gm, "$1\n\n$2");
+  out = out.replace(/^([^\n#|>`][^\n]*[^\s|])\n(\|)/gm, "$1\n\n$2");
   return out;
 }
 

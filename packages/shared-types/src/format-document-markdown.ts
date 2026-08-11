@@ -4,7 +4,11 @@
  */
 
 import { repairMarkdownFences } from "./markdown-repair.js";
-import { normalizeAllTables, repairCollapsedPipeTables } from "./markdown-table.js";
+import {
+  normalizeAllTables,
+  repairCollapsedPipeTables,
+  repairProseGluedTableLines,
+} from "./markdown-table.js";
 import { normalizeMermaidInDocument } from "./mermaid.js";
 import { splitEmbeddedMddFromDbga } from "./dbga-document-structure.js";
 import { repairFragmentedSqlFences } from "./repair-collapsed-sql.js";
@@ -92,6 +96,7 @@ export function formatDocumentMarkdown(text: string): string {
   cleaned = repairPhase0FlowFormat(cleaned);
   cleaned = homogenizeMarkdownBulletMarkers(cleaned);
   cleaned = repairCollapsedPipeTables(cleaned);
+  cleaned = repairProseGluedTableLines(cleaned);
   cleaned = normalizeAllTables(cleaned);
   cleaned = repairTableBoundaries(cleaned);
   cleaned = repairStrayCodeFences(cleaned);

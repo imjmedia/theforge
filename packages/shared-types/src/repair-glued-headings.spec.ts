@@ -94,4 +94,11 @@ stateDiagram-v2
     assert.match(out, /^## 6\. Seguridad/m);
     assert.doesNotMatch(out, /### ## 6\./);
   });
+
+  it("despega heading de blockquote pegado con >", () => {
+    const raw =
+      "### Trazabilidad BRD → MDD (FR → módulo → §§) > Matriz canónica para el checker MaxPrime.";
+    const out = repairGluedMarkdownHeadings(raw);
+    assert.match(out, /### Trazabilidad BRD → MDD \(FR → módulo → §§\)\n\n>\s+Matriz canónica/);
+  });
 });
