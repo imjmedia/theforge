@@ -237,8 +237,11 @@ export const createMddSlice: StateCreator<WorkshopState, [], [], MddSliceActions
         method: "POST",
       });
       if (!res.ok) {
-        const msg = await parseErrorMessageFromResponse(res);
-        set({ error: msg || "No se pudo marcar el MDD como sincronizado." });
+        const msg = await parseErrorMessageFromResponse(
+          res,
+          "No se pudo marcar el MDD como sincronizado.",
+        );
+        set({ error: msg });
         return false;
       }
       const body = (await res.json()) as {
