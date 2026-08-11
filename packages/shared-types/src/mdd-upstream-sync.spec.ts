@@ -136,4 +136,45 @@ describe("mdd-upstream-sync", () => {
     });
     assert.equal(analysis.pendingSync, false);
   });
+
+  it("accept-baseline: pendingSync true → re-anclar → pendingSync false sin cambiar mddContent", () => {
+    const mddContent = "# Master Design Document\n\n## 1. Contexto\n\n" + "alcance estable.\n".repeat(40);
+    const oldBaseline = buildMddUpstreamBaseline({
+      dbgaContent: "dbga v1 antiguo",
+      brdContent: "brd v1",
+      benchmarkContent: "{}",
+      mddContent,
+    });
+    const currentDbga = "dbga v2 alineado a mano con el MDD";
+    const currentBrd = "brd v1";
+    const currentBench = "{}";
+    const before = analyzeMddUpstreamChanges({
+      baseline: oldBaseline,
+      dbgaContent: currentDbga,
+      brdContent: currentBrd,
+      benchmarkContent: currentBench,
+      mddContent,
+    });
+    assert.equal(before.pendingSync, true);
+    assert.ok(before.changedSources.includes("dbga"));
+
+    // Equivalente a captureBaseline / acceptBaseline: re-anclar a documentos actuales.
+    const acceptedBaseline = buildMddUpstreamBaseline({
+      dbgaContent: currentDbga,
+      brdContent: currentBrd,
+      benchmarkContent: currentBench,
+      mddContent,
+    });
+    const after = analyzeMddUpstreamChanges({
+      baseline: acceptedBaseline,
+      dbgaContent: currentDbga,
+      brdContent: currentBrd,
+      benchmarkContent: currentBench,
+      mddContent,
+    });
+    assert.equal(after.pendingSync, false);
+    assert.deepEqual(after.changedSources, []);
+    assert.equal(mddContent, "# Master Design Document\n\n## 1. Contexto\n\n" + "alcance estable.\n".repeat(40));
+    assert.equal(acceptedBaseline.mddContentHash, hashUpstreamDocumentBody(mddContent));
+  });
 });

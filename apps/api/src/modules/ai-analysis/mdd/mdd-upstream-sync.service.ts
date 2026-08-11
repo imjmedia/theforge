@@ -1,4 +1,11 @@
-import { Injectable, Logger, NotFoundException, forwardRef, Inject } from "@nestjs/common";
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  forwardRef,
+  Inject,
+} from "@nestjs/common";
 import {
   analyzeMddUpstreamChanges,
   buildMddUpstreamBaseline,
@@ -9,10 +16,20 @@ import {
   toMddUpstreamSyncStatus,
   type MddUpstreamBaseline,
   type MddUpstreamSyncAnalysis,
+  type MddUpstreamSyncStatus,
 } from "@theforge/shared-types";
 import { PrismaService } from "../../../prisma/prisma.service.js";
 import { pickPrimaryStage } from "../../projects/stage-helpers.js";
 import { ProjectsService } from "../../projects/projects.service.js";
+
+export type AcceptMddUpstreamBaselineResult = {
+  stageId: string;
+  /** Longitud del MDD al aceptar (no se modifica el contenido). */
+  mddLength: number;
+  baseline: MddUpstreamBaseline;
+  analysis: MddUpstreamSyncAnalysis;
+  syncStatus: MddUpstreamSyncStatus;
+};
 
 function parseBaseline(raw: unknown): MddUpstreamBaseline | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -133,6 +150,42 @@ export class MddUpstreamSyncService {
     const baseline = await this.captureBaseline(projectId, stageId);
     const analysis = await this.analyze(projectId, stageId);
     return { baseline, analysis, syncStatus: toMddUpstreamSyncStatus(analysis) };
+  }
+
+  /**
+   * Acknowledge humano: re-ancla `mddUpstreamBaseline` a DBGA/BRD/Benchmark (+ MDD) actuales
+   * sin regenerar contenido. Apaga `pendingSync` cuando el usuario confirma que el MDD ya refleja el upstream.
+   */
+  async acceptBaseline(
+    projectId: string,
+    stageId?: string | null,
+  ): Promise<AcceptMddUpstreamBaselineResult> {
+    const requestedStageId = stageId?.trim() || undefined;
+    const docs = await this.loadUpstreamDocuments(projectId, requestedStageId);
+    if (requestedStageId && docs.stageId !== requestedStageId) {
+      throw new NotFoundException("Etapa no encontrada");
+    }
+    const before = this.analyzeFromDocs(docs);
+    if (!before.hasMdd) {
+      throw new BadRequestException(
+        "Genera o pega un MDD suficiente antes de marcar la sincronización con upstream.",
+      );
+    }
+    const mddLength = docs.mddContent.length;
+    const { baseline, analysis, syncStatus } = await this.captureBaselineAndAnalyze(
+      projectId,
+      docs.stageId,
+    );
+    this.logger.log(
+      `Baseline upstream MDD aceptado (sin regenerar) stageId=${docs.stageId} projectId=${projectId} pendingSync=${syncStatus.pendingSync}`,
+    );
+    return {
+      stageId: docs.stageId,
+      mddLength,
+      baseline,
+      analysis,
+      syncStatus,
+    };
   }
 
   buildSyncSummary(analysis: MddUpstreamSyncAnalysis): string {

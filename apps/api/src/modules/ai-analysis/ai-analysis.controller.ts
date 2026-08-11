@@ -247,6 +247,28 @@ export class AiAnalysisController {
   }
 
   /**
+   * Marca el MDD como sincronizado con el upstream actual (re-ancla baseline sin regenerar contenido).
+   * Query: projectId (required), stageId (optional).
+   */
+  @Post("mdd/upstream-sync/accept-baseline")
+  async acceptMddUpstreamBaseline(
+    @Query("projectId") projectId: string,
+    @Query("stageId") stageId?: string,
+  ) {
+    const id = typeof projectId === "string" ? projectId.trim() : "";
+    if (!id) throw new BadRequestException("projectId is required");
+    const sid = typeof stageId === "string" ? stageId.trim() || undefined : undefined;
+    const result = await this.mddUpstreamSync.acceptBaseline(id, sid);
+    return {
+      stageId: result.stageId,
+      mddLength: result.mddLength,
+      pendingSync: result.syncStatus.pendingSync,
+      syncStatus: result.syncStatus,
+      analysis: result.analysis,
+    };
+  }
+
+  /**
    * Devuelve el threadId del flujo MDD para el proyecto, si existe.
    * El frontend lo usa para rehidratar managerThreadId al reabrir la app y seguir con resume.
    */
