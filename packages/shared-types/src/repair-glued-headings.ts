@@ -89,6 +89,18 @@ function fixGluedPlainTitleMermaidSuffix(draft: string): string {
   return draft.replace(/^([^\n#`][^\n]*[^\s(])mermaid\s*\n(\s*```mermaid)/gim, "$1\n\n$2");
 }
 
+/** `### Título > cita` o `## Foo > bar` → heading + blockquote en líneas separadas. */
+function splitHeadingFromGluedBlockquote(draft: string): string {
+  return draft
+    .split("\n")
+    .map((line) => {
+      const match = line.match(/^(\s*(?:#{1,6}\s+.+?))\s+>\s+(.+)$/);
+      if (!match) return line;
+      return `${match[1]}\n\n> ${match[2]!.trim()}`;
+    })
+    .join("\n");
+}
+
 /** Despega prosa pegada al título en la misma línea (`### Título Este sistema…`). */
 function splitHeadingTitleFromInlineProse(draft: string): string {
   const numberedTitle =
@@ -157,5 +169,6 @@ export function repairGluedMarkdownHeadings(draft: string): string {
   out = splitInlineBoldLabelRuns(out);
   out = out.replace(/^(##\s+\d+\.\s+[^\n#]+?)\s+(#{2,4}\s+)/gm, "$1\n\n$2");
   out = splitHeadingTitleFromInlineProse(out);
+  out = splitHeadingFromGluedBlockquote(out);
   return out.replace(/\n{3,}/g, "\n\n");
 }

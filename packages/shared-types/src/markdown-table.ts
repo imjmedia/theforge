@@ -314,14 +314,68 @@ export function normalizeAllTables(document: string): string {
   return result.join("\n");
 }
 
+/** Fila GFM con al menos dos celdas (`| a | b |`). */
+function looksLikeGfmTableRow(text: string): boolean {
+  const row = text.trim();
+  if (!row.startsWith("|")) return false;
+  const cells = row
+    .split("|")
+    .map((cell) => cell.trim())
+    .filter((cell) => cell.length > 0);
+  return cells.length >= 2;
+}
+
+/**
+ * Separa prosa/heading/blockquote pegados al inicio de una fila de tabla en la misma línea.
+ * Ej.: `### Título > cita | FR | Módulo |` → líneas independientes antes del `|`.
+ */
+function splitProsePrefixFromTableLine(line: string): string {
+  const trimmed = line.trimStart();
+  const indent = line.slice(0, line.length - trimmed.length);
+  if (trimmed.startsWith("|")) return line;
+
+  const pipeIdx = trimmed.indexOf("|");
+  if (pipeIdx <= 0) return line;
+
+  const prefix = trimmed.slice(0, pipeIdx).trimEnd();
+  const tablePart = trimmed.slice(pipeIdx).trimStart();
+  if (!prefix || !looksLikeGfmTableRow(tablePart)) return line;
+
+  return `${indent}${prefix}\n${indent}${tablePart}`;
+}
+
+/** Separa blockquote pegado a la fila cabecera de una tabla. */
+function splitBlockquoteFromGluedTableLine(line: string): string {
+  const trimmed = line.trimStart();
+  const indent = line.slice(0, line.length - trimmed.length);
+  if (!/^>\s/.test(trimmed)) return line;
+
+  const match = trimmed.match(/^>\s*(.+?)\s+(\|.+\|)\s*$/);
+  if (!match || !looksLikeGfmTableRow(match[2]!)) return line;
+
+  return `${indent}> ${match[1]!.trim()}\n\n${indent}${match[2]!.trim()}`;
+}
+
+/**
+ * Despega prosa, headings o blockquotes del primer `|` de una fila de tabla GFM.
+ * Complementa `repairCollapsedPipeTables` cuando la cabecera queda en la misma línea que el texto previo.
+ */
+export function repairProseGluedTableLines(document: string): string {
+  if (!document?.trim()) return document ?? "";
+  return document
+    .split("\n")
+    .map((line) => splitBlockquoteFromGluedTableLine(splitProsePrefixFromTableLine(line)))
+    .join("\n");
+}
+
 /**
  * Expande tablas markdown colapsadas en una sola línea
  * (`| H1 | H2 | | :--- | :--- | | fila | datos |` → filas reales).
- * Típico del Clarifier/Architect en §1 (tabla de dolores).
+ * Típico del Clarifier/Architect en §1 (tabla de dolores) y matriz FR §1 MDD.
  */
 export function repairCollapsedPipeTables(document: string): string {
   if (!document?.trim()) return document ?? "";
-  return document
+  const expanded = document
     .split("\n")
     .map((line) => {
       const pipeCount = (line.match(/\|/g) ?? []).length;
@@ -341,4 +395,5 @@ export function repairCollapsedPipeTables(document: string): string {
       return prefix + rows.join("\n");
     })
     .join("\n");
+  return repairProseGluedTableLines(expanded);
 }
