@@ -9,6 +9,8 @@ import {
   compilePagToApiContractsMarkdown,
   compilePagToPersistenceMarkdown,
   compilePagToBlueprintModulesMarkdown,
+  compilePagToLogicFlowsMarkdown,
+  compilePagToInfraMarkdown,
 } from "./document-compiler.js";
 
 describe("ProjectArchitectureGraph (PAG)", () => {
@@ -22,6 +24,7 @@ describe("ProjectArchitectureGraph (PAG)", () => {
       frontendFramework: "React 18 + Vite",
       database: "PostgreSQL 16",
       orm: "Prisma",
+      cache: "Redis 7",
     },
     entities: [
       {
@@ -149,6 +152,31 @@ describe("ProjectArchitectureGraph (PAG)", () => {
     assert.ok(check.errors.some((e) => e.includes("NonExistentUser")));
   });
 
+  it("valida semánticamente OpenAPI 3.1 y detecta required faltante en properties", () => {
+    const brokenOpenApiPag: ProjectArchitectureGraph = {
+      ...samplePag,
+      endpoints: [
+        {
+          path: "/api/v1/invalids",
+          method: "POST",
+          authRequired: true,
+          errorCodes: [400],
+          rolesAllowed: [],
+          requestSchema: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+            },
+            required: ["title", "unannouncedField"],
+          },
+        },
+      ],
+    };
+    const check = validateProjectArchitectureGraph(brokenOpenApiPag);
+    assert.equal(check.ok, false);
+    assert.ok(check.errors.some((e) => e.includes("unannouncedField")));
+  });
+
   it("compila contratos API deterministas a Markdown sin LLM", () => {
     const md = compilePagToApiContractsMarkdown(samplePag);
     assert.ok(md.includes("# Contratos de API — Enterprise Logistics"));
@@ -156,7 +184,6 @@ describe("ProjectArchitectureGraph (PAG)", () => {
     assert.ok(md.includes("JSON Schema"));
     assert.ok(md.includes("`422`"));
   });
-
 
   it("compila persistencia y módulos deterministas a Markdown", () => {
     const persistenceMd = compilePagToPersistenceMarkdown(samplePag);
@@ -167,5 +194,25 @@ describe("ProjectArchitectureGraph (PAG)", () => {
     const blueprintMd = compilePagToBlueprintModulesMarkdown(samplePag);
     assert.ok(blueprintMd.includes("`ShipmentModule`"));
     assert.ok(blueprintMd.includes("`ShipmentController`"));
+  });
+
+  it("compila flujos lógicos con diagramas Mermaid de secuencia sin LLM", () => {
+    const logicFlowsMd = compilePagToLogicFlowsMarkdown(samplePag);
+    assert.ok(logicFlowsMd.includes("# Flujos Lógicos y Secuencias de Negocio — Enterprise Logistics"));
+    assert.ok(logicFlowsMd.includes("```mermaid"));
+    assert.ok(logicFlowsMd.includes("sequenceDiagram"));
+    assert.ok(logicFlowsMd.includes("Client->>Controller: POST /api/v1/shipments"));
+    assert.ok(logicFlowsMd.includes("Validar JWT Guard (OPERATOR, ADMIN)"));
+    assert.ok(logicFlowsMd.includes("## 2. Invariantes de Negocio y Manejo de Errores"));
+  });
+
+  it("compila infraestructura con Docker Compose y topología Mermaid sin LLM", () => {
+    const infraMd = compilePagToInfraMarkdown(samplePag);
+    assert.ok(infraMd.includes("# Especificación de Infraestructura y Despliegue — Enterprise Logistics"));
+    assert.ok(infraMd.includes("```mermaid"));
+    assert.ok(infraMd.includes("graph TD"));
+    assert.ok(infraMd.includes("postgres:16-alpine"));
+    assert.ok(infraMd.includes("POSTGRES_DB: app_database"));
+    assert.ok(infraMd.includes("`DATABASE_URL`"));
   });
 });

@@ -174,5 +174,88 @@ describe("AiService — Structured Output & ProjectArchitectureGraph (PAG)", () 
     assert.match(contractsMarkdown, /## 1\. Catálogo de Endpoints/);
     assert.match(contractsMarkdown, /\|\s+\*\*GET\*\*\s+\|\s+`\/api\/v1\/orders`\s+\|/);
     assert.match(contractsMarkdown, /## 3\. Códigos de Estado y Manejo de Errores/);
+
+    const savedPag = service.getLastGeneratedPag();
+    assert.ok(savedPag);
+    assert.equal(savedPag?.projectName, "OrderService");
+  });
+
+  it("generateLogicFlows genera diagramas de secuencia Mermaid sin prosa libre", async () => {
+    const service = new AiService(dummyFactory, dummyTechDocs, null);
+    const mockPag: ProjectArchitectureGraph = {
+      version: "1.0.0",
+      projectName: "OrderService",
+      stack: {
+        runtime: "Node.js 20",
+        backendFramework: "NestJS",
+        frontendFramework: "React",
+        database: "PostgreSQL",
+        orm: "Prisma",
+      },
+      entities: [
+        {
+          name: "Order",
+          fields: [{ name: "id", type: "UUID", required: true, constraints: [] }],
+          primaryKey: "id",
+          indexes: [],
+        },
+      ],
+      endpoints: [
+        {
+          path: "/api/v1/orders",
+          method: "POST",
+          description: "Crea una orden nueva en el sistema",
+          authRequired: true,
+          rolesAllowed: ["BUYER"],
+          targetEntity: "Order",
+          errorCodes: [400, 401],
+        },
+      ],
+      services: [
+        {
+          name: "OrderModule",
+          layer: "backend_module",
+          handledEndpoints: ["/api/v1/orders"],
+          dependencies: [],
+        },
+      ],
+    };
+
+    (service as any).generateResponse = async () => JSON.stringify(mockPag);
+
+    const lfMarkdown = await service.generateLogicFlows("# MDD OrderService");
+    assert.match(lfMarkdown, /# Flujos Lógicos y Secuencias de Negocio — OrderService/);
+    assert.match(lfMarkdown, /sequenceDiagram/);
+    assert.match(lfMarkdown, /Client->>Controller: POST \/api\/v1\/orders/);
+    assert.match(lfMarkdown, /Note over Controller: Validar JWT Guard \(BUYER\)/);
+  });
+
+  it("generateInfra genera topología Mermaid y docker-compose.yml determinista", async () => {
+    const service = new AiService(dummyFactory, dummyTechDocs, null);
+    const mockPag: ProjectArchitectureGraph = {
+      version: "1.0.0",
+      projectName: "OrderService",
+      stack: {
+        runtime: "Node.js 20",
+        backendFramework: "NestJS",
+        frontendFramework: "React",
+        database: "PostgreSQL",
+        orm: "Prisma",
+        cache: "Redis",
+      },
+      entities: [],
+      endpoints: [],
+      services: [],
+    };
+
+    (service as any).generateResponse = async () => JSON.stringify(mockPag);
+
+    const infraMarkdown = await service.generateInfra("# MDD OrderService");
+    assert.match(infraMarkdown, /# Especificación de Infraestructura y Despliegue — OrderService/);
+    assert.match(infraMarkdown, /graph TD/);
+    assert.match(infraMarkdown, /```yaml/);
+    assert.match(infraMarkdown, /image: postgres:16-alpine/);
+    assert.match(infraMarkdown, /POSTGRES_DB: app_database/);
+    assert.match(infraMarkdown, /`DATABASE_URL`/);
   });
 });

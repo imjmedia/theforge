@@ -44,6 +44,8 @@ import {
   compilePagToApiContractsMarkdown,
   compilePagToPersistenceMarkdown,
   compilePagToBlueprintModulesMarkdown,
+  compilePagToLogicFlowsMarkdown,
+  compilePagToInfraMarkdown,
 } from "@theforge/shared-types";
 import { appendMddGovernancePatternsToPrompt } from "./utils/mdd-governance-prompt.util.js";
 import {
@@ -362,6 +364,11 @@ function cleanJsonOutput(raw: string): string {
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
+  private lastGeneratedPag: ProjectArchitectureGraph | null = null;
+
+  getLastGeneratedPag(): ProjectArchitectureGraph | null {
+    return this.lastGeneratedPag;
+  }
 
   constructor(
     private readonly aiFactory: AIFactory,
@@ -750,6 +757,7 @@ Reglas estrictas de integridad:
       );
     }
 
+    this.lastGeneratedPag = pag;
     return pag;
   }
 
@@ -1514,6 +1522,28 @@ Reglas estrictas de integridad:
     const mddRaw = mddContent?.trim() ?? "";
     const legacyAsIsLogicFlows = options?.legacyBaselineStage === true && mddRaw.length > 0;
 
+    const useCompilerFirstLf = process.env.COMPILER_FIRST_LOGIC_FLOWS !== "false";
+    if (useCompilerFirstLf && mddRaw.length > 0 && !legacyAsIsLogicFlows) {
+      try {
+        const abortSignal = this.resolveDeliverableLlmAbortSignal(this.resolveAbortSignal(options));
+        const pag =
+          this.lastGeneratedPag ??
+          (await this.generateProjectArchitectureGraph(mddRaw, {
+            gapsFeedback,
+            abortSignal,
+          }));
+        const compiled = compilePagToLogicFlowsMarkdown(pag);
+        if (compiled && compiled.trim().length > 100) {
+          this.logger.log(`[AiService] Flujos lógicos generados via PAG + DocumentCompiler (Compiler-First)`);
+          return compiled;
+        }
+      } catch (err) {
+        this.logger.warn(
+          `[AiService] Fallback a prosa en LogicFlows tras error en Compiler-First: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     if (legacyAsIsLogicFlows) {
       const deterministic = resolveLegacyAsIsLogicFlowsDeterministic({
         codebaseDoc: options?.codebaseDoc,
@@ -1671,6 +1701,29 @@ Reglas estrictas de integridad:
   }
 
   async generateInfra(mddContent: string, blueprintContent?: string | null, gapsFeedback?: string | null, options?: LegacyGenerateOptions): Promise<string> {
+    const useCompilerFirstInfra = process.env.COMPILER_FIRST_INFRA !== "false";
+    if (useCompilerFirstInfra && mddContent?.trim()) {
+      try {
+        const abortSignal = this.resolveDeliverableLlmAbortSignal(this.resolveAbortSignal(options));
+        const pag =
+          this.lastGeneratedPag ??
+          (await this.generateProjectArchitectureGraph(mddContent, {
+            blueprintContent,
+            gapsFeedback,
+            abortSignal,
+          }));
+        const compiled = compilePagToInfraMarkdown(pag);
+        if (compiled && compiled.trim().length > 100) {
+          this.logger.log(`[AiService] Infraestructura generada via PAG + DocumentCompiler (Compiler-First)`);
+          return compiled;
+        }
+      } catch (err) {
+        this.logger.warn(
+          `[AiService] Fallback a prosa en Infra tras error en Compiler-First: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     const mdd = buildMddContextForInfra(mddContent?.trim() ?? "", mddDeliverableCtx(options));
     const blueprint = capTextForLegacyBaseline(blueprintContent ?? "", 6000, options?.legacyBaselineStage);
     const constitutionNote =

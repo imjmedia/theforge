@@ -1254,7 +1254,11 @@ export class ProjectDeliverableGeneratorsService {
       .catch(() => {});
   }
 
-  const updated = await this.projects.update(projectId, { apiContractsContent: apiContent });
+  const pag = this.ai.getLastGeneratedPag();
+  const updated = await this.projects.update(projectId, {
+    apiContractsContent: apiContent,
+    ...(pag ? { documentAst: pag as any } : {}),
+  });
   this.logger.log(
     `[API] Contratos API completados (${apiContent.length} chars, conformidad=${postCheck.ok})`,
   );

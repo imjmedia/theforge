@@ -43,6 +43,27 @@ export type PagEntity = z.infer<typeof pagEntitySchema>;
 export const httpMethodSchema = z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 export type HttpMethod = z.infer<typeof httpMethodSchema>;
 
+/**
+ * Esquema semántico de JSON Schema según especificación OpenAPI 3.1.
+ */
+export const openApiJsonSchema: z.ZodType<any> = z.lazy(() =>
+  z
+    .object({
+      type: z
+        .enum(["string", "number", "integer", "boolean", "array", "object", "null"])
+        .optional(),
+      properties: z.record(z.lazy(() => openApiJsonSchema)).optional(),
+      items: z.lazy(() => openApiJsonSchema).optional(),
+      required: z.array(z.string()).optional(),
+      description: z.string().optional(),
+      format: z.string().optional(),
+      example: z.any().optional(),
+      enum: z.array(z.any()).optional(),
+    })
+    .passthrough(),
+);
+export type OpenApiJsonSchema = z.infer<typeof openApiJsonSchema>;
+
 export const pagEndpointSchema = z.object({
   path: z.string().min(1),
   method: httpMethodSchema,
@@ -50,8 +71,8 @@ export const pagEndpointSchema = z.object({
   authRequired: z.boolean().default(true),
   rolesAllowed: z.array(z.string()).default([]),
   targetEntity: z.string().optional(), // Referencia a entidad PAG
-  requestSchema: z.record(z.any()).optional(), // JSON Schema del request
-  responseSchema: z.record(z.any()).optional(), // JSON Schema del response (200/201)
+  requestSchema: openApiJsonSchema.optional(), // JSON Schema OpenAPI 3.1 del request
+  responseSchema: openApiJsonSchema.optional(), // JSON Schema OpenAPI 3.1 del response (200/201)
   errorCodes: z.array(z.number()).default([400, 401, 403, 404, 500]),
 });
 export type PagEndpoint = z.infer<typeof pagEndpointSchema>;
@@ -129,5 +150,37 @@ export function validateProjectArchitectureGraph(pag: ProjectArchitectureGraph):
     errors.push(`Incompatibilidad de stack: Base de datos ${pag.stack.database} con ORM ${pag.stack.orm}.`);
   }
 
+  // 4. Validación semántica OpenAPI 3.1 en endpoints
+  for (const ep of pag.endpoints) {
+    if (!ep.path.startsWith("/")) {
+      errors.push(`Endpoint [${ep.method} ${ep.path}]: La ruta canónica debe comenzar con "/".`);
+    }
+    for (const code of ep.errorCodes) {
+      if (typeof code !== "number" || code < 100 || code > 599) {
+        errors.push(`Endpoint [${ep.method} ${ep.path}]: Código HTTP inválido "${code}". Debe estar entre 100 y 599.`);
+      }
+    }
+    if (ep.requestSchema) {
+      validateOpenApiJsonSchemaSemantic(ep.requestSchema, `Endpoint [${ep.method} ${ep.path}] requestSchema`, errors);
+    }
+    if (ep.responseSchema) {
+      validateOpenApiJsonSchemaSemantic(ep.responseSchema, `Endpoint [${ep.method} ${ep.path}] responseSchema`, errors);
+    }
+  }
+
   return { ok: errors.length === 0, errors };
+}
+
+function validateOpenApiJsonSchemaSemantic(schema: any, context: string, errors: string[]) {
+  if (!schema || typeof schema !== "object") return;
+  if (Array.isArray(schema.required) && schema.properties) {
+    for (const reqProp of schema.required) {
+      if (typeof reqProp === "string" && !(reqProp in schema.properties)) {
+        errors.push(`${context}: La propiedad obligatoria "${reqProp}" declarada en "required" no está definida en "properties".`);
+      }
+    }
+  }
+  if (schema.type === "array" && !schema.items) {
+    errors.push(`${context}: Esquema de tipo "array" debe definir la especificación de "items".`);
+  }
 }

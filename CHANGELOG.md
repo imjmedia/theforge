@@ -4,6 +4,39 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 
 ## [Unreleased]
 
+> **Arquitectura Compiler-First & Transición de Cascada Multi-Agente a Grafos Deterministas** — Rediseño integral de la cascada de generación de documentos técnicos para eliminar bucles infinitos, alucinación de especificaciones y consumo descontrolado de tokens. Introduce el **Project Architecture Graph (PAG)** con validación semántica OpenAPI 3.1, compilación determinista sin LLM a Markdown (`DocumentCompiler`), persistencia del AST en `Stage.documentAst`, Circuit Breaker global acotado a 3 intentos máximos y soporte para enfoques metodológicos UX-First y Domain-First.
+
+### Added
+
+- **Project Architecture Graph (PAG) & Validación Semántica OpenAPI 3.1** (`packages/shared-types/src/project-architecture-graph.ts`, 7 tests):
+  - Esquema Zod canónico para el grafo de arquitectura de software (`projectArchitectureGraphSchema`): encapsula `stack` tecnológico, `entities` con campos y tipos, `endpoints` con contratos REST, `modules` lógicos y `services` de infraestructura.
+  - Validación semántica recursiva OpenAPI 3.1 (`openApiJsonSchema`): verifica tipos de esquemas de request y response, obligatoriedad de `items` en colecciones tipo `array`, y correspondencia estricta entre propiedades declaradas en `required` y existentes en `properties`.
+  - Integridad referencial en memoria (`validateProjectArchitectureGraph`): verifica que las rutas comiencen con `/`, códigos de error HTTP en rango canónico [100, 599], referencias válidas a entidades del modelo, y compatibilidad de stack (e.g. PostgreSQL con Prisma).
+- **DocumentCompiler Determinista para Especificaciones Técnicas** (`packages/shared-types/src/document-compiler.ts`):
+  - `compilePagToApiContractsMarkdown`: compila contratos de endpoints, tablas de roles/permisos RBAC, códigos de error HTTP y schemas JSON OpenAPI sin llamadas a modelos de lenguaje (zero-hallucination).
+  - `compilePagToPersistenceMarkdown`: compila modelos de persistencia, campos, claves foráneas e índices.
+  - `compilePagToBlueprintModulesMarkdown`: compila la estructura modular de la solución, controladores y servicios asociados.
+  - `compilePagToLogicFlowsMarkdown`: compila flujos de lógica de negocio y genera algorítmicamente diagramas de secuencia **Mermaid** (`sequenceDiagram` con Cliente, Controller, Service, Repository y Database) e invariantes de negocio.
+  - `compilePagToInfraMarkdown`: compila la especificación de infraestructura con diagramas de topología **Mermaid** (`graph TD`), manifiesto determinista `docker-compose.yml` (servicios de app, PostgreSQL y Redis) y matriz de variables de entorno.
+- **Generación Estructurada y Compiler-First en `AiService`** (`apps/api/src/modules/ai/ai.service.ts`, 5 tests):
+  - `AiService.generateObject`: método para solicitar objetos tipados con JSON Schema estricto a los LLMs, desempaquetando defensivamente respuestas en bloques markdown.
+  - `AiService.generateProjectArchitectureGraph`: genera y valida el PAG contra Zod antes de admitirlo en la cascada.
+  - Rutas Compiler-First en `generateApiContracts`, `generateLogicFlows` y `generateInfra`: derivan las especificaciones técnicas directamente del PAG compilado, eliminando divergencias entre contratos, base de datos y flujos lógicos.
+- **Persistencia de AST de Primera Clase (`Stage.documentAst`)** (`apps/api/src/modules/projects/project-deliverable-generators.service.ts`):
+  - Guarda automáticamente el grafo PAG en el campo `documentAst` de la etapa durante la corrida exitosa de la cascada, permitiendo a plugins, exportadores y agentes downstream consumir la verdad arquitectónica estructurada sin re-parsear markdown.
+- **Soporte de Enfoques Metodológicos (UX-First y Domain-First)** (`packages/database/schema.prisma`, `packages/shared-types/src/project.ts`, `apps/web/`):
+  - Campo `methodologicalApproach` en el modelo `Project` de Prisma (`DOMAIN_FIRST` | `UX_FIRST`).
+  - Configuración y selección de enfoque en el asistente de creación de proyectos (`CreateProjectWizardDialog`) y diálogo de ajustes (`ProjectSettingsDialog`).
+  - Renderizado de badges y chips informativos en el header del Workshop y en las tarjetas de proyectos.
+
+### Changed
+
+- **Circuit Breaker Global en Cascada de Entregables (`deliverables-cascade.service.ts`)**:
+  - Reemplazo de bucles infinitos de auto-reparación por un guard estricto (`MAX_GLOBAL_CASCADE_RETRIES = 3`). Si la cascada alcanza 3 reintentos globales, aborta con error explicativo para evitar consumo desmedido de tokens y timeouts de worker.
+  - Límites de una sola pasada en `cascade-w4-post-pass.util.ts` (`maxRetries = 1`) para evitar re-ejecuciones redundantes de auditoría.
+- **Inyección de Contratos Técnicos en Prompts de Generación**:
+  - Los prompts de Arquitectura, Blueprint y Contratos ahora reciben explícitamente los contratos canónicos de tipos y schemas, evitando que los agentes generen modelos dispares.
+
 > **Coste IA por documento — telemetría de tokens y tipo de cambio editable** — Captura el consumo real (prompt + completion) de cada llamada LLM en los adapters (OpenAI-compat / Anthropic / Gemini) y en el pipeline MDD, lo agrupa por documento y modelo, y muestra USD + MXN estimado en una sección colapsable de la columna de métricas. El tipo de cambio MXN/USD se mantiene en Ajustes → Sistema (categoría "Coste & facturación") y se snapshotea por evento para que los totales históricos no cambien al editarlo.
 
 ### Added
