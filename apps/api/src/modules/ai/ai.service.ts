@@ -37,6 +37,14 @@ import { MDD_DOC_GAP_PATCH_PROMPT } from "./prompts/mdd-doc-gap-patch-prompt.js"
 import { parseJsonOrThrow } from "../ai-analysis/utils/parse-json.js";
 import { resolveLlmHardTimeoutMs } from "../ai-analysis/utils/mdd-llm-timeout.util.js";
 import { z } from "zod";
+import {
+  projectArchitectureGraphSchema,
+  type ProjectArchitectureGraph,
+  validateProjectArchitectureGraph,
+  compilePagToApiContractsMarkdown,
+  compilePagToPersistenceMarkdown,
+  compilePagToBlueprintModulesMarkdown,
+} from "@theforge/shared-types";
 import { appendMddGovernancePatternsToPrompt } from "./utils/mdd-governance-prompt.util.js";
 import {
   buildMddContextForUserStories,
@@ -338,6 +346,19 @@ function appendTechDocsContextBlock(prompt: string, techDocsContext: string | nu
   return appendTechDocsToUserPrompt(prompt, techDocsContext);
 }
 
+function cleanJsonOutput(raw: string): string {
+  let cleaned = (raw ?? "").trim();
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  }
+  const firstBrace = cleaned.search(/[\{\[]/);
+  const lastBrace = Math.max(cleaned.lastIndexOf("}"), cleaned.lastIndexOf("]"));
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+  }
+  return cleaned.trim();
+}
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
@@ -551,6 +572,8 @@ export class AiService {
           systemPrompt,
           userMessageImages: options?.userMessageImages,
           abortSignal: options?.abortSignal,
+          jsonObjectMode: options?.jsonObjectMode,
+          maxTokensOverride: options?.maxTokensOverride,
         });
         console.log(`[AiService] ${ts()} ← Respuesta del LLM recibida:`, {
           length: out?.length ?? 0,
@@ -599,6 +622,135 @@ export class AiService {
       this.logger.error("[AiService] generateAuditorResponse error", err);
       throw err;
     }
+  }
+
+  /**
+   * Genera una estructura fuertemente tipada validada contra un esquema Zod.
+   * Utiliza structured output (jsonObjectMode) y valida el resultado.
+   */
+  async generateObject<T>(
+    schema: z.ZodType<T, any, any>,
+    opts: {
+      prompt: string;
+      systemPrompt: string;
+      history?: LlmChatMessage[];
+      activeTab?: string;
+      abortSignal?: AbortSignal;
+      maxRetries?: number;
+      telemetryContext?: GenerateResponseOptions["telemetryContext"];
+    },
+  ): Promise<T> {
+    const maxRetries = opts.maxRetries ?? 1;
+    let lastError: Error | null = null;
+    let currentPrompt = opts.prompt;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (opts.abortSignal?.aborted) throw new Error("Cancelado por el usuario");
+
+      const systemPrompt =
+        opts.systemPrompt +
+        "\n\nIMPORTANTE: Responde ÚNICAMENTE con un objeto JSON válido y bien formado que cumpla con el esquema requerido. No incluyas explicaciones en texto ni comentarios fuera del JSON.";
+
+      const raw = await this.generateResponse(currentPrompt, opts.history ?? [], {
+        systemPrompt,
+        activeTab: opts.activeTab,
+        jsonObjectMode: true,
+        abortSignal: opts.abortSignal,
+        telemetryContext: opts.telemetryContext,
+      });
+
+      const cleaned = cleanJsonOutput(raw);
+      try {
+        const parsedJson = JSON.parse(cleaned);
+        const validated = schema.parse(parsedJson);
+        return validated;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        this.logger.warn(
+          `[AiService] generateObject validación fallida (intento ${attempt + 1}/${maxRetries + 1}): ${lastError.message}`,
+        );
+        if (attempt < maxRetries) {
+          currentPrompt = `${opts.prompt}\n\n[ERROR DE VALIDACIÓN PREVIO]:\n${lastError.message}\nCorrige los campos y tipos para devolver únicamente el JSON válido.`;
+        }
+      }
+    }
+
+    throw lastError ?? new Error("Fallo al generar objeto estructurado");
+  }
+
+  /**
+   * Genera el Grafo de Arquitectura de Proyecto (PAG) formal y tipado directamente como JSON.
+   * Modela entidades, campos, constraints de FK, endpoints REST, stack y servicios.
+   */
+  async generateProjectArchitectureGraph(
+    mddContent: string,
+    options?: {
+      uiScreensContent?: string | null;
+      blueprintContent?: string | null;
+      brdContent?: string | null;
+      gapsFeedback?: string | null;
+      abortSignal?: AbortSignal;
+      telemetryContext?: GenerateResponseOptions["telemetryContext"];
+    },
+  ): Promise<ProjectArchitectureGraph> {
+    const systemPrompt = `Eres un Principal Enterprise Software Architect.
+Tu misión es estructurar y extraer el Grafo de Arquitectura de Proyecto (PAG) formal y tipado a partir de la Constitución (MDD), especificaciones visuales de pantallas y requerimientos.
+El grafo debe modelar:
+1. "projectName": Nombre del proyecto o sistema.
+2. "version": "1.0.0".
+3. "stack": Runtime, backendFramework (e.g. NestJS), frontendFramework (e.g. React), database (PostgreSQL), orm (Prisma).
+4. "entities": Cada modelo de datos / entidad con:
+   - "name": Nombre PascalCase (ej: User, Order, Invoice).
+   - "fields": Campos con "name", "type" (String, Int, Boolean, DateTime, UUID, etc.), "required" (boolean), "description" para humanos, y "constraints" (foreign_key indicando reference.entity y reference.field).
+5. "endpoints": Cada endpoint REST del sistema con:
+   - "path": Ruta canónica (ej: /api/v1/orders, /api/v1/orders/:id).
+   - "method": GET, POST, PUT, PATCH, o DELETE.
+   - "description": Explicación humana de la operación y reglas de negocio.
+   - "authRequired": boolean.
+   - "rolesAllowed": array de roles autorizados.
+   - "targetEntity": Nombre exacto de la entidad principal que manipula (debe existir en entities).
+   - "errorCodes": códigos HTTP posibles (ej: [400, 401, 404, 500]).
+6. "services": Módulos o servicios de backend (ej: AuthModule, BillingModule) que agrupan los endpoints.
+
+Reglas estrictas de integridad:
+- Toda entidad referenciada en un foreign_key o en targetEntity DEBE existir en la lista de entities.
+- Si se proporcionan especificaciones visuales de pantallas (UX-First), los endpoints deben cubrir todas las acciones y vistas de usuario.
+- Genera descripciones claras y exhaustivas para que los documentos compilados sean legibles y útiles para ingenieros humanos.`;
+
+    const parts: string[] = [
+      "Genera el ProjectArchitectureGraph (PAG) completo en formato JSON para el siguiente proyecto:",
+      "MDD (Constitución):\n---\n" + mddContent.trim() + "\n---",
+    ];
+
+    if (options?.uiScreensContent?.trim()) {
+      parts.push("Pantallas y UI (UX-First):\n---\n" + options.uiScreensContent.trim() + "\n---");
+    }
+    if (options?.blueprintContent?.trim()) {
+      parts.push("Blueprint previo:\n---\n" + options.blueprintContent.trim() + "\n---");
+    }
+    if (options?.brdContent?.trim()) {
+      parts.push("BRD (Negocio):\n---\n" + options.brdContent.trim() + "\n---");
+    }
+    if (options?.gapsFeedback?.trim()) {
+      parts.push("Gaps a corregir:\n---\n" + options.gapsFeedback.trim() + "\n---");
+    }
+
+    const pag = await this.generateObject<ProjectArchitectureGraph>(projectArchitectureGraphSchema, {
+      prompt: parts.join("\n\n"),
+      systemPrompt,
+      activeTab: "api-contracts",
+      abortSignal: options?.abortSignal,
+      telemetryContext: options?.telemetryContext,
+    });
+
+    const validation = validateProjectArchitectureGraph(pag);
+    if (!validation.ok) {
+      this.logger.warn(
+        `[AiService] PAG contiene inconsistencias referenciales: ${validation.errors.join("; ")}`,
+      );
+    }
+
+    return pag;
   }
 
   async generateResponseStream(
@@ -1222,6 +1374,25 @@ export class AiService {
   async generateBlueprint(mddContent: string, gapsFeedback?: string | null, options?: LegacyGenerateOptions): Promise<string> {
     const mddRaw = mddContent?.trim() ?? "";
     const legacyAsIsBlueprint = options?.legacyBaselineStage === true && mddRaw.length > 0;
+    const useCompilerFirstBp = process.env.COMPILER_FIRST_BLUEPRINT === "true";
+    if (useCompilerFirstBp && mddRaw.length > 0 && !legacyAsIsBlueprint) {
+      try {
+        const abortSignal = this.resolveDeliverableLlmAbortSignal(this.resolveAbortSignal(options));
+        const pag = await this.generateProjectArchitectureGraph(mddRaw, {
+          gapsFeedback,
+          abortSignal,
+        });
+        const persistenceMd = compilePagToPersistenceMarkdown(pag);
+        const modulesMd = compilePagToBlueprintModulesMarkdown(pag);
+        if (persistenceMd && modulesMd) {
+          return `# Blueprint de Arquitectura: ${pag.projectName}\n\n${persistenceMd}\n\n${modulesMd}`;
+        }
+      } catch (err) {
+        this.logger.warn(
+          `[AiService] Fallback a prosa en Blueprint tras error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
     const mdd = buildMddContextForBlueprint(mddRaw, mddDeliverableCtx(options));
     const checklist = legacyAsIsBlueprint ? buildLegacyAsIsBlueprintCoverageChecklist(mddRaw) : "";
     const constitutionNote =
@@ -1261,6 +1432,36 @@ export class AiService {
   }
 
   async generateApiContracts(mddContent: string, blueprintContent?: string | null, gapsFeedback?: string | null, brdContent?: string | null, options?: LegacyGenerateOptions): Promise<string> {
+    const useCompilerFirst = process.env.COMPILER_FIRST_API_CONTRACTS !== "false";
+    if (useCompilerFirst && mddContent?.trim()) {
+      try {
+        this.logger.log(`[AiService] Generando Contratos de API via PAG + DocumentCompiler (Compiler-First)`);
+        const abortSignal = this.resolveDeliverableLlmAbortSignal(this.resolveAbortSignal(options));
+        const pag = await this.generateProjectArchitectureGraph(mddContent, {
+          blueprintContent,
+          brdContent,
+          gapsFeedback,
+          abortSignal,
+          telemetryContext: options?.projectId
+            ? {
+                projectId: options.projectId,
+                stageId: options.stageId ?? null,
+                documentField: "apiContractsContent",
+                context: "initial",
+              }
+            : undefined,
+        });
+        const compiled = compilePagToApiContractsMarkdown(pag);
+        if (compiled && compiled.trim().length > 100) {
+          return compiled;
+        }
+      } catch (err) {
+        this.logger.warn(
+          `[AiService] Fallback a generador de prosa tras error en Compiler-First: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     const techDocsContext = await this.resolveTechDocsContext(mddContent, blueprintContent, options);
     const mdd = buildMddContextForApiContracts(mddContent?.trim() ?? "", mddDeliverableCtx(options));
     const blueprint = capTextForLegacyBaseline(blueprintContent ?? "", 16000, options?.legacyBaselineStage);

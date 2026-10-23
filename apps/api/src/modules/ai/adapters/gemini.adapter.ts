@@ -54,10 +54,11 @@ export class GeminiAdapter implements LLMProvider {
     this.embeddingsEnabled = runtime.embeddingsEnabled && !!runtime.embeddingModel;
   }
 
-  private getModel(systemPrompt?: string) {
+  private getModel(systemPrompt?: string, jsonObjectMode?: boolean) {
     return this.genAI.getGenerativeModel({
       model: this.chatModel,
       systemInstruction: systemPrompt,
+      ...(jsonObjectMode ? { generationConfig: { responseMimeType: "application/json" } } : {}),
     });
   }
 
@@ -66,7 +67,7 @@ export class GeminiAdapter implements LLMProvider {
     history: ChatMessage[],
     options?: GenerateResponseOptions,
   ): Promise<string> {
-    const model = this.getModel(options?.systemPrompt);
+    const model = this.getModel(options?.systemPrompt, options?.jsonObjectMode);
     const chat = model.startChat({ history: historyToGemini(history) });
     const parts = [{ text: prompt }, ...imageParts(options?.userMessageImages)];
     const res = await chat.sendMessage(parts);
