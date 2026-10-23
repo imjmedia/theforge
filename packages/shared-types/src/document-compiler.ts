@@ -318,3 +318,226 @@ export function compilePagToInfraMarkdown(pag: ProjectArchitectureGraph): string
 
   return lines.join("\n");
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════
+ * Exportador Nativo OpenAPI 3.1.0 desde PAG (Zero-LLM)
+ * ═══════════════════════════════════════════════════════════
+ */
+
+/**
+ * Exporta el ProjectArchitectureGraph (PAG) a una especificación OpenAPI 3.1.0 formal.
+ */
+export function exportPagToOpenApiSpec(pag: ProjectArchitectureGraph): Record<string, any> {
+  const paths: Record<string, any> = {};
+  const schemas: Record<string, any> = {};
+
+  // 1. Schemas de componentes desde pag.entities
+  for (const entity of pag.entities) {
+    const properties: Record<string, any> = {};
+    const required: string[] = [];
+
+    for (const field of entity.fields) {
+      properties[field.name] = {
+        type: mapFieldTypeToOpenApiType(field.type),
+        ...(field.description ? { description: field.description } : {}),
+      };
+      if (field.required) {
+        required.push(field.name);
+      }
+    }
+
+    schemas[entity.name] = {
+      type: "object",
+      description: entity.description ?? `Entidad de dominio ${entity.name}`,
+      properties,
+      ...(required.length > 0 ? { required } : {}),
+    };
+  }
+
+  // 2. Paths y operaciones desde pag.endpoints
+  for (const ep of pag.endpoints) {
+    const openApiPath = ep.path.startsWith("/")
+      ? ep.path.replace(/:([a-zA-Z0-9_]+)/g, "{$1}")
+      : `/${ep.path.replace(/:([a-zA-Z0-9_]+)/g, "{$1}")}`;
+    if (!paths[openApiPath]) {
+      paths[openApiPath] = {};
+    }
+
+    const method = ep.method.toLowerCase();
+    const pathParams = Array.from(openApiPath.matchAll(/\{([a-zA-Z0-9_]+)\}/g)).map((m) => m[1]);
+
+    const parameters = pathParams.map((p) => ({
+      name: p,
+      in: "path",
+      required: true,
+      schema: { type: "string" },
+      description: `Parámetro de ruta ${p}`,
+    }));
+
+    const responses: Record<string, any> = {};
+    const successCode = method === "post" ? "201" : "200";
+
+    responses[successCode] = {
+      description: "Operación completada con éxito",
+      content: {
+        "application/json": {
+          schema:
+            ep.responseSchema ??
+            (ep.targetEntity && schemas[ep.targetEntity]
+              ? { $ref: `#/components/schemas/${ep.targetEntity}` }
+              : { type: "object" }),
+        },
+      },
+    };
+
+    for (const code of ep.errorCodes) {
+      responses[String(code)] = {
+        description: `Respuesta de error ${code}`,
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              properties: {
+                statusCode: { type: "integer", example: code },
+                message: { type: "string" },
+                error: { type: "string" },
+              },
+            },
+          },
+        },
+      };
+    }
+
+    const operation: Record<string, any> = {
+      summary: ep.description ? ep.description.slice(0, 80) : `${ep.method} ${openApiPath}`,
+      description: ep.description ?? `Operación ${ep.method} sobre ${ep.targetEntity ?? "recurso"}`,
+      responses,
+    };
+
+    if (parameters.length > 0) {
+      operation.parameters = parameters;
+    }
+
+    if (ep.targetEntity) {
+      operation.tags = [ep.targetEntity];
+    }
+
+    if (ep.authRequired) {
+      operation.security = [{ bearerAuth: ep.rolesAllowed.length ? ep.rolesAllowed : [] }];
+    }
+
+    if (ep.requestSchema && ["post", "put", "patch"].includes(method)) {
+      operation.requestBody = {
+        required: true,
+        content: {
+          "application/json": {
+            schema: ep.requestSchema,
+          },
+        },
+      };
+    }
+
+    paths[openApiPath][method] = operation;
+  }
+
+  return {
+    openapi: "3.1.0",
+    info: {
+      title: pag.projectName,
+      version: pag.version ?? "1.0.0",
+      description: `Especificación OpenAPI 3.1 generada determinísticamente desde el Project Architecture Graph (PAG) para ${pag.projectName}.`,
+    },
+    paths,
+    components: {
+      schemas,
+      securitySchemes: {
+        bearerAuth: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "JWT",
+          description: "Autenticación Bearer JWT",
+        },
+      },
+    },
+  };
+}
+
+function mapFieldTypeToOpenApiType(type: string): string {
+  const t = type.toLowerCase();
+  if (t.includes("int") || t.includes("number")) return "integer";
+  if (t.includes("float") || t.includes("decimal") || t.includes("double")) return "number";
+  if (t.includes("bool")) return "boolean";
+  if (t.includes("date") || t.includes("time")) return "string";
+  if (t.includes("json")) return "object";
+  if (t.includes("array") || t.endsWith("[]")) return "array";
+  return "string";
+}
+
+/**
+ * Convierte un objeto de JavaScript en una cadena YAML válida de manera determinista.
+ */
+export function stringifyToYaml(data: any, indentLevel = 0): string {
+  const indent = "  ".repeat(indentLevel);
+  if (data === null || data === undefined) {
+    return "null";
+  }
+  if (typeof data === "boolean" || typeof data === "number") {
+    return String(data);
+  }
+  if (typeof data === "string") {
+    if (data === "" || /[\n:#\-\[\]{},"']/.test(data)) {
+      return JSON.stringify(data);
+    }
+    return data;
+  }
+  if (Array.isArray(data)) {
+    if (data.length === 0) return "[]";
+    const lines: string[] = [];
+    for (const item of data) {
+      if (typeof item === "object" && item !== null && !Array.isArray(item)) {
+        const objYaml = stringifyToYaml(item, indentLevel + 1);
+        const [first, ...rest] = objYaml.split("\n");
+        lines.push(`${indent}- ${(first ?? "").trimStart()}`);
+        for (const r of rest) {
+          lines.push(r);
+        }
+      } else {
+        lines.push(`${indent}- ${stringifyToYaml(item, indentLevel + 1)}`);
+      }
+    }
+    return lines.join("\n");
+  }
+  if (typeof data === "object") {
+    const keys = Object.keys(data);
+    if (keys.length === 0) return "{}";
+    const lines: string[] = [];
+    for (const key of keys) {
+      const val = data[key];
+      if (val === undefined) continue;
+      if (typeof val === "object" && val !== null) {
+        if (Array.isArray(val) && val.length === 0) {
+          lines.push(`${indent}${key}: []`);
+        } else if (!Array.isArray(val) && Object.keys(val).length === 0) {
+          lines.push(`${indent}${key}: {}`);
+        } else {
+          lines.push(`${indent}${key}:`);
+          lines.push(stringifyToYaml(val, indentLevel + 1));
+        }
+      } else {
+        lines.push(`${indent}${key}: ${stringifyToYaml(val, indentLevel + 1)}`);
+      }
+    }
+    return lines.join("\n");
+  }
+  return String(data);
+}
+
+/**
+ * Exporta el ProjectArchitectureGraph (PAG) a una especificación OpenAPI 3.1.0 en formato YAML.
+ */
+export function exportPagToOpenApiYaml(pag: ProjectArchitectureGraph): string {
+  const spec = exportPagToOpenApiSpec(pag);
+  return stringifyToYaml(spec);
+}
+

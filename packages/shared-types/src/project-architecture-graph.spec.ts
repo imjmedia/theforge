@@ -11,6 +11,8 @@ import {
   compilePagToBlueprintModulesMarkdown,
   compilePagToLogicFlowsMarkdown,
   compilePagToInfraMarkdown,
+  exportPagToOpenApiSpec,
+  exportPagToOpenApiYaml,
 } from "./document-compiler.js";
 
 describe("ProjectArchitectureGraph (PAG)", () => {
@@ -215,4 +217,21 @@ describe("ProjectArchitectureGraph (PAG)", () => {
     assert.ok(infraMd.includes("POSTGRES_DB: app_database"));
     assert.ok(infraMd.includes("`DATABASE_URL`"));
   });
+
+  it("exporta especificación nativa OpenAPI 3.1.0 en formato JSON y YAML directamente desde el PAG", () => {
+    const openApiJson = exportPagToOpenApiSpec(samplePag);
+    assert.equal(openApiJson.openapi, "3.1.0");
+    assert.equal(openApiJson.info.title, "Enterprise Logistics");
+    assert.ok(openApiJson.paths["/api/v1/shipments"]);
+    assert.ok(openApiJson.paths["/api/v1/shipments"].post);
+    assert.equal(openApiJson.paths["/api/v1/shipments"].post.responses["201"].description, "Operación completada con éxito");
+    assert.ok(openApiJson.components.schemas.User);
+    assert.ok(openApiJson.components.schemas.Shipment);
+
+    const openApiYaml = exportPagToOpenApiYaml(samplePag);
+    assert.ok(openApiYaml.includes("openapi: 3.1.0"));
+    assert.ok(openApiYaml.includes("title: Enterprise Logistics"));
+    assert.ok(openApiYaml.includes("/api/v1/shipments:"));
+  });
 });
+

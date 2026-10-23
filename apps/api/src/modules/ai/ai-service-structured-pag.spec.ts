@@ -258,4 +258,64 @@ describe("AiService — Structured Output & ProjectArchitectureGraph (PAG)", () 
     assert.match(infraMarkdown, /POSTGRES_DB: app_database/);
     assert.match(infraMarkdown, /`DATABASE_URL`/);
   });
+
+  it("ejecuta Self-Healing Semántico guiado por el Compiler si el PAG inicial tiene errores", async () => {
+    const service = new AiService(dummyFactory, dummyTechDocs, null);
+    let callCount = 0;
+
+    // Primer PAG con error: path no empieza con '/' y targetEntity inexistente
+    const brokenPag: ProjectArchitectureGraph = {
+      version: "1.0.0",
+      projectName: "SelfHealingSystem",
+      stack: {
+        runtime: "Node.js 20",
+        backendFramework: "NestJS",
+        frontendFramework: "React",
+        database: "PostgreSQL",
+        orm: "Prisma",
+      },
+      entities: [],
+      endpoints: [
+        {
+          path: "api/v1/items", // Invalido: falta '/'
+          method: "GET",
+          targetEntity: "Item", // Invalido: no existe en entities
+          authRequired: true,
+          rolesAllowed: [],
+          errorCodes: [400],
+        },
+      ],
+      services: [],
+    };
+
+    // Segundo PAG reparado
+    const repairedPag: ProjectArchitectureGraph = {
+      ...brokenPag,
+      entities: [
+        {
+          name: "Item",
+          fields: [{ name: "id", type: "String", required: true }],
+          constraints: [],
+          indexes: [],
+        },
+      ],
+      endpoints: [
+        {
+          ...brokenPag.endpoints[0],
+          path: "/api/v1/items",
+        },
+      ],
+    };
+
+    (service as any).generateResponse = async () => {
+      callCount++;
+      return callCount === 1 ? JSON.stringify(brokenPag) : JSON.stringify(repairedPag);
+    };
+
+    const result = await service.generateProjectArchitectureGraph("# MDD content");
+    assert.equal(callCount, 2, "Debe haber llamado al LLM exactamente 2 veces (1 inicial + 1 reparación)");
+    assert.equal(result.endpoints[0].path, "/api/v1/items");
+    assert.equal(result.entities[0].name, "Item");
+  });
 });
+

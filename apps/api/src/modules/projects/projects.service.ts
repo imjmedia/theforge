@@ -8,8 +8,12 @@ import {
   type CreateProjectDto,
   type UpdateProjectDto,
   type TasksPipelineProgress,
+  exportPagToOpenApiSpec,
+  exportPagToOpenApiYaml,
+  type ProjectArchitectureGraph,
 } from "@theforge/shared-types";
 
+import { pickPrimaryStage } from "./stage-helpers.js";
 import { loadAccessibleProjectWithStages } from "./project-access.util.js";
 import { ProjectMddPersistService } from "./project-mdd-persist.service.js";
 import { DeliverablesCascadeService } from "./deliverables-cascade.service.js";
@@ -447,4 +451,33 @@ export class ProjectsService implements IOrchestratorProjectsPort {
   ): Promise<void> {
     return this.mddPersist.persistMddFromBackgroundJob(projectId, rawMarkdown, options);
   }
+
+  async getOpenApiSpec(projectId: string): Promise<Record<string, any>> {
+    const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
+    const activeStage = pickPrimaryStage(project.stages ?? []);
+    const ast = activeStage?.documentAst ?? project.stages?.find((s) => s.documentAst)?.documentAst;
+
+    if (!ast || typeof ast !== "object" || !("endpoints" in ast)) {
+      throw new NotFoundException(
+        "No se encontró un Project Architecture Graph (PAG) estructurado en las etapas del proyecto. Ejecuta la generación de entregables o regenera contratos de API para generar la especificación OpenAPI 3.1.",
+      );
+    }
+
+    return exportPagToOpenApiSpec(ast as unknown as ProjectArchitectureGraph);
+  }
+
+  async getOpenApiYaml(projectId: string): Promise<string> {
+    const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
+    const activeStage = pickPrimaryStage(project.stages ?? []);
+    const ast = activeStage?.documentAst ?? project.stages?.find((s) => s.documentAst)?.documentAst;
+
+    if (!ast || typeof ast !== "object" || !("endpoints" in ast)) {
+      throw new NotFoundException(
+        "No se encontró un Project Architecture Graph (PAG) estructurado en las etapas del proyecto. Ejecuta la generación de entregables o regenera contratos de API para generar la especificación OpenAPI 3.1.",
+      );
+    }
+
+    return exportPagToOpenApiYaml(ast as unknown as ProjectArchitectureGraph);
+  }
 }
+

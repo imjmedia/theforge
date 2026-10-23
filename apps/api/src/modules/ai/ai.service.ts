@@ -750,15 +750,69 @@ Reglas estrictas de integridad:
       telemetryContext: options?.telemetryContext,
     });
 
+    let finalPag = pag;
     const validation = validateProjectArchitectureGraph(pag);
     if (!validation.ok) {
       this.logger.warn(
-        `[AiService] PAG contiene inconsistencias referenciales: ${validation.errors.join("; ")}`,
+        `[AiService] PAG contiene inconsistencias referenciales o de OpenAPI: ${validation.errors.join("; ")}. Iniciando Self-Healing Semántico guiado por el Compiler (1 sola pasada)...`,
       );
+
+      try {
+        const repairSystemPrompt = `Eres un Principal Enterprise Software Architect especializado en reparación semántica de ASTs (Compiler-Guided Self-Healing).
+Tu tarea es corregir quirúrgicamente las inconsistencias referenciales, violaciones de integridad o errores de esquema OpenAPI 3.1 reportados por el compilador en el JSON del ProjectArchitectureGraph (PAG).
+
+REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
+1. Corrige EXACTAMENTE las violaciones reportadas en la lista de errores del compilador.
+2. Si una propiedad listada en "required" no existe en "properties", agrégala a "properties" con su tipo correspondiente o remuévela de "required".
+3. Si un endpoint referencia una "targetEntity" inexistente, crea la entidad correspondiente en "entities" con campos mínimos coherentes o ajusta la referencia.
+4. Si un path no inicia con "/", agrégaselo (ej: "api/v1" -> "/api/v1").
+5. Si un código HTTP no es válido, corrígelo a códigos estándar (ej: 400, 401, 403, 404, 500).
+6. Preserva la totalidad de la estructura válida del PAG original (projectName, stack, entities, endpoints, modules, services).
+7. Devuelve el JSON completo del ProjectArchitectureGraph corregido y validado.`;
+
+        const repairPrompt = [
+          "El compilador ha detectado las siguientes inconsistencias semánticas o de esquema en el ProjectArchitectureGraph generado:",
+          "--- ERRORES DEL COMPILADOR ---",
+          ...validation.errors.map((e) => `- ${e}`),
+          "------------------------------",
+          "",
+          "A continuación está el JSON del ProjectArchitectureGraph a reparar:",
+          "```json",
+          JSON.stringify(pag, null, 2),
+          "```",
+          "",
+          "Corrige las violaciones indicadas y devuelve el ProjectArchitectureGraph reparado y válido en formato JSON.",
+        ].join("\n");
+
+        const repairedPag = await this.generateObject<ProjectArchitectureGraph>(projectArchitectureGraphSchema, {
+          prompt: repairPrompt,
+          systemPrompt: repairSystemPrompt,
+          activeTab: "api-contracts",
+          abortSignal: options?.abortSignal,
+          telemetryContext: options?.telemetryContext
+            ? { ...options.telemetryContext, context: "repair" }
+            : undefined,
+        });
+
+        const recheck = validateProjectArchitectureGraph(repairedPag);
+        if (recheck.ok) {
+          this.logger.log("[AiService] Self-Healing Semántico exitoso: PAG corregido y validado al 100%.");
+          finalPag = repairedPag;
+        } else {
+          this.logger.warn(
+            `[AiService] Self-Healing completó 1 pasada pero restan advertencias: ${recheck.errors.join("; ")}. Continuando con mejor esfuerzo.`,
+          );
+          finalPag = repairedPag;
+        }
+      } catch (repairErr) {
+        this.logger.error(
+          `[AiService] Error durante Self-Healing del PAG: ${repairErr instanceof Error ? repairErr.message : String(repairErr)}. Usando PAG original.`,
+        );
+      }
     }
 
-    this.lastGeneratedPag = pag;
-    return pag;
+    this.lastGeneratedPag = finalPag;
+    return finalPag;
   }
 
   async generateResponseStream(

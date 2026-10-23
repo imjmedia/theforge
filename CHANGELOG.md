@@ -18,10 +18,14 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
   - `compilePagToBlueprintModulesMarkdown`: compila la estructura modular de la solución, controladores y servicios asociados.
   - `compilePagToLogicFlowsMarkdown`: compila flujos de lógica de negocio y genera algorítmicamente diagramas de secuencia **Mermaid** (`sequenceDiagram` con Cliente, Controller, Service, Repository y Database) e invariantes de negocio.
   - `compilePagToInfraMarkdown`: compila la especificación de infraestructura con diagramas de topología **Mermaid** (`graph TD`), manifiesto determinista `docker-compose.yml` (servicios de app, PostgreSQL y Redis) y matriz de variables de entorno.
-- **Generación Estructurada y Compiler-First en `AiService`** (`apps/api/src/modules/ai/ai.service.ts`, 5 tests):
+- **Generación Estructurada, Compiler-First y Self-Healing en `AiService`** (`apps/api/src/modules/ai/ai.service.ts`, 6 tests):
   - `AiService.generateObject`: método para solicitar objetos tipados con JSON Schema estricto a los LLMs, desempaquetando defensivamente respuestas en bloques markdown.
   - `AiService.generateProjectArchitectureGraph`: genera y valida el PAG contra Zod antes de admitirlo en la cascada.
+  - **Self-Healing Semántico guiado por el Compiler**: si la validación semántica o referencial del PAG (`validateProjectArchitectureGraph`) detecta inconsistencias, retroalimenta los diagnósticos exactos del compilador al LLM mediante un prompt especializado de reparación quirúrgica acotado estrictamente a 1 sola pasada (zero bucles infinitos).
   - Rutas Compiler-First en `generateApiContracts`, `generateLogicFlows` y `generateInfra`: derivan las especificaciones técnicas directamente del PAG compilado, eliminando divergencias entre contratos, base de datos y flujos lógicos.
+- **Exportador Nativo OpenAPI 3.1.0 (JSON y YAML)** (`packages/shared-types/src/document-compiler.ts`, `apps/api/src/modules/projects/`):
+  - `exportPagToOpenApiSpec` y `exportPagToOpenApiYaml`: derivan especificaciones OpenAPI 3.1.0 válidas directamente del `documentAst` estructurado sin invocar LLMs ni depender de parsers de Markdown.
+  - Endpoints `GET /projects/:id/openapi.json` y `GET /projects/:id/openapi.yaml` en `ProjectsController` para consumo directo por Swagger UI, Postman, SDK generators e integraciones CI/CD.
 - **Persistencia de AST de Primera Clase (`Stage.documentAst`)** (`apps/api/src/modules/projects/project-deliverable-generators.service.ts`):
   - Guarda automáticamente el grafo PAG en el campo `documentAst` de la etapa durante la corrida exitosa de la cascada, permitiendo a plugins, exportadores y agentes downstream consumir la verdad arquitectónica estructurada sin re-parsear markdown.
 - **Soporte de Enfoques Metodológicos (UX-First y Domain-First)** (`packages/database/schema.prisma`, `packages/shared-types/src/project.ts`, `apps/web/`):

@@ -329,6 +329,27 @@ export class ProjectsController {
   }
 
   /**
+   * Exporta la especificación OpenAPI 3.1.0 nativa generada determinísticamente desde el PAG (JSON).
+   */
+  @Get(":id/openapi.json")
+  async exportOpenApiJson(@Param("id") id: string) {
+    return this.projects.getOpenApiSpec(id);
+  }
+
+  /**
+   * Exporta la especificación OpenAPI 3.1.0 nativa generada determinísticamente desde el PAG (YAML).
+   */
+  @Get(":id/openapi.yaml")
+  async exportOpenApiYaml(@Param("id") id: string, @Res() res: Response) {
+    const yaml = await this.projects.getOpenApiYaml(id);
+    res.set({
+      "Content-Type": "text/yaml; charset=utf-8",
+      "Content-Disposition": `inline; filename="openapi-${id}.yaml"`,
+    });
+    res.send(yaml);
+  }
+
+  /**
    * Análisis unificado cross-artifact (`/speckit.analyze` + conformidad MDD).
    */
   @Get(":id/analyze")
