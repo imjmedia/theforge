@@ -2,7 +2,7 @@
  * @fileoverview Folder tile with layered pocket, document peek on hover, and compact metadata.
  */
 import type { DragEvent } from "react";
-import { Check, GitBranch, Heart, Loader2, Pencil, Sparkles } from "lucide-react";
+import { Check, GitBranch, Heart, Loader2, Palette, Pencil, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type ProjectFolderStatus = "ROJO" | "AMARILLO" | "VERDE";
@@ -12,6 +12,7 @@ export interface ProjectFolderTileProps {
   name: string;
   status: ProjectFolderStatus;
   precisionScore: number;
+  approach?: "DOMAIN_FIRST" | "UX_FIRST";
   projectType?: "NEW" | "LEGACY";
   visibility?: "PRIVATE" | "SHARED";
   selected: boolean;
@@ -124,6 +125,7 @@ export function ProjectFolderTile({
   name,
   status,
   precisionScore,
+  approach,
   projectType,
   visibility,
   selected,
@@ -276,11 +278,29 @@ export function ProjectFolderTile({
               <span
                 className={cn(
                   "flex h-6 w-6 items-center justify-center rounded-full border-2 border-[var(--background)] shadow-md",
-                  typeIsNew ? "bg-emerald-500 text-white" : "bg-amber-500 text-white",
+                  typeIsNew
+                    ? approach === "UX_FIRST"
+                      ? "bg-pink-500 text-white"
+                      : "bg-emerald-500 text-white"
+                    : "bg-amber-500 text-white",
                 )}
-                title={typeIsNew ? "Proyecto nuevo" : "Legacy"}
+                title={
+                  typeIsNew
+                    ? approach === "UX_FIRST"
+                      ? "Proyecto nuevo (UX-First)"
+                      : "Proyecto nuevo (Domain-First)"
+                    : "Legacy"
+                }
               >
-                {typeIsNew ? <Sparkles className="h-3 w-3" strokeWidth={2.5} /> : <GitBranch className="h-3 w-3" strokeWidth={2.5} />}
+                {typeIsNew ? (
+                  approach === "UX_FIRST" ? (
+                    <Palette className="h-3 w-3" strokeWidth={2.5} />
+                  ) : (
+                    <Sparkles className="h-3 w-3" strokeWidth={2.5} />
+                  )
+                ) : (
+                  <GitBranch className="h-3 w-3" strokeWidth={2.5} />
+                )}
               </span>
               <span
                 className={cn(

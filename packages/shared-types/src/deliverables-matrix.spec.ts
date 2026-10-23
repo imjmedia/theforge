@@ -73,4 +73,30 @@ describe("DELIVERABLE_WAVES_BY_COMPLEXITY", () => {
     assert.ok(flat.includes("ui_screens_sync"));
     assert.ok(flat.indexOf("ui_screens_sync") < flat.indexOf("tasks"));
   });
+
+  it("UX_FIRST order places ui_screens_sync first and api_contracts before blueprint and tasks", () => {
+    const highWaves = resolveDeliverableWaves("HIGH", { approach: "UX_FIRST" });
+    assert.deepEqual(highWaves[0], ["ui_screens_sync"]);
+    assert.deepEqual(highWaves[1], ["api_contracts"]);
+    assert.deepEqual(highWaves[2], ["architecture"]);
+    assert.deepEqual(highWaves[3], ["mdd_canonical", "blueprint"]);
+
+    const flatHigh = flattenDeliverableWaves("HIGH", { approach: "UX_FIRST" });
+    const screensIdx = flatHigh.indexOf("ui_screens_sync");
+    const apiIdx = flatHigh.indexOf("api_contracts");
+    const archIdx = flatHigh.indexOf("architecture");
+    const bpIdx = flatHigh.indexOf("blueprint");
+    const tasksIdx = flatHigh.indexOf("tasks");
+
+    assert.ok(screensIdx === 0);
+    assert.ok(screensIdx < apiIdx);
+    assert.ok(apiIdx < archIdx);
+    assert.ok(archIdx < bpIdx);
+    assert.ok(bpIdx < tasksIdx);
+
+    const flatMed = flattenDeliverableWaves("MEDIUM", { approach: "UX_FIRST" });
+    assert.ok(flatMed.indexOf("ui_screens_sync") < flatMed.indexOf("api_contracts"));
+    assert.ok(flatMed.indexOf("api_contracts") < flatMed.indexOf("tasks"));
+  });
 });
+

@@ -3,7 +3,8 @@
  * then name for new projects or hand off to the TheForge picker for legacy paths.
  */
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, ChevronDown, FolderGit2, GitBranch, Loader2, Plus, Sparkles } from "lucide-react";
+import { ArrowLeft, ChevronDown, FolderGit2, GitBranch, Layers, Loader2, Palette, Plus, Sparkles } from "lucide-react";
+import type { ProjectApproach } from "@theforge/shared-types";
 import {
   Button,
   Dialog,
@@ -28,7 +29,12 @@ export interface CreateProjectWizardDialogProps {
   pendingSelectedGroupId?: string | null;
   onPendingGroupConsumed?: () => void;
   onCreateGroup?: () => void;
-  onCreateNew: (name: string, groupId: string) => Promise<void>;
+  onCreateNew: (
+    name: string,
+    groupId: string,
+    approach?: ProjectApproach,
+    uxDesignSource?: string,
+  ) => Promise<void>;
   onContinueLegacy: (tab: "projects" | "repos") => void;
 }
 
@@ -78,12 +84,16 @@ export function CreateProjectWizardDialog({
   const [step, setStep] = useState<1 | 2>(1);
   const [name, setName] = useState("");
   const [groupId, setGroupId] = useState("");
+  const [approach, setApproach] = useState<ProjectApproach>("DOMAIN_FIRST");
+  const [uxDesignSource, setUxDesignSource] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
 
   const reset = useCallback(() => {
     setStep(1);
     setName("");
     setGroupId("");
+    setApproach("DOMAIN_FIRST");
+    setUxDesignSource("");
     setLocalError(null);
   }, []);
 
@@ -121,6 +131,8 @@ export function CreateProjectWizardDialog({
     setStep(1);
     setName("");
     setGroupId("");
+    setApproach("DOMAIN_FIRST");
+    setUxDesignSource("");
   }, []);
 
   const handleSubmitNew = useCallback(async () => {
@@ -135,12 +147,17 @@ export function CreateProjectWizardDialog({
     }
     setLocalError(null);
     try {
-      await onCreateNew(trimmed, groupId);
+      await onCreateNew(
+        trimmed,
+        groupId,
+        approach,
+        uxDesignSource.trim() || undefined,
+      );
       handleClose();
     } catch {
       setLocalError("No se pudo crear el proyecto. Revisa la consola o inténtalo de nuevo.");
     }
-  }, [name, groupId, onCreateNew, handleClose]);
+  }, [name, groupId, approach, uxDesignSource, onCreateNew, handleClose]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -244,6 +261,72 @@ export function CreateProjectWizardDialog({
                   aria-describedby={localError ? "create-project-error" : undefined}
                 />
               </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-[var(--foreground)]">
+                  Enfoque metodológico
+                </label>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setApproach("DOMAIN_FIRST")}
+                    disabled={loading}
+                    className={cn(
+                      "flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors",
+                      approach === "DOMAIN_FIRST"
+                        ? "border-[var(--primary)] bg-[color-mix(in_oklch,var(--primary)_10%,var(--card))] ring-1 ring-[var(--primary)]"
+                        : "border-[var(--border)] bg-[var(--card)] hover:bg-[var(--muted)]/40",
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--foreground)]">
+                      <Layers className="h-3.5 w-3.5 text-[var(--primary)]" />
+                      Domain-First (Clásico)
+                    </div>
+                    <span className="text-[11px] leading-tight text-[var(--foreground-muted)]">
+                      Idea → BD y endpoints en MDD → UI y tareas
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setApproach("UX_FIRST")}
+                    disabled={loading}
+                    className={cn(
+                      "flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors",
+                      approach === "UX_FIRST"
+                        ? "border-[var(--primary)] bg-[color-mix(in_oklch,var(--primary)_10%,var(--card))] ring-1 ring-[var(--primary)]"
+                        : "border-[var(--border)] bg-[var(--card)] hover:bg-[var(--muted)]/40",
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--foreground)]">
+                      <Palette className="h-3.5 w-3.5 text-pink-500" />
+                      UX-First (Traducción)
+                    </div>
+                    <span className="text-[11px] leading-tight text-[var(--foreground-muted)]">
+                      Pantallas → Contratos OpenAPI → Entidades → NestJS
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {approach === "UX_FIRST" ? (
+                <div className="space-y-1.5 rounded-lg border border-pink-500/20 bg-pink-500/5 p-3">
+                  <label htmlFor="create-project-ux-source" className="block text-xs font-medium text-[var(--foreground)]">
+                    Enlace de Figma o spec visual inicial (opcional)
+                  </label>
+                  <Input
+                    id="create-project-ux-source"
+                    value={uxDesignSource}
+                    onChange={(e) => setUxDesignSource(e.target.value)}
+                    placeholder="https://figma.com/file/... o wireframes"
+                    className="h-9 text-xs"
+                    disabled={loading}
+                  />
+                  <p className="text-[11px] text-[var(--foreground-muted)]">
+                    TheForge priorizará la traducción técnica: las pantallas dictarán los contratos OpenAPI antes de codificar la lógica.
+                  </p>
+                </div>
+              ) : null}
               {groups.length > 0 ? (
                 <div className="space-y-2">
                   <label htmlFor="create-project-group" className="text-sm font-medium text-[var(--foreground)]">

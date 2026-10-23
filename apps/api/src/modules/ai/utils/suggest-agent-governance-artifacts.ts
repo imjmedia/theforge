@@ -1,4 +1,4 @@
-import type { ComplexityLevel, ProjectType } from "@theforge/shared-types";
+import type { ComplexityLevel, ProjectApproach, ProjectType } from "@theforge/shared-types";
 import { GOVERNANCE_DOCS_PREFIX, detectWebSurfaces } from "@theforge/shared-types";
 import { selectedPatternIdsFromMdd } from "@theforge/shared-types/mdd-governance-patterns";
 import {
@@ -57,6 +57,8 @@ export interface SuggestAgentGovernanceInput {
   complexity: ComplexityLevel;
   /** Gaps SDD cross-artifact pendientes (precisión). */
   sddPendingGaps?: string[];
+  /** Metodología del proyecto (DOMAIN_FIRST o UX_FIRST con traducción técnica). */
+  approach?: ProjectApproach | null;
 }
 
 export interface ProjectGovernanceFacts {
@@ -78,6 +80,7 @@ export interface ProjectGovernanceFacts {
   npmScripts: string[];
   sddConflicts: string[];
   hasUiSurface: boolean;
+  approach?: ProjectApproach;
 }
 
 function corpus(input: SuggestAgentGovernanceInput): string {
@@ -1265,6 +1268,7 @@ export function extractProjectGovernanceFacts(
       input.mddMarkdown,
       input.blueprintMarkdown,
     ),
+    approach: input.approach ?? undefined,
   };
 }
 
@@ -1296,11 +1300,16 @@ function ruleStrength(
   uiScreensMarkdown?: string | null,
   mddMarkdown?: string | null,
   blueprintMarkdown?: string | null,
+  approach?: ProjectApproach | null,
 ): GovernanceArtifactStrength | null {
   if (!complexityAtLeast(complexity, rule.minComplexity)) return null;
 
   if (rule.id === "git-commits") return "strong";
   if (rule.id === "orchestrator" && complexity !== "LOW") return "weak";
+  if (approach === "UX_FIRST" && (rule.id === "api-contracts" || rule.id === "ui-pantallas")) {
+    return "strong";
+  }
+
 
   if (
     rule.id === "stack-frontend" &&
@@ -1481,6 +1490,7 @@ export function suggestAgentGovernanceArtifacts(
       input.uiScreensMarkdown,
       input.mddMarkdown,
       input.blueprintMarkdown,
+      input.approach,
     );
     if (!strength) continue;
     suggestedRules.push({
@@ -1530,12 +1540,17 @@ export function suggestAgentGovernanceArtifacts(
     rationale.push("Complejidad HIGH + monorepo: considerar AGENTS.md anidados bajo packages/.");
   }
 
+  if (input.approach === "UX_FIRST") {
+    rationale.push("Enfoque UX-First: api-contracts y ui-pantallas configurados como reglas vinculantes front/back.");
+  }
+
   if (input.tasksMarkdown?.trim()) {
     rationale.push("Tasks disponibles: PROMPT-INICIAL, AGENT-PROMPT y PROGRESO derivados del checklist.");
   }
   if (facts.sddConflicts.length > 0) {
     rationale.push(`Conflictos SDD detectados: ${facts.sddConflicts.length} (ver AGENTS.md / AGENT-PROMPT).`);
   }
+
 
   return {
     archetypes,

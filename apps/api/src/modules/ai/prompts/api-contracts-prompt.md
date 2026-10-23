@@ -59,3 +59,12 @@ No inventes tipos, rutas o parámetros que contradigan los contratos reales. Si 
 # Endpoints de dominio #
 
 Incluye **todos** los recursos de §3 y §4 del MDD. Si el dominio es copiloto/integración (webhooks Wasender, `/messages/process`, MCP register, bitácora, métricas LLM), documenta esos contratos — **prohibido** entregar solo `/api/auth/*` + `/users` cuando §1/§3 declaran el resto.
+
+# Enfoque UX-First (Traducción Técnica desde Pantallas/Figma) #
+
+Cuando el proyecto opere bajo enfoque UX-First o el prompt incluya `[UX-FIRST: ESPECIFICACIÓN DE PANTALLAS Y COMPONENTES VISUALES]`:
+1. **La UI manda la arquitectura del contrato:** Las pantallas y flujos visuales definidos por diseño son la **fuente de verdad primordial** para mapear qué datos visuales entran (inputs de formularios, filtros, triggers de acción) y qué datos salen (listados, tarjetas, estados vacíos, detalles). Mapea cada vista a contratos de API estrictos.
+2. **Estructuras JSON Request/Response obligatorias:** Cada formulario, filtro, tabla, tarjeta y modal de las pantallas debe tener su payload JSON tipado. No inventes campos no requeridos por la UI, ni omitas campos que la UI deba pintar.
+3. **Contrato Vinculante Front-Back:** El backend y el frontend quedan obligados a respetar este contrato. La capa full-stack no podrá alterar las estructuras sin actualizar los contratos.
+4. **Validaciones visuales:** Incluye códigos de error y respuestas de validación (`422 Unprocessable Entity` / `400 Bad Request`) con los errores de campo requeridos por las pantallas.
+

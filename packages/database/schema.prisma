@@ -172,6 +172,12 @@ enum ProjectType {
   LEGACY
 }
 
+/// Enfoque metodológico del proyecto: Domain-First (actual) o UX-First (con traducción técnica).
+enum ProjectApproach {
+  DOMAIN_FIRST
+  UX_FIRST
+}
+
 /// Política de adopción SDD: define qué entregables y qué reglas de semáforo aplican al proyecto.
 enum ComplexityLevel {
   LOW
@@ -333,6 +339,10 @@ model Project {
   complexityPending Json?
   projectType      ProjectType  @default(NEW)
   theforgeProjectId   String?
+  /// Enfoque metodológico: DOMAIN_FIRST (arquitectura/backend primero) o UX_FIRST (pantallas -> contratos -> entidades).
+  approach         ProjectApproach @default(DOMAIN_FIRST)
+  /// Insumo de diseño UX para proyectos UX-First: especificación de wireframes, screens spec o URL/referencia visual.
+  uxDesignSource   String?         @db.Text
   hasUxTeam        Boolean      @default(false)
   /// Referencia de diseño para la Guía UX/UI: slug del catálogo (ej. "stripe", "linear-app") o "auto" para matching automático
   uxGuideDesignRef String?

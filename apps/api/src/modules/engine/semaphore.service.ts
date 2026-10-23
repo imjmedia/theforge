@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { ComplexityLevel, Status } from "@theforge/database";
+import { ComplexityLevel, ProjectApproach, Status } from "@theforge/database";
 import { mddJsonSchema, type MddJson } from "@theforge/shared-types";
 
 /** Longitud mínima (caracteres no vacíos) para considerar un entregable “presente”. */
@@ -18,8 +18,10 @@ export type SemaphoreDeliverablesSnapshot = {
 
 export type SemaphoreEvaluationInput = {
   complexity: ComplexityLevel;
+  approach?: ProjectApproach;
   hasUxTeam: boolean;
   figmaMapping?: unknown;
+  uiScreensContent?: string | null;
   /** JSON string normalizado del MDD (solo aplica al camino HIGH). */
   mddJsonString: string | null;
   deliverables: SemaphoreDeliverablesSnapshot;
@@ -36,8 +38,16 @@ function substantial(s: string | null | undefined): boolean {
   return typeof s === "string" && s.trim().length >= MIN_DELIVERABLE_LEN;
 }
 
-function figmaGateOk(hasUxTeam: boolean, figmaMapping: unknown): boolean {
-  return hasUxTeam ? figmaMapping != null : true;
+function figmaGateOk(
+  hasUxTeam: boolean,
+  figmaMapping: unknown,
+  approach?: ProjectApproach,
+  uiScreensContent?: string | null,
+): boolean {
+  if (approach === ProjectApproach.UX_FIRST || hasUxTeam) {
+    return figmaMapping != null || substantial(uiScreensContent);
+  }
+  return true;
 }
 
 /**
@@ -90,7 +100,7 @@ export class SemaphoreService {
     const hasHu = substantial(userStoriesContent);
     const hasTasks = substantial(tasksContent);
 
-    if (!figmaGateOk(input.hasUxTeam, input.figmaMapping)) {
+    if (!figmaGateOk(input.hasUxTeam, input.figmaMapping, input.approach, input.uiScreensContent)) {
       return { status: Status.AMARILLO, precisionScore: 85 };
     }
 
@@ -113,7 +123,7 @@ export class SemaphoreService {
     const hasUserStories = substantial(d.userStoriesContent);
     const hasTasks = substantial(d.tasksContent);
 
-    if (!figmaGateOk(input.hasUxTeam, input.figmaMapping)) {
+    if (!figmaGateOk(input.hasUxTeam, input.figmaMapping, input.approach, input.uiScreensContent)) {
       return { status: Status.AMARILLO, precisionScore: 85 };
     }
 
@@ -211,9 +221,12 @@ export class SemaphoreService {
     if (docGaps && !graphRelief) {
       result = { status: Status.AMARILLO, precisionScore: 70 };
     } else {
-      const figmaOk = hasUxTeam ? figmaMapping != null : true;
+      const figmaOk = figmaGateOk(hasUxTeam, figmaMapping, input.approach, input.uiScreensContent);
       if (!figmaOk) {
-        result = { status: Status.AMARILLO, precisionScore: 85 };
+        result = { status: Status.AMARILLO, precisionScore: 82 };
+      } else if (input.approach === ProjectApproach.UX_FIRST && !substantial(input.deliverables.apiContractsContent)) {
+        // Enfoque UX-First: Si las pantallas no tienen contratos API mapeados, falta la capa de traducción técnica
+        result = { status: Status.AMARILLO, precisionScore: 80 };
       } else {
         const precisionScore = docGaps && graphRelief ? 92 : 95;
         result = { status: Status.VERDE, precisionScore };

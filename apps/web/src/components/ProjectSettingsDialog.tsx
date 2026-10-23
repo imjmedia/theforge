@@ -2,7 +2,8 @@
  * @fileoverview Configuración del proyecto: nombre (owner) y grupo (admin+).
  */
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, Loader2, Plus } from "lucide-react";
+import { ChevronDown, Layers, Loader2, Palette, Plus } from "lucide-react";
+import type { ProjectApproach } from "@theforge/shared-types";
 import {
   Button,
   Dialog,
@@ -13,6 +14,7 @@ import {
   DialogTitle,
   Input,
 } from "@/components/ui";
+import { cn } from "@/lib/utils";
 
 export interface ProjectGroupOption {
   id: string;
@@ -26,11 +28,21 @@ export interface ProjectSettingsDialogProps {
   projectId: string | null;
   currentName: string;
   currentGroupId: string | null;
+  currentApproach?: ProjectApproach;
+  currentUxDesignSource?: string | null;
   groups: ProjectGroupOption[];
   canEditName: boolean;
   canEditGroup: boolean;
   loading?: boolean;
-  onSubmit: (projectId: string, data: { name?: string; groupId?: string }) => Promise<void>;
+  onSubmit: (
+    projectId: string,
+    data: {
+      name?: string;
+      groupId?: string;
+      approach?: ProjectApproach;
+      uxDesignSource?: string | null;
+    },
+  ) => Promise<void>;
   onCreateGroup?: () => void;
   onExportNotion?: () => void;
 }
@@ -41,6 +53,8 @@ export function ProjectSettingsDialog({
   projectId,
   currentName,
   currentGroupId,
+  currentApproach = "DOMAIN_FIRST",
+  currentUxDesignSource = "",
   groups,
   canEditName,
   canEditGroup,
@@ -51,15 +65,19 @@ export function ProjectSettingsDialog({
 }: ProjectSettingsDialogProps) {
   const [name, setName] = useState(currentName);
   const [groupId, setGroupId] = useState(currentGroupId ?? "");
+  const [approach, setApproach] = useState<ProjectApproach>(currentApproach);
+  const [uxDesignSource, setUxDesignSource] = useState(currentUxDesignSource ?? "");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
       setName(currentName);
       setGroupId(currentGroupId ?? "");
+      setApproach(currentApproach);
+      setUxDesignSource(currentUxDesignSource ?? "");
       setError(null);
     }
-  }, [open, currentName, currentGroupId]);
+  }, [open, currentName, currentGroupId, currentApproach, currentUxDesignSource]);
 
   const handleSubmit = useCallback(async () => {
     if (!projectId) return;
@@ -70,12 +88,23 @@ export function ProjectSettingsDialog({
       return;
     }
 
-    const payload: { name?: string; groupId?: string } = {};
+    const payload: {
+      name?: string;
+      groupId?: string;
+      approach?: ProjectApproach;
+      uxDesignSource?: string | null;
+    } = {};
     if (canEditName && trimmedName !== currentName.trim()) {
       payload.name = trimmedName;
     }
     if (canEditGroup && groupId && groupId !== currentGroupId) {
       payload.groupId = groupId;
+    }
+    if (canEditName && approach !== currentApproach) {
+      payload.approach = approach;
+    }
+    if (canEditName && uxDesignSource.trim() !== (currentUxDesignSource ?? "").trim()) {
+      payload.uxDesignSource = uxDesignSource.trim() || null;
     }
 
     if (Object.keys(payload).length === 0) {
@@ -93,9 +122,13 @@ export function ProjectSettingsDialog({
   }, [
     name,
     groupId,
+    approach,
+    uxDesignSource,
     projectId,
     currentName,
     currentGroupId,
+    currentApproach,
+    currentUxDesignSource,
     canEditName,
     canEditGroup,
     onSubmit,
@@ -129,6 +162,69 @@ export function ProjectSettingsDialog({
             />
             {!canEditName ? (
               <p className="text-xs text-[var(--foreground-muted)]">Solo el propietario puede editar el nombre.</p>
+            ) : null}
+          </div>
+
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-[var(--foreground)]">Enfoque metodológico</span>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setApproach("DOMAIN_FIRST")}
+                disabled={loading || !canEditName}
+                className={cn(
+                  "flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left transition-colors",
+                  approach === "DOMAIN_FIRST"
+                    ? "border-[var(--primary)] bg-[color-mix(in_oklch,var(--primary)_10%,var(--card))] ring-1 ring-[var(--primary)]"
+                    : "border-[var(--border)] bg-[var(--card)] hover:bg-[var(--muted)]/40",
+                  !canEditName && "opacity-75 cursor-default",
+                )}
+              >
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--foreground)]">
+                  <Layers className="h-3.5 w-3.5 text-[var(--primary)]" />
+                  Domain-First
+                </div>
+                <span className="text-[10px] leading-tight text-[var(--foreground-muted)]">
+                  Idea → BD/API en MDD → UI
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setApproach("UX_FIRST")}
+                disabled={loading || !canEditName}
+                className={cn(
+                  "flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left transition-colors",
+                  approach === "UX_FIRST"
+                    ? "border-[var(--primary)] bg-[color-mix(in_oklch,var(--primary)_10%,var(--card))] ring-1 ring-[var(--primary)]"
+                    : "border-[var(--border)] bg-[var(--card)] hover:bg-[var(--muted)]/40",
+                  !canEditName && "opacity-75 cursor-default",
+                )}
+              >
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--foreground)]">
+                  <Palette className="h-3.5 w-3.5 text-pink-500" />
+                  UX-First
+                </div>
+                <span className="text-[10px] leading-tight text-[var(--foreground-muted)]">
+                  Pantallas → OpenAPI → NestJS
+                </span>
+              </button>
+            </div>
+
+            {approach === "UX_FIRST" ? (
+              <div className="space-y-1 rounded-lg border border-pink-500/20 bg-pink-500/5 p-2.5">
+                <label htmlFor="project-settings-ux-source" className="block text-[11px] font-medium text-[var(--foreground)]">
+                  Enlace de Figma o spec visual (opcional)
+                </label>
+                <Input
+                  id="project-settings-ux-source"
+                  value={uxDesignSource}
+                  onChange={(e) => setUxDesignSource(e.target.value)}
+                  placeholder="https://figma.com/file/... o notas de pantallas"
+                  className="h-8 text-xs"
+                  disabled={loading || !canEditName}
+                />
+              </div>
             ) : null}
           </div>
 

@@ -299,8 +299,10 @@ export function buildAgentGovernanceInput(
     projectType: project.projectType,
     complexity,
     sddPendingGaps,
+    approach: project.approach,
   };
 }
+
 
 function alignedDeliverablesForProject(project: ProjectWithStages) {
   const stage = pickPrimaryStage(project.stages);

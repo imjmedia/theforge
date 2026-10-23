@@ -159,3 +159,57 @@ test("HIGH: VERDE baja a AMARILLO si hay gaps cross-artifact SDD", () => {
   assert.equal(r.status, Status.AMARILLO);
   assert.equal(r.precisionScore, 82);
 });
+
+test("UX_FIRST: exige pantallas / figmaMapping y contratos API substanciales para VERDE", () => {
+  const s = new SemaphoreService();
+  const mdd = JSON.stringify({
+    db_entities: [{ name: "users" }],
+    business_core: "core flows",
+    edge_cases: "e1: lockout after N attempts",
+    field_types:
+      "Detailed field_types markdown with inferred types and enough length to pass the semaphore heuristic threshold.",
+  });
+
+  // Caso 1: UX_FIRST sin pantallas ni figma
+  const rSinPantallas = s.evaluate(
+    highBase({
+      mddJsonString: mdd,
+      approach: "UX_FIRST" as never,
+      hasUxTeam: true,
+      figmaMapping: null,
+      uiScreensContent: null,
+      deliverables: { ...emptyDeliverables, apiContractsContent: "A substantial api contracts markdown content with openapi schemas." },
+    }),
+  );
+  assert.equal(rSinPantallas.status, Status.AMARILLO);
+  assert.equal(rSinPantallas.precisionScore, 82);
+
+  // Caso 2: UX_FIRST con pantallas pero sin contratos API (falta capa de traducción técnica)
+  const rSinApi = s.evaluate(
+    highBase({
+      mddJsonString: mdd,
+      approach: "UX_FIRST" as never,
+      hasUxTeam: true,
+      uiScreensContent: "# Pantallas\n## Vista Dashboard\nTabla de usuarios y formulario de alta.",
+      deliverables: emptyDeliverables,
+    }),
+  );
+  assert.equal(rSinApi.status, Status.AMARILLO);
+  assert.equal(rSinApi.precisionScore, 80);
+
+  // Caso 3: UX_FIRST con pantallas y contratos API -> VERDE
+  const rCompleto = s.evaluate(
+    highBase({
+      mddJsonString: mdd,
+      approach: "UX_FIRST" as never,
+      hasUxTeam: true,
+      uiScreensContent: "# Pantallas\n## Vista Dashboard\nTabla de usuarios y formulario de alta.",
+      deliverables: {
+        ...emptyDeliverables,
+        apiContractsContent: "A substantial api contracts markdown content with openapi schemas and endpoints.",
+      },
+    }),
+  );
+  assert.equal(rCompleto.status, Status.VERDE);
+  assert.equal(rCompleto.precisionScore, 95);
+});

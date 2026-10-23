@@ -1,4 +1,4 @@
-import type { ComplexityLevel, Estimation, Project, StageStatus, Status } from "@theforge/database";
+import type { ComplexityLevel, Estimation, Project, ProjectApproach, StageStatus, Status } from "@theforge/database";
 import { flattenStageDeliverables, pickPrimaryStage, type StageWithEstimation } from "./stage-helpers.js";
 
 /** Campos de documento que el listado del dashboard no carga (siempre null en `GET /projects`). */
@@ -40,6 +40,8 @@ type ProjectListRow = {
   userId: string;
   name: string;
   visibility: "PRIVATE" | "SHARED";
+  approach?: ProjectApproach;
+  uxDesignSource?: string | null;
   complexity: ComplexityLevel;
   complexityPending: unknown;
   projectType: Project["projectType"];
@@ -80,6 +82,8 @@ export function toApiProjectListItem(
     userId: project.userId,
     name: project.name,
     visibility: project.visibility,
+    approach: project.approach ?? "DOMAIN_FIRST",
+    uxDesignSource: project.uxDesignSource ?? null,
     complexity: project.complexity,
     complexityPending: project.complexityPending,
     projectType: project.projectType,

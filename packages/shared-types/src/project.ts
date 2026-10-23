@@ -4,6 +4,10 @@ import { StatusEnum } from "./status.js";
 export const ProjectTypeEnum = z.enum(["NEW", "LEGACY"]);
 export type ProjectType = z.infer<typeof ProjectTypeEnum>;
 
+/** Enfoque metodológico del proyecto: Domain-First (actual) o UX-First (con traducción técnica). */
+export const ProjectApproachEnum = z.enum(["DOMAIN_FIRST", "UX_FIRST"]);
+export type ProjectApproach = z.infer<typeof ProjectApproachEnum>;
+
 /** Alineado con Prisma `ComplexityLevel`: define semáforo y entregables obligatorios. */
 export const ComplexityLevelEnum = z.enum(["LOW", "MEDIUM", "HIGH"]);
 export type ComplexityLevel = z.infer<typeof ComplexityLevelEnum>;
@@ -25,6 +29,8 @@ export const createProjectSchema = z
   .object({
     name: z.string().min(1),
     visibility: VisibilityEnum.default("PRIVATE"),
+    approach: ProjectApproachEnum.default("DOMAIN_FIRST"),
+    uxDesignSource: z.string().optional().nullable(),
     hasUxTeam: z.boolean().default(false),
     complexity: ComplexityLevelEnum.default("HIGH"),
     projectType: ProjectTypeEnum.default("NEW"),
@@ -43,6 +49,8 @@ export const createProjectSchema = z
 export const updateProjectSchema = z.object({
   name: z.string().min(1).optional(),
   visibility: VisibilityEnum.optional(),
+  approach: ProjectApproachEnum.optional(),
+  uxDesignSource: z.string().optional().nullable(),
   hasUxTeam: z.boolean().optional(),
   /** Si true, el backend exige BRD + To-Be aprobados antes del MDD técnico (streams y, en legacy, generate-mdd / entregables). */
   requireBrdTobeGate: z.boolean().optional(),

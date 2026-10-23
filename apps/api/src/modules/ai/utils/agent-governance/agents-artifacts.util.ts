@@ -90,25 +90,32 @@ export function isStaleAgentsInstallSection(section: string): boolean {
 
 const AGENTS_CRITICAL_RULES_SECTION = "## Reglas críticas";
 
-export function buildAgentsCriticalRulesSection(): string {
-  return (
-    AGENTS_CRITICAL_RULES_SECTION +
-    "\n\n" +
-    "Estas reglas aplican **independientemente del IDE** (Antigravity, Copilot, Codex, etc.):\n\n" +
-    "1. **Git:** conventional commits cuando el repo los use; sin `Co-authored-by` de agentes IA salvo petición explícita.\n" +
-    "2. **Stack:** respeta el MDD §2 y Blueprint; no introduzcas frameworks no documentados.\n" +
-    "3. **Seguridad:** auth, secretos y contratos API según MDD §6 y `api-contracts.md`.\n" +
-    "4. **SDD:** ante conflicto entre artefactos, **gana el MDD**; reporta gaps vía MCP `report_documentation_gap` si aplica.\n" +
-    "5. **Alcance:** implementa solo la tarea abierta; no expandas scope sin aprobación.\n" +
-    "6. **Frontend / Design System:** toda creación de UI debe seguir los **tokens y estilos** de **`design-system.md`** (espejo `docs/sdd/ux-ui-guide.md`); sin valores ad-hoc.\n"
-  );
+export function buildAgentsCriticalRulesSection(facts?: ProjectGovernanceFacts): string {
+  const lines = [
+    AGENTS_CRITICAL_RULES_SECTION,
+    "",
+    "Estas reglas aplican **independientemente del IDE** (Antigravity, Copilot, Codex, etc.):",
+    "",
+    "1. **Git:** conventional commits cuando el repo los use; sin `Co-authored-by` de agentes IA salvo petición explícita.",
+    "2. **Stack:** respeta el MDD §2 y Blueprint; no introduzcas frameworks no documentados.",
+    "3. **Seguridad:** auth, secretos y contratos API según MDD §6 y `api-contracts.md`.",
+    "4. **SDD:** ante conflicto entre artefactos, **gana el MDD**; reporta gaps vía MCP `report_documentation_gap` si aplica.",
+    "5. **Alcance:** implementa solo la tarea abierta; no expandas scope sin aprobación.",
+    "6. **Frontend / Design System:** toda creación de UI debe seguir los **tokens y estilos** de **`design-system.md`** (espejo `docs/sdd/ux-ui-guide.md`); sin valores ad-hoc.",
+  ];
+  if (facts?.approach === "UX_FIRST") {
+    lines.push(
+      "7. **Gobernanza UX-First (Contrato Vinculante):** Las pantallas dictan los contratos en `api-contracts.md`. Backend y frontend están estrictamente desacoplados por el contrato; prohibido alterar schemas de request/response sin actualizar antes el contrato acordado con diseño.",
+    );
+  }
+  return lines.join("\n") + "\n";
 }
 
-export function defaultAgentsMd(featureDir?: string): string {
+export function defaultAgentsMd(featureDir?: string, facts?: ProjectGovernanceFacts): string {
   return (
     "# AGENTS\n\n" +
     "Punto de entrada para agentes de código. Usa **`PROMPT-INICIAL.{tu-ide}.md`** en sesión 0.\n\n" +
-    buildAgentsCriticalRulesSection().trimEnd() +
+    buildAgentsCriticalRulesSection(facts).trimEnd() +
     "\n\n" +
     buildAgentsDualSpecKitSection(featureDir).trimEnd() +
     "\n\n" +
@@ -142,10 +149,13 @@ export function buildDynamicCursorAgents(facts: ProjectGovernanceFacts): Record<
   if (facts.backendStack) {
     out[`${GOVERNANCE_DOCS_PREFIX}agents/backend-implementer.md`] = buildCursorAgentMd(
       "Backend",
-      `API y lógica ${facts.backendStack} según MDD §4 y Architecture.`,
+      facts.approach === "UX_FIRST"
+        ? `API y lógica ${facts.backendStack} según contratos vinculantes de api-contracts.md derivados de diseño UX/UI.`
+        : `API y lógica ${facts.backendStack} según MDD §4 y Architecture.`,
       ["AGENTS.md", "docs/sdd/mdd.md", "docs/sdd/architecture.md", "docs/sdd/api-contracts.md"],
     );
   }
+
   if (facts.hasUiSurface && (facts.frontendStack || facts.mobileStack)) {
     const stack = facts.frontendStack ?? facts.mobileStack ?? "UI";
     out[`${GOVERNANCE_DOCS_PREFIX}agents/frontend-implementer.md`] = buildCursorAgentMd(

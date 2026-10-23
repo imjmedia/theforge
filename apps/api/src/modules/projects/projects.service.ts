@@ -84,6 +84,8 @@ export class ProjectsService implements IOrchestratorProjectsPort {
         userId: true,
         name: true,
         visibility: true,
+        approach: true,
+        uxDesignSource: true,
         complexity: true,
         complexityPending: true,
         projectType: true,

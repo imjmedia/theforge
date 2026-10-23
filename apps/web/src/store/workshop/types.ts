@@ -265,6 +265,10 @@ export interface Project {
   /** Inferencia / plan propuesto; no aplica a `complexity` hasta confirmación explícita. */
   complexityPending?: ComplexityPending | null;
   projectType?: "NEW" | "LEGACY";
+  /** Enfoque metodológico: DOMAIN_FIRST (default) o UX_FIRST (traducción técnica). */
+  approach?: "DOMAIN_FIRST" | "UX_FIRST";
+  /** Insumo visual para proyectos UX-First (Figma URL, especificación de pantallas, etc.). */
+  uxDesignSource?: string | null;
   /** Privado (solo owner) o compartido (todos los usuarios). */
   visibility?: "PRIVATE" | "SHARED";
   /** Si true, el API bloquea MDD técnico hasta BRD + To-Be aprobados (configurable en el panel). */

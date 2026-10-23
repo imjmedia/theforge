@@ -1,5 +1,9 @@
-/** Reintentos W4 post-cascada para brechas scheduler / research→tasks. */
-export const CASCADE_W4_PRECISION_MAX_ATTEMPTS = 3;
+/** Reintentos W4 post-cascada para brechas scheduler / research→tasks (limitado a 1 por defecto para evitar retry storms). */
+export const CASCADE_W4_PRECISION_MAX_ATTEMPTS = Math.max(
+  1,
+  parseInt(process.env.CASCADE_W4_MAX_ATTEMPTS ?? "1", 10) || 1,
+);
+
 
 export const SCHEDULER_RESEARCH_PRECISION_GAP_RE = /\[Scheduler\]|\[Research→Tasks\]/i;
 

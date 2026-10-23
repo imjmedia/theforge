@@ -46,3 +46,11 @@ Técnico, verificable, sin hype de IA. Prioriza diagramas y listas sobre narrati
 # Proyecto legacy (mensaje con contexto TheForge) #
 
 Si el mensaje incluye **Contexto del codebase (TheForge)**, prioriza la **arquitectura real** del repositorio indexado (framework, capas, carpetas, integraciones) citando hechos del bloque. Solo añade patrones agénticos si el MDD o el Blueprint los describen explícitamente; no sustituyas un monolito o SPA real por un diseño de agentes ficticio.
+
+# Enfoque UX-First (Extracción de Entidades y Estado) #
+
+Cuando el mensaje incluya `[UX-FIRST: EXTRACCIÓN DE ENTIDADES Y ESTADO]`:
+1. **Modelos de dominio a partir de flujos de usuario:** A partir de los flujos y pantallas de UX y los contratos de API, define los módulos y entidades de dominio del sistema.
+2. **Interfaces TypeScript y esquema DB antes de lógica:** Traduce las pantallas a interfaces TypeScript de capa de presentación/dominio y esquemas de persistencia (PostgreSQL/Prisma) antes de diseñar la lógica interna de servicios.
+3. **Mapeo de estado:** Documenta el estado cliente (formularios, selecciones, filtros) vs estado servidor (entidades persistidas, agregados) derivado de las interacciones visuales.
+

@@ -1,4 +1,4 @@
-import type { ComplexityLevel } from "./project.js";
+import type { ComplexityLevel, ProjectApproach } from "./project.js";
 import { detectWebSurfaces } from "./web-surfaces.util.js";
 
 /** Claves de entregables para despacho dinámico (backend). */
@@ -125,18 +125,45 @@ export const DELIVERABLE_WAVES_BY_COMPLEXITY: Record<ComplexityLevel, Deliverabl
   ],
 };
 
+/**
+ * Oleadas secuenciales para el enfoque UX-First (Traducción Técnica).
+ * Orden: Pantallas -> Contratos API -> Entidades/Dominio -> Esqueleto SDD NestJS -> Tasks.
+ */
+export const DELIVERABLE_WAVES_UX_FIRST_BY_COMPLEXITY: Record<ComplexityLevel, DeliverableWaveStep[][]> = {
+  LOW: [["ui_screens_sync", "user_stories"], ["tasks", "agent_governance"]],
+  MEDIUM: [
+    ["ui_screens_sync"],
+    ["api_contracts"],
+    ["spec", "ux_ui_guide"],
+    ["tasks", "agent_governance"],
+  ],
+  HIGH: [
+    ["ui_screens_sync"],
+    ["api_contracts"],
+    ["architecture"],
+    ["mdd_canonical", "blueprint"],
+    ["spec", "use_cases", "user_stories", "logic_flows", "ux_ui_guide"],
+    ["tasks", "infra", "agent_governance"],
+  ],
+};
+
 export type DeliverableWaveOptions = {
+  /** Metodología del proyecto (DOMAIN_FIRST por defecto vs UX_FIRST con traducción técnica). */
+  approach?: ProjectApproach;
   /** When true, MEDIUM complexity includes W2b ui_screens_sync before tasks. */
   hasWebSurfaces?: boolean;
   mddMarkdown?: string | null;
   blueprintMarkdown?: string | null;
 };
 
-/** Resolves oleadas; MEDIUM + web surface injects ui_screens_sync before tasks. */
+/** Resolves oleadas; respeta approach UX_FIRST o DOMAIN_FIRST. */
 export function resolveDeliverableWaves(
   complexity: ComplexityLevel,
   opts?: DeliverableWaveOptions,
 ): DeliverableWaveStep[][] {
+  if (opts?.approach === "UX_FIRST") {
+    return DELIVERABLE_WAVES_UX_FIRST_BY_COMPLEXITY[complexity].map((w) => [...w]);
+  }
   const base = DELIVERABLE_WAVES_BY_COMPLEXITY[complexity].map((w) => [...w]);
   const hasWeb =
     opts?.hasWebSurfaces ??

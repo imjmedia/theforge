@@ -103,3 +103,6 @@ export * from "./sdd-graph-sync.js";
 export * from "./forgeops-provision.js";
 export * from "./web-surfaces.util.js";
 export * from "./design-system-defaults.js";
+export * from "./project-architecture-graph.js";
+export * from "./document-compiler.js";
+

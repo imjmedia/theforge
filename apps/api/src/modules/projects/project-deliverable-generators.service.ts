@@ -128,6 +128,10 @@ export class ProjectDeliverableGeneratorsService {
   ) {}
 
   private assertBlueprintCoversMddDataModel(project: Project & { stages: StageWithEst[] }): void {
+  if (project.approach === "UX_FIRST") {
+    // Enfoque UX-First: Los contratos API se derivan prioritariamente de las pantallas UI antes del Blueprint.
+    return;
+  }
   const mdd = buildConstitutionMarkdown(project);
   const dm = this.conformance.checkBlueprintDataModel(mdd, project.blueprintContent);
   if (!dm.ok) {
@@ -783,35 +787,64 @@ export class ProjectDeliverableGeneratorsService {
   }
 
   async generateArchitecturePreview(projectId: string): Promise<{ content: string }> {
-  const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
-  const content = await this.ai.generateArchitecture(
-    buildConstitutionMarkdown(project),
-    project.blueprintContent,
-  );
-  return { content: cleanDocumentContent(content) };
+    const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
+    let gapsFeedback: string | undefined = undefined;
+    if (project.approach === "UX_FIRST") {
+      const parts: string[] = [];
+      if (project.uiScreensContent?.trim()) {
+        parts.push(`[UX-FIRST: ESPECIFICACIÓN DE PANTALLAS Y COMPONENTES VISUALES]\n${project.uiScreensContent.trim()}`);
+      }
+      if (project.apiContractsContent?.trim()) {
+        parts.push(`[UX-FIRST: CONTRATOS DE API VINCULANTES]\n${project.apiContractsContent.trim()}`);
+      }
+      if (parts.length > 0) {
+        gapsFeedback = `[UX-FIRST: EXTRACCIÓN DE ENTIDADES Y ESTADO]\nEste proyecto opera bajo enfoque UX-First. A partir de las pantallas y contratos de API anteriores, extrae los modelos de dominio, interfaces TypeScript y esquemas de persistencia (PostgreSQL/Prisma) antes de definir la lógica de servicios:\n---\n${parts.join("\n\n---\n")}\n---`;
+      }
+    }
+    const content = await this.ai.generateArchitecture(
+      buildConstitutionMarkdown(project),
+      project.blueprintContent,
+      gapsFeedback ? { gapsFeedback } : undefined,
+    );
+    return { content: cleanDocumentContent(content) };
   }
 
   async generateArchitecture(projectId: string, gapsFeedback?: string | null, signal?: AbortSignal) {
-  this.throwIfAborted(signal);
-  const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
-  const mdd = buildConstitutionMarkdown(project);
-  const gfOpts = this.greenfieldGenerateOptions(project);
-  const content = cleanDocumentContent(
-    await this.ai.generateArchitecture(mdd, project.blueprintContent, {
-      ...gfOpts,
-      gapsFeedback,
-      ...this.withHookGenerateOpts(project, undefined, signal),
-    }),
-  );
+    this.throwIfAborted(signal);
+    const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
+    const mdd = buildConstitutionMarkdown(project);
+    const gfOpts = this.greenfieldGenerateOptions(project);
+    let combinedGaps = gapsFeedback ?? "";
+    if (project.approach === "UX_FIRST") {
+      const parts: string[] = [];
+      if (project.uiScreensContent?.trim()) {
+        parts.push(`[UX-FIRST: ESPECIFICACIÓN DE PANTALLAS Y COMPONENTES VISUALES]\n${project.uiScreensContent.trim()}`);
+      }
+      if (project.apiContractsContent?.trim()) {
+        parts.push(`[UX-FIRST: CONTRATOS DE API VINCULANTES]\n${project.apiContractsContent.trim()}`);
+      }
+      if (parts.length > 0) {
+        const uxFirstNotice = `\n\n[UX-FIRST: EXTRACCIÓN DE ENTIDADES Y ESTADO]\nEste proyecto opera bajo enfoque UX-First. A partir de las pantallas y contratos de API anteriores, extrae los modelos de dominio, interfaces TypeScript y esquemas de persistencia (PostgreSQL/Prisma) antes de definir la lógica de servicios:\n---\n${parts.join("\n\n---\n")}\n---`;
+        combinedGaps = combinedGaps ? `${combinedGaps}\n${uxFirstNotice}` : uxFirstNotice;
+      }
+    }
+    const content = cleanDocumentContent(
+      await this.ai.generateArchitecture(mdd, project.blueprintContent, {
+        ...gfOpts,
+        gapsFeedback: combinedGaps || undefined,
+        ...this.withHookGenerateOpts(project, undefined, signal),
+      }),
+    );
 
-  const updated = await this.projects.update(projectId, { architectureContent: content });
-  this.notifyPluginAfterDocumentPersist(
-    "architecture",
-    projectId,
-    updated.architectureContent ?? content,
-  );
-  return updated;
+    const updated = await this.projects.update(projectId, { architectureContent: content });
+    this.notifyPluginAfterDocumentPersist(
+      "architecture",
+      projectId,
+      updated.architectureContent ?? content,
+    );
+    return updated;
   }
+
 
   async generateUseCasesPreview(projectId: string): Promise<{ content: string }> {
   const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
@@ -935,65 +968,94 @@ export class ProjectDeliverableGeneratorsService {
   }
 
   async generateBlueprintPreview(projectId: string, gapsFeedback?: string | null): Promise<{ content: string }> {
-  const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
-  const mddContent = buildConstitutionMarkdown(project);
-  const enrichedMdd = this.enrichMddWithEntities(mddContent);
-  const legacyOpts = await this.resolveLegacyGenerateOptions(project);
-  const content = await this.ai.generateBlueprint(enrichedMdd, gapsFeedback, legacyOpts);
-  return { content: cleanDocumentContent(content) };
+    const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
+    const mddContent = buildConstitutionMarkdown(project);
+    const enrichedMdd = this.enrichMddWithEntities(mddContent);
+    const legacyOpts = await this.resolveLegacyGenerateOptions(project);
+    let combinedGaps = gapsFeedback ?? "";
+    if (project.approach === "UX_FIRST") {
+      const parts: string[] = [];
+      if (project.apiContractsContent?.trim()) {
+        parts.push(`[UX-FIRST: CONTRATOS DE API VINCULANTES]\n${project.apiContractsContent.trim()}`);
+      }
+      if (project.uiScreensContent?.trim()) {
+        parts.push(`[UX-FIRST: PANTALLAS Y VISTAS]\n${project.uiScreensContent.trim()}`);
+      }
+      if (parts.length > 0) {
+        const uxFirstNotice = `\n\n[UX-FIRST: INGENIERÍA INVERSA ASISTIDA]\nEste proyecto opera bajo enfoque UX-First. La sección 3 (Mapa de contratos API -> módulos) debe estructurar módulos NestJS (@Controller y servicios) y DTOs a partir de los contratos de API y pantallas anteriores:\n---\n${parts.join("\n\n---\n")}\n---`;
+        combinedGaps = combinedGaps ? `${combinedGaps}\n${uxFirstNotice}` : uxFirstNotice;
+      }
+    }
+    const content = await this.ai.generateBlueprint(enrichedMdd, combinedGaps || null, legacyOpts);
+    return { content: cleanDocumentContent(content) };
   }
 
   async generateBlueprint(projectId: string, gapsFeedback?: string | null, signal?: AbortSignal) {
-  this.throwIfAborted(signal);
-  const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
-  const mddContent = buildConstitutionMarkdown(project);
-  const enrichedMdd = this.enrichMddWithEntities(mddContent);
-  const legacyOpts = this.withHookGenerateOpts(
-    project,
-    (await this.resolveLegacyGenerateOptions(project)) ?? {},
-    signal,
-  );
-  let blueprintContent = await this.ai.generateBlueprint(enrichedMdd, gapsFeedback, legacyOpts);
-  blueprintContent = cleanDocumentContent(blueprintContent);
-  blueprintContent = repairBlueprintMarkdownTables(blueprintContent);
-
-  // GUARD: Si gapsFeedback provocó un resultado vacío/corto, reintentar SIN gaps
-  if (gapsFeedback && blueprintContent.length < 80) {
     this.throwIfAborted(signal);
-    this.logger.warn(`[Blueprint] Resultado vacío/corto (${blueprintContent.length} chars) con gapsFeedback — reintentando sin gaps`);
-    blueprintContent = await this.ai.generateBlueprint(enrichedMdd, null, legacyOpts);
-    blueprintContent = cleanDocumentContent(blueprintContent);
-    blueprintContent = repairBlueprintMarkdownTables(blueprintContent);
-  }
-
-  // GUARD: No persistir si sigue vacío — preservar el Blueprint anterior
-  if (blueprintContent.length < 80) {
-    this.logger.error(`[Blueprint] No se pudo generar contenido válido — preservando Blueprint anterior`);
-    throw new BadRequestException("No se pudo generar el Blueprint. Intenta de nuevo.");
-  }
-
-  // Verificación multi-capa + reintento LLM acotado ante gaps "duros" (entidades, secciones, tablas…).
-  const MAX_BLUEPRINT_QUALITY_RETRIES = 1;
-  let qualityRetries = 0;
-  let checks = runBlueprintQualityChecks(mddContent, blueprintContent);
-  let hardGaps = collectBlueprintHardQualityGaps(checks);
-
-  while (hardGaps.length > 0 && qualityRetries < MAX_BLUEPRINT_QUALITY_RETRIES) {
-    this.throwIfAborted(signal);
-    qualityRetries += 1;
-    const internalFeedback = buildBlueprintQualityRetryFeedback(checks);
-    const combinedFeedback = [gapsFeedback?.trim(), internalFeedback].filter(Boolean).join("\n\n");
-    this.logger.warn(
-      `[Blueprint] Calidad insuficiente (${checks.entity.gaps.length} entidades, ${checks.section.gaps.length} secciones, ` +
-        `${checks.generalTable.gaps.length} tablaGral, ${checks.apiTable.gaps.length} tablaApi, ${checks.spanish.gaps.length} español, ` +
-        `${checks.selfContained.gaps.length} autocontenido) — reintento ${qualityRetries}/${MAX_BLUEPRINT_QUALITY_RETRIES}: ${hardGaps[0]?.slice(0, 140)}`,
+    const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
+    const mddContent = buildConstitutionMarkdown(project);
+    const enrichedMdd = this.enrichMddWithEntities(mddContent);
+    const legacyOpts = this.withHookGenerateOpts(
+      project,
+      (await this.resolveLegacyGenerateOptions(project)) ?? {},
+      signal,
     );
-    blueprintContent = await this.ai.generateBlueprint(enrichedMdd, combinedFeedback, legacyOpts);
+    let combinedGaps = gapsFeedback ?? "";
+    if (project.approach === "UX_FIRST") {
+      const parts: string[] = [];
+      if (project.apiContractsContent?.trim()) {
+        parts.push(`[UX-FIRST: CONTRATOS DE API VINCULANTES]\n${project.apiContractsContent.trim()}`);
+      }
+      if (project.uiScreensContent?.trim()) {
+        parts.push(`[UX-FIRST: PANTALLAS Y VISTAS]\n${project.uiScreensContent.trim()}`);
+      }
+      if (parts.length > 0) {
+        const uxFirstNotice = `\n\n[UX-FIRST: INGENIERÍA INVERSA ASISTIDA]\nEste proyecto opera bajo enfoque UX-First. La sección 3 (Mapa de contratos API -> módulos) debe estructurar módulos NestJS (@Controller y servicios) y DTOs a partir de los contratos de API y pantallas anteriores:\n---\n${parts.join("\n\n---\n")}\n---`;
+        combinedGaps = combinedGaps ? `${combinedGaps}\n${uxFirstNotice}` : uxFirstNotice;
+      }
+    }
+    let blueprintContent = await this.ai.generateBlueprint(enrichedMdd, combinedGaps || null, legacyOpts);
     blueprintContent = cleanDocumentContent(blueprintContent);
     blueprintContent = repairBlueprintMarkdownTables(blueprintContent);
-    checks = runBlueprintQualityChecks(mddContent, blueprintContent);
-    hardGaps = collectBlueprintHardQualityGaps(checks);
-  }
+
+    // GUARD: Si combinedGaps provocó un resultado vacío/corto, reintentar SIN gaps
+    if (combinedGaps && blueprintContent.length < 80) {
+      this.throwIfAborted(signal);
+      this.logger.warn(`[Blueprint] Resultado vacío/corto (${blueprintContent.length} chars) con gapsFeedback — reintentando sin gaps`);
+      blueprintContent = await this.ai.generateBlueprint(enrichedMdd, null, legacyOpts);
+      blueprintContent = cleanDocumentContent(blueprintContent);
+      blueprintContent = repairBlueprintMarkdownTables(blueprintContent);
+    }
+
+    // GUARD: No persistir si sigue vacío — preservar el Blueprint anterior
+    if (blueprintContent.length < 80) {
+      this.logger.error(`[Blueprint] No se pudo generar contenido válido — preservando Blueprint anterior`);
+      throw new BadRequestException("No se pudo generar el Blueprint. Intenta de nuevo.");
+    }
+
+    // Verificación multi-capa + reintento LLM acotado ante gaps "duros" (entidades, secciones, tablas…).
+    const MAX_BLUEPRINT_QUALITY_RETRIES = 1;
+    let qualityRetries = 0;
+    let checks = runBlueprintQualityChecks(mddContent, blueprintContent);
+    let hardGaps = collectBlueprintHardQualityGaps(checks);
+
+    while (hardGaps.length > 0 && qualityRetries < MAX_BLUEPRINT_QUALITY_RETRIES) {
+      this.throwIfAborted(signal);
+      qualityRetries += 1;
+      const internalFeedback = buildBlueprintQualityRetryFeedback(checks);
+      const qualityCombinedFeedback = [combinedGaps?.trim(), internalFeedback].filter(Boolean).join("\n\n");
+      this.logger.warn(
+        `[Blueprint] Calidad insuficiente (${checks.entity.gaps.length} entidades, ${checks.section.gaps.length} secciones, ` +
+          `${checks.generalTable.gaps.length} tablaGral, ${checks.apiTable.gaps.length} tablaApi, ${checks.spanish.gaps.length} español, ` +
+          `${checks.selfContained.gaps.length} autocontenido) — reintento ${qualityRetries}/${MAX_BLUEPRINT_QUALITY_RETRIES}: ${hardGaps[0]?.slice(0, 140)}`,
+      );
+      blueprintContent = await this.ai.generateBlueprint(enrichedMdd, qualityCombinedFeedback, legacyOpts);
+      blueprintContent = cleanDocumentContent(blueprintContent);
+      blueprintContent = repairBlueprintMarkdownTables(blueprintContent);
+      checks = runBlueprintQualityChecks(mddContent, blueprintContent);
+      hardGaps = collectBlueprintHardQualityGaps(checks);
+    }
+
 
   if (hardGaps.length > 0) {
     this.logger.warn(
@@ -1049,9 +1111,17 @@ export class ProjectDeliverableGeneratorsService {
   const mainStage = project.stages?.[0];
   const brdContent = mainStage?.brdContent ?? undefined;
   const legacyOpts = await this.resolveLegacyGenerateOptions(project);
+  const uiScreensPromptContext =
+    project.approach === "UX_FIRST" && project.uiScreensContent
+      ? `\n\n### [UX-FIRST: ESPECIFICACIÓN DE PANTALLAS Y COMPONENTES VISUALES]\nLas siguientes pantallas y vistas dictan los endpoints y las estructuras JSON de entrada/salida (OpenAPI):\n${project.uiScreensContent}\n`
+      : "";
+  const effectiveBlueprint = project.blueprintContent
+    ? `${project.blueprintContent}${uiScreensPromptContext}`
+    : uiScreensPromptContext || undefined;
+
   const content = await this.ai.generateApiContracts(
     this.enrichMddWithApiEndpoints(buildConstitutionMarkdown(project)),
-    project.blueprintContent,
+    effectiveBlueprint,
     gapsFeedback,
     brdContent,
     legacyOpts,
@@ -1089,9 +1159,17 @@ export class ProjectDeliverableGeneratorsService {
     signal,
   );
 
+  const uiScreensPromptContext =
+    project.approach === "UX_FIRST" && project.uiScreensContent
+      ? `\n\n### [UX-FIRST: ESPECIFICACIÓN DE PANTALLAS Y COMPONENTES VISUALES]\nLas siguientes pantallas y vistas dictan los endpoints y las estructuras JSON de entrada/salida (OpenAPI):\n${project.uiScreensContent}\n`
+      : "";
+  const effectiveBlueprint = project.blueprintContent
+    ? `${project.blueprintContent}${uiScreensPromptContext}`
+    : uiScreensPromptContext || undefined;
+
   let apiContent = await this.ai.generateApiContracts(
     enrichedMdd,
-    project.blueprintContent,
+    effectiveBlueprint,
     gapsFeedback,
     brdContent,
     legacyOpts,
@@ -1106,7 +1184,7 @@ export class ProjectDeliverableGeneratorsService {
     apiContent = cleanDocumentContent(
       await this.ai.generateApiContracts(
         enrichedMdd,
-        project.blueprintContent,
+        effectiveBlueprint,
         null,
         brdContent,
         legacyOpts,

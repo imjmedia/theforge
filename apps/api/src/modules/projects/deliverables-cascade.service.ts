@@ -85,9 +85,34 @@ export type DeliverablesCascadeProgress = {
   total: number;
 };
 
+/** Presupuesto global de reintentos LLM por ejecución de cascada (circuit breaker anti-retry storms). */
+export const MAX_GLOBAL_CASCADE_RETRIES = Math.max(
+  1,
+  parseInt(process.env.CASCADE_MAX_PROJECT_RETRIES_TOTAL ?? "3", 10) || 3,
+);
+
+export class CascadeCircuitBreaker {
+  retriesUsed = 0;
+  constructor(readonly maxRetries = MAX_GLOBAL_CASCADE_RETRIES) {}
+
+  canRetry(): boolean {
+    return this.retriesUsed < this.maxRetries;
+  }
+
+  consumeRetry(count = 1): boolean {
+    if (this.retriesUsed + count <= this.maxRetries) {
+      this.retriesUsed += count;
+      return true;
+    }
+    this.retriesUsed = this.maxRetries;
+    return false;
+  }
+}
+
 @Injectable()
 export class DeliverablesCascadeService {
   private readonly logger = new Logger(DeliverablesCascadeService.name);
+
 
   constructor(
     private readonly prisma: PrismaService,
@@ -167,16 +192,17 @@ export class DeliverablesCascadeService {
       index++;
     }
 
-    await this.runCascadePostPassRetry(projectId, options?.signal).catch((err) => {
+    const circuitBreaker = new CascadeCircuitBreaker();
+    await this.runCascadePostPassRetry(projectId, circuitBreaker, options?.signal).catch((err) => {
       if (err instanceof Error && err.message.includes("Cancelado por el usuario")) throw err;
     });
     throwIfAbortedDelta();
     await this.runCascadeDeterministicConformancePass(projectId);
-    await this.runCascadeConformanceRetry(projectId, options?.signal).catch((err) => {
+    await this.runCascadeConformanceRetry(projectId, circuitBreaker, options?.signal).catch((err) => {
       if (err instanceof Error && err.message.includes("Cancelado por el usuario")) throw err;
     });
     throwIfAbortedDelta();
-    await this.runCascadeConvergenceLoop(projectId, options?.signal).catch((err) => {
+    await this.runCascadeConvergenceLoop(projectId, circuitBreaker, options?.signal).catch((err) => {
       if (err instanceof Error && err.message.includes("Cancelado por el usuario")) throw err;
     });
     throwIfAbortedDelta();
@@ -232,6 +258,7 @@ export class DeliverablesCascadeService {
     const c = project.complexity ?? ComplexityLevel.HIGH;
     const mddForWaves = buildConstitutionMarkdown(project);
     const waveOpts = {
+      approach: project.approach,
       mddMarkdown: mddForWaves,
       blueprintMarkdown: project.blueprintContent,
     };
@@ -333,8 +360,10 @@ export class DeliverablesCascadeService {
       total,
     });
 
+    const circuitBreaker = new CascadeCircuitBreaker();
+
     throwIfAborted();
-    await this.runCascadePostPassRetry(projectId, options?.signal).catch((err) => {
+    await this.runCascadePostPassRetry(projectId, circuitBreaker, options?.signal).catch((err) => {
       if (err instanceof Error && err.message.includes("Cancelado por el usuario")) throw err;
       this.logger.warn(
         `[Cascade] post-pass W4: ${err instanceof Error ? err.message : String(err)}`,
@@ -343,7 +372,7 @@ export class DeliverablesCascadeService {
 
     throwIfAborted();
     await this.runCascadeDeterministicConformancePass(projectId);
-    await this.runCascadeConformanceRetry(projectId, options?.signal).catch((err) => {
+    await this.runCascadeConformanceRetry(projectId, circuitBreaker, options?.signal).catch((err) => {
       if (err instanceof Error && err.message.includes("Cancelado por el usuario")) throw err;
       this.logger.warn(
         `[Cascade] conformance retry: ${err instanceof Error ? err.message : String(err)}`,
@@ -351,7 +380,7 @@ export class DeliverablesCascadeService {
     });
 
     throwIfAborted();
-    await this.runCascadeConvergenceLoop(projectId, options?.signal).catch((err) => {
+    await this.runCascadeConvergenceLoop(projectId, circuitBreaker, options?.signal).catch((err) => {
       if (err instanceof Error && err.message.includes("Cancelado por el usuario")) throw err;
       this.logger.warn(
         `[Cascade] convergence loop: ${err instanceof Error ? err.message : String(err)}`,
@@ -411,11 +440,21 @@ export class DeliverablesCascadeService {
     });
   }
 
-  /** W4: reintenta artefactos con gaps de precisión SDD o TaskAccuracy < 90 (hasta 3 pases). */
-  private async runCascadePostPassRetry(projectId: string, signal?: AbortSignal): Promise<void> {
+  /** W4: reintenta artefactos con gaps de precisión SDD o TaskAccuracy < 90 (hasta 1 pase por defecto, sujeto a circuit breaker). */
+  private async runCascadePostPassRetry(
+    projectId: string,
+    circuitBreaker: CascadeCircuitBreaker,
+    signal?: AbortSignal,
+  ): Promise<void> {
     for (let attempt = 0; attempt < CASCADE_W4_PRECISION_MAX_ATTEMPTS; attempt++) {
       if (signal?.aborted) throw new Error("Cancelado por el usuario");
-      const didRetry = await this.executeCascadePostPassRetryRound(projectId, signal);
+      if (!circuitBreaker.canRetry()) {
+        this.logger.warn(
+          `[Cascade] W4: Circuit breaker agotado (${circuitBreaker.retriesUsed}/${circuitBreaker.maxRetries}), omitiendo retries post-pass`,
+        );
+        return;
+      }
+      const didRetry = await this.executeCascadePostPassRetryRound(projectId, circuitBreaker, signal);
       if (!didRetry) return;
 
       const project = await this.projects.findOne(projectId);
@@ -449,6 +488,7 @@ export class DeliverablesCascadeService {
 
   private async executeCascadePostPassRetryRound(
     projectId: string,
+    circuitBreaker: CascadeCircuitBreaker,
     signal?: AbortSignal,
   ): Promise<boolean> {
     if (signal?.aborted) throw new Error("Cancelado por el usuario");
@@ -577,28 +617,40 @@ export class DeliverablesCascadeService {
     );
 
     if (flags.retryLogicFlows) {
-      await this.projects
-        .generateLogicFlows(projectId, feedback, signal)
-        .catch((e) =>
-          this.logger.warn(`[Cascade] W4 logic-flows retry: ${e instanceof Error ? e.message : e}`),
-        );
+      if (circuitBreaker.consumeRetry(1)) {
+        await this.projects
+          .generateLogicFlows(projectId, feedback, signal)
+          .catch((e) =>
+            this.logger.warn(`[Cascade] W4 logic-flows retry: ${e instanceof Error ? e.message : e}`),
+          );
+      } else {
+        this.logger.warn(`[Cascade] W4: Circuit breaker alcanzado antes de logic-flows retry`);
+      }
       if (signal?.aborted) throw new Error("Cancelado por el usuario");
     }
 
     const upstreamRetries: Array<Promise<unknown>> = [];
     if (flags.retryArchitecture) {
-      upstreamRetries.push(
-        this.projects.generateArchitecture(projectId, feedback, signal).catch((e) =>
-          this.logger.warn(`[Cascade] W4 architecture retry: ${e instanceof Error ? e.message : e}`),
-        ),
-      );
+      if (circuitBreaker.consumeRetry(1)) {
+        upstreamRetries.push(
+          this.projects.generateArchitecture(projectId, feedback, signal).catch((e) =>
+            this.logger.warn(`[Cascade] W4 architecture retry: ${e instanceof Error ? e.message : e}`),
+          ),
+        );
+      } else {
+        this.logger.warn(`[Cascade] W4: Circuit breaker alcanzado antes de architecture retry`);
+      }
     }
     if (flags.retryApiContracts) {
-      upstreamRetries.push(
-        this.projects.generateApiContracts(projectId, feedback, signal).catch((e) =>
-          this.logger.warn(`[Cascade] W4 api-contracts retry: ${e instanceof Error ? e.message : e}`),
-        ),
-      );
+      if (circuitBreaker.consumeRetry(1)) {
+        upstreamRetries.push(
+          this.projects.generateApiContracts(projectId, feedback, signal).catch((e) =>
+            this.logger.warn(`[Cascade] W4 api-contracts retry: ${e instanceof Error ? e.message : e}`),
+          ),
+        );
+      } else {
+        this.logger.warn(`[Cascade] W4: Circuit breaker alcanzado antes de api-contracts retry`);
+      }
     }
 
     if (upstreamRetries.length > 0) {
@@ -607,27 +659,31 @@ export class DeliverablesCascadeService {
     if (signal?.aborted) throw new Error("Cancelado por el usuario");
 
     if (flags.retryTasks) {
-      const refreshed = await this.projects.findOne(projectId);
-      const refreshedStage = pickPrimaryStage(refreshed.stages ?? []);
-      const docAcc = computeCascadeAccuracy({
-        brdMarkdown: refreshedStage?.brdContent,
-        dbgaMarkdown: refreshed.dbgaContent,
-        mddMarkdown: buildConstitutionMarkdown(refreshed),
-        tasksMarkdown: refreshed.tasksContent,
-        logicFlowsMarkdown: refreshed.logicFlowsContent,
-        apiContractsMarkdown: refreshed.apiContractsContent,
-        uiScreensMarkdown: refreshed.uiScreensContent,
-        userStoriesMarkdown: refreshed.userStoriesContent,
-        useCasesMarkdown: refreshed.useCasesContent,
-        specMarkdown: refreshed.specContent,
-      }).doc;
-      const relaxPreflight =
-        docAcc.score < TASKS_PREFLIGHT_DOC_ACCURACY_BLOCK_THRESHOLD;
-      await this.projects
-        .generateTasks(projectId, feedback, { acknowledgeGaps: relaxPreflight, signal })
-        .catch((e) =>
-          this.logger.warn(`[Cascade] W4 tasks retry: ${e instanceof Error ? e.message : e}`),
-        );
+      if (circuitBreaker.consumeRetry(1)) {
+        const refreshed = await this.projects.findOne(projectId);
+        const refreshedStage = pickPrimaryStage(refreshed.stages ?? []);
+        const docAcc = computeCascadeAccuracy({
+          brdMarkdown: refreshedStage?.brdContent,
+          dbgaMarkdown: refreshed.dbgaContent,
+          mddMarkdown: buildConstitutionMarkdown(refreshed),
+          tasksMarkdown: refreshed.tasksContent,
+          logicFlowsMarkdown: refreshed.logicFlowsContent,
+          apiContractsMarkdown: refreshed.apiContractsContent,
+          uiScreensMarkdown: refreshed.uiScreensContent,
+          userStoriesMarkdown: refreshed.userStoriesContent,
+          useCasesMarkdown: refreshed.useCasesContent,
+          specMarkdown: refreshed.specContent,
+        }).doc;
+        const relaxPreflight =
+          docAcc.score < TASKS_PREFLIGHT_DOC_ACCURACY_BLOCK_THRESHOLD;
+        await this.projects
+          .generateTasks(projectId, feedback, { acknowledgeGaps: relaxPreflight, signal })
+          .catch((e) =>
+            this.logger.warn(`[Cascade] W4 tasks retry: ${e instanceof Error ? e.message : e}`),
+          );
+      } else {
+        this.logger.warn(`[Cascade] W4: Circuit breaker alcanzado antes de tasks retry`);
+      }
     }
 
     return true;
@@ -656,9 +712,17 @@ export class DeliverablesCascadeService {
     await this.projects.update(projectId, patches);
   }
 
-  /** Reintenta derivados cuando conformance heurístico falla tras la cascada (máx. 2 iteraciones). */
-  private async runCascadeConformanceRetry(projectId: string, signal?: AbortSignal): Promise<void> {
-    for (let attempt = 0; attempt < 2; attempt++) {
+  /** Reintenta derivados cuando conformance heurístico falla tras la cascada (máx. 1 iteración, sujeto a circuit breaker). */
+  private async runCascadeConformanceRetry(
+    projectId: string,
+    circuitBreaker: CascadeCircuitBreaker,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const MAX_CONFORMANCE_ATTEMPTS = Math.max(
+      1,
+      parseInt(process.env.CASCADE_CONFORMANCE_MAX_ATTEMPTS ?? "1", 10) || 1,
+    );
+    for (let attempt = 0; attempt < MAX_CONFORMANCE_ATTEMPTS; attempt++) {
       if (signal?.aborted) throw new Error("Cancelado por el usuario");
       await this.runCascadeDeterministicConformancePass(projectId);
 
@@ -672,53 +736,70 @@ export class DeliverablesCascadeService {
       const lfCheck = checkLogicFlowsVsMdd(mdd, project.logicFlowsContent ?? null);
       if (apiCheck.ok && infraCheck.ok && bpCheck.ok && lfCheck.ok) return;
 
+      if (!circuitBreaker.canRetry()) {
+        this.logger.warn(
+          `[Cascade] Conformance retry: Circuit breaker agotado (${circuitBreaker.retriesUsed}/${circuitBreaker.maxRetries}), omitiendo retries LLM`,
+        );
+        return;
+      }
+
       this.logger.warn(
-        `[Cascade] Conformance retry ${attempt + 1}/2 — API=${apiCheck.ok} BP=${bpCheck.ok} LF=${lfCheck.ok} Infra=${infraCheck.ok}`,
+        `[Cascade] Conformance retry ${attempt + 1}/${MAX_CONFORMANCE_ATTEMPTS} — API=${apiCheck.ok} BP=${bpCheck.ok} LF=${lfCheck.ok} Infra=${infraCheck.ok}`,
       );
 
       const retries: Promise<unknown>[] = [];
       if (!apiCheck.ok && (project.apiContractsContent ?? "").trim().length >= 80) {
-        retries.push(
-          this.projects.generateApiContracts(projectId, buildApiRetryFeedback(apiCheck), signal).catch((e) =>
-            this.logger.warn(`[Cascade] API conformance retry: ${e instanceof Error ? e.message : e}`),
-          ),
-        );
+        if (circuitBreaker.consumeRetry(1)) {
+          retries.push(
+            this.projects.generateApiContracts(projectId, buildApiRetryFeedback(apiCheck), signal).catch((e) =>
+              this.logger.warn(`[Cascade] API conformance retry: ${e instanceof Error ? e.message : e}`),
+            ),
+          );
+        }
       } else if (!apiCheck.ok) {
-        retries.push(
-          this.projects.generateApiContracts(projectId).catch((e) =>
-            this.logger.warn(`[Cascade] API regen: ${e instanceof Error ? e.message : e}`),
-          ),
-        );
+        if (circuitBreaker.consumeRetry(1)) {
+          retries.push(
+            this.projects.generateApiContracts(projectId).catch((e) =>
+              this.logger.warn(`[Cascade] API regen: ${e instanceof Error ? e.message : e}`),
+            ),
+          );
+        }
       }
       if (!bpCheck.ok && (project.blueprintContent ?? "").trim().length >= 80) {
-        retries.push(
-          this.projects.generateBlueprint(projectId, bpCheck.gaps.slice(0, 12).join("; ")).catch((e) =>
-            this.logger.warn(`[Cascade] Blueprint conformance retry: ${e instanceof Error ? e.message : e}`),
-          ),
-        );
+        if (circuitBreaker.consumeRetry(1)) {
+          retries.push(
+            this.projects.generateBlueprint(projectId, bpCheck.gaps.slice(0, 12).join("; ")).catch((e) =>
+              this.logger.warn(`[Cascade] Blueprint conformance retry: ${e instanceof Error ? e.message : e}`),
+            ),
+          );
+        }
       }
       const flowsContent = (project.logicFlowsContent ?? "").trim();
       const logicFlowsDeterministicBaseline =
         !isLogicFlowsInsufficientContent(flowsContent) &&
         /mapeo determinista|mapeo Ariadne business_logic/i.test(flowsContent);
       if (!lfCheck.ok && !logicFlowsDeterministicBaseline && !isLogicFlowsInsufficientContent(flowsContent)) {
-        retries.push(
-          this.projects.generateLogicFlows(projectId, lfCheck.gaps.slice(0, 12).join("; ")).catch((e) =>
-            this.logger.warn(`[Cascade] Flujos conformance retry: ${e instanceof Error ? e.message : e}`),
-          ),
-        );
+        if (circuitBreaker.consumeRetry(1)) {
+          retries.push(
+            this.projects.generateLogicFlows(projectId, lfCheck.gaps.slice(0, 12).join("; ")).catch((e) =>
+              this.logger.warn(`[Cascade] Flujos conformance retry: ${e instanceof Error ? e.message : e}`),
+            ),
+          );
+        }
       } else if (!lfCheck.ok && isLogicFlowsInsufficientContent(flowsContent)) {
         this.logger.warn(
           "[Cascade] Flujos insuficientes (stub/changelog vacío) tras pass determinista — omitiendo retry LLM",
         );
       }
       if (!infraCheck.ok && (project.infraContent ?? "").trim().length > 80) {
-        const feedback = buildInfraConformanceGapFeedback(infraCheck.gaps);
-        retries.push(
-          this.projects.generateInfra(projectId, feedback, signal).catch((e) =>
-            this.logger.warn(`[Cascade] Infra conformance retry: ${e instanceof Error ? e.message : e}`),
-          ),
-        );
+        if (circuitBreaker.consumeRetry(1)) {
+          const feedback = buildInfraConformanceGapFeedback(infraCheck.gaps);
+          retries.push(
+            this.projects.generateInfra(projectId, feedback, signal).catch((e) =>
+              this.logger.warn(`[Cascade] Infra conformance retry: ${e instanceof Error ? e.message : e}`),
+            ),
+          );
+        }
       }
       if (retries.length === 0) return;
       await Promise.allSettled(retries);
@@ -726,18 +807,26 @@ export class DeliverablesCascadeService {
   }
 
   /**
-   * Ciclo verify → reparación/regen dirigida → verify (máx. 3 iteraciones).
+   * Ciclo verify → reparación/regen dirigida → verify (máx. 1 iteración por defecto, con circuit breaker).
    * Cierra gaps auto-fixables y dispara regeneración LLM por artefacto.
    */
   async repairReadinessGaps(projectId: string, options?: { signal?: AbortSignal }) {
-    await this.runCascadeConvergenceLoop(projectId, options?.signal);
+    const circuitBreaker = new CascadeCircuitBreaker();
+    await this.runCascadeConvergenceLoop(projectId, circuitBreaker, options?.signal);
     if (options?.signal?.aborted) throw new Error("Cancelado por el usuario");
     await this.projects.refreshStageSemaphoreFromProject(projectId).catch(() => undefined);
     return this.projects.findOne(projectId);
   }
 
-  private async runCascadeConvergenceLoop(projectId: string, signal?: AbortSignal): Promise<void> {
-    const MAX_ITERATIONS = 3;
+  private async runCascadeConvergenceLoop(
+    projectId: string,
+    circuitBreaker: CascadeCircuitBreaker,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const MAX_ITERATIONS = Math.max(
+      1,
+      parseInt(process.env.CASCADE_CONVERGENCE_MAX_ITERATIONS ?? "1", 10) || 1,
+    );
     const GAP_TOLERANCE = 5;
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
@@ -811,6 +900,12 @@ export class DeliverablesCascadeService {
 
       for (const step of regenSteps) {
         if (signal?.aborted) throw new Error("Cancelado por el usuario");
+        if (!circuitBreaker.consumeRetry(1)) {
+          this.logger.warn(
+            `[Cascade] Convergence loop: Circuit breaker alcanzado (${circuitBreaker.retriesUsed}/${circuitBreaker.maxRetries}), omitiendo regeneración de ${step}`,
+          );
+          return;
+        }
         const feedback =
           buildConvergenceFeedbackForDeliverable(gaps, step) || plan.feedback || undefined;
         await this.projects

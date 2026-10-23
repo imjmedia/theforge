@@ -738,11 +738,20 @@ function buildProjectFactsBlock(
     ...facts.docPaths.filter((p) => p.startsWith("docs/sdd/")).map((p) => `- \`${p}\``),
     "",
   );
+  if (facts.approach === "UX_FIRST") {
+    parts.push(
+      "**Metodología:** UX-First (Traducción Técnica).",
+      "- Las pantallas de UI (`pantallas.md`) dictan los contratos de API (`api-contracts.md`).",
+      "- Contrato Vinculante: obligatorio para desarrolladores y agentes IA respetar estrictamente los endpoints y DTOs pactados con diseño.",
+      "",
+    );
+  }
   if (facts.sddConflicts.length > 0 && options?.includeSddConflicts !== false) {
     parts.push(buildSddConflictSection(facts).trim(), "");
   }
   return parts.join("\n");
 }
+
 
 function buildTasksPreview(facts: ProjectGovernanceFacts): string {
   if (facts.taskCheckboxes.length > 0) {
@@ -1207,11 +1216,12 @@ type FallbackFactory = (
 
 const FALLBACK_BY_PATH: Record<string, FallbackFactory> = {
   "AGENTS.md": (_c, _s, input) => {
-    const base = defaultAgentsMd();
-    if (!input) return base;
-    const facts = extractProjectGovernanceFacts(input);
+    const facts = input ? extractProjectGovernanceFacts(input) : undefined;
+    const base = defaultAgentsMd(undefined, facts);
+    if (!facts) return base;
     return overlayProjectFacts(base, facts);
   },
+
   "CLAUDE.md": (_c, _s, input) => {
     if (!input) return defaultClaudeShim();
     const facts = extractProjectGovernanceFacts(input);

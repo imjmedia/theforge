@@ -18,7 +18,7 @@ describe("DocReconcileService", () => {
       "apiContracts",
       "spec",
     ]);
-    assert.deepEqual(ordered, ["mdd", "spec", "blueprint", "apiContracts", "tasks"]);
+    assert.deepEqual(ordered, ["mdd", "spec", "apiContracts", "blueprint", "tasks"]);
   });
 
   it("siempre incluye mdd aunque no esté en affectedArtifacts", () => {

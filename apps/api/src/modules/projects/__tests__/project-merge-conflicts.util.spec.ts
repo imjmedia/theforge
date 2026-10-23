@@ -2,7 +2,8 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { detectMergeConflicts } from "../project-merge-conflicts.util.js";
 import type { MergeSourceSnapshot } from "../project-merge-conflicts.util.js";
-import { emptyPhase0Document } from "../ai-analysis/phase0/phase0-normalize.util.js";
+import { emptyPhase0Document } from "../../ai-analysis/phase0/phase0-normalize.util.js";
+
 
 function source(name: string, patch: Partial<ReturnType<typeof emptyPhase0Document>>): MergeSourceSnapshot {
   const base = emptyPhase0Document();

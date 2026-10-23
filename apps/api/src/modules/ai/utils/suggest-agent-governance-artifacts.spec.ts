@@ -793,4 +793,37 @@ PostgreSQL multi-tenant.
     const conflicts = detectSddConflicts(`${mdd}\n${blueprint}`);
     assert.ok(conflicts.some((c) => /Stack backend.*Fastify/i.test(c)));
   });
+
+  it("promotes api-contracts and ui-pantallas to strong when approach is UX_FIRST", () => {
+    const mdd = `
+# MDD UX-First Project
+## 2. Stack
+Backend NestJS, Frontend React.
+`;
+    const suggestions = suggestAgentGovernanceArtifacts({
+      mddMarkdown: mdd,
+      complexity: "HIGH",
+      approach: "UX_FIRST",
+    });
+
+    const apiRule = suggestions.suggestedRules.find((r) => r.id === "api-contracts");
+    const uiRule = suggestions.suggestedRules.find((r) => r.id === "ui-pantallas");
+
+    assert.ok(apiRule, "api-contracts rule must be suggested");
+    assert.equal(apiRule.strength, "strong");
+    assert.ok(uiRule, "ui-pantallas rule must be suggested");
+    assert.equal(uiRule.strength, "strong");
+    assert.ok(
+      suggestions.rationale.some((r) => /UX-First/i.test(r)),
+      "Rationale should include UX-First reference",
+    );
+
+    const facts = extractProjectGovernanceFacts({
+      mddMarkdown: mdd,
+      complexity: "HIGH",
+      approach: "UX_FIRST",
+    });
+    assert.equal(facts.approach, "UX_FIRST");
+  });
 });
+

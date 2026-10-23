@@ -185,5 +185,11 @@ Blueprint en markdown. Primer carácter `#`. Sin introducciones ni envolver el d
 
 - La sección **§9 UI Design System & Component Mapping** (anexada automáticamente tras generación) debe **alinearse a `pantallas.md`**, no mapear cada tabla §3 a `DataTable`/`KanbanBoard` por defecto.
 - **Prohibido** inventar endpoints REST genéricos `GET /api/v1/{entidad}` en §8 si no están en api-contracts.
-- Kanban solo cuando el journey lo exija (pipeline arrastrable visible al usuario). Logs, OTP, auditoría → `DataTable`, `AuditList` o `EmptyState`, no Kanban.
 - Si el mensaje incluye `pantallas.md`, §8 resume layout transversal (`AppLayout`, nav por rol) y remite al detalle pantalla→componente→API allí.
+
+# Enfoque UX-First (Ingeniería Inversa hacia NestJS/SDD) #
+
+Cuando el mensaje incluya `[UX-FIRST: INGENIERÍA INVERSA ASISTIDA]` o contratos de API preexistentes:
+1. **Esqueletos de Módulos y Controladores NestJS:** El mapa de contratos API debe derivar directamente de los endpoints dictados por las pantallas y `api_contracts.md`. Estructura los `@Controller` y `@Injectable() Service` con los DTOs de entrada y salida exactamente correspondientes a las vistas de usuario.
+2. **Persistencia coherente con la UI:** Modela las entidades de base de datos (Prisma / PostgreSQL) a partir de los datos que las pantallas consumen y emiten, garantizando que el esquema de datos respalde 100% las vistas antes de tirar la primera línea de código lógico.
+

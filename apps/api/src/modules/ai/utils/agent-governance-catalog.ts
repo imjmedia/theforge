@@ -234,6 +234,14 @@ export const RULE_CATALOG: RuleCatalogEntry[] = [
         "- Cambios de contrato: actualizar spec/OpenAPI y tests.\n" +
         "- Validación de entrada según stack (Zod, class-validator, etc.).\n",
       ];
+      if (facts?.approach === "UX_FIRST") {
+        lines.push(
+          "## Metodología UX-First (Contrato Vinculante Front-Back)\n\n" +
+          "- **La UI manda la arquitectura del contrato:** Las pantallas de diseño definen con precisión los contratos de API (`api-contracts.md` / `openapi.yaml`).\n" +
+          "- **Implementación estricta:** Desarrolladores full-stack y agentes IA (Cursor, Copilot, etc.) DEBEN implementar los controladores y servicios backend respetando exactamente las firmas y estructuras de Request/Response especificadas en el contrato.\n" +
+          "- **Prohibido desviar endpoints:** Ningún endpoint puede modificarse en el backend sin una previa actualización acordada del contrato y de las pantallas de UI.\n",
+        );
+      }
       if (facts?.blueprintModules.length) {
         lines.push("## Módulos con endpoints\n");
         for (const mod of facts.blueprintModules.slice(0, 6)) {
@@ -244,6 +252,7 @@ export const RULE_CATALOG: RuleCatalogEntry[] = [
       return lines.join("\n");
     },
   },
+
   {
     id: "orchestrator",
     path: "docs/agent-governance/rules/orchestrator.mdc",

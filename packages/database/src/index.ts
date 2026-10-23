@@ -22,4 +22,5 @@ export {
   StageStatus,
   EpisodicMemoryKind,
   ComplexityLevel,
+  ProjectApproach,
 } from "./generated/index.js";

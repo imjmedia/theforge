@@ -8,6 +8,7 @@ import {
   Layers,
   Lock,
   MoreHorizontal,
+  Palette,
   Pencil,
   Plus,
 } from "lucide-react";
@@ -204,6 +205,31 @@ export function WorkshopHeaderBar({
                   </>
                 )}
               </button>
+            ) : null}
+            {project ? (
+              <span
+                className={cn(
+                  "shrink-0 inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-medium",
+                  project.approach === "UX_FIRST"
+                    ? "border-pink-500/40 bg-pink-500/10 text-pink-400"
+                    : "border-blue-500/40 bg-blue-500/10 text-blue-400",
+                )}
+                title={
+                  project.approach === "UX_FIRST"
+                    ? "Enfoque UX-First: Las pantallas dictan contratos OpenAPI, entidades y arquitectura NestJS."
+                    : "Enfoque Domain-First: Idea abstracta -> BD/API en MDD -> UI."
+                }
+              >
+                {project.approach === "UX_FIRST" ? (
+                  <>
+                    <Palette className="h-3 w-3" aria-hidden /> UX-First
+                  </>
+                ) : (
+                  <>
+                    <Layers className="h-3 w-3" aria-hidden /> Domain-First
+                  </>
+                )}
+              </span>
             ) : null}
             <span
               role="status"

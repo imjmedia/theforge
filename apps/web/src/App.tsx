@@ -86,6 +86,8 @@ interface Project {
   groupName?: string;
   status: Status;
   precisionScore: number;
+  approach?: "DOMAIN_FIRST" | "UX_FIRST";
+  uxDesignSource?: string | null;
   hasUxTeam: boolean;
   projectType?: "NEW" | "LEGACY";
   visibility?: "PRIVATE" | "SHARED";
@@ -344,17 +346,25 @@ export default function App() {
   }, []);
 
   const createProject = useCallback(
-    async (name: string, groupId: string) => {
+    async (
+      name: string,
+      groupId: string,
+      approach?: "DOMAIN_FIRST" | "UX_FIRST",
+      uxDesignSource?: string,
+    ) => {
       const trimmed = name.trim();
       if (!trimmed) throw new Error("Nombre vacío");
       setLoading(true);
       try {
+        const effectiveApproach = approach ?? "DOMAIN_FIRST";
         const r = await apiFetch(`${API_BASE}/projects`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: trimmed,
-            hasUxTeam: false,
+            approach: effectiveApproach,
+            uxDesignSource: uxDesignSource || null,
+            hasUxTeam: effectiveApproach === "UX_FIRST",
             projectType: "NEW",
             groupId,
           }),
@@ -928,6 +938,8 @@ export default function App() {
         projectId={settingsTarget?.id ?? null}
         currentName={settingsTarget?.name ?? ""}
         currentGroupId={settingsTarget?.groupId ?? null}
+        currentApproach={settingsTarget?.approach ?? "DOMAIN_FIRST"}
+        currentUxDesignSource={settingsTarget?.uxDesignSource ?? ""}
         groups={projectGroups.map((g) => ({ id: g.id, name: g.name, isDefault: g.isDefault }))}
         canEditName={settingsTarget ? canRenameProject(settingsTarget) : false}
         canEditGroup={isAdmin}
@@ -1598,6 +1610,7 @@ export default function App() {
                           name={p.name}
                           status={p.status}
                           precisionScore={p.precisionScore}
+                          approach={p.approach}
                           projectType={p.projectType}
                           visibility={p.visibility}
                           selected={selectedProjectIds.includes(p.id)}

@@ -153,6 +153,8 @@ export class ProjectUpdateService {
     const hasSettingsChange =
       rest.name !== undefined ||
       rest.visibility !== undefined ||
+      rest.approach !== undefined ||
+      rest.uxDesignSource !== undefined ||
       rest.complexity !== undefined ||
       rest.hasUxTeam !== undefined ||
       rest.projectType !== undefined ||
