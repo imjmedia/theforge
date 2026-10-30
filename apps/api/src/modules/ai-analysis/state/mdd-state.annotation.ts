@@ -86,8 +86,6 @@ export const MDDStateAnnotation = Annotation.Root({
     sectionsToRun?: string[];
     previousMddDraftForMerge?: string;
     goto: string;
-    /** true → plan_approval no interrumpe; ejecuta directo (p. ej. tras responder preguntas del Clarifier). */
-    autoApprove?: boolean;
   } | undefined>(),
   planUserIntent: Annotation<string | undefined>(),
   executorControlled: Annotation<boolean | undefined>(),

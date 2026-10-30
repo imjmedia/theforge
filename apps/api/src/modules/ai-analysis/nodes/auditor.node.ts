@@ -7,7 +7,6 @@ import { HumanMessage, AIMessage, ToolMessage } from "@langchain/core/messages";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { AUDITOR_PROMPT } from "../prompts/load-prompts.js";
 import type { DBGAStateType } from "../state/index.js";
-import { forceFinalAnswer } from "../utils/tool-loop.js";
 import { z } from "zod";
 
 const auditorOutputSchema = z.object({
@@ -41,7 +40,6 @@ export function createAuditorNode(
     const messages = [new HumanMessage(prompt)];
 
     let lastContent = "";
-    let lastHadToolCalls = false;
     let loopCount = 0;
 
     while (loopCount < MAX_TOOL_LOOPS) {
@@ -50,7 +48,6 @@ export function createAuditorNode(
       lastContent = typeof aiMsg.content === "string" ? aiMsg.content : "";
 
       const toolCalls = aiMsg.tool_calls ?? [];
-      lastHadToolCalls = toolCalls.length > 0;
       if (toolCalls.length === 0) break;
 
       const toolMessages: ToolMessage[] = [];
@@ -77,11 +74,6 @@ export function createAuditorNode(
 
       messages.push(aiMsg, ...toolMessages);
       loopCount++;
-    }
-
-    // Sin texto final, o bucle agotado con tool_calls pendientes: pedir respuesta final sin tools.
-    if (!lastContent.trim() || lastHadToolCalls) {
-      lastContent = await forceFinalAnswer(llm, llmWithTools, messages);
     }
 
     const stripped = lastContent.replace(/^```json?\s*|\s*```$/g, "").trim();

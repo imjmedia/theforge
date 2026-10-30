@@ -4,7 +4,7 @@ Extracción modular de `../mdd-manager.node.ts` — nodo LangGraph Manager del p
 
 | Archivo | Exports | Notas |
 |---------|---------|-------|
-| `manager-constants.ts` | Umbrales y regex de routing | `QUALITY_THRESHOLD`, `PLAN_APPROVAL_CONFIRM_PATTERN` (úsese vía `isPlanApproval()`), etc. |
+| `manager-constants.ts` | Umbrales y regex de routing | `QUALITY_THRESHOLD`, `PLAN_APPROVAL_CONFIRM_PATTERN`, etc. |
 | `manager-context.util.ts` | `LOG`, `hasRealBenchmark`, `mddHasContent` | Helpers de estado del draft/benchmark |
 | `manager-heuristics.ts` | `inferSectionsFromMessage`, `looksLike*` | Heurísticos de mensaje (sin LLM) |
 | `manager-plan.ts` | `buildMddPlan`, `expandSectionsToRun`, `generateMddPlanWithLLM` | Planner–Executor: goals por paso |

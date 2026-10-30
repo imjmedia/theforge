@@ -14,8 +14,6 @@ const criticOutputSchema = z.object({
   refinedQuery: z.string().optional().nullable(),
 });
 
-type CriticOutput = z.infer<typeof criticOutputSchema>;
-
 /** Creates the Critic (Validation) node. */
 export function createCriticNode(llm: BaseChatModel) {
   return async (state: DBGAStateType): Promise<Partial<DBGAStateType>> => {
@@ -28,21 +26,7 @@ export function createCriticNode(llm: BaseChatModel) {
     const prompt = `${CRITIC_PROMPT}\n\n---\n${context}`;
     const response = await llm.invoke([new HumanMessage(prompt)]);
     const text = typeof response.content === "string" ? response.content : "";
-    // Salida no parseable (prosa, JSON truncado): continuar a synthesis con lo que hay en vez de
-    // reventar el stream DBGA. El tope de re-research lo aplica routeDbgaAfterCritic (criticIterations).
-    let parsed: CriticOutput;
-    try {
-      parsed = parseJsonOrThrow(text, criticOutputSchema);
-    } catch (err) {
-      console.warn(
-        `[DBGA:Critic] respuesta no parseable (${err instanceof Error ? err.message : String(err)}); continuando a synthesis`,
-      );
-      return {
-        criticDecision: "synthesis",
-        refinedQuery: undefined,
-        criticIterations: (state.criticIterations ?? 0) + 1,
-      };
-    }
+    const parsed = parseJsonOrThrow(text, criticOutputSchema);
     return {
       criticDecision: parsed.criticDecision,
       refinedQuery: parsed.refinedQuery ?? undefined,
