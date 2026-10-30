@@ -14,6 +14,7 @@ import { getInternalDirectivesContext } from "../utils/mdd-mesh-topology.js";
 import { auditorConstitutionRigorAppendix } from "../utils/mdd-complexity-rigor.js";
 import { domainInventoryPromptBlock } from "../utils/mdd-domain-prompt.util.js";
 import { extractLlmText, extractLlmToolCalls, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
+import { forceFinalAnswer } from "../utils/tool-loop.js";
 import { resolveMddAuditorNodeBudgetMs, resolveMddAuditorPerInvokeHardTimeoutMs } from "../utils/mdd-llm-timeout.util.js";
 import {
   buildAuditorFeedbackFromGaps,
@@ -201,6 +202,7 @@ export function createMddAuditorNode(
       const messages = [new HumanMessage(prompt)];
 
       let lastContent = "";
+      let lastHadToolCalls = false;
       let loopCount = 0;
       let emptyFinalAttempts = 0;
       const MAX_EMPTY_FINAL_ATTEMPTS = 2;
@@ -231,6 +233,7 @@ export function createMddAuditorNode(
         const aiMsg = response as AIMessage;
         lastContent = extractLlmText(aiMsg);
         const toolCalls = extractLlmToolCalls(aiMsg);
+        lastHadToolCalls = toolCalls.length > 0;
         if (toolCalls.length === 0) {
           if (!lastContent.trim()) {
             emptyFinalAttempts += 1;
@@ -272,6 +275,13 @@ export function createMddAuditorNode(
         }
         messages.push(aiMsg, ...toolMessages);
         loopCount++;
+      }
+
+      // Bucle agotado con tool_calls pendientes (o sin texto): turno final forzado sin tools,
+      // solo si queda presupuesto del nodo. Evita caer al fallback estructural con contexto ya recopilado.
+      if ((!lastContent.trim() || lastHadToolCalls) && auditorRemainingNodeMs() > 0) {
+        LOG("tool-loop sin respuesta final (iter=%s, toolCalls=%s) → forzando respuesta sin tools", loopCount, lastHadToolCalls);
+        lastContent = await forceFinalAnswer(llm, llmWithTools, messages);
       }
 
       const structuralBase = deterministicBase;

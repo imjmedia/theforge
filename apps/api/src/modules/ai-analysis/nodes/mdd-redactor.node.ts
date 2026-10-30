@@ -9,6 +9,7 @@ import { REDACTOR_MDD_PROMPT } from "../prompts/load-prompts.js";
 import type { MDDStateType } from "../state/index.js";
 import { getMddDraftSummary, logMddNodeOutput, objectSectionToMarkdown, sanitizeContextSection } from "../utils/mdd-sanitize.js";
 import { extractFirstJsonObject, extractJsonFromCodeBlock } from "../utils/parse-json.js";
+import { forceFinalAnswer } from "../utils/tool-loop.js";
 import { replaceOrAppendSection } from "./mdd-section-merge.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Redactor] ${msg}`, ...args);
@@ -74,11 +75,13 @@ export function createMddRedactorNode(llm: BaseChatModel, tools: StructuredToolI
       let text = "";
       if (tools.length > 0) {
         let loopCount = 0;
+        let lastHadToolCalls = false;
         while (loopCount < MAX_REDACTOR_TOOL_LOOPS) {
           const response = await llmWithTools.invoke(messages);
           const aiMsg = response as AIMessage;
           text = typeof aiMsg.content === "string" ? aiMsg.content : "";
           const toolCalls = aiMsg.tool_calls ?? [];
+          lastHadToolCalls = toolCalls.length > 0;
           if (toolCalls.length === 0) break;
           const toolMessages: ToolMessage[] = [];
           for (const tc of toolCalls) {
@@ -101,6 +104,11 @@ export function createMddRedactorNode(llm: BaseChatModel, tools: StructuredToolI
           }
           messages.push(aiMsg, ...toolMessages);
           loopCount++;
+        }
+        // Bucle agotado con tool_calls pendientes (o sin texto): turno final forzado sin tools.
+        if (!text.trim() || lastHadToolCalls) {
+          LOG("tool-loop sin respuesta final (iter=%s, toolCalls=%s) → forzando respuesta sin tools", loopCount, lastHadToolCalls);
+          text = await forceFinalAnswer(llm, llmWithTools, messages);
         }
       } else {
         const response = await llm.invoke(messages);

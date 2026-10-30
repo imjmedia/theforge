@@ -356,3 +356,37 @@ export function managerPlanStepWithTools(
 }
 
 export { NODE_TASK_DESCRIPTIONS };
+
+/** Nodos del plan que escriben o modifican el MDD (los demás formatean, auditan o critican). */
+export const PLAN_WRITER_NODES: ReadonlySet<string> = new Set([
+  "clarifier",
+  "software_architect",
+  "stack_architect",
+  "data_model",
+  "api_contracts",
+  "section5",
+  "tail_parallel",
+  "post_critic_parallel",
+  "security",
+  "integration",
+  "security_integration",
+  "data_model_patch",
+  "blackboard",
+]);
+
+/**
+ * Plan trivial que `plan_approval` ejecuta sin interrumpir (HITL 4.4 solo para planes con
+ * varios agentes escritores): 1 paso, `autoApprove` explícito (tras responder preguntas) o,
+ * en `sections`, un único agente escritor. El Manager usa la misma regla para no gastar la
+ * llamada LLM de análisis de impacto cuando el resumen no se va a mostrar.
+ */
+export function planWillAutoApprove(
+  mddPlan: ReadonlyArray<{ node: string }>,
+  delegateTarget: "clarifier_only" | "full_pipeline" | "sections" | undefined,
+  autoApprove?: boolean,
+): boolean {
+  if (autoApprove === true) return true;
+  if (mddPlan.length <= 1) return true;
+  if (delegateTarget !== "sections") return false;
+  return mddPlan.filter((s) => PLAN_WRITER_NODES.has(s.node)).length <= 1;
+}
