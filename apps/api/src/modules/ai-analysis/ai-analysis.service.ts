@@ -440,13 +440,26 @@ export class AiAnalysisService {
     return row?.threadId ?? null;
   }
 
-  /** Borra checkpoint para ese par proyecto / etapa (`mddStageId` vacío = hilo DBGA). */
+  /**
+   * Borra checkpoint para ese par proyecto / etapa (`mddStageId` vacío = hilo DBGA).
+   * Además purga el hilo en las tablas LangGraph (checkpoints / checkpoint_writes / checkpoint_blobs)
+   * vía PostgresSaver.deleteThread: sin esto crecen sin límite y un thread_id reutilizado podría
+   * reanudar un estado viejo.
+   */
   async clearMddCheckpoint(projectId: string, mddStageId = ""): Promise<void> {
     if (!projectId?.trim()) return;
-    await this.prisma.agentStateCheckpoint.deleteMany({
-      where: { projectId: projectId.trim(), mddStageId: mddStageId.trim() },
-    });
+    const where = { projectId: projectId.trim(), mddStageId: mddStageId.trim() };
+    const rows = await this.prisma.agentStateCheckpoint.findMany({ where, select: { threadId: true } });
+    await this.prisma.agentStateCheckpoint.deleteMany({ where });
     this.nodeCacheService.invalidateAll();
+    if (rows.length === 0) return;
+    const checkpointer = await this.checkpointerService.getCheckpointer().catch(() => null);
+    if (!checkpointer) return;
+    for (const row of rows) {
+      await checkpointer.deleteThread(row.threadId).catch((err: unknown) => {
+        this.logger.warn(`deleteThread(${row.threadId}) falló: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
   }
 
   /**
