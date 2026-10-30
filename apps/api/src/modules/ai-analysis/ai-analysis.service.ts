@@ -205,11 +205,16 @@ function stageIdForEstimation(mddStageId: string): string | undefined {
   return s.length > 0 ? s : undefined;
 }
 
+/**
+ * Opciones para calculateLiveMetrics / getPrecisionBreakdown. Incluye `auditorGaps` del último estado
+ * para que el % mostrado al usuario (interrupt y done) sea el del Auditor LLM (juez único) y no el
+ * semáforo regex, que solo aplica cuando aún no hay auditoría.
+ */
 function estimationOpts(
   projectId: string | undefined,
   stageId: string | null | undefined,
-  state: Pick<MDDState, "mddComplexity" | "projectId" | "activeStageId"> | null | undefined,
-): { projectId?: string; stageId?: string | null; complexity?: EstimationComplexity } {
+  state: Pick<MDDState, "mddComplexity" | "projectId" | "activeStageId" | "auditorGaps"> | null | undefined,
+): { projectId?: string; stageId?: string | null; complexity?: EstimationComplexity; auditorGaps?: AuditorGaps } {
   const pid = (state?.projectId ?? projectId)?.trim();
   if (!pid) return {};
   const sid = (stageId ?? state?.activeStageId) ?? null;
@@ -217,6 +222,7 @@ function estimationOpts(
     projectId: pid,
     stageId: sid,
     complexity: state?.mddComplexity,
+    ...(state?.auditorGaps ? { auditorGaps: state.auditorGaps } : {}),
   };
 }
 

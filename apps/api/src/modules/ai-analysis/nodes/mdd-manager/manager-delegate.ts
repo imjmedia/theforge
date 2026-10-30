@@ -5,7 +5,7 @@ import type { MDDStateType } from "../../state/index.js";
 import { getPlanDirective, getUserBrief } from "../../utils/mdd-user-brief.js";
 import { generateImpactAnalysis } from "../../utils/mdd-impact-analysis.js";
 import { detectLegacyIntegrationIntent, HANDOFF_SPEC_SUGGESTION } from "../../utils/integration-intent.util.js";
-import { LOG } from "./manager-context.util.js";
+import { dbgaContentWithUserText, LOG } from "./manager-context.util.js";
 import { buildMddPlan, generateMddPlanWithLLM, planWillAutoApprove } from "./manager-plan.js";
 import type { ManagerLlmTurnResult } from "./manager-llm-turn.js";
 
@@ -44,7 +44,7 @@ export async function handleManagerDelegateOutcome(ctx: ManagerDelegateContext):
   }
   
   const accumulatedWithRequest = [state.userInputAccumulated?.trim(), userMessage ? `Petición: ${userMessage}` : ""].filter(Boolean).join("\n\n---\n\n");
-  const dbgaWithRequest = [state.dbgaContent?.trim(), userMessage ? `Petición: ${userMessage}` : ""].filter(Boolean).join("\n\n");
+  const dbgaWithRequest = dbgaContentWithUserText(state, userMessage ? `Petición: ${userMessage}` : "");
   const baseUpdate = {
     userInputAccumulated: accumulatedWithRequest || state.userInputAccumulated,
     dbgaContent: dbgaWithRequest || state.dbgaContent,

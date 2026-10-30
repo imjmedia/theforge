@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { isPlanApproval } from "./manager-heuristics.js";
 import { USER_STOP_PATTERN } from "./manager-constants.js";
 import { managerParseFallbackDecision } from "./manager-llm-turn.js";
+import { dbgaContentWithUserText } from "./manager-context.util.js";
 
 describe("isPlanApproval", () => {
   it("acepta afirmaciones cortas y compuestas", () => {
@@ -81,5 +82,22 @@ describe("managerParseFallbackDecision", () => {
     const d = managerParseFallbackDecision({ hasDraft: true, userMessage: "hazlo" });
     assert.equal(d.delegateTarget, "sections");
     assert.ok(d.sectionsToRun?.includes("software_architect"));
+  });
+});
+
+describe("dbgaContentWithUserText", () => {
+  const base = { dbgaContent: "# Benchmark\n\nCompetidores: A, B" } as Parameters<typeof dbgaContentWithUserText>[0];
+  it("con Benchmark real conserva dbgaContent intacto", () => {
+    assert.equal(dbgaContentWithUserText(base, "Petición: agrega MFA"), base.dbgaContent);
+  });
+  it("sin Benchmark (placeholder o vacío) anexa el texto del usuario", () => {
+    const placeholder = { dbgaContent: "(sin benchmark)" } as typeof base;
+    assert.equal(dbgaContentWithUserText(placeholder, "Petición: agrega MFA"), "(sin benchmark)\n\nPetición: agrega MFA");
+    const empty = { dbgaContent: undefined } as typeof base;
+    assert.equal(dbgaContentWithUserText(empty, "sistema de auth"), "sistema de auth");
+  });
+  it("texto vacío devuelve dbgaContent tal cual", () => {
+    assert.equal(dbgaContentWithUserText(base, ""), base.dbgaContent);
+    assert.equal(dbgaContentWithUserText(base, undefined), base.dbgaContent);
   });
 });
