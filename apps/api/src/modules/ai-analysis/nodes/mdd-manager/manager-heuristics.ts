@@ -1,8 +1,5 @@
 import {
   INITIAL_TOPIC_PATTERN,
-  PLAN_APPROVAL_CONFIRM_PATTERN,
-  PLAN_APPROVAL_MAX_CHARS,
-  PLAN_REJECTION_HINT,
   REFORMAT_DOCUMENT_PATTERN,
   REGENERATE_ER_DIAGRAM_PATTERN,
   REGENERATE_SECTION_N_PATTERN,
@@ -131,18 +128,6 @@ export function wantsToContinueRefining(msg: string): boolean {
 export function looksLikeShortAgreement(msg: string): boolean {
   const t = (msg ?? "").trim();
   return t.length <= 80 && SHORT_AGREEMENT_PATTERN.test(t);
-}
-
-/**
- * Aprobación del plan pendiente (HITL 4.4): mensaje corto que EMPIEZA con afirmación
- * ("sí", "sí, adelante", "ok, procede", "dale", "listo") y no contiene señales de
- * negación/modificación ("no", "pero", "cambia"…). Lo demás se trata como petición de cambios.
- */
-export function isPlanApproval(msg: string): boolean {
-  const t = (msg ?? "").trim();
-  if (!t || t.length > PLAN_APPROVAL_MAX_CHARS) return false;
-  if (PLAN_REJECTION_HINT.test(t)) return false;
-  return PLAN_APPROVAL_CONFIRM_PATTERN.test(t);
 }
 
 /** Infiere qué agentes deben aplicar la propuesta a partir del feedback del auditor. */

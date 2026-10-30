@@ -205,16 +205,11 @@ function stageIdForEstimation(mddStageId: string): string | undefined {
   return s.length > 0 ? s : undefined;
 }
 
-/**
- * Opciones para calculateLiveMetrics / getPrecisionBreakdown. Incluye `auditorGaps` del último estado
- * para que el % mostrado al usuario (interrupt y done) sea el del Auditor LLM (juez único) y no el
- * semáforo regex, que solo aplica cuando aún no hay auditoría.
- */
 function estimationOpts(
   projectId: string | undefined,
   stageId: string | null | undefined,
-  state: Pick<MDDState, "mddComplexity" | "projectId" | "activeStageId" | "auditorGaps"> | null | undefined,
-): { projectId?: string; stageId?: string | null; complexity?: EstimationComplexity; auditorGaps?: AuditorGaps } {
+  state: Pick<MDDState, "mddComplexity" | "projectId" | "activeStageId"> | null | undefined,
+): { projectId?: string; stageId?: string | null; complexity?: EstimationComplexity } {
   const pid = (state?.projectId ?? projectId)?.trim();
   if (!pid) return {};
   const sid = (stageId ?? state?.activeStageId) ?? null;
@@ -222,7 +217,6 @@ function estimationOpts(
     projectId: pid,
     stageId: sid,
     complexity: state?.mddComplexity,
-    ...(state?.auditorGaps ? { auditorGaps: state.auditorGaps } : {}),
   };
 }
 
@@ -446,26 +440,13 @@ export class AiAnalysisService {
     return row?.threadId ?? null;
   }
 
-  /**
-   * Borra checkpoint para ese par proyecto / etapa (`mddStageId` vacío = hilo DBGA).
-   * Además purga el hilo en las tablas LangGraph (checkpoints / checkpoint_writes / checkpoint_blobs)
-   * vía PostgresSaver.deleteThread: sin esto crecen sin límite y un thread_id reutilizado podría
-   * reanudar un estado viejo.
-   */
+  /** Borra checkpoint para ese par proyecto / etapa (`mddStageId` vacío = hilo DBGA). */
   async clearMddCheckpoint(projectId: string, mddStageId = ""): Promise<void> {
     if (!projectId?.trim()) return;
-    const where = { projectId: projectId.trim(), mddStageId: mddStageId.trim() };
-    const rows = await this.prisma.agentStateCheckpoint.findMany({ where, select: { threadId: true } });
-    await this.prisma.agentStateCheckpoint.deleteMany({ where });
+    await this.prisma.agentStateCheckpoint.deleteMany({
+      where: { projectId: projectId.trim(), mddStageId: mddStageId.trim() },
+    });
     this.nodeCacheService.invalidateAll();
-    if (rows.length === 0) return;
-    const checkpointer = await this.checkpointerService.getCheckpointer().catch(() => null);
-    if (!checkpointer) return;
-    for (const row of rows) {
-      await checkpointer.deleteThread(row.threadId).catch((err: unknown) => {
-        this.logger.warn(`deleteThread(${row.threadId}) falló: ${err instanceof Error ? err.message : String(err)}`);
-      });
-    }
   }
 
   /**
