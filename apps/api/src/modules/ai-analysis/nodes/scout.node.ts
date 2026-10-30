@@ -13,6 +13,7 @@ import {
 import { buildUserDeclaredStackPromptBlock } from "../utils/user-declared-stack.util.js";
 import { z } from "zod";
 import { parseJsonOrThrow } from "../utils/parse-json.js";
+import { forceFinalAnswer } from "../utils/tool-loop.js";
 
 const scoutOutputSchema = z.object({
   domainClassification: z.string().optional(),
@@ -48,6 +49,7 @@ export function createScoutNode(
     const messages = [new HumanMessage(prompt)];
 
     let lastContent: string = "";
+    let lastHadToolCalls = false;
     let loopCount = 0;
 
     while (loopCount < MAX_TOOL_LOOPS) {
@@ -56,6 +58,7 @@ export function createScoutNode(
       lastContent = typeof aiMsg.content === "string" ? aiMsg.content : "";
 
       const toolCalls = aiMsg.tool_calls ?? [];
+      lastHadToolCalls = toolCalls.length > 0;
       if (toolCalls.length === 0) break;
 
       const toolMessages: ToolMessage[] = [];
@@ -84,7 +87,13 @@ export function createScoutNode(
       loopCount++;
     }
 
+    // Sin texto final, o bucle agotado con tool_calls pendientes: pedir respuesta final sin tools.
+    if (!lastContent.trim() || lastHadToolCalls) {
+      lastContent = await forceFinalAnswer(llm, llmWithTools, messages);
+    }
+
     if (!lastContent.trim()) {
+      console.warn("[DBGA:Scout] sin respuesta final del LLM; sin competidores en esta ronda");
       return { competitors: [], status: "researching" };
     }
     let competitors: z.infer<typeof scoutOutputSchema>["competitors"] = [];
