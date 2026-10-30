@@ -27,7 +27,6 @@ import {
   ASK_WHAT_NEEDED_FOR_85_PATTERN,
   FULL_MDD_REGENERATE_DIRECTIVE,
   MAX_MDD_ITERATIONS,
-  PLAN_APPROVAL_CONFIRM_PATTERN,
   QUALITY_THRESHOLD,
   REFORMAT_DOCUMENT_PATTERN,
   REGENERATE_ER_DIAGRAM_PATTERN,
@@ -39,6 +38,7 @@ import {
   agentsForMddSection,
   inferAgentsFromAuditorFeedback,
   inferSectionsFromMessage,
+  isPlanApproval,
   looksLikeContextScopeOnlyRequest,
   looksLikeExplicitMddModificationRequest,
   looksLikeFullMddRegenerateRequest,
@@ -88,7 +88,7 @@ export async function runDeterministicManagerHandlers(
   
   const pending = state.pendingPlanApproval;
   if (pending) {
-    if (PLAN_APPROVAL_CONFIRM_PATTERN.test(userMessage)) {
+    if (isPlanApproval(userMessage)) {
       LOG("plan aprobado por usuario → Executor (paso a paso)");
       const accumulatedWithRequest = state.userInputAccumulated?.trim() ?? "";
       const dbgaWithRequest = state.dbgaContent?.trim() ?? "";
@@ -297,7 +297,7 @@ export async function runDeterministicManagerHandlers(
   
   // HITL 4.4: reanudación tras aprobación del plan. Usuario aprobó (ejecutar) o rechazó (modificar → Clarifier).
   if (state.pendingPlanApproval && state.lastUserMessage?.trim()) {
-    const approved = PLAN_APPROVAL_CONFIRM_PATTERN.test(state.lastUserMessage.trim());
+    const approved = isPlanApproval(state.lastUserMessage.trim());
     const { mddPlan, delegateTarget, sectionsToRun, previousMddDraftForMerge } = state.pendingPlanApproval;
     const accumulatedWithRequest = approved
       ? state.userInputAccumulated?.trim() ?? ""
