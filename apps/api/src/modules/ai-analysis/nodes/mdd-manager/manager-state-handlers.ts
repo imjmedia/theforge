@@ -53,6 +53,7 @@ import {
   generateMddPlanWithLLM,
   managerPlanStepWithTools,
   NODE_TASK_DESCRIPTIONS,
+  planWillAutoApprove,
 } from "./manager-plan.js";
 
 export type ManagerHandlerContext = {
@@ -361,7 +362,8 @@ export async function runDeterministicManagerHandlers(
       const planDirective = getPlanDirective(state);
       const mddPlan = buildMddPlan("full_pipeline", undefined, getUserBrief(state), planDirective, state.mddComplexity);
       if (mddPlan.length > 0) {
-        const impactSummary = await generateImpactAnalysis(llm, state, resumeAnswer);
+        // El usuario acaba de responder nuestras preguntas: el plan se ejecuta sin pedir otra
+        // aprobación (autoApprove) y, por tanto, sin gastar la llamada LLM de análisis de impacto.
         return new Command({
           update: {
             managerQuestions: undefined,
@@ -371,9 +373,9 @@ export async function runDeterministicManagerHandlers(
             clarifierJustGeneratedQuestions: false,
             lastUserMessage: undefined,
             requestQuestionsOnly: false,
-            pendingPlanApproval: { mddPlan, delegateTarget: "full_pipeline", goto: "clarifier" },
+            pendingPlanApproval: { mddPlan, delegateTarget: "full_pipeline", goto: "clarifier", autoApprove: true },
             planUserIntent: planDirective,
-            impactSummary,
+            impactSummary: "",
           },
           goto: "plan_approval",
         });
@@ -462,7 +464,7 @@ export async function runDeterministicManagerHandlers(
     if (mddPlan.length > 0) {
       const accumulatedWithRequest = [state.userInputAccumulated?.trim(), userMessage ? `Usuario: ${userMessage}` : ""].filter(Boolean).join("\n\n---\n\n");
       const dbgaWithRequest = [state.dbgaContent?.trim(), userMessage ? `Usuario: ${userMessage}` : ""].filter(Boolean).join("\n\n");
-      const impactSummary = await generateImpactAnalysis(llm, state, directive);
+      const impactSummary = planWillAutoApprove(mddPlan, "sections") ? "" : await generateImpactAnalysis(llm, state, directive);
       LOG("Acuerdo breve → plan_approval sections=%s", sectionsToRun.join(", "));
       return new Command({
         update: {
@@ -495,9 +497,10 @@ export async function runDeterministicManagerHandlers(
     const delegateTarget = useSections ? ("sections" as const) : ("clarifier_only" as const);
     const mddPlan = buildMddPlan(delegateTarget, sectionsToRun, getUserBrief(state), getPlanDirective(state), state.mddComplexity);
     if (mddPlan.length > 0) {
-      const impactSummary = state.auditorFeedback
-        ? await generateImpactAnalysis(llm, state, state.auditorFeedback)
-        : "";
+      const impactSummary =
+        state.auditorFeedback && !planWillAutoApprove(mddPlan, delegateTarget)
+          ? await generateImpactAnalysis(llm, state, state.auditorFeedback)
+          : "";
       LOG(
         "Refinamiento gaps → plan_approval delegate=%s sections=%s",
         delegateTarget,
@@ -589,14 +592,13 @@ export async function runDeterministicManagerHandlers(
     const mddPlan: MddPlanStep[] = [
       managerPlanStepWithTools("auditor", "1", NODE_TASK_DESCRIPTIONS.auditor),
     ];
-    LOG("usuario pidió auditar → plan_approval (1 paso: auditor)");
-    const impactSummary = await generateImpactAnalysis(llm, state, userMessage);
+    LOG("usuario pidió auditar → plan_approval (1 paso: auditor, auto-aprobado)");
     return new Command({
       update: {
         lastUserMessage: undefined,
         pendingPlanApproval: { mddPlan, delegateTarget: "sections", sectionsToRun: ["auditor"], goto: "auditor" },
         planUserIntent: getPlanDirective(state),
-        impactSummary,
+        impactSummary: "",
       },
       goto: "plan_approval",
     });
@@ -649,7 +651,7 @@ export async function runDeterministicManagerHandlers(
       const dbgaWithRequest = [state.dbgaContent?.trim(), `Petición: ${userMessage}`]
         .filter(Boolean)
         .join("\n\n");
-      const impactSummary = await generateImpactAnalysis(llm, state, userMessage);
+      const impactSummary = planWillAutoApprove(mddPlan, "sections") ? "" : await generateImpactAnalysis(llm, state, userMessage);
       LOG(
         "cambio explícito MDD (stack/infra) → plan_approval sections=%s",
         sectionsToRun.join(","),
@@ -699,7 +701,7 @@ export async function runDeterministicManagerHandlers(
     if (mddPlan.length > 0) {
       const accumulatedWithRequest = stateForDirective.userInputAccumulated ?? state.userInputAccumulated;
       const dbgaWithRequest = [state.dbgaContent?.trim(), userMessage ? `Petición: ${userMessage}` : ""].filter(Boolean).join("\n\n");
-      const impactSummary = await generateImpactAnalysis(llm, state, userMessage);
+      const impactSummary = planWillAutoApprove(mddPlan, "sections") ? "" : await generateImpactAnalysis(llm, state, userMessage);
       LOG("petición sustancial (len=%s) → plan sections=%s, goto plan_approval", userMessage!.trim().length, sectionsToRun.join(","));
       return new Command({
         update: {
@@ -735,7 +737,7 @@ export async function runDeterministicManagerHandlers(
     if (!mddPlan.length) mddPlan = buildMddPlan("sections", sectionsToRun, getUserBrief(state), planDirective, state.mddComplexity);
     if (mddPlan.length > 0) {
       const accumulatedWithRequest = [state.userInputAccumulated?.trim(), userMessage ? `Usuario: ${userMessage}` : ""].filter(Boolean).join("\n\n---\n\n");
-      const impactSummary = await generateImpactAnalysis(llm, state, userMessage);
+      const impactSummary = planWillAutoApprove(mddPlan, "sections") ? "" : await generateImpactAnalysis(llm, state, userMessage);
       LOG("usuario dijo 'ya trabaje' / ejecuta (len=%s) → plan sections=%s, goto plan_approval", userMessage!.trim().length, sectionsToRun.join(","));
       return new Command({
         update: {

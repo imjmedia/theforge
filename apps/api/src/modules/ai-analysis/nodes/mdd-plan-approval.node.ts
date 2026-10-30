@@ -4,6 +4,8 @@
 
 import { Command, interrupt } from "@langchain/langgraph";
 import type { MDDStateType } from "../state/index.js";
+import { getLastSubstantiveUserMessage } from "../utils/mdd-user-brief.js";
+import { planWillAutoApprove } from "./mdd-manager/manager-plan.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:PlanApproval] ${msg}`, ...args);
 
@@ -22,6 +24,9 @@ function buildPlanSummaryMessage(impactSummary?: string): string {
  * Nodo HITL 4.4: interrumpe para aprobación del plan antes de ejecutar.
  * El mensaje muestra las actividades que cada agente ejecutará, no el último mensaje del usuario.
  * Al reanudar, interrupt() devuelve el mensaje del usuario y delegamos de vuelta al Manager.
+ * Si el plan es trivial (1 paso, un solo agente escritor en `sections`, o `autoApprove` tras responder
+ * preguntas), se ejecuta directo en el Executor sin interrumpir: el mismo update que aplica el Manager
+ * cuando el usuario escribe "sí".
  */
 export function createMddPlanApprovalNode() {
   return async (state: MDDStateType): Promise<Command> => {
@@ -29,6 +34,38 @@ export function createMddPlanApprovalNode() {
     if (!pending?.mddPlan?.length) {
       LOG("sin pendingPlanApproval, volver al manager");
       return new Command({ goto: "manager" });
+    }
+
+    if (planWillAutoApprove(pending.mddPlan, pending.delegateTarget, pending.autoApprove)) {
+      const reason =
+        pending.autoApprove === true
+          ? "tras responder preguntas"
+          : pending.mddPlan.length <= 1
+            ? "plan de 1 paso"
+            : "un solo agente escritor";
+      LOG("auto-aprobado (%s) mddPlanLen=%s goto=%s → executor", reason, pending.mddPlan.length, pending.goto);
+      const directive = state.planUserIntent ?? getLastSubstantiveUserMessage(state);
+      const { mddPlan, delegateTarget, sectionsToRun, previousMddDraftForMerge } = pending;
+      return new Command({
+        update: {
+          lastUserMessage: undefined,
+          requestQuestionsOnly: delegateTarget === "clarifier_only",
+          lastStepFailed: undefined,
+          mddPlan,
+          delegateTarget,
+          sectionsToRun,
+          previousMddDraftForMerge,
+          pendingPlanApproval: undefined,
+          planUserIntent: undefined,
+          impactSummary: undefined,
+          executorControlled: true,
+          mddPlanCurrentStep: undefined,
+          architectCriticFeedback: undefined,
+          architectCriticAttempts: undefined,
+          ...(directive ? { acceptedProposalDirective: directive } : {}),
+        },
+        goto: "executor",
+      });
     }
 
     const planMessage = buildPlanSummaryMessage(state.impactSummary);

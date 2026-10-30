@@ -122,6 +122,8 @@ export const mddStateSchema = z.object({
       sectionsToRun: z.array(z.string()).optional(),
       previousMddDraftForMerge: z.string().optional(),
       goto: z.string(),
+      /** true → plan_approval no interrumpe; ejecuta directo (p. ej. tras responder preguntas del Clarifier). */
+      autoApprove: z.boolean().optional(),
     })
     .optional(),
   /** Intención del usuario para este plan (rellenado al crear pendingPlanApproval); al confirmar se copia a acceptedProposalDirective. */

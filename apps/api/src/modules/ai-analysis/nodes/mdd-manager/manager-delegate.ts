@@ -6,7 +6,7 @@ import { getPlanDirective, getUserBrief } from "../../utils/mdd-user-brief.js";
 import { generateImpactAnalysis } from "../../utils/mdd-impact-analysis.js";
 import { detectLegacyIntegrationIntent, HANDOFF_SPEC_SUGGESTION } from "../../utils/integration-intent.util.js";
 import { LOG } from "./manager-context.util.js";
-import { buildMddPlan, generateMddPlanWithLLM } from "./manager-plan.js";
+import { buildMddPlan, generateMddPlanWithLLM, planWillAutoApprove } from "./manager-plan.js";
 import type { ManagerLlmTurnResult } from "./manager-llm-turn.js";
 
 export type ManagerDelegateContext = {
@@ -75,7 +75,9 @@ export async function handleManagerDelegateOutcome(ctx: ManagerDelegateContext):
       gotoNode = "clarifier";
     }
     LOG("delegar a plan_approval mddPlanLen=%s goto=%s", mddPlan.length, gotoNode);
-    const impactSummary = await generateImpactAnalysis(llm, state, userMessage || planDirective || "Re-planificación");
+    const impactSummary = planWillAutoApprove(mddPlan, delegateTarget)
+      ? ""
+      : await generateImpactAnalysis(llm, state, userMessage || planDirective || "Re-planificación");
     return new Command({
       update: {
         pendingPlanApproval: {
