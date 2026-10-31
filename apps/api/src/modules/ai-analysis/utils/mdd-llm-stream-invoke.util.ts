@@ -14,11 +14,38 @@
  * tope absoluto para bucles de repetición.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { AIMessageChunk, type BaseMessage } from "@langchain/core/messages";
 import {
   resolveLlmHardTimeoutMs,
   resolveLlmIdleTimeoutMs,
 } from "./mdd-llm-timeout.util.js";
+
+/**
+ * Señal de aborto "activa" para las invocaciones LLM del pipeline MDD.
+ *
+ * LangGraph no propaga `config.signal` a las llamadas LLM que los nodos construyen por su cuenta
+ * (`invokeLlmWithRetry` crea su propio AbortController), así que cancelar un stream/job abortaba el
+ * grafo pero dejaba el nodo en vuelo gastando tokens. El servicio ejecuta `graph.stream` dentro de
+ * `runWithLlmAbortSignal(signal, …)` y cada invocación LLM la enlaza vía `getActiveLlmAbortSignal()`
+ * sin tocar el código de los nodos.
+ */
+const llmAbortSignalStorage = new AsyncLocalStorage<AbortSignal | undefined>();
+
+export function runWithLlmAbortSignal<T>(signal: AbortSignal | undefined, fn: () => T): T {
+  return llmAbortSignalStorage.run(signal, fn);
+}
+
+export function getActiveLlmAbortSignal(): AbortSignal | undefined {
+  return llmAbortSignalStorage.getStore();
+}
+
+/** Error de cancelación (`name === "AbortError"`): detiene reintentos y BullMQ no lo reintenta. */
+export function createLlmAbortError(tag: string): Error {
+  const err = new Error(`[${tag}] invocación LLM aborted por cancelación del turno`);
+  err.name = "AbortError";
+  return err;
+}
 
 export type StreamableLlmLike = {
   invoke: (messages: BaseMessage[], options?: unknown) => Promise<unknown>;
@@ -31,6 +58,8 @@ export type StreamInvokeOptions = {
   idleTimeoutMs?: number;
   /** Tope absoluto por invocación. Default `LANGGRAPH_LLM_HARD_TIMEOUT_MS` (10 min). */
   hardTimeoutMs?: number;
+  /** Señal externa (cancelación de turno/job). Si dispara, se aborta el fetch y se lanza AbortError. */
+  signal?: AbortSignal;
 };
 
 export type StreamInvokeResult = {
@@ -78,7 +107,16 @@ export async function invokeLlmStreamingWithIdleTimeout(
   const hardTimeoutMs = options.hardTimeoutMs ?? resolveLlmHardTimeoutMs();
   const startedAt = Date.now();
 
+  const externalSignal = options.signal;
+  if (externalSignal?.aborted) throw createLlmAbortError(options.tag);
+
   const abortController = new AbortController();
+  let externalAborted = false;
+  const onExternalAbort = (): void => {
+    externalAborted = true;
+    abortController.abort();
+  };
+  externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
   let idleTimedOut = false;
   let hardTimedOut = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -114,6 +152,7 @@ export async function invokeLlmStreamingWithIdleTimeout(
     for await (const raw of stream as AsyncIterable<unknown>) {
       // No todos los transportes honran el AbortSignal (wrappers propios, mocks,
       // proxies OpenAI-compat): sin este corte el timeout no serviría de nada.
+      if (externalAborted) throw createLlmAbortError(options.tag);
       if (idleTimedOut || hardTimedOut) throw timeoutError();
       armIdleTimer();
       chunks += 1;
@@ -122,11 +161,14 @@ export async function invokeLlmStreamingWithIdleTimeout(
       if (!chunk) continue;
       merged = merged === null ? chunk : (merged.concat(chunk) as AIMessageChunk);
     }
+    if (externalAborted) throw createLlmAbortError(options.tag);
     if (idleTimedOut || hardTimedOut) throw timeoutError();
   } catch (err) {
+    if (externalAborted) throw createLlmAbortError(options.tag);
     if (idleTimedOut || hardTimedOut) throw timeoutError();
     throw err;
   } finally {
+    externalSignal?.removeEventListener("abort", onExternalAbort);
     if (idleTimer) clearTimeout(idleTimer);
     clearTimeout(hardTimer);
   }

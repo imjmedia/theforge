@@ -7,13 +7,19 @@ import { ModelsUnavailableError } from "../../ai/config/llm-model-fallback.js";
 const RECURSION_LIMIT_USER_MESSAGE =
   "No se pudieron identificar competidores directos tras varios intentos. Esto suele ocurrir en dominios internos B2B o nichos muy específicos. Puedes continuar con un análisis sin competidores de referencia o reformular la idea con más contexto.";
 
+const MDD_RECURSION_LIMIT_USER_MESSAGE =
+  "El flujo MDD superó el límite de pasos del grafo (bucle de reparación o re-planificación). El borrador se conservó; reintenta con una petición más acotada (p. ej. una sola sección).";
+
+/** Flujo que originó el error: determina el texto del límite de recursión. */
+export type StreamErrorFlow = "dbga" | "mdd";
+
 export interface DbgaStreamErrorPayload {
   message: string;
   code?: string;
 }
 
-/** Mensaje y código opcional para eventos `error` del stream DBGA/MDD. */
-export function formatDbgaStreamError(err: unknown): DbgaStreamErrorPayload {
+/** Mensaje y código opcional para eventos `error` del stream DBGA/MDD (`flow` por defecto "dbga"). */
+export function formatDbgaStreamError(err: unknown, flow: StreamErrorFlow = "dbga"): DbgaStreamErrorPayload {
   if (err instanceof ModelsUnavailableError) {
     return { message: err.message, code: err.code };
   }
@@ -27,6 +33,9 @@ export function formatDbgaStreamError(err: unknown): DbgaStreamErrorPayload {
     /unexpected token/i.test(raw) ||
     (/json/i.test(raw) && /parse|syntax/i.test(raw));
   if (isRecursionLimit) {
+    if (flow === "mdd") {
+      return { message: MDD_RECURSION_LIMIT_USER_MESSAGE, code: "MDD_RECURSION_LIMIT" };
+    }
     return { message: RECURSION_LIMIT_USER_MESSAGE };
   }
   if (isJsonParse) {

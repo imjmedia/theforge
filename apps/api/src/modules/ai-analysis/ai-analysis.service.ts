@@ -1,4 +1,6 @@
 import { forwardRef, Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { fallbackClarifierQuestions } from "./utils/mdd-clarifier-questions.util.js";
+import { hashMddDraft } from "./estimation/mdd-draft-hash.util.js";
 import { randomUUID } from "node:crypto";
 import { PrismaService } from "../../prisma/prisma.service.js";
 import { PreferencesService } from "../ai/preferences.service.js";
@@ -13,6 +15,14 @@ import {
   composeBrdPreamble,
 } from "./utils/brd-tobe-gate.util.js";
 import { CheckpointerService } from "./checkpoint/checkpointer.service.js";
+import {
+  mddThreadLockKey,
+  ThreadRunLockService,
+  THREAD_BUSY_CODE,
+  THREAD_BUSY_MESSAGE,
+  type ThreadRunLease,
+} from "./checkpoint/thread-run-lock.service.js";
+import { runWithLlmAbortSignal } from "./utils/mdd-llm-stream-invoke.util.js";
 import { NodeCacheService } from "./checkpoint/node-cache.service.js";
 import { EstimationService } from "./estimation/estimation.service.js";
 import type { AuditorGaps, MddAgentEditLogEntry } from "./estimation/estimation.types.js";
@@ -163,6 +173,10 @@ export type StreamProgressEvent =
     precisionBreakdown?: PrecisionBreakdown;
     auditTrail?: string[];
     mddAgentEditLog?: MddAgentEditLogEntry[];
+    /** Último nodo escritor que falló (borrador conservado / placeholder); el Auditor se omitió en ese caso. */
+    failedStep?: { node: string; error: string };
+    /** true cuando el servidor ya persistió este markdown en `done` (el cliente no debe repetir el PATCH). */
+    persistedOnServer?: boolean;
   }
   | { type: "error"; message: string; code?: string; replanning?: boolean };
 
@@ -196,6 +210,55 @@ export type StreamMddManagerEvent =
  * Con checkpointer y projectId, el estado se persiste por thread_id y se puede retomar Fase 0.
  * Inyecta preferencias arquitectónicas (memoria semántica) cuando hay projectId.
  */
+/** Opciones comunes de los streams MDD (HTTP y job). */
+export type MddStreamRunOptions = {
+  /**
+   * Cancelación: cierre del cliente HTTP o abort del job. Se pasa a `graph.stream({ signal })` y, vía
+   * AsyncLocalStorage, a cada invocación LLM del pipeline (`invokeLlmWithRetry`), de modo que el nodo
+   * en vuelo se corta en lugar de seguir consumiendo tokens.
+   */
+  signal?: AbortSignal;
+  /**
+   * Persistir el markdown final en servidor antes de emitir `done` (manager/resume). Default `true`.
+   * El job BullMQ lo desactiva porque persiste él mismo (`runMddGenerationJob`).
+   */
+  persistOnDone?: boolean;
+};
+
+/** Evento que el turno de chat en cola entrega al relay (mismos tipos que el NDJSON del stream). */
+export type MddChatJobEvent = StreamMddManagerEvent;
+
+/** Ganchos del turno de chat ejecutado en el worker (`runMddChatTurn`). */
+export type MddChatTurnHooks = {
+  /** Abort del job (cancelación del usuario / apagado del worker). */
+  signal?: AbortSignal;
+  /** Progreso para `job.updateProgress` (banner de generación). */
+  onProgress?: (p: MddJobProgress) => void | Promise<void>;
+  /** Se invoca por cada evento del generador (incluidos terminales), en orden. */
+  onEvent?: (event: MddChatJobEvent) => void | Promise<void>;
+};
+
+/**
+ * Avanza el generador interno ejecutando cada `next()` dentro del contexto de aborto LLM: así las
+ * llamadas LLM de los nodos (que no reciben `config.signal`) ven la señal del turno.
+ */
+async function* withLlmAbortContext<T, R>(
+  signal: AbortSignal | undefined,
+  gen: AsyncGenerator<T, R, undefined>,
+): AsyncGenerator<T, R, undefined> {
+  if (!signal) return yield* gen;
+  try {
+    for (;;) {
+      const step = await runWithLlmAbortSignal(signal, () => gen.next());
+      if (step.done) return step.value;
+      yield step.value;
+    }
+  } finally {
+    // Si el consumidor cortó antes de tiempo, ejecuta los `finally` del generador interno.
+    await gen.return(undefined as R).catch(() => undefined);
+  }
+}
+
 /** Guarda lastStepFailed por thread_id cuando un nodo falla; se inyecta al reanudar para que el Manager re-planifique. */
 const lastStepFailedByThread = new Map<string, { node: string; error: string }>();
 
@@ -261,6 +324,7 @@ export class AiAnalysisService {
     private readonly uiMcp: UiMcpService,
     @Inject(forwardRef(() => MddUpstreamSyncService))
     private readonly mddUpstreamSync: MddUpstreamSyncService,
+    private readonly threadLock: ThreadRunLockService,
     @Optional() createDbgaGraphFn?: typeof createDbgaGraph,
   ) {
     this.createDbgaGraphFn = createDbgaGraphFn ?? createDbgaGraph;
@@ -465,6 +529,193 @@ export class AiAnalysisService {
       await checkpointer.deleteThread(row.threadId).catch((err: unknown) => {
         this.logger.warn(`deleteThread(${row.threadId}) falló: ${err instanceof Error ? err.message : String(err)}`);
       });
+    }
+  }
+
+  // ─── Hilo MDD: lease por hilo, persistencia server-side y memoria de checkpoint ───────────────
+
+  /** Etapa efectiva del hilo MDD (misma resolución que el stream manager) para la clave del lease. */
+  private async resolveMddLockStageId(projectId: string, stageIdFromClient?: string | null): Promise<string> {
+    const fallback = (stageIdFromClient ?? "").trim();
+    try {
+      const project = await this.prisma.project.findUnique({
+        where: { id: projectId.trim() },
+        include: { stages: { orderBy: { ordinal: "asc" } } },
+      });
+      if (!project) return fallback;
+      const route = await this.agentSupervisor.resolveRouteFromProject(project, stageIdFromClient);
+      return (route.stageId ?? "").trim();
+    } catch {
+      return fallback;
+    }
+  }
+
+  /**
+   * Valores del checkpoint del hilo si ya hay memoria de turnos previos (borrador, score del Auditor o
+   * respuestas acumuladas del usuario); `null` en hilo nuevo. Con memoria, el stream NO debe arrancar con
+   * `initialState` completo: `defaultMDDState` pisaría auditorScore/mddIteration/managerRound con ceros.
+   */
+  private async readThreadCheckpointMemory(
+    graph: { getState: (config: { configurable: Record<string, string> }) => Promise<{ values?: unknown }> },
+    config: { configurable: Record<string, string> },
+  ): Promise<MDDState | null> {
+    try {
+      const snapshot = await graph.getState(config);
+      const values = snapshot?.values as MDDState | undefined;
+      if (!values || typeof values !== "object") return null;
+      const hasMemory =
+        !!values.mddDraft?.trim() ||
+        (typeof values.auditorScore === "number" && values.auditorScore > 0) ||
+        !!values.userInputAccumulated?.trim();
+      return hasMemory ? values : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Persistidor de borradores MDD con suelo anti-wipe (`evaluateMddDraftPersistFloor`): compartido por el
+   * job BullMQ y por el `done` de los streams manager/resume.
+   */
+  private createMddPersister(args: {
+    projectId: string;
+    stageId?: string;
+    label: string;
+    lockedPatternIds: ReadonlySet<string>;
+    /** Longitud del MDD almacenado al inicio (suelo entre reintentos / turnos). */
+    storedBaselineLen: number;
+    /** También aplica el suelo con `finalize` (un `done` degenerado no debe pisar un MDD grande). */
+    enforceFloorOnFinalize?: boolean;
+    onPersisted?: (info: { length: number; finalize: boolean }) => void;
+  }): { persist: (markdown: string, finalize: boolean) => Promise<boolean>; lastLen: () => number } {
+    let lastPersistedLen = 0;
+    const persist = async (markdown: string, finalize: boolean): Promise<boolean> => {
+      const cleaned = cleanDocumentContent(markdown);
+      if (cleaned.trim().length < 48) return false;
+      if (cleaned.length === lastPersistedLen && !finalize) return false;
+      const floor = evaluateMddDraftPersistFloor({
+        candidateLen: cleaned.trim().length,
+        storedBaselineLen: args.storedBaselineLen,
+        finalize: finalize && !args.enforceFloorOnFinalize,
+      });
+      if (!floor.allowed) {
+        this.logger.warn(`${args.label}: ${floor.reason}`);
+        return false;
+      }
+      lastPersistedLen = cleaned.length;
+      await this.projects.persistMddFromBackgroundJob(args.projectId, markdown, {
+        stageId: args.stageId?.trim() || undefined,
+        finalize,
+        lockedPatternIds: [...args.lockedPatternIds],
+      });
+      args.onPersisted?.({ length: cleaned.length, finalize });
+      return true;
+    };
+    return { persist, lastLen: () => lastPersistedLen };
+  }
+
+  /** Prepara el persistidor del `done` de un stream (resuelve patrones bloqueados y baseline actuales). */
+  private async createMddStreamPersister(
+    projectId: string,
+    stageId: string | undefined,
+    clientDraft: string | undefined,
+    label: string,
+  ): Promise<ReturnType<AiAnalysisService["createMddPersister"]>> {
+    const resolved = await this.resolveLockedPatternIdsForMddJob({
+      mode: "manager",
+      projectId,
+      stageId,
+      mddContent: clientDraft,
+    });
+    const { correctedIds } = resolveGovernancePatternIncompatibilities(resolved.lockedPatternIds);
+    return this.createMddPersister({
+      projectId,
+      stageId: resolved.stageId ?? stageId,
+      label,
+      lockedPatternIds: correctedIds,
+      storedBaselineLen: peelDocumentBodyForPersist(resolved.stageMddContent).trim().length,
+      enforceFloorOnFinalize: true,
+    });
+  }
+
+  /**
+   * Persiste el MDD final de un stream ANTES de emitir `done` (antes solo persistía el job: un stream
+   * cerrado por el cliente perdía el trabajo). Intenta finalize (delivery gate); si el gate rechaza,
+   * conserva el borrador como intermedio. Nunca rompe el stream.
+   */
+  private async persistMddStreamDone(
+    persister: ReturnType<AiAnalysisService["createMddPersister"]>,
+    markdown: string | undefined,
+    label: string,
+  ): Promise<boolean> {
+    const md = (markdown ?? "").trim();
+    if (md.length < 48 || (md.length < 200 && /\(Sin contenido generado\.\)/.test(md))) return false;
+    try {
+      await persister.persist(md, true);
+      return true;
+    } catch (err) {
+      this.logger.warn(
+        `${label}: persist final falló (${err instanceof Error ? err.message : String(err)}); guardando como borrador`,
+      );
+    }
+    try {
+      await persister.persist(md, false);
+      return true;
+    } catch (err) {
+      this.logger.warn(`${label}: persist borrador falló: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
+
+  /**
+   * Envuelve un turno MDD: lease por hilo (Redis `SET NX PX` / Map en dev; `THREAD_BUSY` si ya hay un turno),
+   * contexto de aborto LLM y persistencia server-side en `done`. El lease se libera en `finally`
+   * (también si el cliente corta el stream y el generador recibe `return()`).
+   */
+  private async *runGuardedMddStream<E extends { type: string }>(params: {
+    tag: string;
+    /** Sin projectId no hay hilo que bloquear. */
+    projectId: string | undefined;
+    lockStageId: string | undefined;
+    options?: MddStreamRunOptions;
+    persist?: { stageId: string | undefined; clientDraft?: string };
+    inner: () => AsyncGenerator<E, void, undefined>;
+  }): AsyncGenerator<E, void, undefined> {
+    const pid = params.projectId?.trim();
+    let lease: ThreadRunLease | null = null;
+    if (pid) {
+      lease = await this.threadLock.acquire(mddThreadLockKey(pid, params.lockStageId));
+      if (!lease) {
+        this.logger.warn(`[${params.tag}] hilo ocupado projectId=${pid} stage=${params.lockStageId ?? ""}`);
+        yield { type: "error", code: THREAD_BUSY_CODE, message: THREAD_BUSY_MESSAGE } as unknown as E;
+        return;
+      }
+    }
+    try {
+      let persister: ReturnType<AiAnalysisService["createMddPersister"]> | null = null;
+      if (pid && params.persist && params.options?.persistOnDone !== false) {
+        persister = await this.createMddStreamPersister(
+          pid,
+          params.persist.stageId,
+          params.persist.clientDraft,
+          `[${params.tag}] persist`,
+        ).catch((err: unknown) => {
+          this.logger.warn(
+            `[${params.tag}] no se pudo preparar la persistencia server-side: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return null;
+        });
+      }
+      for await (const event of withLlmAbortContext(params.options?.signal, params.inner())) {
+        if (persister && event.type === "done") {
+          const persisted = await this.persistMddStreamDone(persister, (event as { markdown?: string }).markdown, `[${params.tag}] persist`);
+          // El cliente web no debe volver a hacer PATCH del mismo contenido (doble guardado reseteaba pendingCascadeDelta).
+          if (persisted) (event as { persistedOnServer?: boolean }).persistedOnServer = true;
+        }
+        yield event;
+      }
+    } finally {
+      await lease?.release();
     }
   }
 
@@ -681,7 +932,25 @@ export class AiAnalysisService {
     projectId?: string,
     stageId?: string | null,
     clientMddContent?: string,
+    options?: MddStreamRunOptions,
   ): AsyncGenerator<StreamProgressEvent> {
+    const pid = projectId?.trim();
+    yield* this.runGuardedMddStream<StreamProgressEvent>({
+      tag: "MDD stream/pipeline",
+      projectId: pid,
+      lockStageId: pid ? await this.resolveMddLockStageId(pid, stageId) : undefined,
+      options,
+      inner: () => this.runMddPipelineStream(dbgaContent, projectId, stageId, clientMddContent, options?.signal),
+    });
+  }
+
+  private async *runMddPipelineStream(
+    dbgaContent: string,
+    projectId: string | undefined,
+    stageId: string | null | undefined,
+    clientMddContent: string | undefined,
+    signal: AbortSignal | undefined,
+  ): AsyncGenerator<StreamProgressEvent, void, undefined> {
     let estimationStage: string | undefined;
     let brdContent: string | null = null;
     let preservedGovernance: string | null = null;
@@ -729,7 +998,7 @@ export class AiAnalysisService {
         prisma: this.prisma,
       });
     } catch (err) {
-      const formatted = formatDbgaStreamError(err);
+      const formatted = formatDbgaStreamError(err, "mdd");
       yield { type: "error", message: formatted.message, code: formatted.code };
       return;
     }
@@ -766,6 +1035,7 @@ export class AiAnalysisService {
       const stream = await graph.stream(initialState, {
         recursionLimit: LANGGRAPH_RECURSION_LIMIT,
         streamMode: ["updates", "values"] as const,
+        ...(signal ? { signal } : {}),
       });
 
       for await (const raw of stream) {
@@ -802,7 +1072,7 @@ export class AiAnalysisService {
           if (projectId?.trim() && draft) {
             this.estimationService.setLiveDraft(projectId.trim(), draft, estimationStage);
             if (lastState.auditorGaps) {
-              this.estimationService.setAuditorGaps(projectId.trim(), lastState.auditorGaps, estimationStage);
+              this.estimationService.setAuditorGaps(projectId.trim(), lastState.auditorGaps, estimationStage, hashMddDraft(draft));
             }
             const prepared = await this.prepareMddForStreamDraft(
               streamPrepareCache,
@@ -870,12 +1140,13 @@ export class AiAnalysisService {
         precisionBreakdown,
         auditTrail,
         mddAgentEditLog: editLogTracker.log.length > 0 ? editLogTracker.log : undefined,
+        ...(lastState?.lastStepFailed ? { failedStep: lastState.lastStepFailed } : {}),
       };
     } catch (err) {
       if (projectId?.trim() && !isMddUserCancellationError(err)) {
         this.estimationService.clearLiveDraft(projectId.trim(), estimationStage);
       }
-      const formatted = formatDbgaStreamError(err);
+      const formatted = formatDbgaStreamError(err, "mdd");
       yield { type: "error", message: formatted.message, code: formatted.code };
     }
   }
@@ -892,7 +1163,37 @@ export class AiAnalysisService {
     initialMddDraft?: string,
     stageIdFromClient?: string | null,
     imageAttachments?: ChatImagePart[],
+    options?: MddStreamRunOptions,
   ): AsyncGenerator<StreamMddManagerEvent> {
+    const lockStageId = await this.resolveMddLockStageId(projectId, stageIdFromClient);
+    yield* this.runGuardedMddStream<StreamMddManagerEvent>({
+      tag: "MDD stream/manager",
+      projectId,
+      lockStageId,
+      options,
+      persist: { stageId: lockStageId || undefined, clientDraft: (initialMddDraft ?? "").trim() || undefined },
+      inner: () =>
+        this.runMddManagerStream(
+          dbgaContent,
+          projectId,
+          initialMessage,
+          initialMddDraft,
+          stageIdFromClient,
+          imageAttachments,
+          options?.signal,
+        ),
+    });
+  }
+
+  private async *runMddManagerStream(
+    dbgaContent: string,
+    projectId: string,
+    initialMessage: string | undefined,
+    initialMddDraft: string | undefined,
+    stageIdFromClient: string | null | undefined,
+    imageAttachments: ChatImagePart[] | undefined,
+    signal: AbortSignal | undefined,
+  ): AsyncGenerator<StreamMddManagerEvent, void, undefined> {
     this.logger.log(`[MDD stream/manager] start projectId=${projectId} initialMessage=${initialMessage ? "(presente)" : "(vacío)"} mddDraftLen=${(initialMddDraft ?? "").length}`);
 
     const checkpointer = await this.checkpointerService.getCheckpointer();
@@ -960,7 +1261,7 @@ export class AiAnalysisService {
         },
       );
     } catch (err) {
-      const formatted = formatDbgaStreamError(err);
+      const formatted = formatDbgaStreamError(err, "mdd");
       this.logger.error(`[MDD stream/manager] setup error: ${formatted.message}`, err instanceof Error ? err.stack : String(err));
       yield { type: "error", message: formatted.message, code: formatted.code };
       return;
@@ -1012,18 +1313,47 @@ export class AiAnalysisService {
       recursionLimit: LANGGRAPH_RECURSION_LIMIT,
     };
 
-    let lastState: MDDState = initialState;
-    let lastNonEmptyDraft = (initialState.mddDraft ?? "").trim() || "";
+    // El checkpoint ya no se borra al terminar un turno: un hilo con memoria (auditorScore, auditorFeedback,
+    // userInputAccumulated, borrador) continúa con una ACTUALIZACIÓN PARCIAL (solo lo que cambia en este turno)
+    // y no con `initialState` completo, cuyos defaults (auditorScore=0, mddIteration=0, managerRound=0,
+    // clarifiedScope="") pisarían esa memoria. Se pasa como input plano (no `Command({ update })`): sobre un
+    // hilo terminado un Command sin `goto` no dispara el nodo START, así que el grafo no correría.
+    // Los flags transitorios de gate los resetea el Manager al inicio del turno.
+    const checkpointMemory = await this.readThreadCheckpointMemory(graph, config);
+    const continuationInput: Partial<MDDState> | null = checkpointMemory
+      ? {
+          dbgaContent: dbgaEffective,
+          brdContent: (brdContent ?? "").trim() || undefined,
+          // "" (no undefined): un campo undefined no se escribe y quedaría el mensaje del turno anterior.
+          lastUserMessage: lastUserMessage ?? "",
+          ...(existingMdd ? { mddDraft: existingMdd } : {}),
+          projectId: projectId?.trim(),
+          ...agentCtx,
+        }
+      : null;
+    const streamInput: MDDState | Partial<MDDState> = continuationInput ?? initialState;
+    const seedState: MDDState = checkpointMemory
+      ? ({ ...checkpointMemory, ...continuationInput } as MDDState)
+      : initialState;
+    if (checkpointMemory) {
+      this.logger.log(
+        `[MDD stream/manager] hilo con memoria (auditorScore=${checkpointMemory.auditorScore ?? 0}, draftLen=${(checkpointMemory.mddDraft ?? "").length}); input parcial threadId=${threadId}`,
+      );
+    }
+
+    let lastState: MDDState = seedState;
+    let lastNonEmptyDraft = (seedState.mddDraft ?? "").trim() || "";
     const streamPrepareCache = { draftKey: "", markdown: "" };
     const auditTrail: string[] = [];
     const editLogTracker = new MddStreamEditLogTracker(
-      initialState.mddDraft ?? "",
-      initialState.internalDirectives,
+      seedState.mddDraft ?? "",
+      seedState.internalDirectives,
     );
 
     try {
-      const stream = await graph.stream(initialState, {
+      const stream = await graph.stream(streamInput, {
         ...config,
+        ...(signal ? { signal } : {}),
         streamMode: ["updates", "values"] as const,
       });
 
@@ -1051,10 +1381,7 @@ export class AiAnalysisService {
             let reply = typeof value?.reply === "string" ? value.reply : undefined;
             let questions = Array.isArray(value?.questions) ? value.questions : typeof value?.questions === "string" ? [value.questions] : [];
             if (value?.type === "questions" && questions.length === 0) {
-              questions = [
-                "¿Cuáles son los objetivos principales del sistema o producto?",
-                "¿Qué aplicaciones o sistemas deben integrarse (ej. SSO, APIs)?",
-              ];
+              questions = fallbackClarifierQuestions(lastState?.auditorFeedback);
             }
             const plan = value?.type === "plan_approval" && Array.isArray(value?.plan) ? value.plan : undefined;
             const planMessage = value?.type === "plan_approval" && typeof value?.message === "string" ? value.message : undefined;
@@ -1120,7 +1447,7 @@ export class AiAnalysisService {
             lastNonEmptyDraft = draft;
             this.estimationService.setLiveDraft(projectId.trim(), draft, estimationStageId);
             if (lastState.auditorGaps) {
-              this.estimationService.setAuditorGaps(projectId.trim(), lastState.auditorGaps, estimationStageId);
+              this.estimationService.setAuditorGaps(projectId.trim(), lastState.auditorGaps, estimationStageId, hashMddDraft(draft));
             }
             const prepared = await this.prepareMddForStreamDraft(
               streamPrepareCache,
@@ -1169,8 +1496,9 @@ export class AiAnalysisService {
       logSection3Debug("final (stream/manager done)", markdown);
       
       if (projectId?.trim()) {
+        // El checkpoint se conserva al terminar: contiene la memoria de turno (auditorScore, feedback,
+        // respuestas acumuladas). Solo el reset explícito (DELETE dbga/checkpoint) o el inicio DBGA lo borran.
         this.estimationService.clearLiveDraft(projectId.trim(), estimationStageId);
-        this.clearMddCheckpoint(projectId.trim(), mddStageKey).catch(() => { });
       }
       const estOptsDone = estimationOpts(projectId, estimationStageId, lastState);
       const metrics = this.estimationService.calculateLiveMetrics(markdown, estOptsDone);
@@ -1193,6 +1521,7 @@ export class AiAnalysisService {
         precisionBreakdown,
         auditTrail,
         mddAgentEditLog: editLogTracker.log.length > 0 ? editLogTracker.log : undefined,
+        ...(lastState?.lastStepFailed ? { failedStep: lastState.lastStepFailed } : {}),
       };
     } catch (err) {
       if (isGraphInterrupt(err) && err.interrupts?.length > 0) {
@@ -1206,10 +1535,7 @@ export class AiAnalysisService {
         let reply = typeof value?.reply === "string" ? value.reply : undefined;
         let questions = Array.isArray(value?.questions) ? value.questions : typeof value?.questions === "string" ? [value.questions] : [];
         if (value?.type === "questions" && questions.length === 0) {
-          questions = [
-            "¿Cuáles son los objetivos principales del sistema o producto?",
-            "¿Qué aplicaciones o sistemas deben integrarse (ej. SSO, APIs)?",
-          ];
+          questions = fallbackClarifierQuestions(lastState?.auditorFeedback);
         }
         const plan = value?.type === "plan_approval" && Array.isArray(value?.plan) ? value.plan : undefined;
         const planMessage = value?.type === "plan_approval" && typeof value?.message === "string" ? value.message : undefined;
@@ -1254,7 +1580,7 @@ export class AiAnalysisService {
       if (!isMddUserCancellationError(err)) {
         this.estimationService.clearLiveDraft(projectId.trim(), estimationStageId);
       }
-      const formatted = formatDbgaStreamError(err);
+      const formatted = formatDbgaStreamError(err, "mdd");
       const message = formatted.message;
       this.logger.error(`[MDD stream/manager] error: ${message}`, err instanceof Error ? err.stack : String(err));
       lastStepFailedByThread.set(threadId, { node: "unknown", error: message });
@@ -1279,7 +1605,43 @@ export class AiAnalysisService {
     userMessage: string,
     mddContentFromClient?: string,
     imageAttachments?: ChatImagePart[],
+    options?: MddStreamRunOptions,
   ): AsyncGenerator<StreamMddManagerEvent> {
+    // Etapa del hilo: define la clave del lease y el destino de la persistencia en `done`.
+    const cpRow = await this.prisma.agentStateCheckpoint
+      .findFirst({
+        where: { projectId: projectId.trim(), threadId: threadId.trim() },
+        select: { mddStageId: true },
+      })
+      .catch(() => null);
+    const clientDraftForPersist = mddContentFromClient?.trim() || undefined;
+    yield* this.runGuardedMddStream<StreamMddManagerEvent>({
+      tag: "MDD stream/resume",
+      // Sin checkpoint no hay hilo que bloquear; el stream interno responde con el error habitual.
+      projectId: cpRow ? projectId : undefined,
+      lockStageId: cpRow?.mddStageId ?? undefined,
+      options,
+      persist: { stageId: cpRow?.mddStageId?.trim() || undefined, clientDraft: clientDraftForPersist },
+      inner: () =>
+        this.runMddResumeStream(
+          projectId,
+          threadId,
+          userMessage,
+          mddContentFromClient,
+          imageAttachments,
+          options?.signal,
+        ),
+    });
+  }
+
+  private async *runMddResumeStream(
+    projectId: string,
+    threadId: string,
+    userMessage: string,
+    mddContentFromClient: string | undefined,
+    imageAttachments: ChatImagePart[] | undefined,
+    signal: AbortSignal | undefined,
+  ): AsyncGenerator<StreamMddManagerEvent, void, undefined> {
     let resumeText = (userMessage ?? "").trim();
     if (imageAttachments?.length && !contentIncludesVisionBlock(resumeText)) {
       try {
@@ -1339,7 +1701,7 @@ export class AiAnalysisService {
         },
       );
     } catch (err) {
-      const formatted = formatDbgaStreamError(err);
+      const formatted = formatDbgaStreamError(err, "mdd");
       this.logger.error(`[MDD stream/resume] setup error: ${formatted.message}`, err instanceof Error ? err.stack : String(err));
       yield { type: "error", message: formatted.message, code: formatted.code };
       return;
@@ -1370,13 +1732,32 @@ export class AiAnalysisService {
 
     let resumeInitialDraft = clientDraft ?? "";
     let resumeInitialDirectives: MDDState["internalDirectives"];
+    let threadHasPendingWork = true;
     try {
       const cpSnapshot = await graph.getState(config);
       const cpValues = cpSnapshot?.values as MDDState | undefined;
       if (cpValues?.mddDraft?.trim()) resumeInitialDraft = cpValues.mddDraft.trim();
       resumeInitialDirectives = cpValues?.internalDirectives;
+      // `next` vacío = el grafo llegó a END (turno anterior terminado en `done`, ya sin borrar el checkpoint):
+      // no hay interrupt que reanudar y un `Command({ resume })` terminaría sin procesar el mensaje.
+      if (Array.isArray(cpSnapshot?.next) && cpSnapshot.next.length === 0) threadHasPendingWork = false;
     } catch {
       /* usar clientDraft o vacío */
+    }
+    if (!threadHasPendingWork) {
+      this.logger.log(
+        `[MDD stream/resume] hilo ${threadId} sin interrupt pendiente (turno previo terminado): se procesa como turno nuevo con memoria del checkpoint`,
+      );
+      yield* this.runMddManagerStream(
+        "",
+        projectId,
+        resumeText,
+        clientDraft,
+        cp.mddStageId.trim() || undefined,
+        undefined,
+        signal,
+      );
+      return;
     }
     const editLogTracker = new MddStreamEditLogTracker(resumeInitialDraft, resumeInitialDirectives);
 
@@ -1415,6 +1796,7 @@ export class AiAnalysisService {
         }),
         {
           ...config,
+          ...(signal ? { signal } : {}),
           streamMode: ["updates", "values"] as const,
         },
       );
@@ -1433,10 +1815,7 @@ export class AiAnalysisService {
             let reply = typeof value?.reply === "string" ? value.reply : undefined;
             let questions = Array.isArray(value?.questions) ? value.questions : typeof value?.questions === "string" ? [value.questions] : [];
             if (value?.type === "questions" && questions.length === 0) {
-              questions = [
-                "¿Cuáles son los objetivos principales del sistema o producto?",
-                "¿Qué aplicaciones o sistemas deben integrarse (ej. SSO, APIs)?",
-              ];
+              questions = fallbackClarifierQuestions(lastState?.auditorFeedback);
             }
             const plan = value?.type === "plan_approval" && Array.isArray(value?.plan) ? value.plan : undefined;
             const planMessage = value?.type === "plan_approval" && typeof value?.message === "string" ? value.message : undefined;
@@ -1517,7 +1896,7 @@ export class AiAnalysisService {
             if (projectId?.trim()) {
               this.estimationService.setLiveDraft(projectId.trim(), draft, estimationStage);
               if (lastState.auditorGaps) {
-                this.estimationService.setAuditorGaps(projectId.trim(), lastState.auditorGaps, estimationStage);
+                this.estimationService.setAuditorGaps(projectId.trim(), lastState.auditorGaps, estimationStage, hashMddDraft(draft));
               }
             }
             const prepared = await this.prepareMddForStreamDraft(
@@ -1589,8 +1968,8 @@ export class AiAnalysisService {
         logSection3Debug("final (stream/resume done)", markdown);
         
         if (projectId?.trim()) {
+          // Checkpoint conservado (memoria de turno); ver nota en el stream manager.
           this.estimationService.clearLiveDraft(projectId.trim(), estimationStage);
-          this.clearMddCheckpoint(projectId.trim(), cp.mddStageId).catch(() => { });
         }
         const estOptsResumeDone = estimationOpts(projectId, estimationStage, lastState);
         const metrics = this.estimationService.calculateLiveMetrics(markdown, estOptsResumeDone);
@@ -1614,6 +1993,7 @@ export class AiAnalysisService {
           precisionBreakdown,
           auditTrail,
           mddAgentEditLog: editLogTracker.log.length > 0 ? editLogTracker.log : undefined,
+          ...(lastState?.lastStepFailed ? { failedStep: lastState.lastStepFailed } : {}),
         };
       }
     } catch (err) {
@@ -1631,10 +2011,7 @@ export class AiAnalysisService {
         let reply = typeof value?.reply === "string" ? value.reply : undefined;
         let questions = Array.isArray(value?.questions) ? value.questions : typeof value?.questions === "string" ? [value.questions] : [];
         if (value?.type === "questions" && questions.length === 0) {
-          questions = [
-            "¿Cuáles son los objetivos principales del sistema o producto?",
-            "¿Qué aplicaciones o sistemas deben integrarse (ej. SSO, APIs)?",
-          ];
+          questions = fallbackClarifierQuestions(lastState?.auditorFeedback);
         }
         const plan = value?.type === "plan_approval" && Array.isArray(value?.plan) ? value.plan : undefined;
         const planMessage = value?.type === "plan_approval" && typeof value?.message === "string" ? value.message : undefined;
@@ -1681,7 +2058,7 @@ export class AiAnalysisService {
         };
         return;
       }
-      const formatted = formatDbgaStreamError(err);
+      const formatted = formatDbgaStreamError(err, "mdd");
       this.logger.error(
         `[MDD stream/resume] error: ${formatted.message}`,
         err instanceof Error ? err.stack : String(err),
@@ -1783,7 +2160,7 @@ export class AiAnalysisService {
       const regenUserId = await tracer.step("resolve-user", async () => this.resolveUserId(pid));
       llm = await tracer.step("create-llm", async () => createDbgaLLM(this.aiFactory, regenUserId));
     } catch (err) {
-      const formatted = formatDbgaStreamError(err);
+      const formatted = formatDbgaStreamError(err, "mdd");
       tracer.summary(false, { error: formatted.message });
       yield { type: "error", message: formatted.message, code: formatted.code };
       return;
@@ -2367,7 +2744,6 @@ export class AiAnalysisService {
     options?: { signal?: AbortSignal },
   ): Promise<MddJobResult> {
     const { mode, projectId, stageId } = data;
-    let lastPersistedLen = 0;
     const resolvedPatterns = await this.resolveLockedPatternIdsForMddJob(data);
     const { correctedIds: lockedPatternIds, corrections } = resolveGovernancePatternIncompatibilities(
       resolvedPatterns.lockedPatternIds,
@@ -2397,26 +2773,17 @@ export class AiAnalysisService {
     // el MDD bueno del intento 1 (job 92: 70k → 3084).
     const storedBaselineLen = peelDocumentBodyForPersist(resolvedPatterns.stageMddContent).trim().length;
 
+    const persister = this.createMddPersister({
+      projectId,
+      stageId: stageId?.trim() || undefined,
+      label: `MDD job ${mode} (${projectId})`,
+      lockedPatternIds,
+      storedBaselineLen,
+      onPersisted: ({ length, finalize }) =>
+        onProgress({ phase: finalize ? "persisted" : "draft", mddLength: length }),
+    });
     const persistMarkdown = async (markdown: string, finalize: boolean): Promise<void> => {
-      const cleaned = cleanDocumentContent(markdown);
-      if (cleaned.trim().length < 48) return;
-      if (cleaned.length === lastPersistedLen && !finalize) return;
-      const floor = evaluateMddDraftPersistFloor({
-        candidateLen: cleaned.trim().length,
-        storedBaselineLen,
-        finalize,
-      });
-      if (!floor.allowed) {
-        this.logger.warn(`MDD job ${mode} (${projectId}): ${floor.reason}`);
-        return;
-      }
-      lastPersistedLen = cleaned.length;
-      await this.projects.persistMddFromBackgroundJob(projectId, markdown, {
-        stageId: stageId?.trim() || undefined,
-        finalize,
-        lockedPatternIds: [...lockedPatternIds],
-      });
-      onProgress({ phase: finalize ? "persisted" : "draft", mddLength: cleaned.length });
+      await persister.persist(markdown, finalize);
     };
 
     type MddJobEvent = StreamMddManagerEvent | StreamProgressEvent;
@@ -2444,7 +2811,7 @@ export class AiAnalysisService {
             mode,
             projectId,
             stageId: stageId?.trim() || undefined,
-            mddLength: event.markdown?.length ?? lastPersistedLen,
+            mddLength: event.markdown?.length ?? persister.lastLen(),
             outcome: "interrupt",
             threadId: event.threadId,
             interrupt: {
@@ -2493,42 +2860,44 @@ export class AiAnalysisService {
       throw new Error("La generación del MDD no devolvió contenido suficiente.");
     };
 
+    // El job persiste él mismo (arriba) y es dueño del abort: los streams internos no persisten en `done`
+    // y reciben la señal del job (corta el nodo LLM en vuelo al cancelar/preemptar).
+    const streamOptions: MddStreamRunOptions = { signal: options?.signal, persistOnDone: false };
+    // Un stream HTTP y un job nunca corren a la vez sobre el mismo hilo: el job toma el mismo lease
+    // (reentrante, así los streams internos no se autobloquean). Si está ocupado lanza THREAD_BUSY
+    // (no reintentable en BullMQ).
+    const withThreadLease = async <T,>(fn: () => Promise<T>): Promise<T> => {
+      const lockStage = await this.resolveMddLockStageId(projectId, stageId);
+      return this.threadLock.runExclusive(mddThreadLockKey(projectId, lockStage), fn);
+    };
+
     switch (mode) {
       case "pipeline": {
         if (data.forceFullPipeline) {
           this.nodeCacheService.invalidateAll();
           this.logger.log(`MDD pipeline forceFullPipeline: node cache invalidated projectId=${projectId}`);
         }
-        const jobResult = await consume(
-          this.streamMddAnalysis(
-            data.dbgaContent ?? "",
-            projectId,
-            stageId,
-            data.mddContent,
-          ) as AsyncGenerator<MddJobEvent>,
-        );
-        if (jobResult.ok && jobResult.outcome === "done") {
-          return this.finalizeMddJobUpstreamBaseline(projectId, stageId, jobResult);
-        }
-        return jobResult;
-      }
-      case "manager": {
-        // PR #505: el cache se eliminó del flujo de regeneración.
-        // El manager mode también siempre corre el pipeline LLM completo
-        // sin reusar contenido cacheado.
-        const jobResult = await consume(
-          this.streamMddAnalysisWithManager(
-            data.dbgaContent ?? "",
-            projectId,
-            data.initialMessage,
-            data.mddContent,
-            stageId,
+        const jobResult = await withThreadLease(() =>
+          consume(
+            this.streamMddAnalysis(
+              data.dbgaContent ?? "",
+              projectId,
+              stageId,
+              data.mddContent,
+              streamOptions,
+            ) as AsyncGenerator<MddJobEvent>,
           ),
         );
         if (jobResult.ok && jobResult.outcome === "done") {
           return this.finalizeMddJobUpstreamBaseline(projectId, stageId, jobResult);
         }
         return jobResult;
+      }
+      case "manager":
+      case "resume": {
+        // Chat con Manager: mismo turno que el stream HTTP (persistencia en `done`, interrupt → waiting_user),
+        // ejecutado bajo el lease del hilo. El worker de la cola añade el relay de eventos (`executeChatJob`).
+        return this.runMddChatTurn(data, { signal: options?.signal, onProgress });
       }
       case "section-pipeline": {
         const rawSection = data.section;
@@ -2609,6 +2978,123 @@ export class AiAnalysisService {
       default:
         throw new Error(`Modo MDD no soportado en job: ${mode}`);
     }
+  }
+
+  /**
+   * Turno de chat con Manager (`manager` / `resume`) para el worker BullMQ. Reutiliza los streams HTTP
+   * (`streamMddAnalysisWithManager` / `streamMddResume`) con persistencia en `done` (`persistedOnServer`),
+   * bajo el mismo lease por hilo: si hay otro turno en curso lanza `ThreadBusyError` (el job no se reintenta).
+   * `interrupt` completa el job con `status: "waiting_user"`; la respuesta del usuario encola un `resume`.
+   * Los errores del propio turno (evento `error`) también completan el job (`ok: false`) para no re-ejecutarlo.
+   */
+  async runMddChatTurn(data: MddJobData, hooks: MddChatTurnHooks = {}): Promise<MddJobResult> {
+    const { mode, projectId } = data;
+    const signal = hooks.signal;
+    const requestedStage = data.stageId?.trim() || undefined;
+    const streamOptions: MddStreamRunOptions = { signal };
+    let lockKey: string | null;
+    let resultStageId: string | undefined = requestedStage;
+    let open: () => AsyncGenerator<StreamMddManagerEvent>;
+
+    if (mode === "resume") {
+      const threadId = data.threadId?.trim() ?? "";
+      if (!projectId?.trim() || !threadId) throw new Error("projectId y threadId son obligatorios en mode resume");
+      const cp = await this.prisma.agentStateCheckpoint
+        .findFirst({ where: { projectId: projectId.trim(), threadId }, select: { mddStageId: true } })
+        .catch(() => null);
+      // Sin checkpoint no hay hilo que bloquear: el stream responde con su error habitual.
+      lockKey = cp ? mddThreadLockKey(projectId, cp.mddStageId) : null;
+      resultStageId = cp?.mddStageId?.trim() || requestedStage;
+      open = () =>
+        this.streamMddResume(
+          projectId,
+          threadId,
+          data.userMessage ?? "",
+          data.mddContent?.trim() || undefined,
+          data.imageAttachments,
+          streamOptions,
+        );
+    } else if (mode === "manager") {
+      const lockStage = await this.resolveMddLockStageId(projectId, requestedStage);
+      lockKey = mddThreadLockKey(projectId, lockStage);
+      open = () =>
+        this.streamMddAnalysisWithManager(
+          data.dbgaContent ?? "",
+          projectId,
+          data.initialMessage,
+          data.mddContent,
+          requestedStage,
+          data.imageAttachments,
+          streamOptions,
+        );
+    } else {
+      throw new Error(`Modo de chat MDD no soportado: ${mode}`);
+    }
+
+    const consume = async (): Promise<MddJobResult> => {
+      let result: MddJobResult | null = null;
+      for await (const raw of open()) {
+        let event: MddChatJobEvent = raw;
+        if (event.type === "error" && signal?.aborted) {
+          event = { type: "error", message: "Cancelado por el usuario", code: "CANCELLED" };
+        }
+        await hooks.onEvent?.(event);
+        if (event.type === "progress") {
+          await hooks.onProgress?.({ agent: event.agent, message: event.message, phase: event.phase });
+        } else if (event.type === "draft") {
+          await hooks.onProgress?.({ phase: "draft", mddLength: event.markdown?.length });
+        }
+        // Eventos posteriores al primero terminal se relayan, pero no cambian el resultado del job.
+        if (result) continue;
+        if (event.type === "interrupt") {
+          result = {
+            ok: true,
+            mode,
+            projectId,
+            stageId: resultStageId,
+            mddLength: event.markdown?.length,
+            outcome: "interrupt",
+            status: "waiting_user",
+            threadId: event.threadId,
+            interrupt: { reply: event.reply, questions: event.questions, planMessage: event.planMessage },
+          };
+        } else if (event.type === "done") {
+          result = {
+            ok: true,
+            mode,
+            projectId,
+            stageId: resultStageId,
+            mddLength: event.markdown?.length ?? 0,
+            outcome: "done",
+          };
+        } else if (event.type === "error" || event.type === "blocked") {
+          result = {
+            ok: false,
+            mode,
+            projectId,
+            stageId: resultStageId,
+            outcome: "error",
+            error: event.message,
+            errorCode: event.code,
+          };
+        }
+      }
+      if (signal?.aborted && (!result || result.errorCode === "CANCELLED")) {
+        throw new Error("Cancelado por el usuario");
+      }
+      return (
+        result ?? {
+          ok: false,
+          mode,
+          projectId,
+          stageId: resultStageId,
+          outcome: "error",
+          error: "El turno terminó sin respuesta del Manager.",
+        }
+      );
+    };
+
+    return lockKey ? this.threadLock.runExclusive(lockKey, consume) : consume();
   }
 
   /** Captura baseline upstream y adjunta estado de sync al resultado del job para el Workshop. */

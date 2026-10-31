@@ -14,7 +14,12 @@ import {
   Package,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { resolveWorkshopSemaphoreStatus, isWorkshopSemaphoreGreen } from "@/utils/workshopSemaphoreStatus";
+import {
+  resolveWorkshopSemaphoreStatus,
+  isWorkshopSemaphoreGreen,
+  resolveWorkshopHeadlineScore,
+  type LiveMetricsAuditorFields,
+} from "@/utils/workshopSemaphoreStatus";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -308,7 +313,12 @@ export function WorkshopMetricsColumnInner({
   const setWorkshopActiveDocPanel = useWorkshopStore((s) => s.setWorkshopActiveDocPanel);
 
   const mddEmpty = !((mddContent ?? "").trim() || (project?.mddContent ?? "").trim());
-  const precisionScore = mddEmpty ? 0 : (liveMetrics?.precision ?? project?.precisionScore ?? 0);
+  // Titular: nota del Auditor si está vigente para este MDD; la integral queda como dato secundario.
+  const headlineScore = resolveWorkshopHeadlineScore(
+    liveMetrics as (typeof liveMetrics & LiveMetricsAuditorFields) | null,
+    project?.precisionScore ?? 0,
+  );
+  const precisionScore = mddEmpty ? 0 : headlineScore.value;
   const infraContent = infraContentField ?? project?.infraContent ?? null;
   const costDisplayFallback = calculateCostFromMdd(mddContent, {
     status: projectStatus,
@@ -513,7 +523,10 @@ export function WorkshopMetricsColumnInner({
                   {semaphoreConfig.label}
                 </p>
                 <p className="text-[11px] text-[color-mix(in_oklch,var(--muted-foreground)_96%,var(--foreground))]">
-                  Precisión {precisionScore}%
+                  {headlineScore.source === "auditor" && !mddEmpty ? "Auditor" : "Precisión"} {precisionScore}%
+                  {!mddEmpty && headlineScore.source === "auditor" && headlineScore.integral != null
+                    ? ` · Integral ${headlineScore.integral}%`
+                    : ""}
                   {!mddEmpty && deliveryGate ? ` · Gate ${deliveryGate.score}/100` : ""}
                 </p>
                 {precisionFormulaBreakdown ? (
@@ -1381,7 +1394,7 @@ export function WorkshopMetricsColumnInner({
           {auditorFeedback ? (
             <div className="max-h-28 shrink-0 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--background)] p-2 text-[11px] leading-snug text-[color-mix(in_oklch,var(--foreground)_90%,var(--muted-foreground))] shadow-sm">
               <strong className="mb-0.5 block text-[var(--foreground)]">
-                Auditoría ({liveMetrics?.precision ?? 0}% — {auditFeedbackStatusLabel})
+                Auditoría ({headlineScore.value}% — {auditFeedbackStatusLabel})
               </strong>
               {auditorFeedback}
             </div>

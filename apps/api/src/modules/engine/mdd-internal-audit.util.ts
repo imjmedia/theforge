@@ -92,6 +92,73 @@ function extractMermaidEntityAndAttrNames(md: string): { entities: Set<string>; 
   return { entities, attributes };
 }
 
+const MFA_TOKEN_RE = /\b(?:mfa|totp|2fa|two[- ]?factor|segundo factor|google\s+authenticator)\b/gi;
+const MFA_NEGATION_WORDS = new Set(["no", "sin"]);
+/** Tras la mención: "MFA no se implementa/incluye en v1", "MFA fuera de alcance". */
+const MFA_POST_NEGATION_RE =
+  /^[^.;\n]{0,24}?\b(?:no\s+(?:se\s+)?(?:implementa|incluye|soporta|contempla|habr[aá]|usar[aá])|fuera\s+de\s+alcance|no\s+aplica)/i;
+
+/**
+ * true si el texto menciona MFA/TOTP/2FA de forma afirmativa: se descartan las menciones precedidas por
+ * "no|sin" (hasta 4 palabras antes, en la misma oración) o seguidas de "no se implementa…/fuera de alcance".
+ */
+export function mentionsMfaAffirmatively(text: string): boolean {
+  const src = text ?? "";
+  for (const m of src.matchAll(MFA_TOKEN_RE)) {
+    const idx = m.index ?? 0;
+    const before = src.slice(0, idx);
+    const sentenceStart = Math.max(
+      before.lastIndexOf("."),
+      before.lastIndexOf(";"),
+      before.lastIndexOf("\n"),
+      before.lastIndexOf("!"),
+      before.lastIndexOf("?"),
+    );
+    const words = before
+      .slice(sentenceStart + 1)
+      .split(/\s+/)
+      .map((w) => w.replace(/[^\p{L}]/gu, "").toLowerCase())
+      .filter(Boolean)
+      .slice(-4);
+    if (words.some((w) => MFA_NEGATION_WORDS.has(w))) continue;
+    const after = src.slice(idx + m[0].length);
+    if (MFA_POST_NEGATION_RE.test(after)) continue;
+    return true;
+  }
+  return false;
+}
+
+const AUTH_PROTOCOL_NEGATIONS: ReadonlyArray<{ no: RegExp; yes: RegExp }> = [
+  {
+    no: /no\s+(?:se\s+)?(?:implementa(?:r[áa]n?)?|implementar)\s+(?:un\s+|el\s+|su\s+)?(?:oauth|oidc|saml|openid)/i,
+    yes: /\b(?:oauth|oidc|saml|openid\s+connect)\b/i,
+  },
+  { no: /no\s+habr[áa]\s+(?:oauth|oidc|saml)/i, yes: /\b(?:oauth|oidc|saml)\b/i },
+  { no: /no\s+se\s+usar[áa]\s+(?:oauth|oidc|saml)/i, yes: /\b(?:oauth|oidc|saml)\b/i },
+];
+
+/** La oración de §1 delega el protocolo a un tercero (no es una contradicción con §7). */
+const DELEGATION_RE =
+  /\b(?:delega\w*|externo\w*|externa\w*|proveedor\w*|identity\s+provider|idp|keycloak|auth0|cognito|okta)\b/i;
+
+/**
+ * Contradicción §1 ↔ §7: la MISMA oración de §1 niega implementar OAuth/OIDC/SAML y §7 lo afirma.
+ * No cuenta si la oración delega en un proveedor externo ("No se implementará OAuth propio; se delega en Keycloak").
+ */
+export function detectContextIntegrationContradiction(contextBlock: string, integrationBlock: string): boolean {
+  const sentences = (contextBlock ?? "").split(/(?<=[.!?])\s+|\n+/);
+  const integration = integrationBlock ?? "";
+  for (const sentence of sentences) {
+    if (!sentence.trim()) continue;
+    for (const { no, yes } of AUTH_PROTOCOL_NEGATIONS) {
+      if (!no.test(sentence)) continue;
+      if (DELEGATION_RE.test(sentence)) continue;
+      if (yes.test(integration)) return true;
+    }
+  }
+  return false;
+}
+
 const TRACEABILITY_SECTION_KEYS = ["contexto", "modeloDatos", "apiContracts", "seguridad"] as const;
 
 /** Traceability: Context mentions MFA-like concepts without §3/§4/§6 support. */
@@ -117,14 +184,15 @@ export function computeTraceabilityGaps(md: string): {
   ).toLowerCase();
   const sqlBlock = (md.match(/```sql\s*([\s\S]*?)```/i)?.[1] ?? "") + dataModelBlock;
 
-  const hasMfaInContext = /\b(mfa|totp|2fa|two[- ]?factor|segundo factor|google\s+authenticator)\b/i.test(
-    contextBlock,
-  );
+  const hasMfaInContext = mentionsMfaAffirmatively(contextBlock);
   if (hasMfaInContext) {
     const hasSecretTables =
-      /\bmfa_secrets\b|\btotp_secret\b|\bmfa_secret\b|\botp_secret\b|create\s+table\s+\w*secret/i.test(sqlBlock);
-    const hasVerifyEndpoint = /\/verify|\/totp|\/mfa|verify.*totp/i.test(apiBlock);
-    const hasTotpInSecurity = /\b(totp|rfc\s*6238|algoritmo\s+totp|time-based)\b/i.test(securityBlock);
+      /\bmfa_secrets\b|\btotp_secret\b|\bmfa_secret\b|\botp_secret\b|\bwebauthn_credentials?\b|\bpasskeys?\b|create\s+table\s+\w*secret/i.test(
+        sqlBlock,
+      );
+    const hasVerifyEndpoint = /\/verify|\/totp|\/mfa|\/webauthn|\/passkeys?|verify.*totp/i.test(apiBlock);
+    const hasTotpInSecurity =
+      /\b(totp|rfc\s*6238|algoritmo\s+totp|time-based|webauthn|passkeys?|fido2|authenticator)\b/i.test(securityBlock);
     const hasAnySupport = hasSecretTables || hasVerifyEndpoint || hasTotpInSecurity;
     if (!hasAnySupport) {
       inconsistentSections.push("contexto", "modeloDatos", "apiContracts", "seguridad");
@@ -142,6 +210,13 @@ export interface MddContractGaps {
   infraStackGap: number;
   securityEdgeCaseGap: number;
 }
+
+/** Números uno..diez (ES/EN) cuentan como dígito al definir el umbral de intentos. */
+const NUM_TOKEN = String.raw`(?:\d+|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|one|two|three|four|five|six|seven|eight|nine|ten)`;
+const SECURITY_ATTEMPTS_DEFINED_RE = new RegExp(
+  String.raw`\b${NUM_TOKEN}\s*(?:intentos?|attempts?|fallos?)|intentos?\s*:\s*${NUM_TOKEN}\b|m[aá]ximo\s+(?:de\s+)?${NUM_TOKEN}\b|fallos?\s*:\s*${NUM_TOKEN}\b`,
+  "i",
+);
 
 /** Contract gaps aligned with Auditor protocol: §2↔§7, §3↔Mermaid, §4↔§3, §5↔§6. */
 export function computeContractGaps(md: string): MddContractGaps {
@@ -184,7 +259,7 @@ export function computeContractGaps(md: string): MddContractGaps {
   );
 
   const skipApiKeys =
-    /^(id|created_at|updated_at|password|confirm_password|token|refresh_token|redirect_uri|scope|code|totp_code|payment|professional|client|user|data|meta|gateway|video_room)$/i;
+    /^(id|created_at|updated_at|password|confirm_password|token|refresh_token|redirect_uri|scope|code|totp_code|client|user|data|meta)$/i;
   if (sqlColumns.size > 0 && apiBlock.length > 100) {
     const apiKeys = extractJsonKeysFromSection(apiBlock);
     for (const k of apiKeys) {
@@ -220,8 +295,9 @@ export function computeContractGaps(md: string): MddContractGaps {
   if (detectSection2Section7NodeVersionMismatchIssue(md)) {
     infraStackGap = 1;
   } else if (/\b(nestjs|node\.?js|node\s)/i.test(archBlock) && archBlock.length > 50) {
+    // Serverless (Lambda/Vercel/Cloud Run) o "node runtime" también reflejan Node sin Dockerfile.
     const infraReflectsNode =
-      /\b(dockerfile|from\s+node|npm\s|pnpm\s|node\s|nodejs|docker\b|contenedor|imagen\s+node|backend\s+node)/i.test(
+      /\b(dockerfile|from\s+node|npm\s|pnpm\s|node\s|nodejs|docker\b|contenedor|imagen\s+node|backend\s+node|lambda|vercel|cloud\s*run|serverless|node\s+runtime)/i.test(
         infraBlock,
       );
     if (!infraReflectsNode) infraStackGap = 1;
@@ -232,11 +308,7 @@ export function computeContractGaps(md: string): MddContractGaps {
       logicBlock,
     )
   ) {
-    if (
-      !/\d+\s*(intentos?|attempts?|fallos?)|intentos?\s*:\s*\d+|máximo\s+\d+|fallos?\s*:\s*\d+/i.test(
-        securityBlock,
-      )
-    ) {
+    if (!SECURITY_ATTEMPTS_DEFINED_RE.test(securityBlock)) {
       securityEdgeCaseGap = 1;
     }
   }

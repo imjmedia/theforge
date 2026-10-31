@@ -30,7 +30,7 @@ import type { PrismaService } from "../../../prisma/prisma.service.js";
 import { createMddCrossConsistencyNode } from "../nodes/mdd-cross-consistency.node.js";
 import { createMddFormatSecIntNode } from "../nodes/mdd-format-sec-int.node.js";
 import { createMddPrepareOutputNode } from "../nodes/mdd-prepare-output.node.js";
-import { createMddBlackboardNode } from "../nodes/mdd-blackboard.node.js";
+import { BLACKBOARD_ALLOWED_NODES, createMddBlackboardNode } from "../nodes/mdd-blackboard.node.js";
 import {
   draftHasSubstantialSections6And7,
   shouldClarifierRevisionSkipArchitectPipeline,
@@ -45,10 +45,10 @@ import { detectSection3CompositionBlockers } from "../utils/schema-owner.util.js
 import type { UserLLMRuntime } from "../../ai/providers/llm-runtime.types.js";
 import { createDbgaLLM, createDbgaLLMFromRuntime, createMddApiContractsChunkLlmFromRuntime, createMddAuditorLLM, createMddHighComplexityLLM, resolveMddArchitectScopeMaxTokens } from "../llm/create-dbga-llm.js";
 import type { AIFactory } from "../../ai/ai.factory.js";
-import { getMddAuditorTools, getMddArchitectTools } from "../tools/tool-registry.js";
+import { getMddArchitectTools } from "../tools/tool-registry.js";
 import type { TheForgeService } from "../../theforge/theforge.service.js";
 import { MDDStateAnnotation, type MDDStateType } from "../state/index.js";
-import type { NodeCacheService } from "../checkpoint/node-cache.service.js";
+import { isCacheableNodeOutput, type NodeCacheService } from "../checkpoint/node-cache.service.js";
 import {
   clarifierInput,
   softwareArchitectInput,
@@ -61,9 +61,14 @@ import { isHighSplitArchitectPipeline } from "../utils/mdd-architect-pipeline.ut
 
 const MAX_MDD_ITERATIONS = 2;
 
-/** Auditor score-only: no re-enrutar tras primera pasada. */
+/**
+ * Auditor score-only: no re-enrutar tras primera pasada.
+ * Si un nodo escritor falló (`lastStepFailed`), tampoco se audita: puntuar placeholders
+ * convertía un error de LLM en "calidad baja" + preguntas genéricas. El gate de
+ * prepare_output reporta el estado real y decide el reintento acotado.
+ */
 function shouldSkipAuditor(state: MDDStateType): boolean {
-  return state.auditorRan === true;
+  return state.auditorRan === true || state.lastStepFailed != null;
 }
 
 /** Gate loop: tras fix del nodo dueño, volver a prepare_output sin re-pipeline completo. */
@@ -75,6 +80,9 @@ function routeAuditorOrPrepareOutput(state: MDDStateType): string {
   return shouldSkipAuditor(state) ? "prepare_output" : "auditor";
 }
 
+/** Destinos válidos tras blackboard (deben coincidir con el mapa de aristas condicionales). */
+const BLACKBOARD_ROUTE_TARGETS: ReadonlySet<string> = new Set(BLACKBOARD_ALLOWED_NODES);
+
 /** Temperatura baja para nodos estructurales (architect/security/integration): reproducibilidad de diseño. */
 const STRUCTURAL_TEMPERATURE = 0.2;
 
@@ -84,6 +92,14 @@ async function resolveStructuralRuntime(
   preflight?: UserLLMRuntime | null,
 ): Promise<UserLLMRuntime> {
   return preflight ?? aiFactory.resolveRuntime(userId);
+}
+
+/** LLM del Arquitecto monolítico (scope "full"): tope de tokens propio, mayor que el de security/integration/tail. */
+function createArchitectFullLlm(runtime: UserLLMRuntime): ReturnType<typeof createDbgaLLMFromRuntime> {
+  return createDbgaLLMFromRuntime(runtime, {
+    temperature: STRUCTURAL_TEMPERATURE,
+    maxTokensOverride: resolveMddArchitectScopeMaxTokens("full"),
+  });
 }
 
 function createTailStructuralLlm(runtime: UserLLMRuntime): ReturnType<typeof createDbgaLLMFromRuntime> {
@@ -138,7 +154,13 @@ function wrapNodeStart(
   };
 }
 
-function wrapCache(
+/**
+ * Envuelve un nodo LLM con el cache en memoria.
+ * - Bypass total mientras `deliveryGateLoopActive === true` (el gate re-ejecuta el nodo a propósito
+ *   para corregir; un hit devolvería el mismo resultado que no pasó el gate).
+ * - Solo se guardan éxitos con contenido (ver `isCacheableNodeOutput`): nunca `{}` ni `lastStepFailed`.
+ */
+export function wrapCache(
   cache: NodeCacheService | null,
   nodeName: string,
   getInput: InputHashFn,
@@ -146,6 +168,9 @@ function wrapCache(
 ): NodeFn {
   if (!cache) return nodeFn;
   return async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
+    if (state.deliveryGateLoopActive === true) {
+      return nodeFn(state);
+    }
     const projectId = state.projectId;
     const key = cache.key(nodeName, projectId, getInput(state));
     const cached = cache.get(key);
@@ -154,7 +179,11 @@ function wrapCache(
       return cached;
     }
     const result = await nodeFn(state);
-    cache.set(key, result);
+    if (isCacheableNodeOutput(result)) {
+      cache.set(key, result);
+    } else {
+      console.log(`[MDD:Cache] SKIP-STORE ${nodeName} (salida vacía, fallida o sin contenido)`);
+    }
     return result;
   };
 }
@@ -192,6 +221,7 @@ export async function createMddGraph(
     maxTokensOverride: resolveMddArchitectScopeMaxTokens("section5"),
   });
   const structuralLlm = createTailStructuralLlm(structuralRuntime);
+  const architectFullLlm = createArchitectFullLlm(structuralRuntime);
   const stackLlm = createDbgaLLMFromRuntime(structuralRuntime, {
     temperature: STRUCTURAL_TEMPERATURE,
     maxTokensOverride: resolveMddArchitectScopeMaxTokens("stack"),
@@ -221,7 +251,7 @@ export async function createMddGraph(
       nodeCache,
       "software_architect",
       softwareArchitectInput,
-      createMddSoftwareArchitectNode(structuralLlm, getMddArchitectTools(), {
+      createMddSoftwareArchitectNode(architectFullLlm, getMddArchitectTools(), {
         theforge: options?.theforge ?? null,
         uiMcpFrontendLibraryLabel: options?.uiMcpFrontendLibraryLabel ?? null,
         scope: "full",
@@ -307,7 +337,7 @@ export async function createMddGraph(
   // [Unreleased] → Fixed → "Eliminación del LLM formatter destructivo".
   const auditorNode = wrapNodeStart(
     "auditor",
-    createMddAuditorNode(auditorLlm, getMddAuditorTools(), null),
+    createMddAuditorNode(auditorLlm, null),
     onNodeStart,
   );
   const structuredHydratorNode = wrapNodeStart(
@@ -632,6 +662,7 @@ export async function createMddGraphWithManager(
     maxTokensOverride: resolveMddArchitectScopeMaxTokens("section5"),
   });
   const structuralLlm = createTailStructuralLlm(structuralRuntime);
+  const architectFullLlm = createArchitectFullLlm(structuralRuntime);
   const stackLlm = createDbgaLLMFromRuntime(structuralRuntime, {
     temperature: STRUCTURAL_TEMPERATURE,
     maxTokensOverride: resolveMddArchitectScopeMaxTokens("stack"),
@@ -656,7 +687,7 @@ export async function createMddGraphWithManager(
     nodeCache,
     "software_architect",
     softwareArchitectInput,
-    createMddSoftwareArchitectNode(structuralLlm, getMddArchitectTools(), {
+    createMddSoftwareArchitectNode(architectFullLlm, getMddArchitectTools(), {
       theforge: theForgeForArchitect,
       uiMcpFrontendLibraryLabel: compileOptions?.uiMcpFrontendLibraryLabel ?? null,
       scope: "full",
@@ -717,7 +748,6 @@ export async function createMddGraphWithManager(
   );
   const auditorNode = createMddAuditorNode(
     auditorLlm,
-    getMddAuditorTools(),
     precisionCalculator ?? null,
   );
   const blackboardNode = createMddBlackboardNode(llm);
@@ -956,7 +986,8 @@ export async function createMddGraphWithManager(
   }
   function routeAfterBlackboard(state: MDDStateType): string {
     if (state.executorControlled === true) return "executor";
-    return state.sectionsToRun?.[0] || "manager";
+    const first = state.sectionsToRun?.[0];
+    return first && BLACKBOARD_ROUTE_TARGETS.has(first) ? first : "manager";
   }
   function routeAfterStructuredHydrator(state: MDDStateType): string {
     if (state.executorControlled === true) return "executor";
@@ -1162,7 +1193,9 @@ export async function createMddGraphWithManager(
       manager: "manager",
       executor: "executor",
     })
-    .addEdge("format_after_redactor", "cross_consistency_checker")
+    // Sin arista estática format_after_redactor → cross_consistency_checker: el router ya devuelve
+    // "cross_consistency_checker" en el camino por defecto; con la arista estática además se disparaba
+    // en modo plan (executor) y el executor corría dos veces.
     .addConditionalEdges("cross_consistency_checker", routeAfterConsistency, {
       diagram_injector: "diagram_injector",
       auditor: "auditor",

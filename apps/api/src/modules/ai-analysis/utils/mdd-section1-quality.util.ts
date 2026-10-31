@@ -24,7 +24,12 @@ export type Section1QualityResult = {
   bodyLen: number;
   minLen: number;
   missingSubsections: string[];
+  /** Todos los blockers (longitud + placeholder + estructura): contrato histórico para Clarifier. */
   blockers: string[];
+  /** Solo blockers duros: vacío/placeholder y longitud mínima. Usado por el delivery gate. */
+  lengthBlockers: string[];
+  /** Subsecciones constitución faltantes como warnings (no bloquean la entrega). */
+  structureWarnings: string[];
 };
 
 function level(complexity?: MddComplexityLevel): MddComplexityLevel {
@@ -82,14 +87,21 @@ function requiredSubsections(complexity: MddComplexityLevel): SubsectionKey[] {
 export function evaluateSection1BodyQuality(
   body: string | null | undefined,
   complexity?: MddComplexityLevel,
+  overrides?: { minLen?: number },
 ): Section1QualityResult {
   const cx = level(complexity);
-  const minLen = minSection1BodyLength(cx);
+  const minLen = overrides?.minLen ?? minSection1BodyLength(cx);
   const trimmed = (body ?? "").trim();
   const blockers: string[] = [];
   const missingSubsections: string[] = [];
 
-  if (!trimmed || isMddSectionPipelinePlaceholderBody(trimmed)) {
+  // Guarda anti-sobreaciertos: con >= minLen chars de contenido real, solo es placeholder si
+  // el cuerpo ARRANCA con "Pendiente: <agente del pipeline>" (no por mencionarlo en el texto).
+  const isPlaceholder =
+    isMddSectionPipelinePlaceholderBody(trimmed) &&
+    (trimmed.length < minLen ||
+      /^\s*\(?\s*(?:Pendiente|TBD)\s*:\s*(?:Arquitecto|Clarificador|Ingeniero|Integraci|paso\s+dedicado)/i.test(trimmed));
+  if (!trimmed || isPlaceholder) {
     blockers.push("§1 Contexto vacío o placeholder del pipeline.");
     return {
       ok: false,
@@ -97,6 +109,8 @@ export function evaluateSection1BodyQuality(
       minLen,
       missingSubsections: ["contenido"],
       blockers,
+      lengthBlockers: [...blockers],
+      structureWarnings: [],
     };
   }
 
@@ -131,10 +145,12 @@ export function evaluateSection1BodyQuality(
     }
   }
 
+  const lengthBlockers = [...blockers];
+  const structureWarnings: string[] = [];
   if (missingSubsections.length > 0) {
-    blockers.push(
-      `Sección 1. Contexto: estructura constitución incompleta (faltan: ${missingSubsections.join(", ")}).`,
-    );
+    const structureIssue = `Sección 1. Contexto: estructura constitución incompleta (faltan: ${missingSubsections.join(", ")}).`;
+    blockers.push(structureIssue);
+    structureWarnings.push(structureIssue);
   }
 
   return {
@@ -143,6 +159,8 @@ export function evaluateSection1BodyQuality(
     minLen,
     missingSubsections,
     blockers,
+    lengthBlockers,
+    structureWarnings,
   };
 }
 

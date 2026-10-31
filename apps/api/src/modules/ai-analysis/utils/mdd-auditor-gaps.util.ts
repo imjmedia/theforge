@@ -224,20 +224,191 @@ export function synthesizeDeterministicAuditorGaps(
   };
 }
 
-/** Truncate large MDD drafts for LLM auditor calls (avoid proxy timeout). */
+const FENCE_LINE_RE = /^\s*(```|~~~)(.*)$/;
+const SECTION_HEADING_RE = /^##\s+(\d+)\.\s/;
+const JSON_OMITTED_NOTE = "[ejemplo JSON omitido por tamaño]";
+const PROSE_TRUNCATED_MARKER = "[... sección truncada ...]";
+const PROSE_SECTIONS = new Set([1, 2, 5, 6, 7]);
+
+type DraftChunk = { num: number; lines: string[] };
+
+/** Divide el borrador en preámbulo (num 0) + secciones `## N.`; ignora headings dentro de fences. */
+function splitDraftIntoChunks(draft: string): DraftChunk[] {
+  const chunks: DraftChunk[] = [{ num: 0, lines: [] }];
+  let fence: string | null = null;
+  for (const line of draft.split("\n")) {
+    const f = line.match(FENCE_LINE_RE);
+    if (f) {
+      if (fence === null) fence = f[1]!;
+      else if (f[1] === fence && f[2]!.trim() === "") fence = null;
+    } else if (fence === null) {
+      const h = line.match(SECTION_HEADING_RE);
+      if (h) {
+        chunks.push({ num: Number(h[1]), lines: [line] });
+        continue;
+      }
+    }
+    chunks[chunks.length - 1]!.lines.push(line);
+  }
+  return chunks;
+}
+
+function chunkLength(lines: string[]): number {
+  return lines.reduce((n, l) => n + l.length + 1, 0);
+}
+
+/** Sustituye por `{…}` el cuerpo de cada fence ```json con cuerpo > `minBodyChars` (siempre cierra el fence). */
+function dropJsonFenceBodies(lines: string[], minBodyChars: number): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i]!;
+    const f = line.match(FENCE_LINE_RE);
+    if (f && /^json\b/i.test(f[2]!.trim())) {
+      let j = i + 1;
+      const body: string[] = [];
+      while (j < lines.length) {
+        const c = lines[j]!.match(FENCE_LINE_RE);
+        if (c && c[1] === f[1] && c[2]!.trim() === "") break;
+        body.push(lines[j]!);
+        j += 1;
+      }
+      const closed = j < lines.length;
+      if (closed && body.join("\n").length > minBodyChars) {
+        out.push(line, "{…}", f[1]!, JSON_OMITTED_NOTE);
+      } else {
+        out.push(line, ...body);
+        if (closed) out.push(lines[j]!);
+      }
+      i = closed ? j + 1 : lines.length;
+      continue;
+    }
+    out.push(line);
+    i += 1;
+  }
+  return out;
+}
+
+/** Corta por líneas completas hasta `limit` chars; si queda dentro de un fence lo cierra antes del marcador. */
+function truncateLinesFenceAware(lines: string[], limit: number): string[] {
+  if (chunkLength(lines) <= limit) return lines;
+  const out: string[] = [];
+  let used = 0;
+  let fence: string | null = null;
+  for (const line of lines) {
+    if (used + line.length + 1 > limit && out.length > 0) break;
+    out.push(line);
+    used += line.length + 1;
+    const f = line.match(FENCE_LINE_RE);
+    if (f) {
+      if (fence === null) fence = f[1]!;
+      else if (f[1] === fence && f[2]!.trim() === "") fence = null;
+    }
+  }
+  if (fence !== null) out.push(fence);
+  out.push("", PROSE_TRUNCATED_MARKER);
+  return out;
+}
+
+/** Reduce cada `CREATE TABLE` de los fences ```sql a las primeras `maxLines` líneas + cierre `);`. */
+function compactCreateTables(lines: string[], maxLines: number): string[] {
+  const out: string[] = [];
+  let inSql = false;
+  let tableLines = 0;
+  let skipped = 0;
+  let inTable = false;
+  const flushSkipped = (): void => {
+    if (skipped > 0) {
+      out.push(`  -- … (+${skipped} línea(s) de columnas omitidas por tamaño)`);
+      skipped = 0;
+    }
+  };
+  for (const line of lines) {
+    const f = line.match(FENCE_LINE_RE);
+    if (f) {
+      if (!inSql && /^sql\b/i.test(f[2]!.trim())) inSql = true;
+      else if (inSql && f[2]!.trim() === "") {
+        flushSkipped();
+        inSql = false;
+        inTable = false;
+      }
+      out.push(line);
+      continue;
+    }
+    if (!inSql) {
+      out.push(line);
+      continue;
+    }
+    if (/^\s*CREATE\s+TABLE\b/i.test(line)) {
+      inTable = true;
+      tableLines = 0;
+      out.push(line);
+      continue;
+    }
+    if (inTable) {
+      if (/^\s*\)\s*;?\s*$/.test(line)) {
+        flushSkipped();
+        inTable = false;
+        out.push(line);
+        continue;
+      }
+      tableLines += 1;
+      if (tableLines <= maxLines) out.push(line);
+      else skipped += 1;
+      continue;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+/**
+ * Reduce borradores MDD grandes para la llamada del Auditor LLM (evita timeouts del proxy)
+ * SIN romper fences ni ocultar contratos: antes cortaba cada sección a ~3 500 chars, incluso
+ * dentro de ```sql/```json, y el LLM reportaba fences rotos / endpoints faltantes que no existían.
+ *
+ * Orden de reducción (se detiene en cuanto cabe en `maxChars`):
+ *  1. Cuerpos de ```json largos (sobre todo §4) → `{…}` + nota.
+ *  2. Prosa de §1/§2/§5/§6/§7 truncada por líneas completas; si el corte cae dentro de un fence
+ *     se cierra antes del marcador. §3 (CREATE TABLE) y §4 (filas de endpoints) no se tocan.
+ *  3. Todos los cuerpos ```json restantes (p. ej. manifest de §7) → `{…}`.
+ *  4. Último recurso: cuerpos de CREATE TABLE compactados (cabecera + primeras columnas).
+ */
 export function truncateDraftForAuditorLlm(draft: string, maxChars = 28_000): string {
   const trimmed = draft.trim();
   if (trimmed.length <= maxChars) return trimmed;
 
-  const chunks = trimmed.split(/\n(?=##\s+\d+\.)/);
+  let chunks = splitDraftIntoChunks(trimmed);
+  const render = (): string => chunks.map((c) => c.lines.join("\n")).join("\n").trim();
+  const total = (): number => chunks.reduce((n, c) => n + chunkLength(c.lines), 0);
+
   if (chunks.length <= 1) {
-    return `${trimmed.slice(0, maxChars)}\n\n[... MDD truncado para auditoría ...]`;
+    // Sin secciones canónicas: reducir solo cuerpos JSON y cortar por líneas/fences.
+    chunks[0]!.lines = dropJsonFenceBodies(chunks[0]!.lines, 400);
+    chunks[0]!.lines = truncateLinesFenceAware(chunks[0]!.lines, maxChars);
+    return render();
   }
 
-  const perSection = Math.max(1200, Math.floor(maxChars / chunks.length));
-  const parts = chunks.map((chunk) => {
-    if (chunk.length <= perSection) return chunk;
-    return `${chunk.slice(0, perSection)}\n\n[... sección truncada ...]`;
-  });
-  return parts.join("\n");
+  // 1. JSON largos de §4.
+  chunks = chunks.map((c) => (c.num === 4 ? { ...c, lines: dropJsonFenceBodies(c.lines, 400) } : c));
+  if (total() <= maxChars) return render();
+
+  // 2. Prosa de secciones no contractuales.
+  const proseChunks = chunks.filter((c) => PROSE_SECTIONS.has(c.num));
+  if (proseChunks.length > 0) {
+    const fixed = chunks.filter((c) => !PROSE_SECTIONS.has(c.num)).reduce((n, c) => n + chunkLength(c.lines), 0);
+    const perSection = Math.max(1_200, Math.floor((maxChars - fixed) / proseChunks.length));
+    chunks = chunks.map((c) =>
+      PROSE_SECTIONS.has(c.num) ? { ...c, lines: truncateLinesFenceAware(c.lines, perSection) } : c,
+    );
+  }
+  if (total() <= maxChars) return render();
+
+  // 3. Resto de cuerpos JSON.
+  chunks = chunks.map((c) => ({ ...c, lines: dropJsonFenceBodies(c.lines, 0) }));
+  if (total() <= maxChars) return render();
+
+  // 4. Último recurso: compactar CREATE TABLE de §3.
+  chunks = chunks.map((c) => (c.num === 3 ? { ...c, lines: compactCreateTables(c.lines, 8) } : c));
+  return render();
 }

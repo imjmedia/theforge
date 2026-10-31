@@ -203,3 +203,38 @@ describe("seguridadItemsToSection6Markdown", () => {
     assert.ok(!md.includes("{"));
   });
 });
+
+describe("heurísticas de corrupción acotadas (placeholder en oraciones)", () => {
+  it("no marca corrupto un bullet con 'placeholder' dentro de una oración", () => {
+    const md = `## 6. Seguridad
+
+### Gestión de secretos
+
+- Prohibir valores placeholder en secretos y variables de entorno de producción.
+- Rotar claves cada 90 días; thinking: no aplica aquí.
+`;
+    assert.strictEqual(isCorruptedSecurityLlmText(md), false);
+    assert.ok(parseSecurityLlmResponse(md), "la sección legible debe parsearse");
+  });
+
+  it("sanitizeSeguridadItems conserva el bullet con la palabra placeholder en medio de la frase", () => {
+    const out = sanitizeSeguridadItems([
+      {
+        title: "Gestión de secretos",
+        content: ["Prohibir valores placeholder en secretos.", "Usar un gestor de secretos (Vault)."],
+      },
+    ]);
+    assert.ok(out);
+    assert.strictEqual(out![0]!.content.length, 2);
+  });
+
+  it("sigue marcando corrupto cuando el marcador abre la línea o hay ≥3 patrones", () => {
+    assert.ok(isCorruptedSecurityLlmText("## 6. Seguridad\n\nPlaceholder: pending\n- JWT con rotación."));
+    assert.ok(isCorruptedSecurityLlmText("- Thinking: voy a redactar la sección"));
+    assert.ok(
+      isCorruptedSecurityLlmText(
+        "El texto es un placeholder; will rewrite más tarde. Here's my thinking sobre la sección.",
+      ),
+    );
+  });
+});

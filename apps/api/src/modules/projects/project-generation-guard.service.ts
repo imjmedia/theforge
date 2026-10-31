@@ -32,7 +32,11 @@ type TrackedBgJob = {
  */
 @Injectable()
 export class ProjectGenerationGuardService {
-  private readonly mddStreams = new Set<string>();
+  /**
+   * Streams/jobs MDD activos por proyecto (contador): dos streams del mismo proyecto (p. ej. manager +
+   * regenerate-section) ya no se pisan: cerrar uno dejaba al otro "inactivo" con el antiguo `Set`.
+   */
+  private readonly mddStreams = new Map<string, number>();
   private readonly bgJobs = new Map<string, TrackedBgJob>();
 
   constructor(
@@ -48,19 +52,27 @@ export class ProjectGenerationGuardService {
   ) {}
 
   registerMddStream(projectId: string): void {
-    this.mddStreams.add(projectId);
+    this.mddStreams.set(projectId, (this.mddStreams.get(projectId) ?? 0) + 1);
   }
 
+  /** Libera UNA referencia (la del stream/job que cierra). */
   unregisterMddStream(projectId: string): void {
+    const n = this.mddStreams.get(projectId) ?? 0;
+    if (n <= 1) this.mddStreams.delete(projectId);
+    else this.mddStreams.set(projectId, n - 1);
+  }
+
+  /** Libera todas las referencias (cancelación/preempt/stall: el dueño ya no existe o fue abortado). */
+  forceUnregisterMddStream(projectId: string): void {
     this.mddStreams.delete(projectId);
   }
 
   isMddStreamActive(projectId: string): boolean {
-    return this.mddStreams.has(projectId);
+    return (this.mddStreams.get(projectId) ?? 0) > 0;
   }
 
   listActiveMddStreamProjectIds(): string[] {
-    return [...this.mddStreams];
+    return [...this.mddStreams.keys()];
   }
 
   registerBackgroundJob(jobId: string, projectId: string, type: GenerationJobType): void {

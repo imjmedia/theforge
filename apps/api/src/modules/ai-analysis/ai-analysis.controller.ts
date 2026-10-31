@@ -1,4 +1,16 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query, Res } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  ForbiddenException,
+  Get,
+  NotFoundException,
+  Param,
+  Post,
+  Query,
+  Res,
+} from "@nestjs/common";
 import { Response } from "express";
 import { Readable } from "node:stream";
 import { PrismaService } from "../../prisma/prisma.service.js";
@@ -14,6 +26,11 @@ import { ProjectGenerationGuardService } from "../projects/project-generation-gu
 import { MddQueueService, type MddJobData, type MddJobMode } from "./mdd/mdd-queue.service.js";
 import { MddUpstreamSyncService } from "./mdd/mdd-upstream-sync.service.js";
 import { TokenUsageService } from "./token-usage/token-usage.service.js";
+import { ndjsonLinesWithHeartbeat } from "./utils/ndjson-stream.util.js";
+import { MddJobEventsService } from "./mdd/mdd-job-events.service.js";
+import { parseMddJobEventsCursor, type MddJobRelayEvent } from "./mdd/mdd-job-events.util.js";
+import { isMddChatJobMode, validateMddChatJobPayload } from "./mdd/mdd-queue-job-payload.util.js";
+import { resolveMddChatConfig } from "./mdd/mdd-chat-config.util.js";
 
 @Controller("ai-analysis")
 export class AiAnalysisController {
@@ -28,6 +45,7 @@ export class AiAnalysisController {
     private readonly mddQueue: MddQueueService,
     private readonly mddUpstreamSync: MddUpstreamSyncService,
     private readonly tokenUsage: TokenUsageService,
+    private readonly mddJobEvents: MddJobEventsService,
   ) { }
 
   private registerMddStreamLock(projectId: string | undefined): void {
@@ -36,6 +54,53 @@ export class AiAnalysisController {
 
   private releaseMddStreamLock(projectId: string | undefined): void {
     if (projectId?.trim()) this.generationGuard.unregisterMddStream(projectId.trim());
+  }
+
+  /**
+   * Responde un stream MDD como NDJSON con:
+   * - `AbortSignal` por stream: si el cliente cierra la conexión se aborta `graph.stream` y la llamada LLM
+   *   en vuelo (antes LangGraph seguía ejecutando el nodo y gastando tokens).
+   * - heartbeat cada 15 s sin eventos (un nodo silencioso >10 min no llega al timeout de 600 s del socket).
+   * - registro en el guard de generación mientras dure el stream (también en resume).
+   * El lease por hilo y la persistencia en `done` viven en el servicio (`runGuardedMddStream`).
+   */
+  private pipeMddNdjson(
+    res: Response,
+    options: {
+      tag: string;
+      projectId: string | undefined;
+      run: (signal: AbortSignal) => AsyncIterable<unknown>;
+    },
+  ): void {
+    const abort = new AbortController();
+    this.registerMddStreamLock(options.projectId);
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      this.releaseMddStreamLock(options.projectId);
+    };
+    const stream = Readable.from(
+      ndjsonLinesWithHeartbeat(options.run(abort.signal), {
+        tag: options.tag,
+        // Este helper solo sirve a los streams MDD (stream, manager, resume): mensaje de recursión del flujo MDD.
+        formatError: (err) => ({ ...formatDbgaStreamError(err, "mdd") }),
+      }),
+    );
+    // Cliente desconectado (o respuesta terminada): abortar el trabajo en vuelo y soltar el guard.
+    res.on("close", () => {
+      if (!res.writableFinished) abort.abort();
+      release();
+      stream.destroy();
+    });
+    stream.on("error", (err) => {
+      console.error(`[${options.tag}] stream error:`, err);
+      release();
+      if (!res.destroyed) {
+        try { res.end(); } catch { /* ignore */ }
+      }
+    });
+    stream.pipe(res);
   }
 
   /**
@@ -285,27 +350,36 @@ export class AiAnalysisController {
 
   /**
    * Encola generación/regeneración MDD en background (sobrevive cerrar el navegador con Redis).
-   * Body: { mode: pipeline|manager|section|section-pipeline, projectId, stageId?, dbgaContent?, initialMessage?, mddContent?, section?, gapReasons? }
+   * Body: { mode: pipeline|manager|resume|section|section-pipeline|upstream-sync, projectId, stageId?, dbgaContent?, initialMessage?, mddContent?, section?, gapReasons? }
+   * Chat con Manager: `manager` (turno nuevo) y `resume` (threadId + userMessage; `images?`). Los eventos del turno
+   * se consumen con `GET mdd/jobs/:jobId/events?cursor=N`.
    */
   @Post("mdd/jobs")
   async enqueueMddJob(@Body() body: Record<string, unknown>) {
     const mode = body?.mode as MddJobMode | undefined;
     const projectId = typeof body?.projectId === "string" ? body.projectId.trim() : "";
     if (!projectId) throw new BadRequestException("projectId is required");
-    if (!mode || !["pipeline", "manager", "section", "section-pipeline", "upstream-sync"].includes(mode)) {
-      throw new BadRequestException("mode must be pipeline, manager, section, section-pipeline, or upstream-sync");
+    if (!mode || !["pipeline", "manager", "resume", "section", "section-pipeline", "upstream-sync"].includes(mode)) {
+      throw new BadRequestException(
+        "mode must be pipeline, manager, resume, section, section-pipeline, or upstream-sync",
+      );
     }
     const project = await this.prisma.project.findUnique({ where: { id: projectId } });
     if (project && (project as { projectType?: string }).projectType === "LEGACY") {
       throw new BadRequestException("Usa POST …/legacy/generate-mdd para proyectos LEGACY.");
     }
+    const isChat = isMddChatJobMode(mode);
     const data: MddJobData = {
       mode,
       projectId,
       stageId: typeof body?.stageId === "string" ? body.stageId.trim() || undefined : undefined,
       dbgaContent: typeof body?.dbgaContent === "string" ? body.dbgaContent : undefined,
       initialMessage: typeof body?.initialMessage === "string" ? body.initialMessage.trim() : undefined,
-      mddContent: typeof body?.mddContent === "string" ? body.mddContent : undefined,
+      mddContent:
+        typeof body?.mddContent === "string" ? (isChat ? body.mddContent.trim() : body.mddContent) : undefined,
+      threadId: typeof body?.threadId === "string" ? body.threadId.trim() || undefined : undefined,
+      userMessage: typeof body?.userMessage === "string" ? body.userMessage.trim() || undefined : undefined,
+      imageAttachments: isChat ? parseChatImageAttachments(body?.images) : undefined,
       section: typeof body?.section === "number" ? body.section : Number(body?.section) || undefined,
       gapReasons: Array.isArray(body?.gapReasons)
         ? body.gapReasons.filter((g): g is string => typeof g === "string" && g.trim().length > 0)
@@ -319,6 +393,8 @@ export class AiAnalysisController {
         typeof body?.upstreamChangeSummary === "string" ? body.upstreamChangeSummary.trim() : undefined,
       forceFullPipeline: body?.forceFullPipeline === true,
     };
+    const chatPayloadError = validateMddChatJobPayload(data);
+    if (chatPayloadError) throw new BadRequestException(chatPayloadError);
     if (mode === "section" || mode === "section-pipeline") {
       const section = data.section;
       if (!Number.isInteger(section) || section! < 1 || section! > 7) {
@@ -343,7 +419,94 @@ export class AiAnalysisController {
       jobId,
       statusPath: `/ai-analysis/mdd/jobs/${jobId}`,
       projectStatusPath: `/projects/${projectId}/mdd-jobs/${jobId}`,
+      ...(isChat ? { eventsPath: `/ai-analysis/mdd/jobs/${jobId}/events` } : {}),
     };
+  }
+
+  /**
+   * Configuración pública del chat MDD: `chatViaQueue` (env `MDD_CHAT_VIA_QUEUE`, default "1") decide si el
+   * Workshop encola el turno en BullMQ o usa el NDJSON legacy dentro del request.
+   */
+  @Get("mdd/config")
+  getMddConfig() {
+    return resolveMddChatConfig();
+  }
+
+  /**
+   * Eventos del turno de chat de un job (`manager` / `resume`) como NDJSON con cursor: reproduce desde
+   * `cursor` y sigue en vivo hasta un evento terminal (`done`, `error`, `interrupt`, `blocked`) o hasta que
+   * el cliente se desconecta (el job NO se cancela: sigue en el worker). Cada línea incluye `cursor`
+   * (índice de la siguiente entrada) para reanudar; `{"type":"heartbeat"}` cada 15 s.
+   */
+  @Get("mdd/jobs/:jobId/events")
+  async streamMddJobEvents(
+    @Param("jobId") jobId: string,
+    @Query("projectId") projectIdRaw: string | undefined,
+    @Query("cursor") cursorRaw: string | undefined,
+    @Res() res: Response,
+  ) {
+    const projectId = typeof projectIdRaw === "string" ? projectIdRaw.trim() : "";
+    if (!projectId) throw new BadRequestException("projectId is required");
+    const status = await this.mddQueue.getJobStatus(jobId);
+    if (status.status === "unknown") throw new NotFoundException("Job no encontrado");
+    if (status.projectId && status.projectId !== projectId) throw new ForbiddenException();
+    const cursor = parseMddJobEventsCursor(cursorRaw);
+
+    res.setHeader("Content-Type", "application/x-ndjson");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
+    const abort = new AbortController();
+    const queue = this.mddQueue;
+    const events = this.mddJobEvents;
+    let completedIdleChecks = 0;
+    const onIdle = async (): Promise<MddJobRelayEvent | null> => {
+      const st = await queue.getJobStatus(jobId);
+      if (st.status === "failed") {
+        const cancelled = /cancelad/i.test(st.error ?? "");
+        return {
+          type: "error",
+          message: cancelled ? "Cancelado por el usuario" : (st.error ?? "El job del chat falló en el worker."),
+          code: cancelled ? "CANCELLED" : "JOB_FAILED",
+        };
+      }
+      if (st.status === "unknown") {
+        return { type: "error", message: "El job del chat ya no existe en la cola.", code: "JOB_GONE" };
+      }
+      if (st.status === "completed") {
+        // El evento terminal se agrega antes de completar el job: una segunda ronda ociosa sin él = perdido.
+        completedIdleChecks += 1;
+        if (completedIdleChecks >= 2) {
+          return { type: "error", message: "El turno terminó pero sus eventos ya no están disponibles.", code: "NO_RESULT" };
+        }
+      }
+      return null;
+    };
+    const lines = (async function* (): AsyncGenerator<string, void, undefined> {
+      try {
+        for await (const line of events.tail(jobId, cursor, { signal: abort.signal, onIdle })) {
+          yield JSON.stringify(line) + "\n";
+        }
+      } catch (err) {
+        const payload = formatDbgaStreamError(err, "mdd");
+        console.error("[MDD job events] error:", payload.message);
+        yield JSON.stringify({ type: "error", ...payload, cursor }) + "\n";
+      }
+    })();
+    const stream = Readable.from(lines);
+    res.on("close", () => {
+      abort.abort();
+      stream.destroy();
+    });
+    stream.on("error", (err) => {
+      console.error("[MDD job events] stream error:", err);
+      if (!res.destroyed) {
+        try { res.end(); } catch { /* ignore */ }
+      }
+    });
+    stream.pipe(res);
   }
 
   @Get("mdd/jobs/:jobId")
@@ -375,33 +538,12 @@ export class AiAnalysisController {
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
-    this.registerMddStreamLock(projectId);
     const service = this.aiAnalysis;
-    const stream = Readable.from(
-      (async function* () {
-        try {
-          for await (const event of service.streamMddAnalysis(dbgaContent, projectId, stageId)) {
-            yield JSON.stringify(event) + "\n";
-          }
-        } catch (err) {
-          const payload = formatDbgaStreamError(err);
-          console.error("[MDD stream] error:", payload.message);
-          yield JSON.stringify({ type: "error", ...payload }) + "\n";
-        }
-      })(),
-    );
-    // Si el cliente se desconecta, destruir el stream para no quedarlo colgado
-    res.on("close", () => {
-      this.releaseMddStreamLock(projectId);
-      stream.destroy();
+    this.pipeMddNdjson(res, {
+      tag: "MDD stream",
+      projectId,
+      run: (signal) => service.streamMddAnalysis(dbgaContent, projectId, stageId, undefined, { signal }),
     });
-    stream.on("error", (err) => {
-      console.error("[MDD stream] stream error:", err);
-      if (!res.destroyed) {
-        try { res.end(); } catch { /* ignore */ }
-      }
-    });
-    stream.pipe(res);
   }
 
   /**
@@ -443,40 +585,21 @@ export class AiAnalysisController {
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
-    this.registerMddStreamLock(projectId);
     const service = this.aiAnalysis;
-    const stream = Readable.from(
-      (async function* () {
-        try {
-          for await (const event of service.streamMddAnalysisWithManager(
-            dbgaContent,
-            projectId,
-            initialMessage,
-            mddContent,
-            stageId,
-            imageAttachments,
-          )) {
-            yield JSON.stringify(event) + "\n";
-          }
-        } catch (err) {
-          const payload = formatDbgaStreamError(err);
-          console.error("[MDD stream/manager] error:", payload.message);
-          yield JSON.stringify({ type: "error", ...payload }) + "\n";
-        }
-      })(),
-    );
-    // Si el cliente se desconecta, destruir el stream para no quedarlo colgado
-    res.on("close", () => {
-      this.releaseMddStreamLock(projectId);
-      stream.destroy();
+    this.pipeMddNdjson(res, {
+      tag: "MDD stream/manager",
+      projectId,
+      run: (signal) =>
+        service.streamMddAnalysisWithManager(
+          dbgaContent,
+          projectId,
+          initialMessage,
+          mddContent,
+          stageId,
+          imageAttachments,
+          { signal },
+        ),
     });
-    stream.on("error", (err) => {
-      console.error("[MDD stream/manager] stream error:", err);
-      if (!res.destroyed) {
-        try { res.end(); } catch { /* ignore */ }
-      }
-    });
-    stream.pipe(res);
   }
 
   /**
@@ -523,7 +646,7 @@ export class AiAnalysisController {
             yield JSON.stringify(event) + "\n";
           }
         } catch (err) {
-          const payload = formatDbgaStreamError(err);
+          const payload = formatDbgaStreamError(err, "mdd");
           console.error("[MDD stream/regenerate-section] error:", payload.message);
           yield JSON.stringify({ type: "error", ...payload }) + "\n";
         }
@@ -576,34 +699,12 @@ export class AiAnalysisController {
     res.flushHeaders();
 
     const service = this.aiAnalysis;
-    const stream = Readable.from(
-      (async function* () {
-        try {
-          for await (const event of service.streamMddResume(
-            projectId,
-            threadId,
-            userMessage,
-            mddContent,
-            imageAttachments,
-          )) {
-            yield JSON.stringify(event) + "\n";
-          }
-        } catch (err) {
-          const payload = formatDbgaStreamError(err);
-          console.error("[MDD stream/resume] error:", payload.message);
-          yield JSON.stringify({ type: "error", ...payload }) + "\n";
-        }
-      })(),
-    );
-    // Si el cliente se desconecta, destruir el stream para no quedarlo colgado
-    res.on("close", () => { stream.destroy(); });
-    stream.on("error", (err) => {
-      console.error("[MDD stream/resume] stream error:", err);
-      if (!res.destroyed) {
-        try { res.end(); } catch { /* ignore */ }
-      }
+    this.pipeMddNdjson(res, {
+      tag: "MDD stream/resume",
+      projectId,
+      run: (signal) =>
+        service.streamMddResume(projectId, threadId, userMessage, mddContent, imageAttachments, { signal }),
     });
-    stream.pipe(res);
   }
 
   /**

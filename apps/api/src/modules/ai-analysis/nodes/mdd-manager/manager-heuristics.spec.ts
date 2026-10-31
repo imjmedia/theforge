@@ -1,6 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { isPlanApproval } from "./manager-heuristics.js";
+import {
+  classifyPlanResponse,
+  getPlanApprovalExtra,
+  inferSectionsFromMessage,
+  isPlanApproval,
+} from "./manager-heuristics.js";
 import { USER_STOP_PATTERN } from "./manager-constants.js";
 import { managerParseFallbackDecision } from "./manager-llm-turn.js";
 import { dbgaContentWithUserText } from "./manager-context.util.js";
@@ -25,6 +30,16 @@ describe("isPlanApproval", () => {
       "perfecto!",
       "aprobado",
       "confirmo",
+      "Me parece bien",
+      "Claro",
+      "Está bien",
+      "Esta bien",
+      "Por supuesto",
+      "Procedan",
+      "Continúa",
+      "Continua",
+      "claro que sí, procede",
+      "me parece bien, adelante",
     ]) {
       assert.equal(isPlanApproval(msg), true, `debería aprobar: ${msg}`);
     }
@@ -32,11 +47,8 @@ describe("isPlanApproval", () => {
 
   it("rechaza mensajes con señales de modificación o que no empiezan afirmando", () => {
     for (const msg of [
-      "sí, pero cambia la sección 6",
-      "sí, quita Kubernetes",
       "no",
       "no, mejor modifica el plan",
-      "ok, antes agrega MFA",
       "quiero cambiar el stack a Dokploy",
       "simplemente no",
       "",
@@ -51,8 +63,68 @@ describe("isPlanApproval", () => {
     assert.equal(isPlanApproval("valentía"), false);
   });
 
-  it("rechaza mensajes largos aunque empiecen con sí", () => {
-    assert.equal(isPlanApproval("sí, " + "x".repeat(100)), false);
+  it("aprueba aunque añada una nota ('sí, pero agrega X'); la nota se expone como extra", () => {
+    assert.equal(isPlanApproval("sí, pero agrega MFA obligatorio"), true);
+    assert.equal(getPlanApprovalExtra("sí, pero agrega MFA obligatorio"), "agrega MFA obligatorio");
+    assert.equal(isPlanApproval("sí, procede, no olvides §6"), true);
+    assert.match(getPlanApprovalExtra("sí, procede, no olvides §6") ?? "", /no olvides §6/);
+    assert.equal(isPlanApproval("sí, quita Kubernetes"), true);
+    assert.equal(getPlanApprovalExtra("sí, quita Kubernetes"), "quita Kubernetes");
+    assert.equal(isPlanApproval("ok, antes agrega MFA"), true);
+    assert.equal(getPlanApprovalExtra("ok, antes agrega MFA"), "antes agrega MFA");
+    assert.equal(getPlanApprovalExtra("sí, adelante"), undefined);
+    assert.equal(getPlanApprovalExtra("Me parece bien"), undefined);
+  });
+
+  it("una aprobación larga sin verbo de modificación se aprueba y conserva el texto como extra", () => {
+    const msg = "sí, " + "x".repeat(100);
+    assert.equal(isPlanApproval(msg), true);
+    assert.ok(getPlanApprovalExtra(msg));
+  });
+
+  it("freno explícito tras la afirmación NO aprueba", () => {
+    assert.equal(isPlanApproval("sí pero espera, no ejecutes todavía"), false);
+    assert.equal(classifyPlanResponse("ok, no lo ejecutes aún").kind, "modify");
+  });
+});
+
+describe("classifyPlanResponse", () => {
+  it("modify: rechazo claro o instrucción sin afirmación", () => {
+    for (const msg of ["no", "No, mejor modifica el plan", "cambia el stack a Dokploy", "agrega una tabla de auditoría", "quiero otro stack"]) {
+      assert.equal(classifyPlanResponse(msg).kind, "modify", msg);
+    }
+  });
+
+  it("ambiguous: duda o pregunta sin verbo de cambio ni rechazo", () => {
+    for (const msg of ["hmm", "¿qué hace el paso 3?", "no sé", "no sé, déjame pensarlo", "", "   "]) {
+      assert.equal(classifyPlanResponse(msg).kind, "ambiguous", msg);
+    }
+  });
+});
+
+describe("inferSectionsFromMessage", () => {
+  it("mapea lógica / edge cases / §5 a section5", () => {
+    assert.ok(inferSectionsFromMessage("revisa la lógica de reintentos").includes("section5"));
+    assert.ok(inferSectionsFromMessage("faltan edge cases de pagos").includes("section5"));
+    assert.ok(inferSectionsFromMessage("cubre los casos borde").includes("section5"));
+    assert.ok(inferSectionsFromMessage("regenera la sección 5").includes("section5"));
+    assert.ok(inferSectionsFromMessage("completa §5 por favor").includes("section5"));
+  });
+
+  it("§N con espacios previos mapea como 'sección N' (antes no había frontera \\b antes de §)", () => {
+    assert.ok(inferSectionsFromMessage("ajusta §3 y §6").includes("software_architect"));
+    assert.ok(inferSectionsFromMessage("ajusta §3 y §6").includes("security"));
+    assert.ok(inferSectionsFromMessage("actualiza §7").includes("integration"));
+  });
+
+  it("no contiene tokens específicos de cliente (DENUE/INEGI)", () => {
+    assert.deepEqual(inferSectionsFromMessage("consulta al directorio estadístico DENUE del INEGI"), []);
+  });
+
+  it("section5 se expande a un nodo válido del plan", async () => {
+    const { expandSectionsToRun } = await import("./manager-plan.js");
+    const nodes = expandSectionsToRun(inferSectionsFromMessage("revisa edge cases"));
+    assert.ok(nodes.includes("section5"));
   });
 });
 

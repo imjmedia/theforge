@@ -1,6 +1,9 @@
 import { PlanningDocumentFields, DocumentCompleteness, DOC_COMPLETE_MIN_LENGTH, DOC_PARTIAL_MIN_LENGTH } from "./estimation.types.js";
-const DOC_WEIGHTS: Record<keyof PlanningDocumentFields, number> = {
-  mddContent: 0,
+/** Peso del MDD en la completitud: es el documento central de la etapa (antes 0 → un MDD perfecto no sumaba). */
+export const MDD_COMPLETENESS_WEIGHT = 0.3;
+
+/** Pesos relativos previos del resto de documentos (suman 1.0); se reescalan a (1 − MDD_COMPLETENESS_WEIGHT). */
+const OTHER_DOC_BASE_WEIGHTS: Record<Exclude<keyof PlanningDocumentFields, "mddContent">, number> = {
   brdContent: 0.22,
   specContent: 0.14,
   architectureContent: 0.14,
@@ -12,6 +15,19 @@ const DOC_WEIGHTS: Record<keyof PlanningDocumentFields, number> = {
   infraContent: 0.05,
   tasksContent: 0.05,
 };
+
+function buildDocWeights(): Record<keyof PlanningDocumentFields, number> {
+  const baseSum = Object.values(OTHER_DOC_BASE_WEIGHTS).reduce((a, b) => a + b, 0);
+  const scale = (1 - MDD_COMPLETENESS_WEIGHT) / baseSum;
+  const out = { mddContent: MDD_COMPLETENESS_WEIGHT } as Record<keyof PlanningDocumentFields, number>;
+  for (const [k, w] of Object.entries(OTHER_DOC_BASE_WEIGHTS)) {
+    out[k as keyof PlanningDocumentFields] = w * scale;
+  }
+  return out;
+}
+
+/** Pesos efectivos de completitud por documento; suman 1. Exportado para tests. */
+export const DOC_WEIGHTS: Record<keyof PlanningDocumentFields, number> = buildDocWeights();
 
 const THIN_USE_CASES_RE =
   /#\s*Casos de uso\s*\(\s*thin\s*[—–-]\s*ProcessInventory\s*\)|thin\s*[—–-]\s*ProcessInventory/i;

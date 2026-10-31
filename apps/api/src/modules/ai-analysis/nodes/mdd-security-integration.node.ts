@@ -7,7 +7,7 @@ import type { MDDStateType } from "../state/index.js";
 import { createMddSecurityNode } from "./mdd-security.node.js";
 import { createMddIntegrationNode } from "./mdd-integration.node.js";
 import { getMddDraftSummary, replaceSection6Or7InDraft } from "../utils/mdd-sanitize.js";
-import { resolveSection7BodyForMerge } from "../utils/mdd-tail-parallel.util.js";
+import { mergeBranchLastStepFailed, resolveSection7BodyForMerge } from "../utils/mdd-tail-parallel.util.js";
 import type { MddStructured } from "../state/mdd-structured.schema.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:SecurityIntegration] ${msg}`, ...args);
@@ -62,6 +62,8 @@ export function createMddSecurityIntegrationNode(llm: BaseChatModel) {
       ...(Array.isArray((intResult as Record<string, unknown>).internalDirectives) ? (intResult as Record<string, unknown>).internalDirectives as { from: string; to: string; message: string }[] : []),
     ];
 
+    const lastStepFailed = mergeBranchLastStepFailed([secResult, intResult]);
+
     const sum = getMddDraftSummary(finalDraft);
     LOG("ok parallel done finalDraftLen=%s section2=%s §6=%s §7=%s",
       sum.length, sum.section2,
@@ -73,6 +75,8 @@ export function createMddSecurityIntegrationNode(llm: BaseChatModel) {
       mddDraft: finalDraft,
       mddStructured: mergedStructured,
       ...(directives.length > 0 ? { internalDirectives: directives } : {}),
+      // No perder el fallo de Security/Integration en el merge paralelo.
+      ...(lastStepFailed ? { lastStepFailed } : {}),
     };
   };
 }

@@ -5,6 +5,7 @@ import {
   MDD_QUALITY_TABLE_ROWS,
   resolveMddReadinessHintActions,
 } from "@/utils/mddSectionRegen";
+import { resolveWorkshopHeadlineScore, type LiveMetricsAuditorFields } from "@/utils/workshopSemaphoreStatus";
 import type { WorkshopAuditModalProps } from "./workshopModals.types";
 
 /** MDD audit breakdown modal (precision, traceability, agent logs). */
@@ -29,6 +30,9 @@ export function WorkshopAuditModal({
 }: WorkshopAuditModalProps) {
   if (!open) return null;
 
+  const headline = resolveWorkshopHeadlineScore(liveMetrics as (typeof liveMetrics & LiveMetricsAuditorFields) | null);
+  const auditorHeadline = headline.source === "auditor";
+
   return (
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={() => onClose()}>
     <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -40,7 +44,11 @@ export function WorkshopAuditModal({
           </h2>
           {liveMetrics ? (
             <p className="mt-1 text-sm text-[var(--muted-foreground)]">
-              Precisión integral: <span className="font-semibold text-[var(--foreground)]">{liveMetrics.precision}%</span>
+              {auditorHeadline ? "Nota del Auditor" : "Precisión integral"}:{" "}
+              <span className="font-semibold text-[var(--foreground)]">{headline.value}%</span>
+              {auditorHeadline && headline.integral != null ? (
+                <span className="text-xs text-[var(--foreground-subtle)]"> · Integral {headline.integral}%</span>
+              ) : null}
               {documentCompleteness != null || consistencyScore != null || liveMetrics.mddQualityScore != null ? (
                 <span className="text-xs text-[var(--foreground-subtle)]">
                   {" "}
@@ -203,7 +211,7 @@ export function WorkshopAuditModal({
                 ) : null}
                 {liveMetrics?.mddQualityScore != null ? (
                   <li>
-                    Calidad MDD (45%):{" "}
+                    Calidad MDD (45%{auditorHeadline ? ", Auditor" : ", regex"}):{" "}
                     <span className="font-mono font-medium text-[var(--foreground)]">
                       {liveMetrics.mddQualityScore}%
                     </span>

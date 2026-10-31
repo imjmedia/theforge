@@ -46,4 +46,15 @@ describe("formatDbgaStreamError", () => {
     assert.match(message, /formato inesperado/i);
     assert.doesNotMatch(message, /Unexpected token/i);
   });
+
+  it("flow mdd: mensaje y código propios para el límite de recursión", () => {
+    const payload = formatDbgaStreamError(new Error("Recursion limit of 100 reached"), "mdd");
+    assert.equal(payload.code, "MDD_RECURSION_LIMIT");
+    assert.match(payload.message, /flujo MDD/i);
+    assert.doesNotMatch(payload.message, /competidores/i);
+  });
+
+  it("flow mdd no altera otros errores", () => {
+    assert.equal(formatDbgaStreamError(new Error("timeout de red"), "mdd").message, "timeout de red");
+  });
 });

@@ -33,6 +33,10 @@ export interface LiveMetricsResult {
   roles: Record<string, number>;
   rolesHours: Record<string, number>;
   status: "red" | "yellow" | "green";
+  /** Score del Auditor LLM cuando el contenido evaluado coincide con el borrador auditado. */
+  auditorScore?: number;
+  /** Origen de la calidad MDD en la métrica integral: Auditor LLM o semáforo regex de respaldo. */
+  mddQualitySource?: "auditor" | "regex";
   /** @deprecated Usar mddReadinessHints */
   readinessHints?: string[];
   mddReadinessHints?: string[];

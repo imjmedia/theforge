@@ -1,7 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import {
+  DELIVERY_GATE_RESET_UPDATE,
+  DELIVERY_GATE_STOP,
+  fingerprintGateBlockers,
   fingerprintPlaceholderBlockers,
+  guardFixTargetAgainstSealedScopedSections,
+  hasRepeatedGateBlockers,
+  shouldStopDeliveryGateLoop,
   guardFixTargetAgainstSection5Blockers,
   hasRepeatedPlaceholderBlockers,
   hasUnresolvedAutoRepairableGateWarnings,
@@ -349,5 +355,72 @@ describe("shouldContinueDeliveryGateLoop", () => {
       ),
       false,
     );
+  });
+});
+
+describe("progreso del loop del gate (fingerprint, sentinel, reset)", () => {
+  const gate = (blockers: string[], warnings: string[] = []) => ({
+    ok: blockers.length === 0,
+    score: 60,
+    blockers,
+    warnings,
+  });
+  const B2 = ["Sección 2. Arquitectura y Stack tiene contenido insuficiente (50 chars; mínimo 200)."];
+
+  it("fingerprint de TODOS los blockers: orden/espacios no importan", () => {
+    const a = fingerprintGateBlockers(["B  uno", "a dos"]);
+    const b = fingerprintGateBlockers(["a dos", "b uno"]);
+    assert.equal(a, b);
+    assert.equal(hasRepeatedGateBlockers(a, ["a dos", "B uno"]), true);
+    assert.equal(hasRepeatedGateBlockers(a, ["a dos"]), false);
+    assert.equal(hasRepeatedGateBlockers(undefined, ["a dos"]), false);
+  });
+
+  it("blockers idénticos al intento anterior detienen el loop", () => {
+    const fp = fingerprintGateBlockers(B2);
+    assert.equal(shouldStopDeliveryGateLoop(gate(B2), "stack_architect", 1, fp), true);
+    assert.equal(shouldStopDeliveryGateLoop(gate(B2), "stack_architect", 1, undefined), false);
+    assert.equal(
+      shouldStopDeliveryGateLoop(gate([...B2, "Sección 3. Modelo de Datos tiene contenido insuficiente (10 chars; mínimo 100)."]), "stack_architect", 1, fp),
+      false,
+    );
+  });
+
+  it("se detiene al agotar intentos y con el sentinel stop", () => {
+    assert.equal(shouldStopDeliveryGateLoop(gate(B2), "stack_architect", 3), true);
+    assert.equal(shouldStopDeliveryGateLoop(gate(B2), DELIVERY_GATE_STOP, 0), true);
+  });
+
+  it("fixTarget integration sin referencias a §6/§7 → stop; con referencias → continúa", () => {
+    assert.equal(shouldStopDeliveryGateLoop(gate(B2), "integration", 0), true);
+    assert.equal(
+      shouldStopDeliveryGateLoop(gate(["Sección 7. Infraestructura tiene contenido insuficiente (20 chars; mínimo 200)."]), "integration", 0),
+      false,
+    );
+    assert.equal(
+      shouldStopDeliveryGateLoop(gate([], ["§6: LDAP/AD es auth principal pero el texto documenta hash local."]), "integration", 0),
+      false,
+    );
+  });
+
+  it("§4 sellado + blocker de §4 sin referencias a §6/§7 → sentinel stop (no redirige a integration)", () => {
+    const rows = Array.from({ length: 6 }, (_, i) => `| GET | /api/v1/ep-${i} | list |`).join("\n");
+    const draft = `# MDD\n## 4. Contratos de API\n${rows}\n## 5. Lógica y Edge Cases\nx\n`;
+    const target = guardFixTargetAgainstSealedScopedSections(
+      "api_contracts",
+      ["§4 Contratos de API no tiene endpoints reales (método + ruta; placeholder o solo stubs)."],
+      { mddDraft: draft, apiContractsArchitectMddDraftSnapshot: draft },
+    );
+    assert.equal(target, DELIVERY_GATE_STOP);
+  });
+
+  it("DELIVERY_GATE_RESET_UPDATE resetea todo el estado del loop", () => {
+    assert.deepEqual(DELIVERY_GATE_RESET_UPDATE, {
+      deliveryGateAttempt: 0,
+      deliveryGateLoopActive: false,
+      deliveryGateFixTarget: undefined,
+      deliveryGatePlaceholderFingerprint: undefined,
+      deliveryGateBlockersFingerprint: undefined,
+    });
   });
 });

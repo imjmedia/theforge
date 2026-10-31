@@ -1,36 +1,62 @@
+import { createHash } from "node:crypto";
 import type { MDDStateType } from "../state/index.js";
 
 // ---------------------------------------------------------------------------
 // Input-hash helpers for each LLM node.
 //
-// Each function extracts ONLY the state fields that the node actually reads
-// as input.  Fields unique to later nodes (e.g. auditorFeedback is consumed
-// by clarifier but produced by auditor) are excluded to avoid cache poisoning
-// when a downstream node hasn't run yet.
+// Each function extracts ALL the state fields that the node actually reads as
+// input. Omitting a read field makes the cache replay a stale output when only
+// that field changes (e.g. auditorFeedback or currentStepGoal), so the lists
+// below are derived from `state.<field>` usages in each node.
+//
+// Large strings (drafts, snapshots) are hashed IN FULL (sha256) instead of
+// truncated, so an edit past any prefix still changes the key.
 // ---------------------------------------------------------------------------
 
 export function clarifierInput(state: MDDStateType): Record<string, unknown> {
   return {
-    dbgaContent: state.dbgaContent,
-    mddDraft: truncStr(state.mddDraft, 20_000),
+    dbgaContent: hashStr(state.dbgaContent),
+    mddDraft: hashStr(state.mddDraft),
+    mddStructured: hashValue(state.mddStructured),
+    previousMddDraftForMerge: hashStr(state.previousMddDraftForMerge),
+    clarifiedScope: hashStr(state.clarifiedScope),
     auditorFeedback: state.auditorFeedback,
+    auditorScore: state.auditorScore,
     userInputAccumulated: state.userInputAccumulated,
+    lastUserMessage: state.lastUserMessage,
     mddComplexity: state.mddComplexity,
     managerQuestions: state.managerQuestions,
     requestQuestionsOnly: state.requestQuestionsOnly,
+    deliveryGateFixTarget: state.deliveryGateFixTarget,
+    deliveryGateLoopActive: state.deliveryGateLoopActive,
     mddIteration: state.mddIteration,
   };
 }
 
 export function softwareArchitectInput(state: MDDStateType): Record<string, unknown> {
   return {
-    clarifiedScope: state.clarifiedScope,
-    mddDraft: truncStr(state.mddDraft, 20_000),
-    mddStructuredKeys: state.mddStructured
-      ? Object.keys(state.mddStructured).filter((k) => k !== "seguridad" && k !== "integracion")
-      : undefined,
+    clarifiedScope: hashStr(state.clarifiedScope),
+    dbgaContent: hashStr(state.dbgaContent),
+    brdContent: hashStr(state.brdContent),
+    mddDraft: hashStr(state.mddDraft),
+    previousMddDraftForMerge: hashStr(state.previousMddDraftForMerge),
+    mddStructured: hashValue(state.mddStructured),
     acceptedProposalDirective: state.acceptedProposalDirective,
     architectCriticFeedback: state.architectCriticFeedback,
+    auditorFeedback: state.auditorFeedback,
+    currentStepGoal: state.currentStepGoal,
+    currentStepAllowedTools: state.currentStepAllowedTools,
+    deliveryGateFixTarget: state.deliveryGateFixTarget,
+    deliveryGateLoopActive: state.deliveryGateLoopActive,
+    userInputAccumulated: state.userInputAccumulated,
+    lastUserMessage: state.lastUserMessage,
+    internalDirectives: state.internalDirectives,
+    stackArchitectAttempt: state.stackArchitectAttempt,
+    stackArchitectMddDraftSnapshot: hashStr(state.stackArchitectMddDraftSnapshot),
+    dataModelArchitectMddDraftSnapshot: hashStr(state.dataModelArchitectMddDraftSnapshot),
+    apiContractsArchitectMddDraftSnapshot: hashStr(state.apiContractsArchitectMddDraftSnapshot),
+    clarifierMddDraftSnapshot: hashStr(state.clarifierMddDraftSnapshot),
+    sectionsToRun: state.sectionsToRun,
     mddComplexity: state.mddComplexity,
     mddIteration: state.mddIteration,
     isLegacyProject: state.isLegacyProject,
@@ -40,88 +66,100 @@ export function softwareArchitectInput(state: MDDStateType): Record<string, unkn
 
 export function securityInput(state: MDDStateType): Record<string, unknown> {
   return {
-    clarifiedScope: state.clarifiedScope,
-    mddDraft: truncStr(state.mddDraft, 20_000),
-    mddStructuredSeguridad: state.mddStructured?.seguridad,
+    clarifiedScope: hashStr(state.clarifiedScope),
+    mddDraft: hashStr(state.mddDraft),
+    mddStructured: hashValue(state.mddStructured),
+    securitySectionMd: hashStr(state.securitySectionMd),
+    securityArchitectMddDraftSnapshot: hashStr(state.securityArchitectMddDraftSnapshot),
     acceptedProposalDirective: state.acceptedProposalDirective,
     auditorFeedback: state.auditorFeedback,
+    deliveryGateFixTarget: state.deliveryGateFixTarget,
+    deliveryGateLoopActive: state.deliveryGateLoopActive,
+    userInputAccumulated: state.userInputAccumulated,
+    lastUserMessage: state.lastUserMessage,
+    internalDirectives: state.internalDirectives,
   };
 }
 
 export function integrationInput(state: MDDStateType): Record<string, unknown> {
   return {
-    clarifiedScope: state.clarifiedScope,
-    mddDraft: truncStr(state.mddDraft, 20_000),
-    mddStructuredIntegracion: state.mddStructured?.integracion,
+    clarifiedScope: hashStr(state.clarifiedScope),
+    mddDraft: hashStr(state.mddDraft),
+    mddStructured: hashValue(state.mddStructured),
+    previousMddDraftForMerge: hashStr(state.previousMddDraftForMerge),
+    integrationSectionMd: hashStr(state.integrationSectionMd),
+    integrationArchitectMddDraftSnapshot: hashStr(state.integrationArchitectMddDraftSnapshot),
     acceptedProposalDirective: state.acceptedProposalDirective,
     auditorFeedback: state.auditorFeedback,
     userInputAccumulated: state.userInputAccumulated,
+    lastUserMessage: state.lastUserMessage,
+    deliveryGateFixTarget: state.deliveryGateFixTarget,
+    deliveryGateLoopActive: state.deliveryGateLoopActive,
+    sectionsToRun: state.sectionsToRun,
+    internalDirectives: state.internalDirectives,
   };
 }
 
 /** Combined Security + Integration node: union of both nodes' input fields to avoid stale cache. */
 export function securityIntegrationInput(state: MDDStateType): Record<string, unknown> {
   return {
-    clarifiedScope: state.clarifiedScope,
-    mddDraft: truncStr(state.mddDraft, 20_000),
-    mddStructuredSeguridad: state.mddStructured?.seguridad,
-    mddStructuredIntegracion: state.mddStructured?.integracion,
-    acceptedProposalDirective: state.acceptedProposalDirective,
-    auditorFeedback: state.auditorFeedback,
-    userInputAccumulated: state.userInputAccumulated,
+    ...securityInput(state),
+    ...integrationInput(state),
   };
 }
 
 export function llmFormatterInput(state: MDDStateType): Record<string, unknown> {
   return {
     mddStructuredKeys: state.mddStructured ? Object.keys(state.mddStructured).sort() : undefined,
-    // Only the first 4K of each structured section to keep hash cheap
-    mddStructuredSnap: snapMddStructured(state.mddStructured, 4_000),
+    mddStructuredSnap: snapMddStructured(state.mddStructured),
   };
 }
 
 export function crossConsistencyInput(state: MDDStateType): Record<string, unknown> {
   return {
-    mddDraft: truncStr(state.mddDraft, 20_000),
+    mddDraft: hashStr(state.mddDraft),
     mddComplexity: state.mddComplexity,
   };
 }
 
 export function architectCriticInput(state: MDDStateType): Record<string, unknown> {
   return {
-    // Only §§3-4 are relevant for the critic
-    mddDraftSection3_4: extractSections3And4(state.mddDraft ?? "", 10_000),
+    // Only §§3-4 are relevant for the critic (hashed in full)
+    mddDraftSection3_4: hashStr(extractSections3And4(state.mddDraft ?? "")),
     acceptedProposalDirective: state.acceptedProposalDirective,
   };
 }
 
 // ---- helpers --------------------------------------------------------------
 
-/** Truncate a long string to `max` chars for hashing. */
-function truncStr(s: string | undefined, max: number): string | undefined {
-  if (!s) return s;
-  return s.length > max ? s.slice(0, max) : s;
+/** sha256 (hex) of the FULL string; `undefined`/empty pass through unchanged. */
+export function hashStr(s: string | undefined | null): string | undefined {
+  if (!s) return s ?? undefined;
+  return createHash("sha256").update(s).digest("hex");
 }
 
-/** Snap the first `max` chars of each string/key in mddStructured. */
-function snapMddStructured(
-  s: Record<string, unknown> | undefined,
-  max: number,
-): Record<string, string> | undefined {
+/** sha256 of the JSON serialization of a (possibly large) structured value. */
+function hashValue(v: unknown): string | undefined {
+  if (v === undefined || v === null) return undefined;
+  return hashStr(JSON.stringify(v));
+}
+
+/** Per-key sha256 of the FULL value of each mddStructured entry. */
+function snapMddStructured(s: Record<string, unknown> | undefined): Record<string, string> | undefined {
   if (!s) return undefined;
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(s)) {
-    out[k] = truncStr(String(v ?? ""), max) ?? "";
+    const str = typeof v === "string" ? v : JSON.stringify(v ?? "");
+    out[k] = hashStr(str) ?? "";
   }
   return out;
 }
 
 /** Extract only §§3-4 from the draft for the architect critic. */
-function extractSections3And4(draft: string, max: number): string {
+function extractSections3And4(draft: string): string {
   const section3 = extractSectionBody(draft, /^##\s*3\.\s*Modelo\s+(?:de\s+)?datos/im);
   const section4 = extractSectionBody(draft, /^##\s*4\.\s*Contratos\s+de\s+API/im);
-  const combined = [section3, section4].filter(Boolean).join("\n\n---\n\n");
-  return truncStr(combined, max) ?? "";
+  return [section3, section4].filter(Boolean).join("\n\n---\n\n");
 }
 
 function extractSectionBody(draft: string, heading: RegExp): string {

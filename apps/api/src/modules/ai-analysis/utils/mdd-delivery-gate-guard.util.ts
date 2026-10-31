@@ -5,22 +5,30 @@
 import type { MddDeliveryGateResult } from "@theforge/shared-types";
 import { prepareMddForOutput } from "./mdd-prepare-output.js";
 import { validateMddForDelivery } from "./mdd-delivery-gate.util.js";
+import type { MddComplexityLevel } from "../state/mdd-state.schema.js";
 
 export const MDD_DELIVERY_GATE_ERR = "ERR_MDD_DELIVERY_GATE";
 
 /**
  * Evalúa el gate tras el pipeline determinista de prepareMddForOutput (fixes seguros en mdd-sanitize).
  * @param domainContext BRD/DBGA opcionales para blockers de dominio (PLAN-CASCADE-90-ACCURACY).
+ *   `mddComplexity` opcional: se reenvía al pipeline y al gate para usar el mismo perfil de umbrales
+ *   que el pipeline (ver `resolveDeliveryGateProfile`); ausente → perfil indulgente.
  */
 export async function evaluateMddDeliveryGatePrepared(
   mddRaw: string,
-  domainContext?: { brdMarkdown?: string | null; dbgaMarkdown?: string | null },
+  domainContext?: {
+    brdMarkdown?: string | null;
+    dbgaMarkdown?: string | null;
+    mddComplexity?: MddComplexityLevel;
+  },
 ): Promise<MddDeliveryGateResult> {
   const gateRef: { current?: MddDeliveryGateResult } = {};
   const prepared = await prepareMddForOutput(mddRaw, {
     deliveryGateRef: gateRef,
     brdMarkdown: domainContext?.brdMarkdown,
     dbgaMarkdown: domainContext?.dbgaMarkdown,
+    mddComplexity: domainContext?.mddComplexity,
     formatForPersist: false,
   });
   return gateRef.current ?? validateMddForDelivery(prepared, domainContext);

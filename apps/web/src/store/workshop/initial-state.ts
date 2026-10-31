@@ -93,6 +93,8 @@ export const workshopInitialState = {
   liveMetrics: null as LiveMetricsResult | null,
   planValidation: null as PlanValidationPersisted | null,
   managerThreadId: null as string | null,
+  activeChatJobId: null as string | null,
+  activeChatJobCursor: 0,
   mddReviewing: false,
   mddReapplyingFormat: false,
   mddPersisting: false,

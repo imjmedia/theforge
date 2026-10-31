@@ -7,7 +7,6 @@ import {
   extractContratosSectionBody,
   isContratosPlaceholder,
   isContratosSubstantial,
-  MIN_CONTRATOS_LENGTH,
   stripLeadingContratosPlaceholder,
 } from "./mdd-sanitize/contratos-format.js";
 import {
@@ -59,8 +58,25 @@ function section5BodyIsPreserveBaseline(body: string | null | undefined): boolea
   return sectionBodyIsSubstantial(trimmed, MIN_SUBSTANTIAL_SECTION5_BODY_LEN);
 }
 
-/** Ratio mínimo (nuevo/baseline) para aceptar merge de §5. */
+/** @deprecated Sin uso: los reverts por ratio de longitud se eliminaron (solo contenido destruido). */
 export const SECTION5_REGRESSION_LENGTH_RATIO = 0.75;
+
+/** Longitud mínima por defecto para que un cuerpo "sobreviva" (por debajo se da por destruido). */
+export const MIN_SURVIVING_SECTION_BODY_LEN = 60;
+
+/**
+ * True si el cuerpo fue destruido: ausente, vacío, placeholder del pipeline o por debajo del
+ * mínimo sustancial de la sección (`minLen`). Es el ÚNICO criterio de restore: un cuerpo
+ * real que solo es más corto que el baseline NUNCA se revierte.
+ */
+export function isSectionBodyDestroyed(
+  body: string | null | undefined,
+  minLen: number = MIN_SURVIVING_SECTION_BODY_LEN,
+): boolean {
+  const trimmed = (body ?? "").trim();
+  if (!trimmed || trimmed.length < minLen) return true;
+  return isMddSectionPipelinePlaceholderBody(trimmed);
+}
 
 /** §5 duplicada hinchada (cola >> núcleo): no usar como baseline de preserve. */
 const SECTION5_INFLATED_DUP_RATIO = 3;
@@ -97,10 +113,13 @@ export function resolveSection5PreserveBaselineBody(baseline: string): string | 
   return extractBestSection5Body(trimmed);
 }
 
-/** Baseline sustancial cuya longitud activa protección anti-regresión §5. */
+/** @deprecated Sin uso: los reverts por ratio de longitud se eliminaron. */
 export const MIN_SECTION5_BASELINE_FOR_REGRESSION_GUARD = 1_200;
 
-/** True si candidato §5 es claramente peor que baseline sustancial. */
+/**
+ * True SOLO si el candidato §5 destruyó el contenido (vacío/placeholder/trivial) mientras el
+ * baseline era sustancial. Un §5 más corto que el baseline NO es regresión.
+ */
 export function isSection5SectionRegression(
   baselineBody: string | null | undefined,
   candidateBody: string | null | undefined,
@@ -109,9 +128,7 @@ export function isSection5SectionRegression(
   const candidate = (candidateBody ?? "").trim();
   if (!baseline || !candidate) return false;
   if (!section5BodyIsPreserveBaseline(baseline)) return false;
-  if (!sectionBodyIsSubstantial(candidate, MIN_SUBSTANTIAL_SECTION5_BODY_LEN)) return true;
-  if (baseline.length < MIN_SECTION5_BASELINE_FOR_REGRESSION_GUARD) return false;
-  return candidate.length / baseline.length < SECTION5_REGRESSION_LENGTH_RATIO;
+  return isSectionBodyDestroyed(candidate, MIN_SUBSTANTIAL_SECTION5_BODY_LEN);
 }
 
 export type TailSectionSnapshotSource = {
@@ -340,7 +357,7 @@ export function reinjectTailSectionsFromSnapshotsForGateLoop(
   return out;
 }
 
-/** Restaura §6/§7 si dedupe/normalize las regresó (placeholder, ausente o <50%). */
+/** Restaura §6/§7 si dedupe/normalize las destruyó (placeholder o ausente). */
 export function restoreSections6And7IfRegressed(source: string, normalized: string): string {
   let out = normalized;
   out = preserveSection6IfSubstantial(source, out);
@@ -394,23 +411,17 @@ export function draftHasSubstantialSection3(draft: string): boolean {
   return sectionBodyIsSubstantial(body, MIN_SUBSTANTIAL_SECTION3_BODY_LEN);
 }
 
-/** True si §4 tiene contratos reales (endpoints/JSON; no stub «Falta: definir endpoints…»). */
+/** True si §4 tiene endpoints reales (JSON, método+ruta o tabla GFM; no stub «Falta: definir endpoints…»). Criterio único del gate y del sello scoped. */
 export function draftHasSubstantialSection4(draft: string): boolean {
   return isContratosSubstantial(extractContratosSectionBody((draft ?? "").trim()));
 }
 
 /**
- * §4 persistible tras api_contracts: JSON completo O tabla densa sin placeholder Auditor.
- * Más permisivo que `draftHasSubstantialSection4` (gate) para no perder catálogos solo-tabla.
+ * §4 persistible tras api_contracts. Mismo criterio que el gate (`draftHasSubstantialSection4`):
+ * endpoints reales (JSON, rutas método+path o tabla GFM) sin placeholder del Auditor.
  */
 export function draftHasPersistableSection4(draft: string): boolean {
-  const body = extractContratosSectionBody((draft ?? "").trim());
-  if (!body) return false;
-  if (isContratosSubstantial(body)) return true;
-  const normalized = stripLeadingContratosPlaceholder(body);
-  if (!normalized || normalized.length < MIN_CONTRATOS_LENGTH) return false;
-  if (isContratosPlaceholder(normalized)) return false;
-  return countContratosEndpointRows(normalized) >= 5;
+  return draftHasSubstantialSection4(draft);
 }
 
 /** True si §5 tiene cuerpo real (no placeholder del pipeline). */
@@ -486,7 +497,7 @@ export function isScopedSectionSealed(
       );
     case 4:
       return !!(
-        source.apiContractsArchitectMddDraftSnapshot?.trim() && draftHasPersistableSection4(draft)
+        source.apiContractsArchitectMddDraftSnapshot?.trim() && draftHasSubstantialSection4(draft)
       );
     default:
       return false;
@@ -544,43 +555,27 @@ function preserveSectionBodyIfSubstantial(
   if (!sectionBodyIsSubstantial(prevBody, minLen)) return current;
 
   const curBody = extractBody(current);
+  // Solo se restaura contenido DESTRUIDO (ausente/placeholder/trivial); una sección más corta
+  // que el baseline (p. ej. corregida por el gate-loop) nunca se revierte.
+  const curDestroyed = isSectionBodyDestroyed(curBody, minLen);
   const curSubstantial = sectionBodyIsSubstantial(curBody, minLen);
-  const curShorter = (curBody?.length ?? 0) < (prevBody?.length ?? 0) * 0.5;
   const baselineLen = prevBody?.length ?? 0;
   const curLen = curBody?.length ?? 0;
   const currentDup = mddHasDuplicateSectionHeadings(current);
   const skipCtx = {
     curSubstantial,
-    curShorter,
+    curShorter: curLen < baselineLen,
     baselineDup: false,
     currentDup,
     baselineLen,
     curLen,
   };
 
-  if (curSubstantial && !curShorter) {
-    if (isSection5) logSection5PreserveSkip("current sustancial y no <50% baseline", skipCtx);
+  if (!curDestroyed) {
+    if (isSection5) logSection5PreserveSkip("current no destruida (sin revert por longitud)", skipCtx);
     return current;
   }
 
-  if (curSubstantial && baselineLen > curLen * 3) {
-    if (
-      isSection5 &&
-      prevBody &&
-      curBody &&
-      isSection5SectionRegression(prevBody, curBody)
-    ) {
-      const restored = replaceBody(current, prevBody);
-      if (restored !== current) {
-        console.warn(
-          `[MDD:SectionPreserve] §5 restaurada por regresión (bypass >3× skip) (${curLen}→${baselineLen} chars)`,
-        );
-      }
-      return restored;
-    }
-    if (isSection5) logSection5PreserveSkip("current sustancial pero baseline >3× current", skipCtx);
-    return current;
-  }
   if (currentDup && baselineLen > 0 && baselineLen >= curLen * 2.5) {
     if (isSection5) logSection5PreserveSkip("current headings duplicados y baseline ≥2.5× current", skipCtx);
     return current;
@@ -647,12 +642,9 @@ export function preserveSection3FromDataModelSnapshot(
   const snapTables = (snapBody.match(/\bCREATE\s+TABLE\b/gi) ?? []).length;
   const curTables = (curBody?.match(/\bCREATE\s+TABLE\b/gi) ?? []).length;
 
-  if (
-    draftHasSubstantialSection3(currentDraft) &&
-    curTables >= Math.max(1, Math.ceil(snapTables * 0.5))
-  ) {
-    return currentDraft;
-  }
+  // Solo restaura si §3 fue destruida (ausente/placeholder/trivial); tener menos tablas
+  // que el snapshot NO es motivo de revert (el gate-loop puede podar tablas legítimamente).
+  if (!isSectionBodyDestroyed(curBody, MIN_SUBSTANTIAL_SECTION3_BODY_LEN)) return currentDraft;
 
   const restored = replaceMddSection3Body(currentDraft, snapBody);
   if (restored !== currentDraft) {
@@ -688,9 +680,8 @@ export function preserveSection4FromApiContractsSnapshot(
   const snapRows = countContratosEndpointRows(stripLeadingContratosPlaceholder(snapBody));
   const curRows = countContratosEndpointRows(stripLeadingContratosPlaceholder(curBody ?? ""));
 
-  if (draftHasPersistableSection4(currentDraft) && curRows >= Math.max(3, Math.ceil(snapRows * 0.5))) {
-    return currentDraft;
-  }
+  // Solo restaura si §4 fue destruida (ausente/placeholder/sin endpoints); menos filas NO es revert.
+  if (curBody && !isContratosPlaceholder(curBody)) return currentDraft;
 
   const restored = replaceMddSection4Body(currentDraft, snapBody);
   if (restored !== currentDraft) {
@@ -729,22 +720,12 @@ export function preserveSection4IfSubstantial(baselineDraft: string, currentDraf
   if (!baseline || !current) return current || baseline;
 
   const prevBody = extractContratosSectionBody(baseline);
-  const baselineGateSubstantial = isContratosSubstantial(prevBody);
-  const baselinePersistable = draftHasPersistableSection4(baseline);
-  if (!baselineGateSubstantial && !baselinePersistable) return current;
+  if (!isContratosSubstantial(prevBody)) return current;
 
+  // Solo restaura si §4 fue destruida (ausente/placeholder/sin endpoints). Un §4 más corto o
+  // con menos filas que el baseline se respeta (puede ser un fix del gate-loop).
   const curBody = extractContratosSectionBody(current);
-  const curGateSubstantial = isContratosSubstantial(curBody);
-  const curPersistable = draftHasPersistableSection4(current);
-  const curShorter = (curBody?.length ?? 0) < (prevBody?.length ?? 0) * 0.5;
-
-  if (baselinePersistable) {
-    const baselineRows = countContratosEndpointRows(stripLeadingContratosPlaceholder(prevBody ?? ""));
-    const curRows = countContratosEndpointRows(stripLeadingContratosPlaceholder(curBody ?? ""));
-    if (curPersistable && curRows >= Math.max(3, Math.ceil(baselineRows * 0.5))) return current;
-  } else if (curGateSubstantial && !curShorter) {
-    return current;
-  }
+  if (curBody && !isContratosPlaceholder(curBody)) return current;
 
   const restored = replaceMddSection4Body(current, prevBody!);
   if (restored !== current) {
@@ -756,8 +737,8 @@ export function preserveSection4IfSubstantial(baselineDraft: string, currentDraf
 }
 
 /**
- * Restaura §5 desde `baselineDraft` cuando `currentDraft` la regresó (placeholder o
- * cuerpo <50% del baseline). Usar tras Formatter, CrossConsistency y normalize.
+ * Restaura §5 desde `baselineDraft` cuando `currentDraft` la destruyó (ausente, placeholder o
+ * trivial). Nunca por ser más corta que el baseline. Usar tras Formatter, CrossConsistency y normalize.
  */
 export function preserveSection5IfSubstantial(baselineDraft: string, currentDraft: string): string {
   const baseline = (baselineDraft ?? "").trim();
@@ -867,7 +848,8 @@ function preserveSectionByNumber(
 }
 
 /**
- * Restaura §1–§7 sustanciales cuando un paso mecánico las regresó (placeholder o <50% del baseline).
+ * Restaura §1–§7 sustanciales cuando un paso mecánico las destruyó (ausente o placeholder).
+ * No revierte secciones que solo se acortaron (no deshace fixes del gate-loop).
  * §2–§7 se restauran aunque §1 siga fina (p. ej. MDD desde benchmark con BRD corto).
  */
 export function preserveValidatedSectionsIfSubstantial(

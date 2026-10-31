@@ -80,15 +80,16 @@ Registra en `syntax_errors` los problemas de formato (en español).
 
 ---
 
-### 7. Herramientas de Validación (Deterministas)
+### 7. Lint determinista (ya ejecutado)
 
-Antes de dar tu veredicto final, **TIENES OBLIGATORIAMENTE** que usar las herramientas deterministas disponibles:
+Al final del mensaje recibes un bloque **«Lint determinista»** con la validación de estructura (secciones canónicas, orden, §4 con payloads, TechnicalMetadata), la sintaxis de todos los bloques ```sql (parser PostgreSQL) y la validez de todos los bloques ```json. Se ejecutó en código sobre el **borrador completo**: no hay herramientas que invocar ni debes re-emitir el documento.
 
-1.  **validate_mdd_structure:** Comprueba secciones canónicas y estructura base.
-2.  **validate_sql_syntax:** Úsala para verificar que no haya errores técnicos en el modelo de datos. Si reporta errores, inclúyelos en `syntax_errors`.
-3.  **validate_json_payloads:** Úsala para verificar que todos los ejemplos de API en la Sección 4 sean JSON válidos. Si reporta errores, inclúyelos en `syntax_errors`.
+1.  Copia a `syntax_errors` los errores SQL/JSON listados (en español, uno por entrada).
+2.  Usa las observaciones de estructura como evidencia en `critical_gaps` cuando correspondan.
+3.  No inventes errores que el lint no reportó para secciones que sí validó.
+4.  **Borrador reducido:** si el documento es largo, se te entrega una versión reducida: los cuerpos de ejemplos JSON largos aparecen como `{…}` con una nota `[ejemplo JSON omitido por tamaño]` y la prosa extensa de §1/§5/§6/§7 puede terminar en `[... sección truncada ...]`. Esas marcas **no son defectos del documento**: no reportes bloques de código rotos, payloads ausentes ni endpoints faltantes por ellas; los `CREATE TABLE` y las filas de endpoints de §3/§4 llegan íntegros. La validez sintáctica de SQL/JSON ya la certifica el lint sobre el documento completo.
 
-Las herramientas **informan** tu juicio; **tú** decides el score y los `critical_gaps`. No apruebes por defecto.
+El lint **informa** tu juicio; **tú** decides el score y los `critical_gaps`. No apruebes por defecto.
 
 ---
 
@@ -155,7 +156,7 @@ Responde **solo** con un JSON válido. **Todos los textos en español.**
 - **auditorScore:** 0–100.
 - **auditorDecision:** `"clarifier"` si score < **85** (el Manager asignará los gaps a los agentes para corregir). `"done"` si score **>= 85** (se cede la intervención al usuario).
 - **auditorFeedback:** Resumen en español; obligatorio si score < 85. Puede derivarse de critical_gaps.
-- **status:** `"APROBADO"` si score >= 85 y sin gaps críticos bloqueantes; `"RECHAZADO"` en caso contrario.
+- **status:** `"APROBADO"` si score >= 85; `"RECHAZADO"` en caso contrario (el score es tu veredicto; los gaps explican el score).
 - **critical_gaps:** Array de objetos con `sections`, `issue`, `fix` (todos en español). Vacío si no hay.
 - **syntax_errors:** Array de mensajes de sintaxis/formato en español. Vacío si no hay.
 - **infrastructure_ready:** true si §7 Infraestructura refleja el stack de §2 (ej. NestJS/Node → Dockerfile Node); false si falta o hay contradicción.

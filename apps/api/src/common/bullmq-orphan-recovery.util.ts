@@ -59,20 +59,31 @@ export async function forceFailBullMqActiveJob(
 
 /**
  * Tras reinicio del API/worker: jobs `active` en Redis no tienen worker vivo.
- * Los marcamos failed (no reintentar pipeline MDD a medias) y quitamos waiting/delayed obsoletos.
+ * Los marcamos failed (no reintentar pipeline MDD a medias).
+ *
+ * Los jobs `waiting`/`delayed` NO se tocan por defecto: la cola Redis es compartida entre réplicas
+ * y un job en espera pertenece a una réplica viva (o a la siguiente que lo consuma), no a este proceso.
+ * Solo se eliminan con `removeQueued: true` explícito, y con `ownsQueuedJob` solo los que éste devuelva true.
  */
 export async function recoverBullMqJobsAfterWorkerRestart(
   queue: Queue,
   options: {
     reason?: string;
+    /** Opt-in: eliminar jobs waiting/delayed. Default `false` (la cola es compartida entre réplicas). */
     removeQueued?: boolean;
+    /**
+     * Con `removeQueued`, restringe la eliminación a jobs de este proceso (p. ej. `data.workerId === myId`).
+     * Si falta, `removeQueued: true` elimina todos (úsese solo en entornos de una sola réplica).
+     */
+    ownsQueuedJob?: (job: Job) => boolean;
     logger?: RecoverLogger;
     /** Si true (default), no toca jobs `active` cuyo lock Redis sigue vivo (otro worker). */
     skipJobsWithLock?: boolean;
   } = {},
 ): Promise<{ failedActive: number; removedQueued: number; skippedLocked: number }> {
   const reason = options.reason ?? BULLMQ_WORKER_RESTARTED_REASON;
-  const removeQueued = options.removeQueued ?? true;
+  const removeQueued = options.removeQueued ?? false;
+  const ownsQueuedJob = options.ownsQueuedJob;
   const skipJobsWithLock = options.skipJobsWithLock ?? true;
   const logger = options.logger;
   let failedActive = 0;
@@ -100,6 +111,7 @@ export async function recoverBullMqJobsAfterWorkerRestart(
     for (const state of ["waiting", "delayed", "waiting-children"] as const) {
       const jobs = await queue.getJobs([state], 0, 500);
       for (const job of jobs) {
+        if (ownsQueuedJob && !ownsQueuedJob(job)) continue;
         try {
           await job.remove();
           removedQueued += 1;

@@ -498,6 +498,8 @@ export function createMddSoftwareArchitectNode(
 ) {
   return async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
     const scope: MddSoftwareArchitectScope = opts?.scope ?? "full";
+    /** Nombre del nodo del grafo para `lastStepFailed` (el Auditor se omite si un escritor falló). */
+    const failedNodeName = scope === "stack" ? "stack_architect" : scope === "full" ? "software_architect" : scope;
     const scopeSection = architectScopeSectionNumber(scope);
     const decoupleSection5 = shouldDecoupleSection5FromArchitect(state, scope);
     const tfPid = (state.theforgeProjectId ?? "").trim();
@@ -832,11 +834,14 @@ export function createMddSoftwareArchitectNode(
 
       if (!text.trim()) {
         logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, 0), { scope, empty: true });
-        LOG("LLM vacío, devolviendo borrador sin transformar");
+        LOG("LLM vacío, devolviendo borrador sin transformar (lastStepFailed=%s)", failedNodeName);
+        const llmEmptyFailure = {
+          lastStepFailed: { node: failedNodeName, error: "LLM vacío tras reintentos; borrador sin transformar" },
+        };
         if (scope === "stack") {
-          return { stackArchitectAttempt: (state.stackArchitectAttempt ?? 0) + 1 };
+          return { stackArchitectAttempt: (state.stackArchitectAttempt ?? 0) + 1, ...llmEmptyFailure };
         }
-        return {};
+        return llmEmptyFailure;
       }
       const contextIntro = ((state.clarifiedScope ?? "").trim() || (draftTrimmed.slice(0, 800) + (draftTrimmed.length > 800 ? "…" : ""))).trim();
       let mddDraft = "";
@@ -972,7 +977,10 @@ export function createMddSoftwareArchitectNode(
           throw new SyntaxError("El Arquitecto no devolvió JSON con mddDraft, ni sqlSchema/apiContracts, ni markdown usable.");
         }
       }
-      if (!mddDraft) return {};
+      if (!mddDraft) {
+        LOG("sin markdown ni JSON usable; borrador conservado (lastStepFailed=%s)", failedNodeName);
+        return { lastStepFailed: { node: failedNodeName, error: "Respuesta del Arquitecto sin markdown ni JSON usable" } };
+      }
       const minLength = 600;
       let extractedFromFullMdd = false;
 
@@ -1276,6 +1284,7 @@ export function createMddSoftwareArchitectNode(
         return {
           mddStructured: merged,
           mddDraft,
+          lastStepFailed: undefined,
           ...meshUpdate,
           ...phaseUpdate,
           ...stackSnapshotUpdate,
@@ -1286,6 +1295,7 @@ export function createMddSoftwareArchitectNode(
       }
       return {
         mddDraft,
+        lastStepFailed: undefined,
         ...meshUpdate,
         ...phaseUpdate,
         ...stackSnapshotUpdate,

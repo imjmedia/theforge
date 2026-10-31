@@ -40,7 +40,9 @@ import { extractTechnicalMetadataTags } from "../../engine/mdd-markdown-parser.j
 import {
   computeContractGaps,
   computeTraceabilityGaps,
+  detectContextIntegrationContradiction,
 } from "../../engine/mdd-internal-audit.util.js";
+import { hashMddDraft } from "./mdd-draft-hash.util.js";
 import { computeDocumentCompleteness } from "./completeness.util.js";
 import { computeCrossDocumentConsistency } from "./consistency.util.js";
 import { isCredentialStorageSatisfied } from "../utils/mdd-credential-storage.util.js";
@@ -93,7 +95,7 @@ function extractSection(md: string, pattern: RegExp): string {
 /**
  * Gaps de consistencia y completitud (agnóstico de dominio).
  * Alineado con "MDD Universal Audit Rules":
- * - Rule 1 Feature-Infrastructure: scopeDataGap (alcance → modelo/API).
+ * - Rule 1 Feature-Infrastructure: (cálculo scopeDataGap eliminado: no lo consumía ningún juez).
  * - Rule 2 Data Integrity: dataIntegrityGap (UUID PKs, created_at/updated_at TIMESTAMPTZ). No se exige ON DELETE (borrado puede ser lógico).
  * - Rule 3 API-Schema: no auto-check 1:1 (defer to agents); opcional apiErrorCodes en sección API.
  * - Rule 4 Inheritance: missingManifest + TechnicalMetadata/base template en proyectos derivados.
@@ -101,7 +103,6 @@ function extractSection(md: string, pattern: RegExp): string {
  * - Contract gaps: apiSchemaGap, mermaidParityGap, infraStackGap, securityEdgeCaseGap.
  */
 function computeConsistencyGaps(md: string): {
-  scopeDataGap: number;
   contradictionGap: number;
   securityCompletenessGap: number;
   missingManifest: number;
@@ -125,15 +126,6 @@ function computeConsistencyGaps(md: string): {
     md,
     /^#+\s*(?:7\.\s*)?(?:infraestructura|infra|integraci[oó]n)/im,
   ).toLowerCase();
-  const securityBlock = extractSection(
-    md,
-    /^##\s+(?:\d+\.\s*)?(?:seguridad|security)/im,
-  ).toLowerCase();
-
-  const apiBlock = extractSection(
-    md,
-    /^#+\s*(?:4\.\s*)?(?:contratos\s+de\s+api|api\s+contracts|endpoints)/im,
-  ).toLowerCase();
   const sqlBlock =
     (md.match(/```sql\s*([\s\S]*?)```/i)?.[1] ?? "") +
     (dataModelBlock || lower);
@@ -141,40 +133,8 @@ function computeConsistencyGaps(md: string): {
 
   const contractGaps = computeContractGaps(md);
 
-  // --- Rule 1: Document–Model congruence (domain-agnostic) ---
-  // Cualquier concepto que el documento describa y que exija persistencia debe tener reflejo en tablas/columnas.
-  // Pares (documento menciona X → esquema debe contener Y). Cubren múltiples dominios (auth, catálogo, pedidos, etc.).
-  const scopeText = [contextBlock, securityBlock, apiBlock].join(" ");
-  const persistenceConceptPairs: Array<{ doc: RegExp; schema: RegExp }> = [
-    { doc: /\b(credencial|password|contraseña|hash|login|autenticaci[oó]n|almacenamiento de credencial)\b/i, schema: /\b(password_hash|credential|hash|external_store|almac[eé]n|referencia)\b/i },
-    { doc: /\b(mfa|totp|2fa|two[- ]?factor|segundo factor|secretos?|google\s+authenticator)\b/i, schema: /\bmfa_secrets\b|\btotp_secret\b|\bmfa_secret\b|\botp_secret\b|create\s+table\s+\w*secret/i },
-    { doc: /\b(sesi[oó]n|session)s?\b/i, schema: /\b(session|sesion|sessions)\b/i },
-    { doc: /\b(audit|auditoría|historial|history|log|registro)\b/i, schema: /\b(audit|history|log|created_at|updated_at)\b/i },
-    { doc: /\b(roles?|rbac|permisos?|permiso)\b/i, schema: /\b(role|permission|rol|permiso)\b/i },
-    { doc: /\b(pedido|order)s?\b/i, schema: /\b(order|pedido)\b/i },
-    { doc: /\b(producto|product)s?\b/i, schema: /\b(product|producto)\b/i },
-    { doc: /\b(catálogo|catalog)\b/i, schema: /\b(catalog|catálogo|category|product)\b/i },
-    { doc: /\b(inventario|inventory|stock)\b/i, schema: /\b(inventory|inventario|stock)\b/i },
-    { doc: /\b(pago|payment)\b/i, schema: /\b(payment|pago|transaction)\b/i },
-    { doc: /\b(notificaci[oó]n|notification)\b/i, schema: /\b(notification|notificaci|alert)\b/i },
-  ];
-  let scopeDataGap = 0;
-  for (const { doc: docRe, schema: schemaRe } of persistenceConceptPairs) {
-    if (docRe.test(scopeText) && !schemaRe.test(tablesAndColumns)) {
-      scopeDataGap = 1;
-      break;
-    }
-  }
-
-  let contradictionGap = 0;
-  const negations = [
-    { no: /no\s+(se\s+)?implementa(rá|rán|)\s+(oauth|oidc|saml|openid)/i, yes: /\b(oauth|oidc|saml|openid\s+connect)\b/i },
-    { no: /no\s+habr[áa]\s+(oauth|oidc|saml)/i, yes: /\b(oauth|oidc|saml)\b/i },
-    { no: /no\s+se\s+usar[áa]\s+(oauth|oidc|saml)/i, yes: /\b(oauth|oidc|saml)\b/i },
-  ];
-  for (const { no: noRe, yes: yesRe } of negations) {
-    if (noRe.test(contextBlock) && yesRe.test(integrationBlock)) contradictionGap = 1;
-  }
+  // §1 niega implementar OAuth/OIDC/SAML y §7 lo afirma (misma oración; delegar a un IdP externo no cuenta).
+  const contradictionGap = detectContextIntegrationContradiction(contextBlock, integrationBlock) ? 1 : 0;
 
   let securityCompletenessGap = 0;
   const highSecurity = /\b(high_security|alta seguridad|seguridad crítica)\b/i.test(lower);
@@ -214,7 +174,6 @@ function computeConsistencyGaps(md: string): {
   }
 
   return {
-    scopeDataGap,
     contradictionGap,
     securityCompletenessGap,
     missingManifest,
@@ -728,6 +687,8 @@ function buildReadinessHints(
   return out.slice(0, 6);
 }
 
+type StoredAuditorGaps = { gaps: AuditorGaps; auditedDraftHash?: string };
+
 /**
  * Servicio de estimación en vivo, independiente del flujo LangChain.
  * Tasa interna 2026: $21k netos × 1.4 carga social ÷ 160 h/mes = $185 MXN/hr.
@@ -736,9 +697,14 @@ function buildReadinessHints(
 @Injectable()
 export class EstimationService {
   private readonly liveDraftByProject = new Map<string, string>();
-  private readonly auditorGapsByProject = new Map<string, AuditorGaps>();
+  /**
+   * Gaps del Auditor LLM + hash del borrador que evaluaron. Se usan sólo si el contenido evaluado
+   * (override del editor, borrador en vivo o DB) tiene ese mismo hash; si cambió, caen a regex.
+   */
+  private readonly auditorGapsByProject = new Map<string, StoredAuditorGaps>();
   /** `projectId` o `projectId::stageId` → complejidad para semáforo/desglose (alineado con Workshop). */
   private readonly estimationComplexityByKey = new Map<string, EstimationComplexity>();
+  private readonly complexityLoads = new Map<string, Promise<EstimationComplexity>>();
 
   constructor(private readonly prisma: PrismaService) { }
 
@@ -747,6 +713,41 @@ export class EstimationService {
     const p = projectId?.trim();
     if (!p) return;
     this.estimationComplexityByKey.set(this.draftKey(p, stageId), complexity);
+    // La complejidad es del proyecto: también como fallback para consultas sin etapa.
+    this.estimationComplexityByKey.set(p, complexity);
+  }
+
+  /**
+   * Resuelve (y cachea) `Project.complexity` desde Prisma cuando no está en caché.
+   * Los callers asíncronos deben invocarlo antes del `calculateLiveMetrics` síncrono para no asumir HIGH.
+   */
+  async ensureProjectComplexity(projectId: string, stageId?: string | null): Promise<EstimationComplexity> {
+    const p = projectId?.trim();
+    if (!p) return "HIGH";
+    const cached = this.lookupCachedComplexity(p, stageId);
+    if (cached) return cached;
+    let pending = this.complexityLoads.get(p);
+    if (!pending) {
+      pending = this.prisma.project
+        .findUnique({ where: { id: p }, select: { complexity: true } })
+        .then((proj) => {
+          const cx = (proj?.complexity as EstimationComplexity | undefined) ?? "HIGH";
+          this.cacheProjectComplexity(p, stageId, cx);
+          return cx;
+        })
+        .finally(() => {
+          this.complexityLoads.delete(p);
+        });
+      this.complexityLoads.set(p, pending);
+    }
+    return pending;
+  }
+
+  private lookupCachedComplexity(projectId: string, stageId?: string | null): EstimationComplexity | undefined {
+    return (
+      this.estimationComplexityByKey.get(this.draftKey(projectId, stageId)) ??
+      this.estimationComplexityByKey.get(projectId)
+    );
   }
 
   private resolveEstimationComplexity(options?: {
@@ -757,7 +758,15 @@ export class EstimationService {
     if (options?.complexity) return options.complexity;
     const pid = options?.projectId?.trim();
     if (!pid) return "HIGH";
-    return this.estimationComplexityByKey.get(this.draftKey(pid, options?.stageId)) ?? "HIGH";
+    const cached = this.lookupCachedComplexity(pid, options?.stageId);
+    if (cached) return cached;
+    // Sin caché y API síncrona: HIGH sólo esta vez; precarga en segundo plano para las siguientes llamadas.
+    try {
+      void this.ensureProjectComplexity(pid, options?.stageId).catch(() => undefined);
+    } catch {
+      /* prisma no disponible (tests): se queda HIGH */
+    }
+    return "HIGH";
   }
 
   /** Clave de borrador/gaps: `projectId` o `projectId::stageId` si hay etapa explícita. */
@@ -769,15 +778,58 @@ export class EstimationService {
 
   setLiveDraft(projectId: string, mddDraft: string, stageId?: string | null): void {
     if (!projectId?.trim()) return;
+    // Los gaps del Auditor no se borran aquí: el hash guardado hace que dejen de aplicar en cuanto el contenido cambia
+    // (el stream re-registra el mismo `auditorGaps` en cada evento, y conserva su hash original).
     this.liveDraftByProject.set(this.draftKey(projectId, stageId), mddDraft ?? "");
   }
 
-  /** Almacena gaps estructurados del Auditor (LLM) para usar en métricas cuando el draft no ha cambiado. */
-  setAuditorGaps(projectId: string, gaps: AuditorGaps | undefined, stageId?: string | null): void {
+  /**
+   * Almacena gaps estructurados del Auditor (LLM) junto con el hash del borrador evaluado.
+   * `auditedDraftHash` explícito > hash previo si son los mismos gaps (re-registro del stream) > hash del borrador
+   * en vivo > sin hash (se ata de forma perezosa al contenido del servidor en la primera lectura).
+   * `gaps == null` los elimina.
+   */
+  setAuditorGaps(
+    projectId: string,
+    gaps: AuditorGaps | undefined,
+    stageId?: string | null,
+    auditedDraftHash?: string,
+  ): void {
     if (!projectId?.trim()) return;
     const key = this.draftKey(projectId, stageId);
-    if (gaps == null) this.auditorGapsByProject.delete(key);
-    else this.auditorGapsByProject.set(key, gaps);
+    if (gaps == null) {
+      this.auditorGapsByProject.delete(key);
+      return;
+    }
+    const prev = this.auditorGapsByProject.get(key);
+    const sameGapsAsPrev = prev != null && JSON.stringify(prev.gaps) === JSON.stringify(gaps);
+    const live = this.liveDraftByProject.get(key);
+    const hash =
+      auditedDraftHash ??
+      (sameGapsAsPrev ? prev.auditedDraftHash : undefined) ??
+      (live != null && live.trim().length > 0 ? hashMddDraft(live) : undefined);
+    this.auditorGapsByProject.set(key, { gaps, ...(hash ? { auditedDraftHash: hash } : {}) });
+  }
+
+  /**
+   * Tras persistir el MDD final de un job ya auditado (`prevalidatedFromStream`): los gaps describen el contenido
+   * persistido aunque el sanitizado haya cambiado espacios/formato → reata el hash.
+   */
+  rebindAuditorGapsToPersistedContent(projectId: string, stageId: string | null | undefined, content: string): void {
+    if (!projectId?.trim()) return;
+    const entry = this.auditorGapsByProject.get(this.draftKey(projectId, stageId));
+    if (entry && content.trim()) entry.auditedDraftHash = hashMddDraft(content);
+  }
+
+  /** PATCH manual del MDD: si el contenido persistido no es el que auditó el Auditor, los gaps ya no aplican. */
+  dropAuditorGapsIfContentChanged(projectId: string, stageId: string | null | undefined, content: string): void {
+    if (!projectId?.trim()) return;
+    const key = this.draftKey(projectId, stageId);
+    const entry = this.auditorGapsByProject.get(key);
+    if (!entry) return;
+    if (!entry.auditedDraftHash || entry.auditedDraftHash !== hashMddDraft(content)) {
+      this.auditorGapsByProject.delete(key);
+    }
   }
 
   /** Persiste audit trail / breakdown / gaps del último pipeline MDD en `Stage.shortTermContext`. */
@@ -790,12 +842,15 @@ export class EstimationService {
     if (!sid) return;
     const stage = await this.prisma.stage.findUnique({
       where: { id: sid },
-      select: { shortTermContext: true },
+      select: { shortTermContext: true, mddContent: true },
     });
     const prev =
       stage?.shortTermContext && typeof stage.shortTermContext === "object" && !Array.isArray(stage.shortTermContext)
         ? (stage.shortTermContext as Record<string, unknown>)
         : {};
+    const auditedDraftHash = snapshot.auditorGaps
+      ? (snapshot.auditedDraftHash ?? this.resolveAuditedDraftHash(projectId, stageId, snapshot.auditorGaps, stage?.mddContent))
+      : undefined;
     await this.prisma.stage.update({
       where: { id: sid },
       data: {
@@ -803,11 +858,31 @@ export class EstimationService {
           ...prev,
           mddAuditSnapshot: {
             ...snapshot,
+            ...(auditedDraftHash ? { auditedDraftHash } : {}),
             updatedAt: new Date().toISOString(),
           },
         } as unknown as Prisma.InputJsonValue,
       },
     });
+  }
+
+  /**
+   * Hash del borrador que evaluó el Auditor cuando el caller no lo pasa: el de los mismos gaps en memoria,
+   * si no el del borrador en vivo (stream) y, para auditorías manuales, el del MDD persistido de la etapa.
+   */
+  private resolveAuditedDraftHash(
+    projectId: string,
+    stageId: string | null | undefined,
+    gaps: AuditorGaps,
+    persistedMdd: string | null | undefined,
+  ): string | undefined {
+    const key = this.draftKey(projectId, stageId);
+    const mem = this.auditorGapsByProject.get(key);
+    if (mem?.auditedDraftHash && JSON.stringify(mem.gaps) === JSON.stringify(gaps)) return mem.auditedDraftHash;
+    const live = this.liveDraftByProject.get(key);
+    if (live != null && live.trim().length > 0) return hashMddDraft(live);
+    if (persistedMdd && persistedMdd.trim().length > 0) return hashMddDraft(persistedMdd);
+    return undefined;
   }
 
   /** Recupera el último snapshot de auditoría MDD persistido. */
@@ -898,37 +973,76 @@ export class EstimationService {
   }
 
   /**
+   * Gaps del Auditor aplicables a `content`: sólo si el hash normalizado del contenido evaluado coincide con el del
+   * borrador que auditó el Auditor (memoria o snapshot persistido). Sin gaps vigentes → `undefined` (regex).
+   * Nunca lee la clave legacy `projectId` cuando hay `stageId` (evita cruzar etapas).
+   */
+  private async resolveAuditorGapsForContent(
+    projectId: string,
+    stageId: string | null | undefined,
+    content: string,
+    hasOverride: boolean,
+  ): Promise<AuditorGaps | undefined> {
+    if (!content.trim()) return undefined;
+    const key = this.draftKey(projectId, stageId);
+    const contentHash = hashMddDraft(content);
+    let serverHashPromise: Promise<string> | undefined;
+    /** Hash del contenido que el servidor tiene (en vivo o DB); el override sólo "es el servidor" si coincide. */
+    const matchesServerContent = async (): Promise<boolean> => {
+      if (!hasOverride) return true;
+      serverHashPromise ??= this.getMddContentForProject(projectId, stageId).then((c) => hashMddDraft(c ?? ""));
+      return (await serverHashPromise) === contentHash;
+    };
+
+    const entry = this.auditorGapsByProject.get(key);
+    if (entry) {
+      if (entry.auditedDraftHash) {
+        if (entry.auditedDraftHash === contentHash) return entry.gaps;
+      } else if (await matchesServerContent()) {
+        // Gaps sin hash (callers que no lo pasan): describen el contenido del servidor → se atan al primer match.
+        entry.auditedDraftHash = contentHash;
+        return entry.gaps;
+      }
+    }
+    const snap = await this.getMddAuditSnapshot(projectId, stageId);
+    if (snap?.auditorGaps) {
+      if (snap.auditedDraftHash) {
+        if (snap.auditedDraftHash === contentHash) return snap.auditorGaps;
+      } else if (await matchesServerContent()) {
+        return snap.auditorGaps;
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * Métricas para un proyecto. Si se pasa mddContent, se usa ese; sino liveDraft o DB.
-   * Cuando no hay override y hay gaps del Auditor guardados para el proyecto, se usan para precisión/semáforo.
-   * Sin live draft de streaming, sincroniza `Stage.status` / `precisionScore` con la métrica integral
-   * (misma fuente que el panel Semáforo del Workshop).
+   * Los gaps del Auditor (memoria o snapshot) se usan si su `auditedDraftHash` coincide con el contenido evaluado
+   * (también con override del editor); si no, se cae a regex y `mddQualitySource` queda en "regex".
+   * Es el ÚNICO escritor de `Stage.status` / `precisionScore` del semáforo del MDD: sin live draft de streaming
+   * persiste el titular del panel Workshop (`SemaphoreService` sólo evalúa la ruta de entregables LOW/MEDIUM
+   * y el reporte de auditoría compuesto; ya no escribe `Stage.status`).
    */
   async getLiveMetricsForProject(
     projectId: string,
     mddContentOverride?: string,
     stageId?: string | null,
+    options?: {
+      /**
+       * Si false, calcula sin escribir `Stage.status`/`precisionScore` (p. ej. pipeline PATCH antes de persistir el MDD).
+       * Por defecto true: este método es el ÚNICO escritor de `Stage.status` para el semáforo del MDD.
+       */
+      syncStage?: boolean;
+    },
   ): Promise<LiveMetricsResult> {
     const key = this.draftKey(projectId, stageId);
     const liveDraft = this.liveDraftByProject.get(key);
     const hasLiveDraft = (liveDraft?.trim().length ?? 0) > 0;
-    const content =
-      mddContentOverride != null && mddContentOverride.length > 0
-        ? mddContentOverride
-        : (await this.getMddContentForProject(projectId, stageId)) ?? "";
-    const useStoredGaps = !mddContentOverride && this.auditorGapsByProject.has(key);
-    const useLegacyGaps =
-      !mddContentOverride &&
-      !useStoredGaps &&
-      this.auditorGapsByProject.has(projectId?.trim() ?? "");
-    let auditorGaps = useStoredGaps
-      ? this.auditorGapsByProject.get(key)
-      : useLegacyGaps
-        ? this.auditorGapsByProject.get(projectId!.trim())
-        : undefined;
-    if (!auditorGaps && !mddContentOverride) {
-      const snap = await this.getMddAuditSnapshot(projectId, stageId);
-      auditorGaps = snap?.auditorGaps;
-    }
+    const hasOverride = mddContentOverride != null && mddContentOverride.length > 0;
+    const content = hasOverride
+      ? mddContentOverride
+      : (await this.getMddContentForProject(projectId, stageId)) ?? "";
+    const auditorGaps = await this.resolveAuditorGapsForContent(projectId, stageId, content, hasOverride);
     const proj = await this.prisma.project.findUnique({
       where: { id: projectId.trim() },
       select: { complexity: true },
@@ -1021,6 +1135,8 @@ export class EstimationService {
       dbgaMarkdown: dbgaContent,
       specMarkdown: documents.specContent,
       inventory,
+      // Mismo perfil que el pipeline de persistencia (antes el panel juzgaba sin complejidad).
+      mddComplexity: cx,
     });
     let status = applyDeliveryGateToSemaphoreStatus(metrics.status, deliveryGate);
 
@@ -1077,11 +1193,12 @@ export class EstimationService {
 
     // Sincroniza Stage aunque venga override del editor: el listado debe reflejar el
     // semáforo del panel. Solo se omite con borrador en streaming (live draft).
-    const shouldSyncStage = !hasLiveDraft && content.trim().length > 0;
+    const shouldSyncStage = options?.syncStage !== false && !hasLiveDraft && content.trim().length > 0;
     if (shouldSyncStage) {
       const sid = await this.resolveStageId(projectId, stageId);
       if (sid) {
-        await this.syncStageSemaphoreFromLiveMetrics(sid, result.status, result.precision);
+        // Titular persistido = titular del panel (nota del Auditor cuando está vigente, si no la integral).
+        await this.syncStageSemaphoreFromLiveMetrics(sid, result.status, result.auditorScore ?? result.precision);
       }
     }
 
@@ -1161,6 +1278,11 @@ export class EstimationService {
     let consistencyScore: number | undefined;
     let completeness: DocumentCompleteness | undefined;
     let mddQualityScore: number | undefined;
+    const auditorForQuality = options?.auditorGaps;
+    const mddQualitySource: "auditor" | "regex" = auditorForQuality ? "auditor" : "regex";
+    const auditorScore = auditorForQuality
+      ? Math.min(100, Math.max(0, Math.round(auditorForQuality.score)))
+      : undefined;
 
     if (hasDocs) {
       // ── Métrica integral ──────────────────────────────────
@@ -1218,12 +1340,30 @@ export class EstimationService {
       }
       precision = Math.max(0, precision - conformancePenalty);
 
-      const hasGreenCriteria = meetsIntegralLiveGreenCriteria({
-        precision,
-        consistencyScore,
-        crossDocumentGapCount: gapCount,
-      });
-      status = hasGreenCriteria ? "green" : precision >= PRECISION_RED_MAX ? "yellow" : "red";
+      if (auditorForQuality && auditorScore != null) {
+        // Titular = nota del Auditor (lo que ve el usuario en el chat); sigue limitada por la trazabilidad BRD→MDD.
+        const strictInfra = cx === "HIGH";
+        const auditorClean =
+          auditorForQuality.critical_gaps.length === 0 &&
+          (!strictInfra || auditorForQuality.infrastructure_ready);
+        // consistencyScore 50 sin gaps = "sin datos de trazabilidad" (no hay BRD/Spec que cruzar): no bloquea el verde.
+        const traceabilityMeasured = !(consistencyScore === 50 && gapCount === 0);
+        const auditorGreen =
+          auditorClean &&
+          meetsIntegralLiveGreenCriteria({
+            precision: auditorScore,
+            consistencyScore: traceabilityMeasured ? consistencyScore : undefined,
+            crossDocumentGapCount: gapCount,
+          });
+        status = auditorGreen ? "green" : auditorScore >= PRECISION_RED_MAX ? "yellow" : "red";
+      } else {
+        const hasGreenCriteria = meetsIntegralLiveGreenCriteria({
+          precision,
+          consistencyScore,
+          crossDocumentGapCount: gapCount,
+        });
+        status = hasGreenCriteria ? "green" : precision >= PRECISION_RED_MAX ? "yellow" : "red";
+      }
 
       // 6. Hints separados: MDD vs trazabilidad BRD→MDD
       traceabilityHints =
@@ -1347,6 +1487,8 @@ export class EstimationService {
       ...(consistencyScore != null ? { consistencyScore } : {}),
       ...(completeness != null ? { completeness } : {}),
       ...(mddQualityScore != null ? { mddQualityScore } : {}),
+      mddQualitySource,
+      ...(auditorScore != null ? { auditorScore } : {}),
       ...(crossDocumentGaps != null ? { crossDocumentGaps } : {}),
     };
   }

@@ -132,6 +132,8 @@ export const mddStateSchema = z.object({
   executorControlled: z.boolean().optional(),
   /** Índice del paso actual en mddPlan (0-based). El Executor avanza este valor tras cada paso. */
   mddPlanCurrentStep: z.number().int().min(-1).optional(),
+  /** Saltos mesh (directiva interna → nodo anterior del plan) ya consumidos; el Executor corta al llegar al tope. */
+  meshJumpCount: z.number().int().min(0).optional(),
   /** 4.3 Least privilege: solo estas tools para el paso actual (nombres). Lo setea el Executor antes de goto al nodo. */
   currentStepAllowedTools: z.array(z.string()).optional(),
   /** Goal del paso actual (del mddPlan); el agente lo recibe en su contexto. */
@@ -190,6 +192,8 @@ export const mddStateSchema = z.object({
     .optional(),
   /** Fingerprint de blockers placeholder del intento anterior (circuit breaker gate). */
   deliveryGatePlaceholderFingerprint: z.string().optional(),
+  /** Fingerprint de todos los blockers del intento anterior (corta el loop sin progreso). */
+  deliveryGateBlockersFingerprint: z.string().optional(),
   /** F3: §4∥§6∥§7 ya ejecutados tras critic (omitir tail_parallel en primera pasada). */
   postCriticParallelDone: z.boolean().optional(),
   /** §5 sin cambios tras nodo section5 — omitir 2ª pasada format_after_architect. */
@@ -239,6 +243,7 @@ export const defaultMDDState: MDDState = {
   planUserIntent: undefined,
   executorControlled: undefined,
   mddPlanCurrentStep: undefined,
+  meshJumpCount: undefined,
   currentStepAllowedTools: undefined,
   currentStepGoal: undefined,
   architectCriticFeedback: undefined,
@@ -257,6 +262,7 @@ export const defaultMDDState: MDDState = {
   deliveryGateLoopActive: undefined,
   deliveryGateFixTarget: undefined,
   deliveryGatePlaceholderFingerprint: undefined,
+  deliveryGateBlockersFingerprint: undefined,
   postCriticParallelDone: undefined,
   section5FormatSkipped: undefined,
   stackArchitectAttempt: undefined,

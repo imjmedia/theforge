@@ -4,7 +4,6 @@
 
 import type { DomainInventory } from "@theforge/shared-types";
 import type { MddDeliveryGateResult } from "@theforge/shared-types";
-import { CASCADE_ACCURACY_THRESHOLD } from "@theforge/shared-types";
 import { preRenderMddSanity } from "./mdd-pre-render.js";
 import {
   applyPreDeliveryGateFixes,
@@ -15,18 +14,26 @@ import {
   validateMddStructure,
 } from "./mdd-sanitize.js";
 import { isMddSectionPipelinePlaceholderBody } from "./mdd-sanitize/section-merge.js";
-import { isContratosSubstantial, countContratosEndpointRows } from "./mdd-sanitize/contratos-format.js";
+import {
+  isContratosSubstantial,
+  countContratosEndpointRows,
+  contratosLacksJsonWarning,
+} from "./mdd-sanitize/contratos-format.js";
 import { collectMddQualityIssues, isAutoRepairableDeliveryGateWarning } from "../../engine/mdd-quality-audit.util.js";
 import { domainDeliveryGateFindings } from "../../engine/cascade-accuracy.util.js";
 import { checkBrdDecisionLogClosure } from "../../engine/brd-decision-log.util.js";
 import { evaluateBrdToMddTraceability } from "../estimation/brd-mdd-traceability.util.js";
 import { prepareMddForDeliveryGateValidation } from "../../projects/mdd-deterministic-repair.util.js";
-import { evaluateSection1BodyQuality } from "./mdd-section1-quality.util.js";
+import {
+  evaluateSection1BodyQuality,
+  MIN_SECTION1_BODY_LEN_LOW,
+  MIN_SECTION1_BODY_LEN_MEDIUM,
+  MIN_SECTION1_BODY_LEN_HIGH,
+} from "./mdd-section1-quality.util.js";
 import { evaluateMddContentQuality } from "./mdd-content-quality.util.js";
+import type { MddComplexityLevel } from "../state/mdd-state.schema.js";
 
 export type { MddDeliveryGateResult };
-
-const DELIVERY_SCORE_THRESHOLD = CASCADE_ACCURACY_THRESHOLD;
 
 /** Mínimo de chars que una sección canónica debe tener para no ser considerada
  *  placeholder. 200 chars = ~3-4 líneas de prosa o un bloque SQL/JSON de
@@ -36,13 +43,91 @@ const DELIVERY_SCORE_THRESHOLD = CASCADE_ACCURACY_THRESHOLD;
 const MIN_SECTION_BODY_LENGTH = 200;
 const MIN_SECTION3_BODY_LENGTH = 100;
 
+/** Umbrales del gate de entrega resueltos a partir de la complejidad del proyecto. */
+export type DeliveryGateProfile = {
+  /** Complejidad efectiva, o `null` cuando el llamador no la conoce (perfil indulgente). */
+  complexity: MddComplexityLevel | null;
+  /** True cuando no se conoce la complejidad: se usa el perfil MENOS estricto. */
+  lenient: boolean;
+  minSectionBodyLength: number;
+  minSection3BodyLength: number;
+  minSection1BodyLength: number;
+};
+
+/**
+ * Única fuente de umbrales del gate. Todos los llamadores (pipeline, guard, HTTP, memo) deben
+ * resolverlos por aquí para que el mismo MDD no pase o falle según quién invoque.
+ *
+ * Sin complejidad → perfil indulgente (nunca la ruta legacy más estricta): mínimos por sección
+ * de HIGH (150/80, los más bajos) y §1 al mínimo de LOW (200).
+ */
+export function resolveDeliveryGateProfile(complexity?: MddComplexityLevel | null): DeliveryGateProfile {
+  switch (complexity) {
+    case "HIGH":
+      return {
+        complexity: "HIGH",
+        lenient: false,
+        minSectionBodyLength: 150,
+        minSection3BodyLength: 80,
+        minSection1BodyLength: MIN_SECTION1_BODY_LEN_HIGH,
+      };
+    case "MEDIUM":
+      return {
+        complexity: "MEDIUM",
+        lenient: false,
+        minSectionBodyLength: MIN_SECTION_BODY_LENGTH,
+        minSection3BodyLength: MIN_SECTION3_BODY_LENGTH,
+        minSection1BodyLength: MIN_SECTION1_BODY_LEN_MEDIUM,
+      };
+    case "LOW":
+      return {
+        complexity: "LOW",
+        lenient: false,
+        minSectionBodyLength: MIN_SECTION_BODY_LENGTH,
+        minSection3BodyLength: MIN_SECTION3_BODY_LENGTH,
+        minSection1BodyLength: MIN_SECTION1_BODY_LEN_LOW,
+      };
+    default:
+      return {
+        complexity: null,
+        lenient: true,
+        minSectionBodyLength: 150,
+        minSection3BodyLength: 80,
+        minSection1BodyLength: MIN_SECTION1_BODY_LEN_LOW,
+      };
+  }
+}
+
+/** Heurísticas no auto-reparables que informan pero no deben bloquear la entrega. */
+const DEMOTED_TO_WARNING_RE =
+  /UNIQUE\([^)]*\)\s+sin\s+WHERE|LDAP\/AD es auth principal pero|suelto sin ```mermaid|Manifest JSON sin objeto `stack`/i;
+
+/** Warning (no blocker) si es auto-reparable o está en la lista de heurísticas degradadas. */
+function isWarningOnlyIssue(issue: string): boolean {
+  return isAutoRepairableDeliveryGateWarning(issue) || DEMOTED_TO_WARNING_RE.test(issue);
+}
+
+const PIPELINE_PLACEHOLDER_AT_START_RE =
+  /^\s*\(?\s*(?:Pendiente|TBD)\s*:\s*(?:Arquitecto|Clarificador|Ingeniero|Integraci|paso\s+dedicado)/i;
+
+/**
+ * Placeholder del pipeline con guarda anti-sobreaciertos: una sección con >= `minLength` chars
+ * de contenido real NO es placeholder solo porque mencione "Pendiente: …" en algún punto; solo
+ * cuenta si el cuerpo ARRANCA con un placeholder de agente del pipeline.
+ */
+function isGatePlaceholderBody(body: string, minLength: number): boolean {
+  if (!isMddSectionPipelinePlaceholderBody(body)) return false;
+  if (body.length < minLength) return true;
+  return PIPELINE_PLACEHOLDER_AT_START_RE.test(body);
+}
+
 export type ValidateMddForDeliveryOptions = {
   /** BRD stage content — enables domain auth-skew / entity coverage blockers. */
   brdMarkdown?: string | null;
   dbgaMarkdown?: string | null;
   specMarkdown?: string | null;
   inventory?: DomainInventory | null;
-  /** Relaja blockers de dominio/sustancia en proyectos HIGH (menos loops del gate). */
+  /** Fija el perfil de umbrales (ver `resolveDeliveryGateProfile`); ausente → perfil indulgente. */
   mddComplexity?: "LOW" | "MEDIUM" | "HIGH";
   /** Omite reparaciones deterministas (tests del gate sobre markdown crudo). */
   skipDeterministicRepair?: boolean;
@@ -132,7 +217,8 @@ function detectGenericUiUxIntent(draft: string): boolean {
 
 /**
  * Gate bloqueante de entrega MDD (Fase 0 ≥9/10).
- * ok=true solo si score >= 90 y blockers.length === 0.
+ * ok=true si y solo si blockers.length === 0 (el score es informativo: las deducciones por
+ * warnings no bloquean). Umbrales vía `resolveDeliveryGateProfile`.
  * Con BRD/DBGA: añade blockers de dominio (auth-only skew, entidades faltantes).
  */
 export function validateMddForDelivery(
@@ -158,9 +244,10 @@ export function validateMddForDelivery(
   const blockers: string[] = [];
   const warnings: string[] = [];
   let score = 100;
-  const isHigh = options?.mddComplexity === "HIGH";
-  const minSectionBodyLength = isHigh ? 150 : MIN_SECTION_BODY_LENGTH;
-  const minSection3BodyLength = isHigh ? 80 : MIN_SECTION3_BODY_LENGTH;
+  const profile = resolveDeliveryGateProfile(options?.mddComplexity);
+  const isHigh = profile.complexity === "HIGH";
+  const minSectionBodyLength = profile.minSectionBodyLength;
+  const minSection3BodyLength = profile.minSection3BodyLength;
 
   const structure = validateMddStructure(trimmed);
   if (structure.missingSections.length > 0) {
@@ -191,54 +278,45 @@ export function validateMddForDelivery(
       continue;
     }
     if (entry.num === 1) {
-      if (options?.mddComplexity) {
-        const quality = evaluateSection1BodyQuality(body, options.mddComplexity);
-        if (!quality.ok) {
-          blockers.push(...quality.blockers);
-        }
-      } else if (hasCrossReference(body)) {
-        // sin complejidad: legacy longitud mínima
-      } else {
-        const bodyLen = body.length;
-        if (bodyLen < minSectionBodyLength) {
-          blockers.push(
-            `Sección ${entry.title} tiene contenido insuficiente (${bodyLen} chars; mínimo ${minSectionBodyLength}).`,
-          );
-        }
-        if (isMddSectionPipelinePlaceholderBody(body)) {
-          blockers.push(
-            `Sección ${entry.title} es un placeholder del pipeline (ej. "Pendiente: Arquitecto"). Regenera antes de persistir.`,
-          );
-        }
-      }
+      if (hasCrossReference(body)) continue;
+      // Longitud/placeholder = blocker; subsecciones constitución = warning (§1 corta pero
+      // estructurada incompleta no debe frenar la entrega).
+      const quality = evaluateSection1BodyQuality(body, profile.complexity ?? "LOW", {
+        minLen: profile.minSection1BodyLength,
+      });
+      blockers.push(...quality.lengthBlockers);
+      warnings.push(...quality.structureWarnings);
       continue;
     }
     if (hasCrossReference(body)) continue;
     const bodyLen = body.length;
     if (bodyLen < minLength) {
-      const isPlaceholder = isMddSectionPipelinePlaceholderBody(body);
+      const isPlaceholder = isGatePlaceholderBody(body, minLength);
       const reason = isPlaceholder
         ? `Sección ${entry.title} está en (Pendiente) o tiene contenido insuficiente (${bodyLen} chars; mínimo ${minLength}).`
         : `Sección ${entry.title} tiene contenido insuficiente (${bodyLen} chars; mínimo ${minLength}).`;
       blockers.push(reason);
       continue;
     }
-    if (isMddSectionPipelinePlaceholderBody(body)) {
+    if (isGatePlaceholderBody(body, minLength)) {
       blockers.push(
         `Sección ${entry.title} es un placeholder del pipeline (ej. "Pendiente: Arquitecto"). Regenera antes de persistir.`,
       );
     }
-    // §4: longitud sola no basta — rechaza “(Falta: definir endpoints…)” y stubs sin JSON/rutas.
+    // §4: longitud sola no basta — rechaza “(Falta: definir endpoints…)” y stubs sin rutas.
+    // Criterio único (`isContratosSubstantial`): endpoints método+ruta (prosa, tabla GFM o JSON).
     if (entry.num === 4 && !isContratosSubstantial(body)) {
       blockers.push(
-        "§4 Contratos de API no tiene endpoints reales con request/response JSON (placeholder o solo stubs). Regenera contratos antes de persistir.",
+        "§4 Contratos de API no tiene endpoints reales (método + ruta; placeholder o solo stubs). Regenera contratos antes de persistir.",
       );
     }
-    if (entry.num === 4 && isHigh && isContratosSubstantial(body)) {
+    if (entry.num === 4 && isContratosSubstantial(body)) {
+      const jsonWarning = contratosLacksJsonWarning(body);
+      if (jsonWarning) warnings.push(jsonWarning);
       const endpointRows = countContratosEndpointRows(body);
-      if (bodyLen < 800 && endpointRows < 8) {
-        blockers.push(
-          "§4 Contratos de API truncado o incompleto para proyecto HIGH (catálogo API insuficiente). Regenera contratos antes de persistir.",
+      if (isHigh && bodyLen < 800 && endpointRows < 8) {
+        warnings.push(
+          "§4 Contratos de API truncado o incompleto para proyecto HIGH (catálogo API insuficiente); ampliar el catálogo.",
         );
       }
     }
@@ -263,7 +341,7 @@ export function validateMddForDelivery(
   }
 
   for (const issue of detectCrossConsistencyIssues(trimmed)) {
-    if (isAutoRepairableDeliveryGateWarning(issue)) {
+    if (isWarningOnlyIssue(issue)) {
       warnings.push(issue);
     } else {
       blockers.push(issue);
@@ -277,7 +355,7 @@ export function validateMddForDelivery(
   }
 
   for (const q of collectMddQualityIssues(trimmed)) {
-    if (isAutoRepairableDeliveryGateWarning(q)) {
+    if (isWarningOnlyIssue(q)) {
       warnings.push(q);
     } else {
       blockers.push(q);
@@ -287,7 +365,7 @@ export function validateMddForDelivery(
   const sanity = preRenderMddSanity(trimmed);
   if (!sanity.ok) {
     const sanityMsg = sanity.message ?? sanity.code ?? "Error de validación pre-render del MDD.";
-    if (isAutoRepairableDeliveryGateWarning(sanityMsg)) {
+    if (isWarningOnlyIssue(sanityMsg)) {
       warnings.push(sanityMsg);
     } else {
       blockers.push(sanityMsg);
@@ -318,15 +396,8 @@ export function validateMddForDelivery(
     draft: trimmed,
     domainCorpus: domainCorpusForAnchor,
   });
-  for (const issue of contentQuality.warnings) {
-    // §4 con ratio de schema bajo es más grave en HIGH: catálogo sin contrato no es
-    // implementable sin inventar — sube a blocker igual que el check de longitud de §4.
-    if (isHigh && /^§4 Contratos de API: solo/.test(issue)) {
-      blockers.push(issue);
-    } else {
-      warnings.push(issue);
-    }
-  }
+  // Todo lo de calidad de contenido (incl. ratio de schema de §4) es warning, también en HIGH.
+  warnings.push(...contentQuality.warnings);
 
   if (options?.brdMarkdown?.trim() || options?.dbgaMarkdown?.trim()) {
     const domain = domainDeliveryGateFindings({
@@ -361,7 +432,9 @@ export function validateMddForDelivery(
   score -= blockers.length * 8;
   score = Math.max(0, Math.min(100, score));
 
-  const ok = score >= DELIVERY_SCORE_THRESHOLD && blockers.length === 0;
+  // ok depende SOLO de los blockers: las deducciones de score por warnings (UAT dup, UI genérica)
+  // no deben tumbar un MDD sin blockers (el score se conserva para mostrar).
+  const ok = blockers.length === 0;
   return { ok, score, blockers, warnings };
 }
 

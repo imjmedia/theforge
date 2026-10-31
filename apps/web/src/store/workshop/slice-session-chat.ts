@@ -1,8 +1,5 @@
 import type { StateCreator } from "zustand";
-import type {
-  MddDeliveryGateResult,
-  MddUpstreamSyncStatus,
-} from "@theforge/shared-types";
+import type { MddUpstreamSyncStatus } from "@theforge/shared-types";
 import {
   mddMarkdownHasKnownFormatCorruption,
   mddMarkdownNeedsStructuralRepair,
@@ -29,7 +26,6 @@ import {
   mddHasSection6Heading,
   buildMddSectionRegenNotice,
 } from "../../utils/mddSectionRegen";
-import { mergeAgentProgressFromMddEvent } from "../../utils/agentProgress";
 import {
   buildPlanApprovalChatContents,
   isPlanApprovalResumeMessage,
@@ -50,17 +46,12 @@ import {
 import { pickDefaultStageId } from "./helpers/pick-default-stage";
 import { patchAgentProgressFromMddEvent } from "./helpers/agent-progress-patch";
 import { persistField } from "./helpers/persist-field";
-import {
-  deliveryGateFromStreamEvent,
-} from "./helpers/delivery-gate";
 import { mergeGenerationStatusWithMddUpstreamSync } from "./helpers/generation-status";
 import {
   applyMddEditorBaselineToWorkshop,
   mddContentForEditor,
   normalizedMddForPersistCompare,
-  persistMddFromChatStream,
   selectRawMddFromStage,
-  streamMarkdownPreservesGovernancePatterns,
 } from "./helpers/mdd-editor";
 import {
   effectiveMddContentForSectionRegen,
@@ -82,8 +73,17 @@ import {
   throwStreamHttpError,
 } from "./helpers/store-errors";
 import { shouldApplyWorkshopUpdate } from "./helpers/workshop-scope";
+import { createMddChatEventHandler } from "./helpers/mdd-chat-event";
+import {
+  consumeMddChatJobIntoStore,
+  enqueueMddChatJob,
+  fetchMddChatJobStatus,
+  hasActiveMddChatConsumer,
+  isMddChatViaQueueEnabled,
+} from "./helpers/mdd-chat-queue";
+import { clearMddChatJob, loadMddChatJob, shouldResubscribeToChatJob } from "../../utils/mddChatJob";
 import { selectPersistedMddBaseline } from "./selectors";
-import type { PrecisionBreakdown, Project, Session } from "./types";
+import type { Project, Session } from "./types";
 import type { WorkshopState } from "./workshop-state.types";
 
 type SessionChatSliceActions = Pick<
@@ -94,6 +94,8 @@ type SessionChatSliceActions = Pick<
   | "clearChat"
   | "formatDocumentForActiveTab"
   | "sendMessage"
+  | "cancelActiveChatJob"
+  | "resumeMddChatJob"
 >;
 
 export const createSessionChatSlice: StateCreator<WorkshopState, [], [], SessionChatSliceActions> = (
@@ -129,6 +131,70 @@ export const createSessionChatSlice: StateCreator<WorkshopState, [], [], Session
           error: "Sin conexión: cambios pendientes en cola local. Reintenta al reconectar.",
         });
       }
+    }
+  },
+  cancelActiveChatJob: async () => {
+    const { activeChatJobId, projectId, project } = get();
+    const jobId = activeChatJobId?.trim();
+    const pid = (projectId ?? project?.id ?? "").trim();
+    if (!jobId || !pid) return false;
+    // Reutiliza el cancel del job MDD (DELETE …/mdd-jobs/:id) y deja de leer eventos de este job.
+    return get().cancelMddJob(pid, jobId);
+  },
+  resumeMddChatJob: async (projectId, stageId) => {
+    const pid = projectId.trim();
+    if (!pid || hasActiveMddChatConsumer()) return;
+    const stage = stageId ?? get().activeStageId;
+    const saved = loadMddChatJob(pid, stage);
+    if (!saved) return;
+    let status: Awaited<ReturnType<typeof fetchMddChatJobStatus>>;
+    try {
+      status = await fetchMddChatJobStatus(saved.jobId);
+    } catch {
+      return; // sin red / 5xx: se conserva el estado y se reintenta en la próxima carga
+    }
+    if (!shouldResubscribeToChatJob(status, pid)) {
+      clearMddChatJob(pid, stage);
+      return;
+    }
+    const session = get().session;
+    if (!session?.id || !shouldApplyWorkshopUpdate(get, pid) || hasActiveMddChatConsumer()) return;
+    set({
+      loading: true,
+      loadingReason: "mdd",
+      error: null,
+      agentProgress: [],
+      pendingPlanApproval: null,
+    });
+    try {
+      const handleMddChatEvent = createMddChatEventHandler({
+        set,
+        get,
+        requestProjectId: pid,
+        sessionId: session.id,
+        mddSnapshotBeforeStream: (get().mddContent ?? get().project?.mddContent ?? "").trim(),
+      });
+      await consumeMddChatJobIntoStore({
+        set,
+        get,
+        projectId: pid,
+        stageId: stage,
+        jobId: saved.jobId,
+        cursor: saved.cursor,
+        handleMddChatEvent,
+      });
+    } catch (e) {
+      const msg = friendlyFetchError(e);
+      set({ ...streamErrorPatch({ message: msg }) });
+    } finally {
+      set({
+        loading: false,
+        loadingReason: null,
+        agentProgress: [],
+        streamingUserMessage: null,
+        streamingUserImages: null,
+        streamingContent: null,
+      });
     }
   },
   fetchWelcome: async (projectId, activeTab, options) => {
@@ -880,246 +946,56 @@ export const createSessionChatSlice: StateCreator<WorkshopState, [], [], Session
                 ...(mddStage ? { stageId: mddStage } : {}),
                 ...(imagesForManager.length ? { images: imagesForManager } : {}),
               };
-          const r = await apiFetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
+          // Mismo manejo por evento con ambos transportes (NDJSON legacy y eventos de la cola).
+          const handleMddChatEvent = createMddChatEventHandler({
+            set,
+            get,
+            requestProjectId,
+            sessionId: session.id,
+            mddSnapshotBeforeStream,
           });
-          if (!r.ok) {
-            await throwStreamHttpError(r, "Error en el flujo MDD");
-          }
-          const reader = r.body?.getReader();
-          const decoder = new TextDecoder();
-          let buffer = "";
-          if (reader) {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split("\n");
-              buffer = lines.pop() ?? "";
-              for (const line of lines) {
-                for (const raw of parseNdjsonLine(line)) {
-                try {
-                  const event = raw as {
-                    type: string;
-                    agent?: string;
-                    message?: string;
-                    reply?: string;
-                    questions?: string[];
-                    threadId?: string;
-                    markdown?: string;
-                    precision?: number;
-                    status?: "red" | "yellow" | "green";
-                    precisionBreakdown?: PrecisionBreakdown;
-                    auditorFeedback?: string;
-                    auditTrail?: string[];
-                    /** Plan para aprobación (HITL 4.4) */
-                    plan?: Array<{ step_id: string; task_description: string; node: string }>;
-                    planMessage?: string;
-                    code?: string;
-                  };
-                  if (event.type === "progress" && event.agent != null && event.message != null) {
-                    set((s) => {
-                      if ((s.projectId ?? s.project?.id ?? "").trim() !== requestProjectId) return s;
-                      return {
-                        agentProgress: mergeAgentProgressFromMddEvent(s.agentProgress, {
-                          agent: event.agent!,
-                          message: event.message!,
-                        }),
-                      };
-                    });
-                  } else if (event.type === "draft" && event.markdown != null && event.markdown.trim().length > 80) {
-                    if (!shouldApplyWorkshopUpdate(get, requestProjectId)) continue;
-                    const draftGate = deliveryGateFromStreamEvent(event as { deliveryGate?: MddDeliveryGateResult });
-                    const currentMdd = get().mddContent ?? "";
-                    if (streamMarkdownPreservesGovernancePatterns(currentMdd, event.markdown)) {
-                      set({
-                        mddContent: mddContentForEditor(event.markdown),
-                        ...(draftGate ? { deliveryGate: draftGate } : {}),
-                      });
-                    }
-                  } else if (event.type === "interrupt") {
-                    set({
-                      managerThreadId: event.threadId ?? get().managerThreadId ?? null,
-                      pendingPlanApproval:
-                        Array.isArray(event.plan) && event.plan.length > 0
-                          ? { plan: event.plan, planMessage: event.planMessage ?? "¿Ejecutar este plan?" }
-                          : null,
-                    });
-                    if (event.markdown != null && event.markdown.trim().length > 80) {
-                      const incoming = event.markdown.trim();
-                      const unchanged =
-                        mddSnapshotBeforeStream.length > 80 && incoming === mddSnapshotBeforeStream;
-                      const replyClaimsEdit =
-                        typeof event.reply === "string" &&
-                        /\b(ajust|elimin|actualiz|modific|ya no contiene|sin referencias)\b/i.test(
-                          event.reply,
-                        );
-                      if (unchanged && replyClaimsEdit) {
-                        set({
-                          error:
-                            "El chat indicó cambios pero el MDD no se actualizó. Revisa si hay un plan pendiente de aprobar, o usa /infraestructura o /seguridad para forzar la regeneración.",
-                        });
-                      }
-                      const currentMdd = get().mddContent ?? "";
-                      if (streamMarkdownPreservesGovernancePatterns(currentMdd, incoming)) {
-                        set({ mddContent: mddContentForEditor(incoming) });
-                        if (!unchanged) {
-                          await persistMddFromChatStream(get, set, incoming, requestProjectId);
-                        }
-                      }
-                    }
 
-                    // No sobrescribir mddContent con markdown vacío (auditar puede venir de checkpoint sin draft)
-                    const precisionBreakdown = (event as any).precisionBreakdown;
-                    const auditTrail = (event as any).auditTrail;
-                    const auditorFeedback = (event as any).auditorFeedback;
-                    const interruptGate = deliveryGateFromStreamEvent(event as { deliveryGate?: MddDeliveryGateResult });
-
-                    // Actualizar estado para el semáforo/modal, NO enviar al chat
-                    if (precisionBreakdown || auditTrail || auditorFeedback || interruptGate) {
-                      set({
-                        precisionBreakdown: precisionBreakdown ?? get().precisionBreakdown,
-                        auditTrail: auditTrail ?? get().auditTrail,
-                        auditorFeedback: auditorFeedback ?? get().auditorFeedback,
-                        ...(interruptGate ? { deliveryGate: interruptGate } : {}),
-                      });
-                    }
-
-                    const hasPlanForApproval =
-                      Array.isArray(event.plan) && event.plan.length > 0;
-                    // plan_approval: PlanApprovalCard ya muestra planMessage + tabla «Tareas y responsables»;
-                    // no duplicar el mismo texto como burbuja en el historial del chat.
-                    const clarifierContent = hasPlanForApproval
-                      ? null
-                      : event.reply != null && event.reply !== ""
-                        ? event.reply
-                        : Array.isArray(event.questions) && event.questions.length > 0
-                          ? event.questions.join("\n\n")
-                          : "Responde en el chat para continuar con la entrevista (objetivos del sistema, integraciones, etc.).";
-
-                    let sess = get().session;
-                    if (clarifierContent) {
-                      const appendAssistant = await apiFetch(`${API_BASE}/sessions/${session.id}/messages`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: sessionMessageBody(
-                          { role: "assistant", content: clarifierContent, tab: "mdd" },
-                          get().activeStageId,
-                        ),
-                      });
-                      if (appendAssistant.ok) {
-                        sess = (await appendAssistant.json()) as Session;
-                        set({ session: sess });
-                      }
-                    }
-                    set({
-                      loading: false,
-                      loadingReason: null,
-                      agentProgress: [],
-                      streamingUserMessage: null,
-                      streamingUserImages: null,
-                      streamingContent: null,
-                      evaluatorCritique: null,
-                    });
-                    return;
-                  } else if (event.type === "done" && event.markdown != null) {
-                    set({ managerThreadId: null, pendingPlanApproval: null });
-                    const markdownOk = event.markdown.trim().length > 80;
-                    const mddBeforeFetch = (get().mddContent ?? "").trim();
-                    if (
-                      markdownOk &&
-                      streamMarkdownPreservesGovernancePatterns(mddBeforeFetch, event.markdown)
-                    ) {
-                      set({ mddContent: mddContentForEditor(event.markdown) });
-                    }
-
-                    const precisionBreakdown = (event as any).precisionBreakdown;
-                    const auditTrail = (event as any).auditTrail;
-                    const auditorFeedback = (event as any).auditorFeedback;
-                    const doneGate = deliveryGateFromStreamEvent(event as { deliveryGate?: MddDeliveryGateResult });
-
-                    if (precisionBreakdown || auditTrail || auditorFeedback || doneGate) {
-                      set({
-                        precisionBreakdown: precisionBreakdown ?? get().precisionBreakdown,
-                        auditTrail: auditTrail ?? get().auditTrail,
-                        auditorFeedback: auditorFeedback ?? get().auditorFeedback,
-                        ...(doneGate ? { deliveryGate: doneGate } : {}),
-                      });
-                    }
-
-                    if (markdownOk) {
-                      await persistMddFromChatStream(get, set, event.markdown, requestProjectId);
-                    } else if (mddBeforeFetch.length > 80) {
-                      // `done` con markdown corto (p. ej. placeholder) no debe vaciar borradores ya mostrados por eventos `draft`.
-                      const current = get();
-                      const flat = workshopFlatFromStage(current.project as Project, get().activeStageId);
-                      const serverMdd = (normalizeWorkshopDocumentForEditor(flat.mddContent) ?? "").trim();
-                      if (serverMdd.length < mddBeforeFetch.length) {
-                        set({
-                          mddContent: mddBeforeFetch,
-                          project: current.project ? { ...current.project, mddContent: mddBeforeFetch } : current.project,
-                        });
-                      }
-                    }
-
-                    const assistantContent = "MDD generado. Revisa el documento en el panel central.";
-                    const assistantRes = await apiFetch(`${API_BASE}/sessions/${session.id}/messages`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: sessionMessageBody(
-                        { role: "assistant", content: assistantContent, tab: "mdd" },
-                        get().activeStageId,
-                      ),
-                    });
-                    if (assistantRes.ok) {
-                      const sess = (await assistantRes.json()) as Session;
-                      set({ session: sess });
-                    }
-                    set({
-                      loading: false,
-                      loadingReason: null,
-                      agentProgress: [],
-                      streamingUserMessage: null,
-                      streamingUserImages: null,
-                      streamingContent: null,
-                      pendingPlanApproval: null,
-                      evaluatorCritique: null,
-                    });
-                    return;
-                  } else if (event.type === "blocked" && event.message) {
-                    set({
-                      managerThreadId: null,
-                      pendingPlanApproval: null,
-                      error: String(event.message),
-                      loading: false,
-                      loadingReason: null,
-                      agentProgress: [],
-                      streamingUserMessage: null,
-                      streamingUserImages: null,
-                      streamingContent: null,
-                      evaluatorCritique: null,
-                    });
-                    return;
-                  } else if (event.type === "error" && event.message) {
-                    set({
-                      managerThreadId: null,
-                      pendingPlanApproval: null,
-                      ...streamErrorPatch(event as { message: string; code?: string }),
-                      loading: false,
-                      loadingReason: null,
-                      agentProgress: [],
-                      streamingUserMessage: null,
-                      streamingUserImages: null,
-                      streamingContent: null,
-                      evaluatorCritique: null,
-                    });
-                    return;
+          // Chat vía cola (flag `chatViaQueue` del API): el turno corre en el worker BullMQ y sobrevive
+          // al cierre de la pestaña; los eventos se leen con cursor. Sin flag, NDJSON dentro del request.
+          if (await isMddChatViaQueueEnabled()) {
+            const jobId = await enqueueMddChatJob({
+              mode: managerThreadId != null ? "resume" : "manager",
+              ...body,
+            });
+            void get().fetchGenerationStatus(requestProjectId, mddStage ?? undefined);
+            const outcome = await consumeMddChatJobIntoStore({
+              set,
+              get,
+              projectId: requestProjectId,
+              stageId: mddStage,
+              jobId,
+              cursor: 0,
+              handleMddChatEvent,
+            });
+            if (outcome === "terminal") return;
+          } else {
+            const r = await apiFetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            if (!r.ok) {
+              await throwStreamHttpError(r, "Error en el flujo MDD");
+            }
+            const reader = r.body?.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            if (reader) {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop() ?? "";
+                for (const line of lines) {
+                  for (const raw of parseNdjsonLine(line)) {
+                    if ((await handleMddChatEvent(raw)) === "terminal") return;
                   }
-                } catch (_) {
-                  // ignore
-                }
                 }
               }
             }

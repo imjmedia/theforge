@@ -1,9 +1,11 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { ComplexityLevel, Status } from "@theforge/database";
 import type { SddGraphSyncStatus } from "@theforge/shared-types";
 import { MddCoherenceService } from "./mdd-coherence/mdd-coherence.service.js";
 import { resolveDomainInventory } from "./domain-inventory-persist.util.js";
 import { SemaphoreService, type SemaphoreEvaluationInput } from "./semaphore.service.js";
+import { EstimationService } from "../ai-analysis/estimation/estimation.service.js";
+import { liveSemaphoreToDbStatus } from "../ai-analysis/estimation/live-semaphore-status.util.js";
 import { prepareMddForOutput } from "../ai-analysis/utils/mdd-prepare-output.js";
 import { validateMddForDelivery } from "../ai-analysis/utils/mdd-delivery-gate.util.js";
 import { extractSection5Body } from "../ai-analysis/utils/mdd-sanitize/section-merge.js";
@@ -48,6 +50,12 @@ export type MddUpdatePipelineResult =
 /**
  * Responsabilidad única: validar MDD (sanity), sanitizar Mermaid y evaluar semáforo.
  * Usado por ProjectsService cuando se actualiza mddContent.
+ *
+ * Fuente única del semáforo del MDD: `EstimationService.getLiveMetricsForProject` (misma métrica que el panel
+ * Workshop y único escritor de `Stage.status`, vía `refreshStageSemaphoreFromProject` tras persistir). El `status` /
+ * `precisionScore` que devuelve `process` se calcula con esas mismas métricas (sin escribir en BD: el MDD aún no está
+ * persistido). `SemaphoreService.evaluate` queda sólo como fallback cuando `EstimationService` no está disponible
+ * (módulo sin cablear) y para el reporte compuesto de entregables LOW/MEDIUM (`evaluateCompositeSemaphore`).
  */
 @Injectable()
 export class MddUpdatePipelineService {
@@ -56,6 +64,7 @@ export class MddUpdatePipelineService {
   constructor(
     private readonly semaphore: SemaphoreService,
     private readonly mddCoherence: MddCoherenceService,
+    @Optional() private readonly estimation?: EstimationService,
   ) {}
 
   /**
@@ -83,13 +92,14 @@ export class MddUpdatePipelineService {
       );
       prepared = prepareMddMarkdownForPersist(touched);
       persistFormatted = true;
-      gateRef.current = validateMddForDelivery(prepared);
+      gateRef.current = validateMddForDelivery(prepared, { mddComplexity: semaphoreBase.complexity });
     } else {
       prepared = await prepareMddForOutput(rawMddContent, {
         deliveryGateRef: gateRef,
         formatForPersist: true,
         brdMarkdown: graphScope?.brdMarkdown,
         dbgaMarkdown: graphScope?.dbgaMarkdown,
+        mddComplexity: semaphoreBase.complexity,
       });
     }
     const s5Post = extractSection5Body(prepared)?.length ?? 0;
@@ -97,7 +107,8 @@ export class MddUpdatePipelineService {
       `[MDD:PersistPipeline] prepare done len=${prepared.length} §5=${s5Pre}→${s5Post} prevalidated=${prevalidated}`,
     );
     logMddPersistFenceDiag("update-pipeline:post", prepared);
-    const gate = gateRef.current ?? validateMddForDelivery(prepared);
+    const gate =
+      gateRef.current ?? validateMddForDelivery(prepared, { mddComplexity: semaphoreBase.complexity });
     if (!gate.ok) {
       console.warn(
         `[MDD:PersistPipeline] gate FAIL score=${gate.score} blockers=${gate.blockers.length}: ${gate.blockers.slice(0, 2).join("; ")}`,
@@ -148,11 +159,29 @@ export class MddUpdatePipelineService {
       }
     }
 
-    const { status, precisionScore } = this.semaphore.evaluate({
+    let { status, precisionScore } = this.semaphore.evaluate({
       ...semaphoreBase,
       mddJsonString: contentForSemaphore,
       sddDomainGraphOk,
     });
+    if (this.estimation && pid && sid) {
+      try {
+        // Gaps del Auditor: tras un job ya auditado siguen vigentes (reata el hash al MDD sanitizado);
+        // tras un PATCH manual con contenido distinto dejan de aplicar.
+        if (prevalidated) {
+          this.estimation.rebindAuditorGapsToPersistedContent(pid, sid, sanitizedMdd);
+        } else {
+          this.estimation.dropAuditorGapsIfContentChanged(pid, sid, sanitizedMdd);
+        }
+        const live = await this.estimation.getLiveMetricsForProject(pid, sanitizedMdd, sid, { syncStage: false });
+        status = liveSemaphoreToDbStatus(live.status);
+        precisionScore = Math.min(100, Math.max(0, Math.round(live.auditorScore ?? live.precision)));
+      } catch (e) {
+        this.logger.warn(
+          `[MddPipeline] Métricas en vivo no disponibles; se usa SemaphoreService como respaldo: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
     return {
       ok: true,
       sanitizedMdd,

@@ -28,6 +28,7 @@ import { hasDeliveryGateBlockers } from "./helpers/delivery-gate";
 import { persistField } from "./helpers/persist-field";
 import { errorStateFromCaught, friendlyFetchError, throwStreamHttpError } from "./helpers/store-errors";
 import { workshopStateFromProjectStage } from "./helpers/stage-focus";
+import { resolveWorkshopHeadlineScore, type LiveMetricsAuditorFields } from "../../utils/workshopSemaphoreStatus";
 import {
   generationStatusWithoutSddGraph,
   resetWorkshopSemaphoreSnapshot,
@@ -1175,7 +1176,7 @@ export const createDeliverablesSlice: StateCreator<
         }),
       });
       if (!r.ok) return null;
-      const data = (await r.json()) as LiveMetricsResult & {
+      const data = (await r.json()) as LiveMetricsResult & LiveMetricsAuditorFields & {
         precisionBreakdown?: PrecisionBreakdown;
         completeness?: DocumentCompleteness;
         crossDocumentGaps?: CrossDocumentGap[];
@@ -1211,7 +1212,10 @@ export const createDeliverablesSlice: StateCreator<
                     : metrics.status === "yellow"
                       ? "AMARILLO"
                       : "ROJO",
-                precisionScore: Math.min(100, Math.max(0, Math.round(metrics.precision))),
+                precisionScore: Math.min(
+                  100,
+                  Math.max(0, Math.round(resolveWorkshopHeadlineScore(metrics).value)),
+                ),
               },
             }
           : {}),

@@ -102,6 +102,11 @@ export interface PrecisionBreakdown {
 
 /** Salida exacta para la UI: Semáforo + Estimación (nómina interna y precio mercado). */
 export interface LiveMetricsResult {
+  /**
+   * Métrica integral (completitud + consistencia + calidad MDD). Titular del panel cuando
+   * `mddQualitySource !== "auditor"`; con Auditor vigente el titular es `auditorScore` e `precision` pasa a secundaria.
+   * Con el atajo sin documentos auxiliares (sólo MDD) equivale a la nota MDD.
+   */
   precision: number;
   /** Nómina interna ponderada (Σ horas rol × tarifa rol × riskFactor). */
   totalMXN: number;
@@ -112,6 +117,10 @@ export interface LiveMetricsResult {
   roles: Record<string, number>;
   /** Horas por rol (reparto delivery). */
   rolesHours: Record<string, number>;
+  /**
+   * Semáforo/titular. Con `mddQualitySource === "auditor"` se deriva de `auditorScore` (limitado por trazabilidad BRD→MDD,
+   * delivery gate y conformance); si no, de la métrica integral.
+   */
   status: SemaphoreStatusLive;
   /** Costo estimado de generación con IA (USD → MXN ~ $20/USD). */
   totalMXNIA: number;
@@ -127,6 +136,13 @@ export interface LiveMetricsResult {
   completeness?: DocumentCompleteness;
   /** Calidad MDD usada en la fórmula integral (45% del total). */
   mddQualityScore?: number;
+  /** Nota del Auditor LLM (0–100) cuando sus gaps describen el contenido evaluado; titular del panel. */
+  auditorScore?: number;
+  /**
+   * Origen de `mddQualityScore`: "auditor" (gaps del Auditor LLM vigentes para este contenido) o
+   * "regex" (heurística determinista; el Auditor no evaluó este contenido exacto).
+   */
+  mddQualitySource?: "auditor" | "regex";
   /** Gaps estructurados BRD→MDD. */
   crossDocumentGaps?: CrossDocumentGap[];
   /** Gate bloqueante de entrega MDD (≥9/10); si ok=false, el semáforo no puede ser verde. */
@@ -161,6 +177,11 @@ export type MddAuditSnapshot = {
   mddAgentEditLog?: MddAgentEditLogEntry[];
   precisionBreakdown?: PrecisionBreakdown;
   auditorGaps?: AuditorGaps;
+  /**
+   * Hash normalizado (`hashMddDraft`) del borrador que evaluó el Auditor. Permite reutilizar `auditorGaps`
+   * cuando el editor envía un override cuyo hash coincide. Opcional por compatibilidad con snapshots previos.
+   */
+  auditedDraftHash?: string;
   updatedAt?: string;
 };
 

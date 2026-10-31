@@ -18,6 +18,7 @@ import { extractFirstJsonObject } from "../utils/parse-json.js";
 import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
 import { z } from "zod";
 import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
+import { buildArchitectCriticOutline } from "../utils/mdd-architect-critic-outline.util.js";
 
 const criticOutputSchema = z.object({
   verdict: z.enum(["ok", "gap"]),
@@ -29,7 +30,7 @@ const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:ArchitectCrit
 type CriticVerdict = z.infer<typeof criticOutputSchema>;
 
 /** Parsea salida del crítico: JSON estricto + fallback regex cuando el LLM mezcla prosa. */
-function parseArchitectCriticOutput(text: string): CriticVerdict | null {
+export function parseArchitectCriticOutput(text: string): CriticVerdict | null {
   const raw = extractFirstJsonObject(text);
   if (raw) {
     try {
@@ -54,6 +55,10 @@ function parseArchitectCriticOutput(text: string): CriticVerdict | null {
 /**
  * Nodo Architect Critic (Reflection): verifica si §3 y §4 del MDD cumplen la directiva del usuario
  * y (cuando hay BRD) la fidelidad de dominio / anti auth-skew.
+ *
+ * El LLM recibe un OUTLINE compacto (todas las tablas con columnas y todos los endpoints), no un
+ * recorte crudo. Fail-open: error del proveedor, respuesta vacía o salida no parseable => "ok"
+ * (sin feedback ni reintento); solo un `gap` explícito con ≥1 gap concreto dispara feedback.
  */
 export function createMddArchitectCriticNode(llm: BaseChatModel) {
   return async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
@@ -113,16 +118,18 @@ export function createMddArchitectCriticNode(llm: BaseChatModel) {
 
     const directiveBlock = [directive, explicitReqs].filter(Boolean).join("\n\n") ||
       "(Sin directiva HITL; evalúa fidelidad al inventario de dominio / BRD.)";
+    const outline = buildArchitectCriticOutline({
+      section3,
+      section4: afterSection3Only ? null : section4,
+    });
     const context =
       `**Directiva o requisitos del usuario:**\n${directiveBlock}\n\n` +
       (inventoryBlock ? `${inventoryBlock.trim()}\n\n` : "") +
-      `**Fragmento de MDD recién generado (${afterSection3Only ? "solo §3" : "§3 y §4"}):**\n${fragment.slice(0, 6000)}`;
+      `**Esquema compacto del MDD recién generado (${afterSection3Only ? "solo §3" : "§3 y §4"}). ` +
+      `Lista COMPLETA de tablas y endpoints; si ves "+N más", esos ítems existen y NO deben reportarse como faltantes:**\n${outline}`;
     const prompt = `${ARCHITECT_CRITIC_MDD_PROMPT}\n\n---\n${context}`;
     const startedAt = Date.now();
 
-    const fallbackGapFeedback = afterSection3Only
-      ? "No se pudo verificar §3 automáticamente. Revisa SQL, diagrama ER y cobertura del inventario de dominio antes de generar contratos API."
-      : "No se pudo verificar §3 y §4 automáticamente. Revisa que la directiva del usuario y las entidades/procesos del inventario de dominio estén aplicados en el SQL, diagrama ER y sección 4.";
     try {
       const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], {
         tag: "ArchitectCritic",
@@ -134,37 +141,26 @@ export function createMddArchitectCriticNode(llm: BaseChatModel) {
       });
       const parsedData = parseArchitectCriticOutput(text);
       if (!parsedData) {
-        LOG("parse critic output failed, treating as gap for one retry");
-        if (attempts <= 1) {
-          return {
-            architectCriticFeedback: fallbackGapFeedback,
-            architectCriticAttempts: attempts,
-          };
-        }
+        LOG("critic sin salida parseable (len=%s) → ok, sin reintento", text.length);
         return { architectCriticFeedback: undefined, architectCriticAttempts: attempts };
       }
       const { verdict, gaps } = parsedData;
-      if (verdict === "gap" && Array.isArray(gaps) && gaps.length > 0 && attempts <= 1) {
-        const feedback = gaps.join("\n");
+      const concreteGaps = (gaps ?? []).map((g) => g.trim()).filter((g) => g.length > 0);
+      if (verdict === "gap" && concreteGaps.length > 0 && attempts <= 1) {
+        const feedback = concreteGaps.join("\n");
         LOG("verdict=gap attempts=%s feedback=%s", attempts, feedback.slice(0, 80));
         return {
           architectCriticFeedback: feedback,
           architectCriticAttempts: attempts,
         };
       }
-      LOG("verdict=ok o attempts>1, seguir");
+      LOG("verdict=%s gaps=%s attempts=%s → seguir", verdict, concreteGaps.length, attempts);
       return {
         architectCriticFeedback: undefined,
         architectCriticAttempts: attempts,
       };
     } catch (err) {
-      LOG("critic error: %s", err instanceof Error ? err.message : String(err));
-      if (attempts <= 1) {
-        return {
-          architectCriticFeedback: fallbackGapFeedback,
-          architectCriticAttempts: attempts,
-        };
-      }
+      LOG("critic error: %s → ok (fail-open)", err instanceof Error ? err.message : String(err));
       return { architectCriticFeedback: undefined, architectCriticAttempts: attempts };
     }
   };

@@ -1101,10 +1101,14 @@ export function validateMddStructure(draft: string): ValidateMddStructureResult 
     !!section4Body &&
     section4Body.length >= 100 &&
     !/^\s*\(?\s*(Pendiente|Falta):\s*definir\s+endpoints/i.test(section4Body) &&
-    (/```json/i.test(section4Body) || /\b(POST|GET|PUT|DELETE|PATCH)\s+[\"']?\//i.test(section4Body) || /###\s+(POST|GET|PUT|DELETE|PATCH)/i.test(section4Body));
+    (/```json/i.test(section4Body) ||
+      /\b(POST|GET|PUT|DELETE|PATCH)\s+[\"']?\//i.test(section4Body) ||
+      /###\s+(POST|GET|PUT|DELETE|PATCH)/i.test(section4Body) ||
+      // Tabla GFM: `| GET | /api/v1/orders | … |` (con o sin backticks/negritas en la celda del método).
+      /\|\s*[`*]*(POST|GET|PUT|DELETE|PATCH)[`*]*\s*\|\s*[`*]*\//i.test(section4Body));
 
   if (!section3HasPayloads && section4Body !== null) {
-    issues.push("Sección 4. Contratos de API: debe incluir tabla de endpoints y al menos 2-3 endpoints con request/response en bloques ```json.");
+    issues.push("Sección 4. Contratos de API: debe incluir tabla de endpoints (método + ruta) y, recomendado, request/response en bloques ```json.");
   }
   if (missingSections.length > 0) {
     issues.push("Secciones faltantes: " + missingSections.join(", "));
