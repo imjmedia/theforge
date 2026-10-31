@@ -86,10 +86,14 @@ export const MDDStateAnnotation = Annotation.Root({
     sectionsToRun?: string[];
     previousMddDraftForMerge?: string;
     goto: string;
+    /** true → plan_approval no interrumpe; ejecuta directo (p. ej. tras responder preguntas del Clarifier). */
+    autoApprove?: boolean;
   } | undefined>(),
   planUserIntent: Annotation<string | undefined>(),
   executorControlled: Annotation<boolean | undefined>(),
   mddPlanCurrentStep: Annotation<number | undefined>(),
+  /** Saltos "mesh" (directiva → nodo anterior) consumidos en el plan actual; tope en el Executor. */
+  meshJumpCount: Annotation<number | undefined>(),
   currentStepAllowedTools: Annotation<string[] | undefined>(),
   currentStepGoal: Annotation<string | undefined>(),
   architectCriticFeedback: Annotation<string | undefined>(),
@@ -128,6 +132,8 @@ export const MDDStateAnnotation = Annotation.Root({
   deliveryGateFixTarget: Annotation<DeliveryGateFixTarget | undefined>(),
   /** Fingerprint placeholder blockers (circuit breaker). */
   deliveryGatePlaceholderFingerprint: Annotation<string | undefined>(),
+  /** Fingerprint de TODOS los blockers del intento anterior (corta el loop sin progreso). */
+  deliveryGateBlockersFingerprint: Annotation<string | undefined>(),
   /** F3: post_critic_parallel completó §4∥§6∥§7 (skip tail_parallel). */
   postCriticParallelDone: Annotation<boolean | undefined>(),
   /** §5 sin cambios: skip format_after_architect redundante. */

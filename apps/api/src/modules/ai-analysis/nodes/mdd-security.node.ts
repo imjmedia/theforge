@@ -162,6 +162,20 @@ export function createMddSecurityNode(llm: BaseChatModel, opts?: MddSecurityNode
       if (isPlaceholderSeguridad(seguridad) && !hasPrevSection6) {
         LOG("[DIAG §6] placeholder sin §6 previa tras retries — conservando placeholder mínimo");
       }
+      // Fallback al placeholder PENDING (sin LLM útil ni §6 previa): marcar el paso como fallido
+      // para que el manager/gate no lo trate como éxito. Un éxito solo limpia un fallo previo de "security".
+      const securityFailed = seguridad === PENDING_SEGURIDAD;
+      const failureUpdate: Partial<MDDStateType> = securityFailed
+        ? {
+            lastStepFailed: {
+              node: "security",
+              error: "LLM vacío o respuesta inválida; §6 queda como placeholder (Pendiente de definir.)",
+            },
+          }
+        : state.lastStepFailed?.node === "security"
+          ? { lastStepFailed: undefined }
+          : {};
+      if (securityFailed) LOG("fallo: §6 en placeholder PENDING (lastStepFailed=security)");
       const slice = { seguridad };
       const merged = mergeMddStructured(state.mddStructured, slice, state.mddDraft ?? "");
       let securitySectionMd = seguridadItemsToSection6Markdown(merged.seguridad ?? seguridad);
@@ -178,13 +192,17 @@ export function createMddSecurityNode(llm: BaseChatModel, opts?: MddSecurityNode
       }
       if (sliceOnly) {
         LOG("ok sliceOnly seguridad items=%s", seguridad.length);
-        return { mddStructured: { seguridad: merged.seguridad ?? seguridad }, securitySectionMd };
+        return {
+          mddStructured: { seguridad: merged.seguridad ?? seguridad },
+          securitySectionMd,
+          ...failureUpdate,
+        };
       }
       const mddDraft = buildMddDraftWithSection6(state, merged.seguridad ?? seguridad);
       const sum = getMddDraftSummary(mddDraft);
       LOG("ok seguridad §6 actualizada mddDraftLen=%s section2=%s", sum.length, sum.section2);
       logMddNodeOutput("Security", mddDraft, { inputLen: inputDraftLen });
-      return { mddStructured: merged, mddDraft, securitySectionMd };
+      return { mddStructured: merged, mddDraft, securitySectionMd, ...failureUpdate };
     } catch (err) {
       LOG("error: %s", err instanceof Error ? err.message : String(err));
       throw err;

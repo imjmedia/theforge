@@ -6,7 +6,7 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { Command } from "@langchain/langgraph";
 import type { LivePrecisionCalculator } from "../estimation/estimation.types.js";
 import type { MDDStateType } from "../state/index.js";
-import { hasRealBenchmark, LOG, mddHasContent } from "./mdd-manager/manager-context.util.js";
+import { hasRealBenchmark, LOG, mddHasContent, withTurnReset } from "./mdd-manager/manager-context.util.js";
 import { handleManagerDelegateOutcome } from "./mdd-manager/manager-delegate.js";
 import { runManagerLlmTurn } from "./mdd-manager/manager-llm-turn.js";
 import { runDeterministicManagerHandlers } from "./mdd-manager/manager-state-handlers.js";
@@ -22,6 +22,8 @@ export type { MddManagerToolDeps } from "./mdd-manager/manager-types.js";
  * Caso 2: MDD con contenido pero score < 85% → Manager asigna gaps a agentes; >= 85% cede al usuario.
  * Caso 3: Existe dbgaContent → delegar de inmediato a especialistas para v1; luego bucle refinamiento.
  * Done solo si Auditor >= 85% o usuario pide parar (umbral 85 = ceder intervención al usuario).
+ * Al llegar un mensaje nuevo se limpian los flags transitorios del turno anterior (`withTurnReset`); la memoria
+ * (auditorScore/Feedback, userInputAccumulated) se conserva entre turnos.
  * Si se pasa precisionCalculator, el % mostrado coincide con el semáforo (calculateLiveMetrics sobre mddDraft).
  */
 export function createMddManagerNode(
@@ -32,7 +34,6 @@ export function createMddManagerNode(
   return async (state: MDDStateType): Promise<Partial<MDDStateType> | Command> => {
     const userMessage = (state.lastUserMessage ?? "").trim();
     const score = state.auditorScore ?? 0;
-    const iteration = state.mddIteration ?? 0;
     LOG("entry lastUserMessage=%s mddDraftLen=%s auditorScore=%s", userMessage.slice(0, 80), (state.mddDraft ?? "").length, score);
 
     const deterministic = await runDeterministicManagerHandlers({
@@ -41,9 +42,9 @@ export function createMddManagerNode(
       precisionCalculator,
       userMessage,
       score,
-      iteration,
     });
-    if (deterministic) return deterministic;
+    // Mensaje nuevo del usuario → limpiar flags transitorios del turno anterior (el checkpoint persiste).
+    if (deterministic) return withTurnReset(deterministic, userMessage);
 
     const hasBench = hasRealBenchmark(state);
     const hasDraft = mddHasContent(state);
@@ -55,6 +56,7 @@ export function createMddManagerNode(
       hasBench,
       hasDraft,
     });
-    return handleManagerDelegateOutcome({ state, llm, userMessage, hasDraft, turn });
+    const outcome = await handleManagerDelegateOutcome({ state, llm, userMessage, hasDraft, turn });
+    return withTurnReset(outcome, userMessage);
   };
 }

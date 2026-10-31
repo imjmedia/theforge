@@ -238,14 +238,24 @@ describe("preserveSection5IfSubstantial", () => {
     assert.equal(draftHasSubstantialSection5(out), true);
   });
 
-  it("restaura §5 por regresión aunque baseline >3× current sustancial", () => {
+  it("NO revierte §5 que solo se acortó (aunque baseline >3× current)", () => {
     const richS5 = `${"Regla BDD detallada con edge cases del dominio KMS. ".repeat(400)}`;
     const mediumS5 = `${"Regla corta pero sustancial para el gate. ".repeat(12)}`;
     const rich = BASE.replace(S5_BODY, richS5);
     const shrunk = rich.replace(richS5, mediumS5);
-    assert.ok(isSection5SectionRegression(richS5, mediumS5));
+    assert.equal(isSection5SectionRegression(richS5, mediumS5), false);
     assert.ok(richS5.length > mediumS5.length * 3);
     const out = preserveSection5IfSubstantial(rich, shrunk);
+    assert.equal(out, shrunk);
+    assert.ok(!out.includes("Regla BDD detallada"));
+  });
+
+  it("restaura §5 destruida (placeholder) aunque el baseline sea enorme", () => {
+    const richS5 = `${"Regla BDD detallada con edge cases del dominio KMS. ".repeat(400)}`;
+    const rich = BASE.replace(S5_BODY, richS5);
+    const wiped = rich.replace(richS5, "(Pendiente: Ingeniero de Lógica)");
+    assert.equal(isSection5SectionRegression(richS5, "(Pendiente: Ingeniero de Lógica)"), true);
+    const out = preserveSection5IfSubstantial(rich, wiped);
     assert.ok(out.includes("Regla BDD detallada"));
   });
 
@@ -490,7 +500,40 @@ describe("draftHasPersistableSection4", () => {
 ${"| GET | /api/v1/tenants | list |\n".repeat(8)}`;
     const draft = `# MDD\n## 4. Contratos de API\n${tableOnly}\n`;
     assert.equal(draftHasPersistableSection4(draft), true);
-    assert.equal(draftHasSubstantialSection4(draft), false);
+    // Criterio único: tabla método+ruta es §4 sustancial (el JSON es solo un warning de calidad).
+    assert.equal(draftHasSubstantialSection4(draft), true);
+  });
+});
+
+describe("preservación sin reverts por ratio (gate-loop no se deshace)", () => {
+  it("§3 con menos tablas que el snapshot NO se revierte", () => {
+    const tables = (n: number) =>
+      Array.from({ length: n }, (_, i) => `CREATE TABLE t_${i} (id UUID PRIMARY KEY, name TEXT NOT NULL);`).join("\n");
+    const snapDraft = `# MDD\n## 3. Modelo de Datos\n\n\`\`\`sql\n${tables(10)}\n\`\`\`\n`;
+    const curDraft = `# MDD\n## 3. Modelo de Datos\n\n\`\`\`sql\n${tables(3)}\n\`\`\`\n\nTechnicalMetadata: [high_security] modelo podado por el gate-loop.\n`;
+    assert.equal(draftHasSubstantialSection3(curDraft), true);
+    const out = preserveSection3FromDataModelSnapshot(snapDraft, curDraft);
+    assert.equal(out, curDraft);
+  });
+
+  it("§3 vaciada (placeholder) SÍ se restaura desde el snapshot", () => {
+    const sql = Array.from({ length: 6 }, (_, i) => `CREATE TABLE t_${i} (id UUID PRIMARY KEY, name TEXT NOT NULL);`).join("\n");
+    const snapDraft = `# MDD\n## 3. Modelo de Datos\n\n\`\`\`sql\n${sql}\n\`\`\`\n`;
+    const curDraft = `# MDD\n## 3. Modelo de Datos\n\n(Pendiente: Arquitecto)\n`;
+    const out = preserveSection3FromDataModelSnapshot(snapDraft, curDraft);
+    assert.match(out, /CREATE TABLE t_5/);
+  });
+
+  it("§4 con menos filas que el snapshot NO se revierte; placeholder SÍ", () => {
+    const rows = (n: number) =>
+      Array.from({ length: n }, (_, i) => `| GET | /api/v1/ep-${i} | list |`).join("\n");
+    const snap = `# MDD\n## 4. Contratos de API\n${rows(20)}\n`;
+    const cur = `# MDD\n## 4. Contratos de API\n${rows(6)}\n`;
+    assert.equal(preserveSection4FromApiContractsSnapshot(snap, cur).trim(), cur.trim());
+    const wiped = `# MDD\n## 4. Contratos de API\n(Falta: definir endpoints con request/response en JSON.)\n`;
+    assert.match(preserveSection4FromApiContractsSnapshot(snap, wiped), /ep-19/);
+    assert.equal(preserveSection4IfSubstantial(snap, cur).trim(), cur.trim());
+    assert.match(preserveSection4IfSubstantial(snap, wiped), /ep-19/);
   });
 });
 

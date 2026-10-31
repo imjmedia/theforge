@@ -10,6 +10,7 @@ import { runAgentToolsRound } from "../../utils/mdd-agent-tools-invoke.js";
 import type { MddManagerToolDeps } from "./manager-types.js";
 import { LOG } from "./manager-context.util.js";
 import {
+  inferAgentsFromAuditorFeedback,
   inferSectionsFromMessage,
   looksLikeExplicitMddModificationRequest,
   replyClaimsDocumentWasModified,
@@ -42,7 +43,7 @@ const managerStructuredOutputSchema = z.object({
     .describe("clarifier_only = solo sección 1; full_pipeline = todo; sections = solo los listados en sections"),
   sections: z
     .array(z.string())
-    .describe("Si target es sections: software_architect, security, integration; si no, array vacío"),
+    .describe("Si target es sections: software_architect, section5, security, integration; si no, array vacío"),
   memorySearchQuery: z
     .string()
     .describe("Si action es search_memory: la intención a buscar en el grafo (ej: 'auth con MFA'); si no, cadena vacía"),
@@ -85,7 +86,7 @@ function buildManagerPromptContext(
       ? `\n**Falló un paso anterior:** nodo "${state.lastStepFailed.node}": ${state.lastStepFailed.error}. El usuario reanudó para re-planificar. Decide si reintentar (delegate a ese nodo o pipeline), omitir o pedir aclaración (reply).`
       : "",
     userMessage
-      ? `\n**Mensaje actual:**\n${userMessage}\n\n**Instrucción:** Clasifica en una de las intenciones del prompt.\n\n**REGLAS PARA PREGUNTAS:** Si el usuario pregunta "para qué", "por qué", "qué es", "cómo funciona", "dónde se usa" o cualquier pregunta factual sobre el contenido del MDD (tecnologías, tablas, endpoints, infraestructura), responde con "reply" — es una consulta informativa, NO un cambio. No trates preguntas como solicitudes de modificación.\n\n**REGLAS PARA CAMBIOS Y CORRECCIONES:**\n- Si el mensaje describe una **necesidad** (pantalla, tabla, endpoint, flujo, MFA, etc.) que afecta a uno o más agentes → target: "sections"\n- Si el mensaje hace una **corrección** sobre contenido que YA EXISTE en el Borrador MDD (ej. "cambia X por Y", "te faltó Z", "en la sección N.N usa W") → DELEGA a clarifier o sections. No respondas con reply. El usuario está corrigiendo el documento, no preguntando.\n- Si el usuario menciona una sección específica (ej. "sección 2.1" o "§2.1") → DELEGA inmediatamente. El usuario está señalando contenido existente que debe modificarse.\n- Si es solo aclaración → "reply"\n- Si es confirmar o información amplia → "delegate" (pipeline completo)\n- Si el usuario **acaba de responder** a preguntas que hiciste (mensaje con contenido concreto, no solo "sí"/"no") → **delega** para incorporar su respuesta al documento; no hagas otra pregunta de seguimiento.\n- Si el mensaje es corto y usa "lo", "eso", "elimínenlo" y en Respuestas del usuario o en el Borrador se mencionó algo concreto (ej. Kubernetes, una tecnología) → **delega** con esa directiva; no respondas pidiendo "qué especificar" o "qué eliminar".\n- Ante la duda, "reply".`
+      ? `\n**Mensaje actual:**\n${userMessage}\n\n**Instrucción:** Clasifica en una de las intenciones del prompt.\n\n**REGLAS PARA PREGUNTAS:** Si el usuario pregunta "para qué", "por qué", "qué es", "cómo funciona", "dónde se usa" o cualquier pregunta factual sobre el contenido del MDD (tecnologías, tablas, endpoints, infraestructura), responde con "reply" — es una consulta informativa, NO un cambio. No trates preguntas como solicitudes de modificación.\n\n**REGLAS PARA CAMBIOS Y CORRECCIONES:**\n- Si el mensaje describe una **necesidad** (pantalla, tabla, endpoint, flujo, MFA, etc.) que afecta a uno o más agentes → target: "sections"\n- Si el mensaje hace una **corrección** sobre contenido que YA EXISTE en el Borrador MDD (ej. "cambia X por Y", "te faltó Z", "en la sección N.N usa W") → DELEGA a clarifier o sections. No respondas con reply. El usuario está corrigiendo el documento, no preguntando.\n- Si el usuario menciona una sección específica (ej. "sección 2.1" o "§2.1") → DELEGA inmediatamente. El usuario está señalando contenido existente que debe modificarse.\n- Si es solo aclaración → "reply"\n- Si es confirmar o información amplia → "delegate" (pipeline completo)\n- Si el usuario **acaba de responder** a preguntas que hiciste (mensaje con contenido concreto, no solo "sí"/"no") → **delega** para incorporar su respuesta al documento; no hagas otra pregunta de seguimiento.\n- Si el mensaje es corto y usa "lo", "eso", "elimínenlo" y en Respuestas del usuario o en el Borrador se mencionó algo concreto (ej. Kubernetes, una tecnología) → **delega** con esa directiva; no respondas pidiendo "qué especificar" o "qué eliminar".\n- Ante la duda, "delegate" con target "sections" infiriendo los agentes afectados; "reply" solo para preguntas conceptuales o factuales (nunca para cambios).`
       : "",
   ]
     .filter(Boolean)
@@ -93,16 +94,52 @@ function buildManagerPromptContext(
   return `${MANAGER_MDD_PROMPT}\n\n---\nRonda ${round}.\n\n${context}`;
 }
 
+type ManagerParseFallback = {
+  /** Hay borrador MDD con contenido: el fallback delega a sections en vez de full_pipeline. */
+  hasDraft: boolean;
+  /** Mensaje del usuario, para inferir qué agentes tocar en el fallback. */
+  userMessage: string;
+};
+
+/**
+ * Salida del Manager vacía o no parseable → delegar (no contestar un reply genérico).
+ * El reply genérico era el falso negativo clásico: el usuario pedía un cambio y recibía
+ * "¿En qué más puedo ayudarte?" sin que corriera ningún agente.
+ */
+export function managerParseFallbackDecision(
+  fallback: ManagerParseFallback,
+  complexity?: MDDStateType["mddComplexity"],
+): Pick<ManagerLlmTurnResult, "action" | "delegateTarget" | "sectionsToRun"> {
+  if (!fallback.hasDraft) return { action: "delegate", delegateTarget: "full_pipeline", sectionsToRun: undefined };
+  const inferred = inferSectionsFromMessage(fallback.userMessage);
+  const agents = inferred.length > 0 ? inferred : inferAgentsFromAuditorFeedback(fallback.userMessage);
+  return {
+    action: "delegate",
+    delegateTarget: "sections",
+    sectionsToRun: expandSectionsToRun(agents, { complexity }),
+  };
+}
+
 async function parseManagerLlmResponse(
   llm: BaseChatModel,
   messages: HumanMessage[],
-  complexity?: MDDStateType["mddComplexity"],
+  complexity: MDDStateType["mddComplexity"] | undefined,
+  fallback: ManagerParseFallback,
 ): Promise<Pick<ManagerLlmTurnResult, "action" | "replyContent" | "delegateTarget" | "sectionsToRun"> & { memoryQuery?: string }> {
   let action: "reply" | "delegate" | "search_memory" = "reply";
-  let replyContent = "¿En qué más puedo ayudarte con el MDD? Puedes pedir refinamientos o revisar el documento.";
+  // Sin texto por defecto: un reply vacío del LLM se convierte en delegate (runManagerLlmTurn), nunca en
+  // un "¿En qué más puedo ayudarte?" genérico que dejaba la petición sin ejecutar.
+  let replyContent = "";
   let delegateTarget: "clarifier_only" | "full_pipeline" | "sections" | undefined;
   let sectionsToRun: string[] | undefined;
   let memoryQuery: string | undefined;
+  const applyParseFallback = (reason: string) => {
+    const decision = managerParseFallbackDecision(fallback, complexity);
+    LOG("salida del Manager %s → delegate por defecto (target=%s sections=%s)", reason, decision.delegateTarget, decision.sectionsToRun?.join(",") ?? "-");
+    action = decision.action;
+    delegateTarget = decision.delegateTarget;
+    sectionsToRun = decision.sectionsToRun;
+  };
 
   const useStructuredOutput =
     "withStructuredOutput" in llm && typeof (llm as { withStructuredOutput?: (schema: unknown, config?: unknown) => unknown }).withStructuredOutput === "function";
@@ -143,7 +180,11 @@ async function parseManagerLlmResponse(
           if (parsed.action === "search_memory") {
             memoryQuery = parsed.memorySearchQuery;
           }
-        } catch { /* keep defaults */ }
+        } catch {
+          applyParseFallback("no parseable");
+        }
+      } else {
+        applyParseFallback("vacía");
       }
     }
   } else {
@@ -163,7 +204,11 @@ async function parseManagerLlmResponse(
         if (parsed.action === "search_memory") {
           memoryQuery = parsed.memorySearchQuery;
         }
-      } catch { /* keep defaults */ }
+      } catch {
+        applyParseFallback("no parseable");
+      }
+    } else {
+      applyParseFallback("vacía");
     }
   }
 
@@ -178,12 +223,12 @@ export async function runManagerLlmTurn(options: RunManagerLlmTurnOptions): Prom
   let messages: HumanMessage[] = [new HumanMessage(prompt)];
 
   let action: "reply" | "delegate" | "search_memory" = "reply";
-  let replyContent = "¿En qué más puedo ayudarte con el MDD? Puedes pedir refinamientos o revisar el documento.";
+  let replyContent = "";
   let delegateTarget: "clarifier_only" | "full_pipeline" | "sections" | undefined;
   let sectionsToRun: string[] | undefined;
 
   for (let i = 0; i < 2; i++) {
-    const parsed = await parseManagerLlmResponse(llm, messages, state.mddComplexity);
+    const parsed = await parseManagerLlmResponse(llm, messages, state.mddComplexity, { hasDraft, userMessage });
     action = parsed.action;
     replyContent = parsed.replyContent;
     delegateTarget = parsed.delegateTarget;
@@ -191,7 +236,7 @@ export async function runManagerLlmTurn(options: RunManagerLlmTurnOptions): Prom
 
     if (parsed.action === "search_memory" && parsed.memoryQuery && i < 2) {
       LOG("ejecutando herramientas agénticas MDD/TheForge: %s", parsed.memoryQuery);
-      let memoryContext = "La búsqueda semántica en grafo FalkorDB fue retirada; usa el borrador MDD y las herramientas disponibles.";
+      let memoryContext = "No hay búsqueda semántica en proyectos históricos; usa el borrador MDD y las herramientas disponibles.";
 
       if (toolDeps && state.projectId?.trim() && parsed.memoryQuery) {
         try {
@@ -222,6 +267,14 @@ export async function runManagerLlmTurn(options: RunManagerLlmTurnOptions): Prom
   }
 
   LOG("action=%s delegateTarget=%s sectionsToRun=%s", action, delegateTarget, sectionsToRun?.length);
+
+  if (action === "reply" && !replyContent.trim()) {
+    const decision = managerParseFallbackDecision({ hasDraft, userMessage }, state.mddComplexity);
+    LOG("reply vacío del LLM → delegate (target=%s sections=%s)", decision.delegateTarget, decision.sectionsToRun?.join(",") ?? "-");
+    action = decision.action;
+    delegateTarget = decision.delegateTarget;
+    sectionsToRun = decision.sectionsToRun;
+  }
 
   if (action === "reply" && userMessage && hasDraft && looksLikeExplicitMddModificationRequest(userMessage)) {
     LOG("reply anulado: cambio explícito MDD → forzar delegate/sections");

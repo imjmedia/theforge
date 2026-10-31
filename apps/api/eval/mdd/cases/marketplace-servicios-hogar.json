@@ -1,0 +1,130 @@
+{
+  "id": "marketplace-servicios-hogar",
+  "title": "Marketplace de servicios para el hogar",
+  "domain": "marketplace",
+  "complexity": "MEDIUM",
+  "brief": "Queremos lanzar en Guadalajara una plataforma que conecte a clientes del hogar con profesionistas independientes: electricistas, plomeros, pintores y personal de limpieza. Los profesionistas se registran con su perfil, zonas de cobertura, especialidades y tarifas, y suben identificación y certificados que un administrador revisa antes de activar su cuenta. El cliente publica una solicitud con descripción, fotos y fecha preferida; los profesionistas de la zona pueden enviar una cotización y el cliente acepta una. Al aceptarla se crea una orden de servicio con su calendario, y al terminar el cliente califica al profesional. La plataforma cobra una comisión por orden y liquida cada semana a cada profesional. Los mensajes entre cliente y profesional quedan dentro de la plataforma y no se comparten teléfonos hasta confirmar la orden. Es común que varios profesionistas coticen la misma solicitud al mismo tiempo, así que una solicitud solo puede aceptar una cotización. Restricción: la plataforma no guarda datos de tarjetas; la comisión y los cobros se procesan con la pasarela de pagos del proveedor. Necesitamos reportes de comisiones por periodo y un historial de disputas que no se pueda borrar.",
+  "dbga": "Referentes del sector: Fixer, con buena cobertura de servicios del hogar pero con cobro y verificación poco visibles para el cliente; Doctoralia, que muestra cómo organizar agendas y reseñas, pero enfocado en salud y no en oficios; y los grupos vecinales en redes sociales, con alta confianza pero sin cobro, garantía ni historial. Brechas que la plataforma puede cubrir en Guadalajara: verificación documental de profesionistas por zona, cotizaciones comparables en una sola solicitud, comisión transparente y disputas con historial conservado. Fuera de alcance en esta fase: agenda médica, seguros de daños, financiamiento de obras y app nativa. Riesgo principal: que los profesionistas cierren tratos por fuera de la plataforma; se mitiga no revelando contactos hasta confirmar la orden y dando seguimiento a las calificaciones.",
+  "expect": {
+    "entities": [
+      "clients",
+      "professionals",
+      "service_requests",
+      "quotes",
+      "service_orders",
+      "reviews",
+      "payouts",
+      "disputes"
+    ],
+    "entitySynonyms": {
+      "clients": [
+        "customers",
+        "clientes"
+      ],
+      "professionals": [
+        "providers",
+        "profesionistas",
+        "workers"
+      ],
+      "service_requests": [
+        "requests",
+        "solicitudes"
+      ],
+      "quotes": [
+        "cotizaciones",
+        "bids"
+      ],
+      "service_orders": [
+        "orders",
+        "ordenes_servicio",
+        "bookings"
+      ],
+      "reviews": [
+        "ratings",
+        "calificaciones"
+      ],
+      "payouts": [
+        "liquidaciones",
+        "settlements"
+      ],
+      "disputes": [
+        "disputas",
+        "claims"
+      ]
+    },
+    "capabilities": [
+      {
+        "name": "acceso de usuarios",
+        "endpointHints": [
+          "/auth/login"
+        ]
+      },
+      {
+        "name": "registro y verificación de profesionistas",
+        "endpointHints": [
+          "/professionals",
+          "/professionals/verification"
+        ]
+      },
+      {
+        "name": "solicitudes de servicio",
+        "endpointHints": [
+          "/service-requests"
+        ]
+      },
+      {
+        "name": "cotizaciones",
+        "endpointHints": [
+          "/quotes"
+        ]
+      },
+      {
+        "name": "órdenes de servicio y calificaciones",
+        "endpointHints": [
+          "/service-orders",
+          "/reviews"
+        ]
+      },
+      {
+        "name": "liquidaciones y disputas",
+        "endpointHints": [
+          "/payouts",
+          "/disputes"
+        ]
+      }
+    ],
+    "security": [
+      "jwt|sesión|session",
+      "argon2|bcrypt",
+      "rbac|roles",
+      "auditoría|audit"
+    ],
+    "infra": [
+      "docker",
+      "postgres|postgresql",
+      "s3|almacenamiento|object storage",
+      "backup|respaldo"
+    ],
+    "forbidden": [
+      "whatsapp",
+      "wasender",
+      "bitrix",
+      "denue",
+      "inegi",
+      "datswhy",
+      "watchlist",
+      "pendiente: arquitecto",
+      "pendiente: clarificador",
+      "(pendiente)",
+      "format_section3_endpoints",
+      "lorem ipsum",
+      "carrito",
+      "paciente"
+    ],
+    "mustMentionInContext": [
+      "profesionistas",
+      "cotización",
+      "comisión"
+    ]
+  }
+}

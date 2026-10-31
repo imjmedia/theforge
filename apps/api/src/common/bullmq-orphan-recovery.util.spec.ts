@@ -76,16 +76,42 @@ describe("forceFailBullMqActiveJob", () => {
 });
 
 describe("recoverBullMqJobsAfterWorkerRestart", () => {
-  it("fails active and removes queued jobs", async () => {
+  it("fails active jobs and leaves queued jobs untouched by default (removeQueued=false)", async () => {
+    const waiting = mockJob("waiting", "2");
+    const delayed = mockJob("delayed", "3");
     const queue = mockQueue({
       active: [mockJob("active", "1")],
-      waiting: [mockJob("waiting", "2")],
-      delayed: [mockJob("delayed", "3")],
+      waiting: [waiting],
+      delayed: [delayed],
     });
     const result = await recoverBullMqJobsAfterWorkerRestart(queue);
     assert.equal(result.failedActive, 1);
-    assert.equal(result.removedQueued, 2);
+    assert.equal(result.removedQueued, 0);
     assert.equal(result.skippedLocked, 0);
+    assert.equal(await waiting.getState(), "waiting");
+    assert.equal(await delayed.getState(), "delayed");
+  });
+
+  it("removes queued jobs only when removeQueued is explicitly true", async () => {
+    const queue = mockQueue({
+      waiting: [mockJob("waiting", "2")],
+      delayed: [mockJob("delayed", "3")],
+    });
+    const result = await recoverBullMqJobsAfterWorkerRestart(queue, { removeQueued: true });
+    assert.equal(result.removedQueued, 2);
+  });
+
+  it("with ownsQueuedJob only removes jobs owned by this process", async () => {
+    const mine = mockJob("waiting", "mine");
+    const theirs = mockJob("waiting", "theirs");
+    const queue = mockQueue({ waiting: [mine, theirs] });
+    const result = await recoverBullMqJobsAfterWorkerRestart(queue, {
+      removeQueued: true,
+      ownsQueuedJob: (job) => String(job.id) === "mine",
+    });
+    assert.equal(result.removedQueued, 1);
+    assert.equal(await mine.getState(), "removed");
+    assert.equal(await theirs.getState(), "waiting");
   });
 
   it("skips active jobs that still hold a Redis lock", async () => {

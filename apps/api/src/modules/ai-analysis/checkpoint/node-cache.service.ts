@@ -13,6 +13,44 @@ interface CacheEntry {
 
 const DEFAULT_TTL_MS = 60 * 60 * 1000; // 1 hour
 
+/** Campos de salida que cuentan como "contenido producido" por un nodo LLM cacheable. */
+const CACHEABLE_CONTENT_KEYS = ["mddDraft", "mddStructured", "securitySectionMd", "integrationSectionMd"] as const;
+
+/**
+ * Serialización JSON estable (claves ordenadas recursivamente). Evita el bug del replacer-array de
+ * `JSON.stringify`, que filtra claves anidadas y descartaba `projectId` del hash.
+ */
+export function stableStringify(value: unknown): string {
+  return JSON.stringify(value, (_k, v: unknown) => {
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const sorted: Record<string, unknown> = {};
+      for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+        sorted[k] = (v as Record<string, unknown>)[k];
+      }
+      return sorted;
+    }
+    return v;
+  });
+}
+
+/**
+ * Un resultado solo es cacheable si es un éxito con contenido: no vacío, sin `lastStepFailed`
+ * y con al menos uno de mddDraft/mddStructured/securitySectionMd/integrationSectionMd no vacío.
+ * Así un reintento nunca re-emite un fallo (o un `{}`) sin llamar al LLM.
+ */
+export function isCacheableNodeOutput(output: Partial<MDDStateType> | undefined | null): boolean {
+  if (!output || typeof output !== "object") return false;
+  const rec = output as Record<string, unknown>;
+  if (Object.keys(rec).length === 0) return false;
+  if (rec.lastStepFailed !== undefined && rec.lastStepFailed !== null) return false;
+  return CACHEABLE_CONTENT_KEYS.some((k) => {
+    const v = rec[k];
+    if (typeof v === "string") return v.trim().length > 0;
+    if (v && typeof v === "object") return Object.keys(v as Record<string, unknown>).length > 0;
+    return false;
+  });
+}
+
 /**
  * Lightweight in-memory cache for LLM-node outputs.
  *
@@ -46,7 +84,7 @@ export class NodeCacheService {
    * passed; `projectId` is always included to isolate projects.
    */
   key(nodeName: string, projectId: string | undefined, fields: Record<string, unknown>): string {
-    const raw = JSON.stringify({ projectId: projectId ?? "__global__", ...fields }, Object.keys(fields).sort());
+    const raw = stableStringify({ projectId: projectId ?? "__global__", ...fields });
     const hash = createHash("sha256").update(raw).digest("hex").slice(0, 12);
     return `node:${nodeName}:${hash}`;
   }

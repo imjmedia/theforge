@@ -4,6 +4,7 @@ import {
   buildMddPlan,
   expandSectionsToRun,
   getFullPipelineNodeSequence,
+  planWillAutoApprove,
 } from "./manager-plan.js";
 
 describe("manager-plan", () => {
@@ -104,5 +105,35 @@ describe("manager-plan", () => {
       const expanded = expandSectionsToRun(["security"]);
       assert.deepEqual(expanded, ["security", "format_after_redactor", "diagram_injector", "auditor"]);
     });
+  });
+});
+
+describe("planWillAutoApprove", () => {
+  const step = (node: string) => ({ step_id: node, node, task_description: node });
+
+  it("1 paso → auto-aprobado sea cual sea el target", () => {
+    assert.equal(planWillAutoApprove([step("auditor")], "sections"), true);
+    assert.equal(planWillAutoApprove([step("clarifier")], "full_pipeline"), true);
+  });
+
+  it("autoApprove explícito → auto-aprobado aunque sea full_pipeline", () => {
+    const plan = [step("clarifier"), step("software_architect"), step("auditor")];
+    assert.equal(planWillAutoApprove(plan, "full_pipeline", true), true);
+    assert.equal(planWillAutoApprove(plan, "full_pipeline"), false);
+  });
+
+  it("sections con un solo escritor (+ formato/auditor) → auto-aprobado", () => {
+    const plan = [step("integration"), step("format_after_redactor"), step("diagram_injector"), step("auditor")];
+    assert.equal(planWillAutoApprove(plan, "sections"), true);
+  });
+
+  it("sections con dos escritores → requiere aprobación", () => {
+    const plan = [step("software_architect"), step("security"), step("auditor")];
+    assert.equal(planWillAutoApprove(plan, "sections"), false);
+  });
+
+  it("clarifier_only (clarifier + merge) → requiere aprobación", () => {
+    const plan = [step("clarifier"), step("merge_section1_only")];
+    assert.equal(planWillAutoApprove(plan, "clarifier_only"), false);
   });
 });

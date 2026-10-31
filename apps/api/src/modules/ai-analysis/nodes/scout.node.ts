@@ -8,18 +8,88 @@ import type { StructuredToolInterface } from "@langchain/core/tools";
 import { SCOUT_PROMPT } from "../prompts/load-prompts.js";
 import {
   competitorDataSchema,
+  type CompetitorData,
   type DBGAStateType,
 } from "../state/index.js";
 import { buildUserDeclaredStackPromptBlock } from "../utils/user-declared-stack.util.js";
 import { z } from "zod";
-import { parseJsonOrThrow } from "../utils/parse-json.js";
+import { extractFirstJsonObject } from "../utils/parse-json.js";
+import { forceFinalAnswer } from "../utils/tool-loop.js";
 
+/** Forma esperada de la salida del Scout (sin tope en el schema: el recorte a MAX_COMPETITORS se hace con slice). */
 const scoutOutputSchema = z.object({
   domainClassification: z.string().optional(),
-  competitors: z.array(competitorDataSchema).max(5),
+  competitors: z.array(competitorDataSchema),
 });
 
+type ScoutOutput = z.infer<typeof scoutOutputSchema>;
+
 const MAX_TOOL_LOOPS = 5;
+const MAX_COMPETITORS = 5;
+
+/** Añade https:// a URLs de dominio sin protocolo (p. ej. "acme.com/pricing"). */
+export function normalizeCompetitorUrl(raw: unknown): unknown {
+  if (typeof raw !== "string") return raw;
+  const trimmed = raw.trim();
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (/^[\w.-]+\.[a-z]{2,}(\/.*)?$/i.test(trimmed)) return `https://${trimmed}`;
+  return trimmed;
+}
+
+function normalizeCompetitor(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null) return raw;
+  const item = raw as Record<string, unknown>;
+  return { ...item, url: normalizeCompetitorUrl(item.url) };
+}
+
+export type ParsedScoutCompetitors = {
+  competitors: CompetitorData[];
+  /** Competidores descartados por datos inválidos (p. ej. URL no verificable). */
+  dropped: number;
+  /** Primer motivo de descarte, para log. */
+  firstIssue: string;
+  /** false si el texto no contenía un objeto JSON parseable. */
+  parsed: boolean;
+};
+
+/**
+ * Parseo tolerante de la salida del Scout: un competidor con URL inválida ya no invalida
+ * toda la ronda (antes `schema.parse` lanzaba y se perdían todos). Nunca lanza.
+ */
+export function parseScoutCompetitors(text: string, maxCompetitors = MAX_COMPETITORS): ParsedScoutCompetitors {
+  const empty: ParsedScoutCompetitors = { competitors: [], dropped: 0, firstIssue: "", parsed: false };
+  const stripped = (text ?? "").replace(/^```json?\s*|\s*```$/g, "").trim();
+  if (!stripped) return empty;
+
+  let raw: unknown;
+  try {
+    const json = extractFirstJsonObject(stripped);
+    if (!json) return empty;
+    raw = JSON.parse(json) as unknown;
+  } catch {
+    return empty;
+  }
+
+  const obj = (raw ?? {}) as Partial<ScoutOutput>;
+  const rawList: unknown[] = Array.isArray(obj.competitors) ? obj.competitors : [];
+
+  const competitors: CompetitorData[] = [];
+  let dropped = 0;
+  let firstIssue = "";
+  for (const item of rawList) {
+    const result = competitorDataSchema.safeParse(normalizeCompetitor(item));
+    if (result.success) {
+      competitors.push(result.data);
+      continue;
+    }
+    dropped++;
+    if (!firstIssue) {
+      const issue = result.error.issues[0];
+      firstIssue = issue ? `${issue.path.join(".")}: ${issue.message}` : "dato inválido";
+    }
+  }
+  return { competitors: competitors.slice(0, maxCompetitors), dropped, firstIssue, parsed: true };
+}
 
 function buildToolsByName(tools: StructuredToolInterface[]): Record<string, StructuredToolInterface> {
   const byName: Record<string, StructuredToolInterface> = {};
@@ -48,6 +118,7 @@ export function createScoutNode(
     const messages = [new HumanMessage(prompt)];
 
     let lastContent: string = "";
+    let lastHadToolCalls = false;
     let loopCount = 0;
 
     while (loopCount < MAX_TOOL_LOOPS) {
@@ -56,6 +127,7 @@ export function createScoutNode(
       lastContent = typeof aiMsg.content === "string" ? aiMsg.content : "";
 
       const toolCalls = aiMsg.tool_calls ?? [];
+      lastHadToolCalls = toolCalls.length > 0;
       if (toolCalls.length === 0) break;
 
       const toolMessages: ToolMessage[] = [];
@@ -84,16 +156,22 @@ export function createScoutNode(
       loopCount++;
     }
 
+    // Sin texto final, o bucle agotado con tool_calls pendientes: pedir respuesta final sin tools.
+    if (!lastContent.trim() || lastHadToolCalls) {
+      lastContent = await forceFinalAnswer(llm, llmWithTools, messages);
+    }
+
     if (!lastContent.trim()) {
+      console.warn("[DBGA:Scout] sin respuesta final del LLM; sin competidores en esta ronda");
       return { competitors: [], status: "researching" };
     }
-    let competitors: z.infer<typeof scoutOutputSchema>["competitors"] = [];
-    try {
-      const parsed = parseJsonOrThrow(lastContent, scoutOutputSchema);
-      competitors = parsed.competitors.slice(0, 5);
-    } catch {
-      // El modelo a veces responde en prosa (p. ej. saludo); no abortar todo el stream DBGA.
-      competitors = [];
+    // El modelo a veces responde en prosa (p. ej. saludo) o con un competidor mal formado;
+    // ni un caso ni el otro debe abortar el stream DBGA ni descartar los competidores válidos.
+    const { competitors, dropped, firstIssue, parsed } = parseScoutCompetitors(lastContent);
+    if (!parsed) {
+      console.warn("[DBGA:Scout] respuesta no parseable; sin competidores en esta ronda");
+    } else if (dropped > 0) {
+      console.warn(`[DBGA:Scout] ${dropped} competidor(es) descartado(s) por datos inválidos. Primer motivo: ${firstIssue}`);
     }
     return {
       competitors,

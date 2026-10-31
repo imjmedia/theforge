@@ -433,6 +433,10 @@ export const createProjectSlice: StateCreator<WorkshopState, [], [], ProjectSlic
             set({ managerThreadId: threadData.threadId });
           }
         }
+        // Chat vía cola: si quedó un turno en el worker (pestaña cerrada / recarga), reanudar sus eventos.
+        if (shouldApplyWorkshopUpdate(get, requestedId)) {
+          void get().resumeMddChatJob(requestedId, sid ?? null);
+        }
       })();
       setTimeout(() => {
         if (!shouldApplyWorkshopUpdate(get, requestedId)) return;

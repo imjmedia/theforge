@@ -16,6 +16,7 @@ export const MIN_GENERATION_CONTENT_LEN = 48;
 export type MddJobMode =
   | "pipeline"
   | "manager"
+  | "resume"
   | "section"
   | "section-pipeline"
   | "legacy"
@@ -24,6 +25,7 @@ export type MddJobMode =
 export const MDD_JOB_MODE_LABELS: Record<MddJobMode, string> = {
   pipeline: "MDD desde benchmark",
   manager: "MDD (Manager)",
+  resume: "MDD (chat, respuesta al Manager)",
   section: "Regeneración de sección MDD",
   "section-pipeline": "Regeneración §5 (pipeline MDD)",
   legacy: "MDD legacy (codebase)",
@@ -179,7 +181,7 @@ export function primaryMddJob(
   return status.mddJobs.find((j) => j.status === "active") ?? status.mddJobs[0] ?? null;
 }
 
-const MDD_UPSTREAM_REGEN_MODES: MddJobMode[] = ["pipeline", "manager", "upstream-sync"];
+const MDD_UPSTREAM_REGEN_MODES: MddJobMode[] = ["pipeline", "manager", "resume", "upstream-sync"];
 
 /** true si hay un job MDD que ya está regenerando/sincronizando desde upstream. */
 export function isMddUpstreamRegenerationBusy(

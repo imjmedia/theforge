@@ -1,0 +1,131 @@
+{
+  "id": "saas-facturacion-pymes",
+  "title": "Plataforma SaaS de facturación electrónica para PyMEs",
+  "domain": "SaaS B2B de facturación",
+  "complexity": "HIGH",
+  "brief": "Queremos ofrecer una plataforma SaaS de facturación electrónica a pequeñas y medianas empresas en México. Cada empresa cliente es un tenant con sus usuarios, series de folios, certificados de sello digital y catálogos de productos y clientes. Un usuario emite comprobantes fiscales (factura, nota de crédito y complemento de pago) desde la web o desde una API REST que usa su sistema de punto de venta. El timbrado se hace con un proveedor autorizado de certificación (PAC) mediante integración; si el PAC no responde, el comprobante queda en cola y se reintenta sin duplicar folios. Cada tenant solo ve sus datos; el aislamiento entre empresas es crítico. Los administradores invitan usuarios con roles de contador, vendedor y solo lectura, y los planes mensuales limitan el número de comprobantes. El sistema genera PDF y XML de cada comprobante, permite cancelarlos según las reglas vigentes y envía los archivos por correo al receptor. Se necesita una bitácora de cada cambio de configuración y de cada timbrado, y los XML deben conservarse cinco años. Las llaves privadas de los certificados deben cifrarse y nunca mostrarse otra vez en pantalla. Restricción: el sistema no maneja pagos de suscripción con tarjeta; la facturación del plan se cobra en un proveedor externo de suscripciones y solo recibimos el evento de pago. Se esperan unas 2,000 empresas activas en el primer año.",
+  "dbga": "Competidores: Facturama, con API y panel sencillo para PyMEs y planes por timbre, pero menos flexible cuando un contador administra muchas empresas; Factura.com, fuerte en integración para desarrolladores pero complejo para usuarios no técnicos; y CONTPAQi Comercial, de escritorio, con larga base instalada y sin operación multiempresa en la nube. Brechas: contadores que administran varias empresas desde una sola cuenta, reintento automático cuando el PAC está caído sin riesgo de folio duplicado, y bitácora de cambios exportable para auditoría externa. Fuera de alcance en esta fase: nómina, contabilidad completa y comercio exterior. Alternativa a evaluar: vender como complemento de los sistemas de punto de venta existentes mediante API.",
+  "expect": {
+    "entities": [
+      "tenants",
+      "users",
+      "invoices",
+      "invoice_items",
+      "customers",
+      "products",
+      "invoice_series",
+      "audit_logs"
+    ],
+    "entitySynonyms": {
+      "tenants": [
+        "companies",
+        "empresas",
+        "organizations"
+      ],
+      "users": [
+        "usuarios",
+        "members"
+      ],
+      "invoices": [
+        "comprobantes",
+        "cfdi",
+        "facturas"
+      ],
+      "invoice_items": [
+        "conceptos",
+        "line_items"
+      ],
+      "customers": [
+        "clientes",
+        "receptores"
+      ],
+      "products": [
+        "productos",
+        "catalog_items"
+      ],
+      "invoice_series": [
+        "series",
+        "folios"
+      ],
+      "audit_logs": [
+        "bitacora",
+        "change_logs"
+      ]
+    },
+    "capabilities": [
+      {
+        "name": "empresas y configuración",
+        "endpointHints": [
+          "/tenants",
+          "/settings"
+        ]
+      },
+      {
+        "name": "autenticación y roles",
+        "endpointHints": [
+          "/auth/login",
+          "/users/invite"
+        ]
+      },
+      {
+        "name": "emisión de comprobantes",
+        "endpointHints": [
+          "/invoices"
+        ]
+      },
+      {
+        "name": "cancelación y reintentos de timbrado",
+        "endpointHints": [
+          "/invoices/cancel",
+          "/stamp/retry"
+        ]
+      },
+      {
+        "name": "catálogo de clientes y productos",
+        "endpointHints": [
+          "/customers",
+          "/products"
+        ]
+      },
+      {
+        "name": "webhook de pagos de suscripción",
+        "endpointHints": [
+          "/webhooks/subscriptions"
+        ]
+      }
+    ],
+    "security": [
+      "rbac|roles",
+      "jwt|sesión|session",
+      "cifrado|encrypt|kms",
+      "aislamiento|tenant"
+    ],
+    "infra": [
+      "docker",
+      "postgres|postgresql",
+      "redis|cola|queue",
+      "backup|respaldo"
+    ],
+    "forbidden": [
+      "whatsapp",
+      "wasender",
+      "bitrix",
+      "denue",
+      "inegi",
+      "datswhy",
+      "watchlist",
+      "pendiente: arquitecto",
+      "pendiente: clarificador",
+      "(pendiente)",
+      "format_section3_endpoints",
+      "lorem ipsum",
+      "paciente",
+      "expediente"
+    ],
+    "mustMentionInContext": [
+      "comprobantes",
+      "timbrado",
+      "aislamiento"
+    ]
+  }
+}

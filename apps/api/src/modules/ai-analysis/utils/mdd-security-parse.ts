@@ -105,17 +105,51 @@ const legacySecurityOutputSchema = z.object({
     .pipe(z.string()),
 });
 
-/** Patrones típicos de salida corrupta del LLM (thinking, placeholders, JSON a medias). */
-export const CORRUPTED_SECURITY_TEXT_PATTERNS: RegExp[] = [
-  /\bplaceholder\b/i,
-  /\bwill\s+rewrite\b/i,
-  /\b(?:todo|tbd)\s*:\s*rewrite/i,
+/**
+ * Marcadores inequívocos de salida corrupta: etiquetas de razonamiento y JSON a medias.
+ * Cuentan en cualquier posición del texto.
+ */
+const STRONG_CORRUPTED_SECURITY_PATTERNS: RegExp[] = [
   /<\s*think(?:ing)?\s*>/i,
-  /\bthinking\s*:/i,
-  /\bhere'?s\s+my\s+thinking\b/i,
   /^\s*\{\s*$/m,
   /^\s*-\s*"\w+"\s*:/m,
 ];
+
+/**
+ * Marcadores débiles: palabras que también aparecen en prosa legítima
+ * (p. ej. "Prohibir valores placeholder en secretos"). Solo cuentan al inicio de línea
+ * / como encabezado, o si coinciden ≥3 distintos.
+ */
+const WEAK_CORRUPTED_SECURITY_PATTERNS: RegExp[] = [
+  /\bplaceholder\b/i,
+  /\bwill\s+rewrite\b/i,
+  /\b(?:todo|tbd)\s*:\s*rewrite/i,
+  /\bthinking\s*:/i,
+  /\bhere'?s\s+my\s+thinking\b/i,
+];
+
+/** Marcador débil al inicio de línea (tras viñeta/encabezado/comillas opcionales). */
+const WEAK_MARKER_AT_LINE_START_RE =
+  /^\s*(?:[#>*\-]+\s*)?["']?(?:placeholder\s*(?:["']?\s*:|["'.!]|$)|will\s+rewrite\b|(?:todo|tbd)\s*:\s*rewrite|thinking\s*:|here'?s\s+my\s+thinking\b)/im;
+
+/** Patrones típicos de salida corrupta del LLM (thinking, placeholders, JSON a medias). */
+export const CORRUPTED_SECURITY_TEXT_PATTERNS: RegExp[] = [
+  ...STRONG_CORRUPTED_SECURITY_PATTERNS,
+  ...WEAK_CORRUPTED_SECURITY_PATTERNS,
+];
+
+/**
+ * True si el texto contiene marcadores de corrupción: cualquier marcador fuerte, un marcador
+ * débil al inicio de línea, o ≥3 patrones distintos coincidiendo. Una palabra suelta como
+ * "placeholder" dentro de una oración NO basta.
+ */
+export function hasCorruptedSecurityMarkers(text: string): boolean {
+  const t = text ?? "";
+  if (STRONG_CORRUPTED_SECURITY_PATTERNS.some((re) => re.test(t))) return true;
+  if (WEAK_MARKER_AT_LINE_START_RE.test(t)) return true;
+  const matched = CORRUPTED_SECURITY_TEXT_PATTERNS.filter((re) => re.test(t)).length;
+  return matched >= 3;
+}
 
 function lineLooksLikeJsonFragment(line: string): boolean {
   const t = line.trim();
@@ -131,7 +165,7 @@ function lineLooksLikeJsonFragment(line: string): boolean {
 export function isCorruptedSecurityLlmText(text: string): boolean {
   const t = (text ?? "").trim();
   if (!t) return false;
-  if (CORRUPTED_SECURITY_TEXT_PATTERNS.some((re) => re.test(t))) return true;
+  if (hasCorruptedSecurityMarkers(t)) return true;
   const jsonishLineCount = t.split(/\n/).filter((line) => lineLooksLikeJsonFragment(line)).length;
   const lineCount = t.split(/\n/).filter((l) => l.trim()).length;
   if (lineCount >= 4 && jsonishLineCount / lineCount > 0.35) {
@@ -150,11 +184,11 @@ export function isCorruptedSecurityLlmText(text: string): boolean {
     try {
       const extracted = extractFirstJsonObject(t) ?? t;
       const parsed = JSON.parse(extracted) as unknown;
-      if (!securityStructuredRawSchema.safeParse(parsed).success && /placeholder|will\s+rewrite|thinking/i.test(t)) {
+      if (!securityStructuredRawSchema.safeParse(parsed).success && hasCorruptedSecurityMarkers(t)) {
         return true;
       }
     } catch {
-      if (/placeholder|will\s+rewrite|thinking/i.test(t)) return true;
+      if (hasCorruptedSecurityMarkers(t)) return true;
     }
   }
   return false;
@@ -206,12 +240,12 @@ export function sanitizeSeguridadItems(
       .replace(/^\d+\.\d*\s*/, "")
       .trim();
     if (!title || lineLooksLikeJsonFragment(title)) continue;
-    if (CORRUPTED_SECURITY_TEXT_PATTERNS.some((re) => re.test(title))) continue;
+    if (hasCorruptedSecurityMarkers(title)) continue;
     const content = (item.content ?? [])
       .map((c) => c.replace(/^#+\s*/, "").replace(/^-\s*/, "").trim())
       .filter((c) => c.length > 0)
       .filter((c) => !lineLooksLikeJsonFragment(c) || c.length > 80)
-      .filter((c) => !CORRUPTED_SECURITY_TEXT_PATTERNS.some((re) => re.test(c)));
+      .filter((c) => !hasCorruptedSecurityMarkers(c));
     if (content.length) out.push(mddSeguridadItemSchema.parse({ title, content }));
   }
   if (!out.length) return null;

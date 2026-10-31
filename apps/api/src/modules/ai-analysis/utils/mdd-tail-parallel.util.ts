@@ -47,6 +47,41 @@ export type TailParallelNodeResult = Partial<MDDStateType> & {
   integrationSectionMd?: string;
 };
 
+type BranchResult = Partial<MDDStateType> | undefined;
+
+/**
+ * Propaga `lastStepFailed` de las ramas paralelas: el primero no-undefined; si varias fallaron,
+ * se unen los nombres de nodo (`a+b`) y los errores, para que el fallo no se pierda en el merge.
+ */
+export function mergeBranchLastStepFailed(
+  branches: readonly BranchResult[],
+): { node: string; error: string } | undefined {
+  const failures = branches
+    .map((b) => b?.lastStepFailed)
+    .filter((f): f is { node: string; error: string } => !!f);
+  if (failures.length === 0) return undefined;
+  if (failures.length === 1) return failures[0];
+  const nodes = [...new Set(failures.map((f) => f.node))];
+  return { node: nodes.join("+"), error: failures.map((f) => `${f.node}: ${f.error}`).join(" | ") };
+}
+
+/** `section5FormatSkipped`: true si alguna rama lo marcó; false si alguna lo fijó en false; si no, undefined. */
+export function mergeBranchSection5FormatSkipped(branches: readonly BranchResult[]): boolean | undefined {
+  const values = branches.map((b) => b?.section5FormatSkipped).filter((v): v is boolean => typeof v === "boolean");
+  if (values.length === 0) return undefined;
+  return values.some(Boolean);
+}
+
+/** Campos de estado de fallo/flags que los merges paralelos deben reenviar al estado. */
+function branchFlagsUpdate(branches: readonly BranchResult[]): Partial<MDDStateType> {
+  const lastStepFailed = mergeBranchLastStepFailed(branches);
+  const section5FormatSkipped = mergeBranchSection5FormatSkipped(branches);
+  return {
+    ...(lastStepFailed ? { lastStepFailed } : {}),
+    ...(section5FormatSkipped !== undefined ? { section5FormatSkipped } : {}),
+  };
+}
+
 export function resolveSection7BodyForMerge(
   intResult: TailParallelNodeResult,
   intDraft: string,
@@ -353,6 +388,7 @@ export function mergeTailParallelResults(
     mddDraft: finalDraft,
     mddStructured: mergedStructured,
     ...(directives.length > 0 ? { internalDirectives: directives } : {}),
+    ...branchFlagsUpdate([s5Result, secResult, intResult]),
   };
 }
 
@@ -555,6 +591,6 @@ export function mergePostCriticParallelResults(
       : {}),
     ...(resolvedSecuritySectionMd ? { securitySectionMd: resolvedSecuritySectionMd } : {}),
     ...(resolvedIntegrationSectionMd ? { integrationSectionMd: resolvedIntegrationSectionMd } : {}),
-    ...(directives.length > 0 ? { internalDirectives: directives } : {}),
+    ...(directives.length > 0 ? { internalDirectives: directives } : {}),    ...branchFlagsUpdate([apiResult, secResult, intResult]),
   };
 }

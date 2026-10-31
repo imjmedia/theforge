@@ -11,7 +11,7 @@ import {
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { Queue, Worker, type Job } from "bullmq";
-import type { MddJobSnapshot, MddUpstreamSyncStatus } from "@theforge/shared-types";
+import type { ChatImagePart, MddJobSnapshot, MddUpstreamSyncStatus } from "@theforge/shared-types";
 import {
   applyMddJobProgress,
   createEmptyMddJobProgressState,
@@ -42,12 +42,26 @@ import { ProjectGenerationGuardService } from "../../projects/project-generation
 import { LegacyCoordinatorService } from "../../legacy-flow/legacy-coordinator.service.js";
 import { AiAnalysisService } from "../ai-analysis.service.js";
 import { runWithTokenUsageContext } from "../token-usage/token-usage.context.js";
-import { toMddJobError } from "./mdd-job-error.util.js";
+import { isMddThreadBusyError, isMddUserCancellationError, toMddJobError } from "./mdd-job-error.util.js";
+import { THREAD_BUSY_CODE, THREAD_BUSY_MESSAGE } from "../checkpoint/thread-run-lock.service.js";
+import { MddJobEventsService } from "./mdd-job-events.service.js";
+import type { MddJobRelayEvent } from "./mdd-job-events.util.js";
+import { isMddChatJobMode } from "./mdd-queue-job-payload.util.js";
+import { formatDbgaStreamError } from "../utils/dbga-stream-error.util.js";
 
 export const MDD_QUEUE_NAME = "theforge-mdd";
 
 /** Clave Redis compartida API ↔ worker para cancelar jobs MDD activos en BullMQ. */
 const MDD_CANCEL_KEY_PREFIX = "theforge:mdd-cancel:";
+
+/**
+ * TTL (s) de la clave de cancelación. Ya no se borra al preemptar (el worker remoto la lee cada
+ * `MDD_CANCEL_POLL_MS`); expira sola si el worker dueño murió y nadie la consumió.
+ */
+const MDD_CANCEL_KEY_TTL_SEC = 3600;
+
+/** Backoff entre intentos BullMQ (solo errores transitorios: ECONNRESET, 502/503…). */
+const MDD_RETRY_BACKOFF_MS = 15_000;
 
 /** Intervalo de poll Redis para abort cooperativo (ms). */
 const MDD_CANCEL_POLL_MS = 500;
@@ -61,6 +75,7 @@ const MDD_JOB_STALLED_REASON =
 export type MddJobMode =
   | "pipeline"
   | "manager"
+  | "resume"
   | "section"
   | "section-pipeline"
   | "legacy"
@@ -81,6 +96,12 @@ export interface MddJobData {
   upstreamChangeSummary?: string;
   /** Si true, omite caché upstream y ejecuta siempre el pipeline LLM (Regenerar MDD completo). */
   forceFullPipeline?: boolean;
+  /** Solo mode resume: hilo LangGraph del Manager que se reanuda. */
+  threadId?: string;
+  /** Solo mode resume: respuesta del usuario al Manager (texto). */
+  userMessage?: string;
+  /** Modes manager/resume: imágenes adjuntas del turno de chat. */
+  imageAttachments?: ChatImagePart[];
 }
 
 export type MddJobProgress = {
@@ -127,7 +148,15 @@ export type MddJobResult = {
   projectId: string;
   stageId?: string;
   mddLength?: number;
-  outcome?: "done" | "interrupt";
+  outcome?: "done" | "interrupt" | "error";
+  /**
+   * Solo chat (manager/resume): `waiting_user` cuando el turno terminó en `interrupt` (preguntas / aprobación
+   * de plan). El job se completa; la respuesta del usuario encola un job `resume` sobre el mismo hilo.
+   */
+  status?: "waiting_user";
+  /** Chat: mensaje del evento `error` terminal (el job no se reintenta). */
+  error?: string;
+  errorCode?: string;
   threadId?: string;
   interrupt?: {
     reply?: string;
@@ -175,7 +204,8 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
   private readonly jobAbortControllers = new Map<string, AbortController>();
   private readonly cancelRequestedJobIds = new Set<string>();
   private readonly projectExecutionChains = new Map<string, Promise<void>>();
-  private readonly MAX_ATTEMPTS = 3;
+  /** 2 intentos: un reintento solo cubre fallos de red transitorios; el resto es UnrecoverableError. */
+  private readonly MAX_ATTEMPTS = 2;
   private readonly onMddWorkerError = (err: Error): void => {
     if (isBullMqLockRenewalError(err)) {
       this.logger.warn(`BullMQ MDD: lock renewal lost (${err.message})`);
@@ -191,6 +221,7 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
     private readonly legacyCoordinator: LegacyCoordinatorService,
     @Inject(forwardRef(() => ProjectGenerationGuardService))
     private readonly generationGuard: ProjectGenerationGuardService,
+    private readonly jobEvents: MddJobEventsService,
   ) {}
 
   isEnabled(): boolean {
@@ -254,7 +285,14 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
     this.cancelRequestedJobIds.add(jobId);
     if (!this.queue) return;
     const client = await this.queue.client;
-    await client.set(`${MDD_CANCEL_KEY_PREFIX}${jobId}`, "1");
+    // La cola usa ioredis (`connection: { url }`): firma posicional `SET key val EX ttl`
+    // (el tipo IRedisClient de BullMQ describe adaptadores node-redis con objeto de opciones).
+    await (client as unknown as { set: (...args: unknown[]) => Promise<unknown> }).set(
+      `${MDD_CANCEL_KEY_PREFIX}${jobId}`,
+      "1",
+      "EX",
+      MDD_CANCEL_KEY_TTL_SEC,
+    );
   }
 
   private async clearCancelRequested(jobId: string): Promise<void> {
@@ -442,7 +480,7 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
         );
         if (failed) {
           await this.clearCancelRequested(jobId);
-          this.generationGuard.unregisterMddStream(projectId);
+          this.generationGuard.forceUnregisterMddStream(projectId);
           this.logger.log(
             `BullMQ MDD job ${jobId} fallido (huérfano activo) projectId=${projectId}`,
           );
@@ -469,7 +507,7 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
         removeOnComplete: { age: 3600, count: 80 },
         removeOnFail: { age: 86_400, count: 30 },
         attempts: this.MAX_ATTEMPTS,
-        backoff: { type: "exponential", delay: 5_000 },
+        backoff: { type: "fixed", delay: MDD_RETRY_BACKOFF_MS },
       },
     });
     const recovered = shouldStartBullmqWorkers()
@@ -525,6 +563,7 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(
           `BullMQ MDD job ${job?.id} falló: ${err instanceof Error ? err.message : err}`,
         );
+        if (job?.data) void this.logThreadKeptOnFailure(job.data as MddJobData, `failed jobId=${job.id}`);
       });
       this.worker.on("error", this.onMddWorkerError);
       this.worker.on("stalled", (jobId) => {
@@ -570,7 +609,7 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
       if (failed) {
         this.logger.warn(`BullMQ MDD job ${jobId} fallido tras stall`);
         if (data?.projectId) {
-          this.generationGuard.unregisterMddStream(data.projectId);
+          this.generationGuard.forceUnregisterMddStream(data.projectId);
           this.logger.log(`BullMQ MDD job ${jobId} stream lock liberado projectId=${data.projectId}`);
         }
         return;
@@ -586,8 +625,24 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
       );
     }
     if (data?.projectId) {
-      this.generationGuard.unregisterMddStream(data.projectId);
+      this.generationGuard.forceUnregisterMddStream(data.projectId);
       this.logger.log(`BullMQ MDD job ${jobId} stream lock liberado projectId=${data.projectId}`);
+    }
+  }
+
+  /**
+   * Ante fallo/preempt NO se borra el checkpoint LangGraph (permite reanudar con memoria de turno);
+   * solo se deja constancia del threadId conservado para diagnóstico.
+   */
+  private async logThreadKeptOnFailure(data: MddJobData | undefined, context: string): Promise<void> {
+    if (!data?.projectId || (data.mode !== "manager" && data.mode !== "pipeline")) return;
+    try {
+      const threadId = await this.aiAnalysis.getMddThreadId(data.projectId, data.stageId);
+      this.logger.log(
+        `MDD ${context} projectId=${data.projectId} stageId=${data.stageId ?? "-"} threadId=${threadId ?? "(sin hilo)"} — checkpoint conservado`,
+      );
+    } catch {
+      /* solo diagnóstico */
     }
   }
 
@@ -601,7 +656,7 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
       await this.clearCancelRequested(jobId);
     }
     this.inMemoryRunningProjects.delete(projectId);
-    this.generationGuard.unregisterMddStream(projectId);
+    this.generationGuard.forceUnregisterMddStream(projectId);
 
     if (!this.queue) return;
 
@@ -615,10 +670,15 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
       const failed = await forceFailBullMqActiveJob(this.queue, job, reason);
       if (failed) {
         this.logger.warn(`BullMQ MDD job ${jobId} preempted (${reason}) projectId=${projectId}`);
+        await this.logThreadKeptOnFailure(data, `preempt jobId=${jobId}`);
       }
-      await this.clearCancelRequested(jobId);
+      // NO borrar la clave Redis de cancelación: el worker dueño (otro proceso) la sondea cada 500 ms y,
+      // si la borráramos aquí mismo, nunca vería el abort y seguiría gastando tokens sobre un job ya
+      // marcado failed. La limpia `executeJob` al terminar en el worker dueño, o expira por TTL.
+      // Solo soltamos el flag local de este proceso (el job ya no está activo aquí).
+      if (!this.jobAbortControllers.has(jobId)) this.cancelRequestedJobIds.delete(jobId);
     }
-    this.generationGuard.unregisterMddStream(projectId);
+    this.generationGuard.forceUnregisterMddStream(projectId);
   }
 
   private async assertCanEnqueue(projectId: string): Promise<void> {
@@ -693,15 +753,49 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Libera jobs BullMQ "active" cuyo worker murió (sin lock vigente). A diferencia de
+   * `preemptActiveMddJobsForProject` NO toca jobs vivos: un turno de chat en curso (otra pestaña) debe
+   * rechazarse con 409, no matarse.
+   */
+  private async reapOrphanActiveMddJobsForProject(projectId: string): Promise<void> {
+    if (!this.queue) return;
+    const activeJobs = await this.queue.getJobs(["active"], 0, 100);
+    for (const job of activeJobs) {
+      const data = job.data as MddJobData | undefined;
+      if (data?.projectId !== projectId) continue;
+      const jobId = String(job.id);
+      if (this.jobAbortControllers.has(jobId)) continue;
+      let held = true;
+      try {
+        held = await isBullMqJobLockHeld(this.queue, jobId);
+      } catch {
+        held = true;
+      }
+      if (held) continue;
+      const failed = await forceFailBullMqActiveJob(this.queue, job, BULLMQ_WORKER_RESTARTED_REASON);
+      if (failed) {
+        this.logger.warn(`BullMQ MDD job ${jobId} huérfano liberado antes de encolar chat projectId=${projectId}`);
+      }
+    }
+  }
+
   async enqueue(data: MddJobData): Promise<string> {
-    await this.preemptActiveMddJobsForProject(data.projectId, BULLMQ_JOB_PREEMPTED_REASON);
+    const isChat = isMddChatJobMode(data.mode);
+    if (isChat) {
+      // Chat: nunca se preempta un turno vivo (409 si lo hay); solo se reaprovechan huérfanos.
+      await this.reapOrphanActiveMddJobsForProject(data.projectId);
+    } else {
+      await this.preemptActiveMddJobsForProject(data.projectId, BULLMQ_JOB_PREEMPTED_REASON);
+    }
     await this.assertCanEnqueue(data.projectId);
     await this.cancelQueuedSiblingsForProject(data.projectId);
     const userId = data.userId ?? getRequestUserId();
     const payload: MddJobData = { ...data, userId };
 
     if (this.queue) {
-      const job = await this.queue.add(payload.mode, payload);
+      // Un turno de chat no es idempotente (re-ejecutarlo duplica mensajes y gasta tokens): sin reintentos.
+      const job = await this.queue.add(payload.mode, payload, isChat ? { attempts: 1 } : undefined);
       return String(job.id);
     }
     return this.enqueueInMemory(payload);
@@ -806,6 +900,9 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
           outcome: "done",
         };
       }
+      if (isMddChatJobMode(data.mode)) {
+        return await this.executeChatJob(jobId, data, onProgress, abortController.signal);
+      }
       return await runWithTokenUsageContext(
         {
           projectId,
@@ -827,6 +924,61 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
       this.generationGuard.unregisterMddStream(projectId);
       await this.clearCancelRequested(jobId);
     }
+  }
+
+  /**
+   * Turno de chat (manager / resume) dentro del worker: cada evento del generador se relaya con cursor
+   * (`MddJobEventsService`) y el cliente lo consume por `GET mdd/jobs/:jobId/events`. Garantiza SIEMPRE un
+   * evento terminal (`done` / `error` / `interrupt`) para que el cliente nunca quede esperando.
+   */
+  private async executeChatJob(
+    jobId: string,
+    data: MddJobData,
+    onProgress: (p: MddJobProgress) => void | Promise<void>,
+    signal: AbortSignal,
+  ): Promise<MddJobResult> {
+    const relay = await this.jobEvents.relayFor(jobId);
+    const cancelled: MddJobRelayEvent = {
+      type: "error",
+      message: "Cancelado por el usuario",
+      code: "CANCELLED",
+    };
+    let result: MddJobResult;
+    try {
+      result = await runWithTokenUsageContext(
+        {
+          projectId: data.projectId,
+          stageId: data.stageId ?? null,
+          documentField: "mddContent",
+          context: data.mode === "resume" || data.mddContent || data.initialMessage ? "regenerate" : "initial",
+          jobId,
+        },
+        () =>
+          this.aiAnalysis.runMddChatTurn(data, {
+            signal,
+            onProgress,
+            onEvent: async (event) => {
+              await relay.emit(event as unknown as MddJobRelayEvent);
+            },
+          }),
+      );
+    } catch (err) {
+      let terminal: MddJobRelayEvent;
+      if (isMddUserCancellationError(err) || signal.aborted) terminal = cancelled;
+      else if (isMddThreadBusyError(err)) {
+        terminal = { type: "error", code: THREAD_BUSY_CODE, message: THREAD_BUSY_MESSAGE };
+      } else terminal = { type: "error", ...formatDbgaStreamError(err, "mdd") };
+      await relay.emitTerminalIfMissing(terminal);
+      throw err;
+    }
+    if (!relay.hasTerminal()) {
+      await relay.emitTerminalIfMissing(
+        signal.aborted
+          ? cancelled
+          : { type: "error", message: "El turno terminó sin respuesta del Manager.", code: "NO_RESULT" },
+      );
+    }
+    return result;
   }
 
   async getJobStatus(jobId: string): Promise<MddJobStatus> {

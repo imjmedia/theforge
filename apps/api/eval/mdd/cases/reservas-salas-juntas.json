@@ -1,0 +1,102 @@
+{
+  "id": "reservas-salas-juntas",
+  "title": "Reservas de salas de juntas",
+  "domain": "reservas",
+  "complexity": "LOW",
+  "brief": "Somos una agencia de publicidad de unas 60 personas con cuatro salas de juntas y una sala de capacitación. Hoy las reservas se hacen en una hoja de cálculo compartida y se enciman horarios casi cada semana. Queremos una aplicación web sencilla donde cada empleado vea la disponibilidad de cada sala por día y por hora, reserve un bloque de entre 30 minutos y 4 horas, indique cuántas personas asistirán y el motivo, y cancele su propia reserva. La recepcionista puede bloquear una sala por mantenimiento. Cada sala tiene capacidad máxima y equipo (proyector, videoconferencia, pizarrón): el sistema no debe permitir reservar una sala con más personas que su cupo ni dos reservas traslapadas en el mismo horario. Las reservas recurrentes semanales son útiles para el equipo de planeación. Se ingresa con el correo corporativo y una contraseña. Hay momentos en que unas 40 personas consultan la disponibilidad al mismo tiempo, así que dos personas no deben poder quedarse con la misma sala. Restricción: la aplicación no envía correos ni notificaciones externas y debe funcionar dentro de la red de la oficina.",
+  "expect": {
+    "entities": [
+      "rooms",
+      "room_amenities",
+      "bookings",
+      "room_blocks",
+      "users"
+    ],
+    "entitySynonyms": {
+      "rooms": [
+        "salas",
+        "meeting_rooms"
+      ],
+      "bookings": [
+        "reservations",
+        "reservas"
+      ],
+      "room_blocks": [
+        "maintenance_blocks",
+        "bloqueos"
+      ],
+      "users": [
+        "employees",
+        "empleados"
+      ]
+    },
+    "capabilities": [
+      {
+        "name": "acceso con correo corporativo",
+        "endpointHints": [
+          "/auth/login"
+        ]
+      },
+      {
+        "name": "disponibilidad de salas",
+        "endpointHints": [
+          "/rooms/availability",
+          "/rooms"
+        ]
+      },
+      {
+        "name": "reservar y cancelar",
+        "endpointHints": [
+          "/bookings"
+        ]
+      },
+      {
+        "name": "bloqueos de mantenimiento",
+        "endpointHints": [
+          "/room-blocks"
+        ]
+      },
+      {
+        "name": "reservas recurrentes",
+        "endpointHints": [
+          "/bookings/recurring"
+        ]
+      }
+    ],
+    "security": [
+      "jwt|sesión|session",
+      "argon2|bcrypt|hash",
+      "rbac|roles"
+    ],
+    "infra": [
+      "docker",
+      "postgres|postgresql",
+      "backup|respaldo",
+      "health"
+    ],
+    "forbidden": [
+      "whatsapp",
+      "wasender",
+      "bitrix",
+      "denue",
+      "inegi",
+      "datswhy",
+      "watchlist",
+      "pendiente: arquitecto",
+      "pendiente: clarificador",
+      "(pendiente)",
+      "format_section3_endpoints",
+      "lorem ipsum",
+      "huésped",
+      "pedido"
+    ],
+    "mustMentionInContext": [
+      "salas",
+      "reservas",
+      "disponibilidad"
+    ]
+  },
+  "thresholds": {
+    "minRubric": 75
+  }
+}

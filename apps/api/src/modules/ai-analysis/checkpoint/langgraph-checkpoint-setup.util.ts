@@ -190,3 +190,63 @@ export async function ensureLangGraphCheckpointSchema(
     await pool.end();
   }
 }
+
+/** Subconjunto de `pg.PoolClient` que usa la purga (facilita tests con un cliente falso). */
+export type CheckpointQueryable = {
+  query: (text: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>>; rowCount?: number | null }>;
+};
+
+export const DEFAULT_CHECKPOINT_TTL_DAYS = 14;
+const PURGE_BATCH_LIMIT = 200;
+
+/** Días de retención de checkpoints (`LANGGRAPH_CHECKPOINT_TTL_DAYS`, default 14). */
+export function resolveCheckpointTtlMs(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number.parseFloat(env.LANGGRAPH_CHECKPOINT_TTL_DAYS?.trim() ?? "");
+  const days = Number.isFinite(n) && n > 0 ? n : DEFAULT_CHECKPOINT_TTL_DAYS;
+  return Math.round(days * 24 * 60 * 60 * 1000);
+}
+
+/**
+ * Borra hilos LangGraph inactivos: `checkpoints`, `checkpoint_writes` y `checkpoint_blobs` de los
+ * `thread_id` cuyo último checkpoint (`checkpoint->>'ts'`) es anterior a `olderThanMs` Y cuya fila
+ * `AgentStateCheckpoint` no existe o tampoco se tocó en ese plazo. Un hilo vivo (turno reciente o fila
+ * reciente) nunca se purga. Devuelve los `thread_id` eliminados.
+ */
+export async function purgeStaleLangGraphThreads(
+  client: CheckpointQueryable,
+  options: { olderThanMs: number; schema?: string; limit?: number },
+): Promise<{ threadIds: string[] }> {
+  const schema = options.schema ?? LANGGRAPH_CHECKPOINT_SCHEMA;
+  const limit = options.limit ?? PURGE_BATCH_LIMIT;
+  const secs = Math.max(60, Math.floor(options.olderThanMs / 1000));
+  const t = (name: string) => `"${schema}".${name}`;
+
+  const stale = await client.query(
+    `SELECT l.thread_id AS thread_id
+     FROM (
+       SELECT thread_id, MAX(NULLIF(checkpoint->>'ts', '')::timestamptz) AS last_ts
+       FROM ${t("checkpoints")}
+       GROUP BY thread_id
+     ) l
+     LEFT JOIN public."AgentStateCheckpoint" a ON a."threadId" = l.thread_id
+     WHERE l.last_ts < now() - make_interval(secs => $1::double precision)
+       AND (a."threadId" IS NULL OR a."updatedAt" < now() - make_interval(secs => $1::double precision))
+     ORDER BY l.last_ts ASC
+     LIMIT $2`,
+    [secs, limit],
+  );
+  const threadIds = stale.rows.map((r) => String(r.thread_id)).filter(Boolean);
+  if (threadIds.length === 0) return { threadIds: [] };
+
+  await client.query("BEGIN");
+  try {
+    for (const table of ["checkpoint_writes", "checkpoint_blobs", "checkpoints"] as const) {
+      await client.query(`DELETE FROM ${t(table)} WHERE thread_id = ANY($1::text[])`, [threadIds]);
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw err;
+  }
+  return { threadIds };
+}

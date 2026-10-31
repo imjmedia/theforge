@@ -59,7 +59,6 @@ const NODE_TASK_DESCRIPTIONS: Record<string, string> = {
 const NODE_REQUIRED_TOOLS: Record<string, string[]> = {
   software_architect: ["format_section3_endpoints"],
   api_contracts: ["format_section3_endpoints"],
-  auditor: ["validate_mdd_structure", "validate_sql_syntax", "validate_json_payloads"],
 };
 
 function stepWithTools(node: string, stepId: string, taskDescription: string, goal?: string): MddPlanStep {
@@ -82,7 +81,7 @@ function contextSuffix(userBrief: string | undefined): string {
 
 /** Indicios de requisito de modelo de datos (para goal explícito en paso software_architect). */
 const MODEL_REQUIREMENT_REGEX =
-  /\b(aplicaciones?|modelo\s+de\s+datos|roles?|permisos?|entidades?|tablas?|diagrama\s*(er|entidad|relaci[oó]n)?|relaci[oó]n(es)?|base\s+de\s+datos|campo|columna|guardar(?:se)?\s+en|jwt_token|refresh_token)\b/i;
+  /\b(aplicaciones?|modelo\s+de\s+datos|roles?|permisos?|entidades?|tablas?|diagrama\s*(er|entidad|relaci[oó]n)?|relaci[oó]n(es)?|base\s+de\s+datos|campo|columna|guardar(?:se)?\s+en)\b/i;
 
 /** Indicios de petición que afectan §2 Arquitectura y Stack (stack tecnológico, frontend, backend, etc.). */
 export const STACK_SECTION2_REGEX =
@@ -97,10 +96,10 @@ function goalForArchitectFamily(node: string, architectGoal: string, full: strin
   const rolesPorApp =
     /(?:roles?\s+por\s+aplicaci[oó]n|roles?\s+a\s+nivel\s+de\s+aplicaci[oó]n|permisos?\s+basados\s+en\s+roles?\s+definidos\s+por\s+cada\s+aplicaci[oó]n)/i.test(full);
   if (rolesPorApp && (node === "software_architect" || node === "data_model")) {
-    return "Cambiar el modelo de datos para que incluya applications, application_roles por aplicación y user_application_roles. No copies §3 del borrador; genera §3 desde cero con esas tablas. Luego elabora §4 Contratos de API.";
+    return "Modelar roles y permisos por aplicación según la petición del usuario; no copies §3 del borrador si lo contradice. Luego elabora §4 Contratos de API alineados al modelo.";
   }
   if (directiveRequiresModelAndDiagramChange(full) && (node === "software_architect" || node === "data_model" || node === "api_contracts")) {
-    return `Requisito de seguridad/almacenamiento: ${architectGoal} Debes actualizar §3 Modelo de Datos (quitar de las tablas SQL cualquier campo que no deba persistirse, p. ej. jwt_token) y el diagrama entidad-relación para que coincida; y §4 Contratos de API (añadir o ajustar endpoints, p. ej. refresh_token). Revisa todo el SQL y el erDiagram y elimina columnas que el usuario indica que no deben guardarse en BD.`;
+    return `Requisito de seguridad/almacenamiento: ${architectGoal} Debes actualizar §3 Modelo de Datos (quitar de las tablas SQL cualquier campo que el usuario indique que no debe persistirse) y el diagrama entidad-relación para que coincida; y §4 Contratos de API (añadir o ajustar los endpoints afectados). Revisa todo el SQL y el erDiagram y elimina las columnas que el usuario indica que no deben guardarse en BD.`;
   }
   const affectsModel = MODEL_REQUIREMENT_REGEX.test(full);
   const affectsSection2 = STACK_SECTION2_REGEX.test(full);
@@ -174,12 +173,12 @@ export function getFullPipelineNodeSequence(complexity?: MddComplexityLevel): re
   ];
 }
 
-/** Si la directiva pide no guardar algo en BD (ej. jwt_token) o eliminar un campo, el Arquitecto debe actualizar §3 y diagrama. */
+/** Si la directiva pide no guardar algo en BD o eliminar un campo, el Arquitecto debe actualizar §3 y diagrama. */
 function directiveRequiresModelAndDiagramChange(directive: string): boolean {
   const d = (directive ?? "").toLowerCase();
   return (
     /\bno\s+guardar(?:se)?\s+en\s+base\s+de\s+datos\b/i.test(d) ||
-    /\b(no\s+almacenar|eliminar\s+campo|quitar\s+campo|no\s+persistir|jwt_token|refresh_token)\b/i.test(d) ||
+    /\b(no\s+almacenar|eliminar\s+campo|quitar\s+campo|no\s+persistir)\b/i.test(d) ||
     /\bcampo\s+\w+.*(?:no\s+debe|no\s+guardar|eliminar|quitar)\b/i.test(d)
   );
 }
@@ -356,3 +355,37 @@ export function managerPlanStepWithTools(
 }
 
 export { NODE_TASK_DESCRIPTIONS };
+
+/** Nodos del plan que escriben o modifican el MDD (los demás formatean, auditan o critican). */
+export const PLAN_WRITER_NODES: ReadonlySet<string> = new Set([
+  "clarifier",
+  "software_architect",
+  "stack_architect",
+  "data_model",
+  "api_contracts",
+  "section5",
+  "tail_parallel",
+  "post_critic_parallel",
+  "security",
+  "integration",
+  "security_integration",
+  "data_model_patch",
+  "blackboard",
+]);
+
+/**
+ * Plan trivial que `plan_approval` ejecuta sin interrumpir (HITL 4.4 solo para planes con
+ * varios agentes escritores): 1 paso, `autoApprove` explícito (tras responder preguntas) o,
+ * en `sections`, un único agente escritor. El Manager usa la misma regla para no gastar la
+ * llamada LLM de análisis de impacto cuando el resumen no se va a mostrar.
+ */
+export function planWillAutoApprove(
+  mddPlan: ReadonlyArray<{ node: string }>,
+  delegateTarget: "clarifier_only" | "full_pipeline" | "sections" | undefined,
+  autoApprove?: boolean,
+): boolean {
+  if (autoApprove === true) return true;
+  if (mddPlan.length <= 1) return true;
+  if (delegateTarget !== "sections") return false;
+  return mddPlan.filter((s) => PLAN_WRITER_NODES.has(s.node)).length <= 1;
+}

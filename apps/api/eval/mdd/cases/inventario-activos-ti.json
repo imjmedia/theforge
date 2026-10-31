@@ -1,0 +1,98 @@
+{
+  "id": "inventario-activos-ti",
+  "title": "Inventario interno de activos de TI",
+  "domain": "herramienta interna",
+  "complexity": "LOW",
+  "brief": "Necesitamos una herramienta interna para llevar el inventario de equipos de cómputo y licencias de software del área de TI de nuestra empresa, que tiene unos 180 empleados. La usarán tres personas: el administrador de TI, el técnico de mesa de ayuda y el auditor de compras que revisa el inventario cada trimestre. Queremos registrar cada activo (laptop, escritorio, impresora, teléfono corporativo) con su número de serie, modelo, fecha de compra, proveedor, ubicación y empleado asignado. Las licencias de software deben guardar la clave de producto cifrada, el número de asientos comprados y los asientos ya asignados, con alerta cuando no quede disponibilidad. Cada préstamo, devolución o reasignación de un equipo debe quedar en un historial con fecha, quién lo entregó y quién lo recibió. El técnico necesita buscar por número de serie o por nombre del empleado desde el celular. Los datos no deben salir de la red interna y el historial de movimientos debe conservarse al menos cinco años por temas fiscales. Restricción: la herramienta no se integra con el directorio corporativo ni con el sistema de compras; los empleados y proveedores se capturan a mano desde un catálogo sencillo.",
+  "expect": {
+    "entities": [
+      "assets",
+      "software_licenses",
+      "employees",
+      "asset_movements"
+    ],
+    "entitySynonyms": {
+      "assets": [
+        "equipos",
+        "devices",
+        "inventory_items"
+      ],
+      "software_licenses": [
+        "licenses",
+        "licencias"
+      ],
+      "employees": [
+        "users",
+        "empleados",
+        "staff"
+      ],
+      "asset_movements": [
+        "asset_assignments",
+        "movimientos",
+        "historial_movimientos"
+      ]
+    },
+    "capabilities": [
+      {
+        "name": "gestión de activos",
+        "endpointHints": [
+          "/assets"
+        ]
+      },
+      {
+        "name": "licencias de software",
+        "endpointHints": [
+          "/licenses",
+          "/software-licenses"
+        ]
+      },
+      {
+        "name": "asignación y reasignación",
+        "endpointHints": [
+          "/assignments",
+          "/movements"
+        ]
+      },
+      {
+        "name": "búsqueda por serie o empleado",
+        "endpointHints": [
+          "/assets/search"
+        ]
+      }
+    ],
+    "security": [
+      "cifrado|encrypt|aes",
+      "rbac|roles",
+      "tls|https"
+    ],
+    "infra": [
+      "docker",
+      "postgres|postgresql",
+      "backup|respaldo"
+    ],
+    "forbidden": [
+      "whatsapp",
+      "wasender",
+      "bitrix",
+      "denue",
+      "inegi",
+      "datswhy",
+      "watchlist",
+      "pendiente: arquitecto",
+      "pendiente: clarificador",
+      "(pendiente)",
+      "format_section3_endpoints",
+      "lorem ipsum",
+      "paciente",
+      "carrito"
+    ],
+    "mustMentionInContext": [
+      "inventario",
+      "licencias",
+      "historial"
+    ]
+  },
+  "thresholds": {
+    "minRubric": 75
+  }
+}

@@ -3,6 +3,7 @@
  */
 
 import { Injectable, Logger } from "@nestjs/common";
+import { hashMddDraft } from "../estimation/mdd-draft-hash.util.js";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@theforge/database";
 import { AIFactory } from "../../ai/ai.factory.js";
@@ -10,7 +11,6 @@ import { PrismaService } from "../../../prisma/prisma.service.js";
 import { pickPrimaryStage } from "../../projects/stage-helpers.js";
 import { createDbgaLLM, createMddAuditorLLM } from "../llm/create-dbga-llm.js";
 import { createMddAuditorNode } from "../nodes/mdd-auditor.node.js";
-import { getMddAuditorTools } from "../tools/tool-registry.js";
 import { EstimationService } from "../estimation/estimation.service.js";
 import { MDD_AUDIT_UPDATE_PROMPT } from "../prompts/load-prompts.js";
 import type { MDDStateType } from "../state/index.js";
@@ -297,7 +297,7 @@ export class MddManualAuditService {
     }
     try {
       const llm = await createMddAuditorLLM(this.aiFactory, userId);
-      const node = createMddAuditorNode(llm, getMddAuditorTools(), null);
+      const node = createMddAuditorNode(llm, null);
       const partial = await node({
         mddDraft,
         dbgaContent: dbga ?? "",
@@ -360,13 +360,14 @@ export class MddManualAuditService {
   private async persistAuditSnapshot(
     projectId: string,
     stageId: string,
-    _mddContent: string,
+    mddContent: string,
     _score: number,
     gaps: MddManualAuditState["auditorGaps"],
     feedback: string,
   ): Promise<void> {
+    const auditedDraftHash = hashMddDraft(mddContent);
     if (gaps) {
-      this.estimation.setAuditorGaps(projectId, gaps, stageId);
+      this.estimation.setAuditorGaps(projectId, gaps, stageId, auditedDraftHash);
     }
     const trail: string[] = [];
     if (feedback.trim()) trail.push(feedback.trim());
@@ -377,6 +378,7 @@ export class MddManualAuditService {
       await this.estimation.saveMddAuditSnapshot(projectId, stageId, {
         auditTrail: trail.length > 0 ? trail : undefined,
         auditorGaps: gaps ?? undefined,
+        auditedDraftHash,
       });
     } catch (err) {
       this.logger.warn(`[MddAudit] snapshot failed for ${projectId}: ${err}`);

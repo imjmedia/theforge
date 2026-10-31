@@ -106,3 +106,4 @@ export * from "./design-system-defaults.js";
 export * from "./project-architecture-graph.js";
 export * from "./document-compiler.js";
 
+export * from "./mdd-eval-api.js";

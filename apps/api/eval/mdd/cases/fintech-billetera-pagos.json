@@ -1,0 +1,128 @@
+{
+  "id": "fintech-billetera-pagos",
+  "title": "Billetera digital con pagos y transferencias",
+  "domain": "fintech",
+  "complexity": "HIGH",
+  "brief": "Queremos construir una billetera digital para pequeños comercios y sus clientes en México. Los usuarios se registran con correo, teléfono verificado por código y una identificación oficial que se valida con un proveedor externo de verificación de identidad (KYC). Cada usuario tiene una o más cuentas de saldo en pesos, y puede recibir dinero, pagar a un comercio con código QR, transferir a otro usuario y retirar a una cuenta bancaria. Ninguna operación puede dejar saldos negativos ni duplicarse aunque el cliente toque dos veces el botón o falle la red; cada movimiento debe ser idempotente y contable, con asientos de doble entrada. Los límites diarios dependen del nivel de verificación. Para retiros y cambios de datos sensibles se exige un segundo factor de autenticación por app. Se necesita conciliación diaria contra el banco y reportes para el área de cumplimiento, con bitácora de accesos y alertas por patrones de fraude. Se espera un pico de 800 transacciones por minuto en quincenas. Restricción: la aplicación no guarda números de tarjeta ni datos completos de cuentas bancarias; los cobros con tarjeta se hacen solo a través de la pasarela certificada, que entrega un token. Los datos personales deben conservarse cinco años según la normativa aplicable.",
+  "brd": "RN-01. Un usuario verificado puede recibir, transferir y pagar con saldo en pesos entre usuarios sin costo por transferencia.\nRN-02. Ningún movimiento puede dejar un saldo negativo; si el saldo es insuficiente, la operación se rechaza y el intento queda registrado.\nRN-03. Cada transacción es idempotente: repetir la misma solicitud con la misma clave no genera un segundo cargo.\nRN-04. Los límites diarios dependen del nivel de verificación: nivel 1 hasta 3,000 pesos y nivel 2 hasta 20,000 pesos.\nRN-05. Los retiros y los cambios de correo o teléfono exigen un segundo factor de autenticación.\nRN-06. La conciliación diaria compara los movimientos contra el archivo del banco; las diferencias se listan para revisión de operaciones antes de las 10:00.\nRN-07. Reportes mensuales para cumplimiento con operaciones superiores a 10,000 pesos y con alertas de fraude abiertas.\nRN-08. La bitácora de accesos y movimientos no puede modificarse ni borrarse.\nRN-09. Los datos personales se conservan cinco años desde la última operación y después se anonimizan.\nRN-10. Fuera de alcance en esta fase: crédito, inversiones y pagos internacionales.",
+  "expect": {
+    "entities": [
+      "users",
+      "wallets",
+      "transactions",
+      "ledger_entries",
+      "kyc_verifications",
+      "bank_accounts",
+      "audit_logs"
+    ],
+    "entitySynonyms": {
+      "users": [
+        "customers",
+        "clients",
+        "usuarios"
+      ],
+      "wallets": [
+        "accounts",
+        "cuentas"
+      ],
+      "transactions": [
+        "transferencias",
+        "payments",
+        "movimientos"
+      ],
+      "ledger_entries": [
+        "journal_entries",
+        "asientos"
+      ],
+      "kyc_verifications": [
+        "identity_checks",
+        "verificaciones"
+      ],
+      "bank_accounts": [
+        "cuentas_bancarias",
+        "withdrawal_accounts"
+      ],
+      "audit_logs": [
+        "bitacora",
+        "access_logs"
+      ]
+    },
+    "capabilities": [
+      {
+        "name": "registro y verificación de identidad",
+        "endpointHints": [
+          "/auth/register",
+          "/kyc"
+        ]
+      },
+      {
+        "name": "autenticación con segundo factor",
+        "endpointHints": [
+          "/auth/login",
+          "/auth/mfa"
+        ]
+      },
+      {
+        "name": "cuentas y saldo",
+        "endpointHints": [
+          "/wallets"
+        ]
+      },
+      {
+        "name": "transferencias y pagos con QR",
+        "endpointHints": [
+          "/transactions",
+          "/payments/qr"
+        ]
+      },
+      {
+        "name": "retiros a cuenta bancaria",
+        "endpointHints": [
+          "/withdrawals",
+          "/bank-accounts"
+        ]
+      },
+      {
+        "name": "conciliación y reportes",
+        "endpointHints": [
+          "/reconciliation",
+          "/reports"
+        ]
+      }
+    ],
+    "security": [
+      "mfa|2fa|totp",
+      "argon2|bcrypt",
+      "jwt|sesión|session",
+      "rbac|roles",
+      "cifrado|encrypt|aes"
+    ],
+    "infra": [
+      "docker",
+      "postgres|postgresql",
+      "redis",
+      "backup|respaldo"
+    ],
+    "forbidden": [
+      "whatsapp",
+      "wasender",
+      "bitrix",
+      "denue",
+      "inegi",
+      "datswhy",
+      "watchlist",
+      "pendiente: arquitecto",
+      "pendiente: clarificador",
+      "(pendiente)",
+      "format_section3_endpoints",
+      "lorem ipsum",
+      "paciente",
+      "carrito"
+    ],
+    "mustMentionInContext": [
+      "billetera",
+      "transferencias",
+      "conciliación"
+    ]
+  }
+}

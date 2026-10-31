@@ -247,7 +247,7 @@ export const MIN_CONTRATOS_LENGTH = 150;
 
 /** Detecta endpoints reales: método+ruta, heading `### MÉTODO`, tabla markdown o bloque ```json. */
 export const CONTRATOS_HAS_ENDPOINTS =
-  /\b(POST|GET|PUT|DELETE|PATCH)\s+[\"']?\/|```json|###\s+(POST|GET|PUT|DELETE|PATCH)|\|\s*(POST|GET|PUT|DELETE|PATCH)\s*\|/i;
+  /\b(POST|GET|PUT|DELETE|PATCH)\s+[\"'`]?\/|```json|###\s+(POST|GET|PUT|DELETE|PATCH)|\|\s*[`*]*(POST|GET|PUT|DELETE|PATCH)[`*]*\s*\|/i;
 
 /** Placeholder explícito del pipeline / Auditor (inicio del cuerpo). */
 export const CONTRATOS_IS_PLACEHOLDER =
@@ -298,37 +298,53 @@ export function isContratosPlaceholder(body: string | null | undefined): boolean
   const normalized = stripLeadingContratosPlaceholder(trimmed);
   if (!normalized || normalized.length < MIN_CONTRATOS_LENGTH) return true;
   if (CONTRATOS_IS_PLACEHOLDER.test(normalized)) return true;
-  return !CONTRATOS_HAS_ENDPOINTS.test(normalized);
+  return !(CONTRATOS_HAS_ENDPOINTS.test(normalized) || countContratosEndpointRows(normalized) >= 3);
 }
 
-/** True si §4 tiene contratos usables (endpoints + JSON request/response y no es placeholder). */
+/**
+ * True si §4 tiene endpoints reales (método+ruta en prosa, tabla GFM `| GET | /ruta |`,
+ * heading `### MÉTODO` o ```json) y no es placeholder.
+ *
+ * La presencia de bloques ```json NO es requisito: un §4 documentado como tabla GFM o una
+ * API externa basada en rutas sin cuerpos JSON es legítimamente sustancial. La falta de JSON
+ * se reporta como warning de calidad (`contratosLacksJsonWarning`), no como blocker.
+ */
 export function isContratosSubstantial(body: string | null | undefined): boolean {
   if (!body || isContratosPlaceholder(body)) return false;
-  if (!CONTRATOS_HAS_ENDPOINTS.test(body)) return false;
-  if (!/```json/i.test(body)) return false;
-  return true;
+  return CONTRATOS_HAS_ENDPOINTS.test(body) || countContratosEndpointRows(body) >= 3;
+}
+
+/**
+ * Warning de calidad (no blocker) cuando §4 es sustancial pero no incluye ningún ejemplo
+ * request/response en ```json. Devuelve null si hay JSON o §4 no es sustancial.
+ */
+export function contratosLacksJsonWarning(body: string | null | undefined): string | null {
+  if (!isContratosSubstantial(body)) return null;
+  if (/```json/i.test(body ?? "")) return null;
+  return "§4 Contratos de API: endpoints documentados sin ejemplos request/response en bloques ```json (recomendado, no bloqueante).";
 }
 
 /** Cuenta filas de endpoint (método + ruta) en §4. */
 export function countContratosEndpointRows(body: string | null | undefined): number {
   if (!body?.trim()) return 0;
   const direct = body.match(/\b(POST|GET|PUT|DELETE|PATCH)\s+["']?\//gi) ?? [];
-  const table = body.match(/\|\s*(POST|GET|PUT|DELETE|PATCH)\s*\|/gi) ?? [];
+  const table = body.match(/\|\s*[`*]*(POST|GET|PUT|DELETE|PATCH)[`*]*\s*\|/gi) ?? [];
   return direct.length + table.length;
 }
 
-/** Baseline sustancial cuya longitud activa la protección anti-regresión. */
+/** @deprecated Sin uso: los reverts por ratio de longitud se eliminaron (solo contenido destruido). */
 export const MIN_CONTRATOS_BASELINE_FOR_REGRESSION_GUARD = 1_200;
 
-/** Ratio mínimo (nuevo/baseline) para aceptar un merge quirúrgico de §4. */
+/** @deprecated Sin uso: los reverts por ratio de longitud se eliminaron. */
 export const CONTRATOS_REGRESSION_LENGTH_RATIO = 0.75;
 
-/** Ratio mínimo de filas endpoint (candidato/baseline) cuando baseline ≥ 6. */
+/** @deprecated Sin uso: los reverts por ratio de filas se eliminaron. */
 export const CONTRATOS_REGRESSION_ENDPOINT_RATIO = 0.8;
 
 /**
- * True si el candidato es sustancial pero claramente peor que el baseline
- * (p. ej. merge quirúrgico o SSOT repair que trunca el catálogo API).
+ * True SOLO si el candidato destruyó el contenido de §4: el baseline era sustancial y el
+ * candidato es placeholder/vacío/sin endpoints. Un §4 más corto o con menos filas NO es
+ * regresión (el gate-loop y los agentes pueden condensar legítimamente el catálogo).
  */
 export function isContratosSectionRegression(
   baselineBody: string | null | undefined,
@@ -338,19 +354,7 @@ export function isContratosSectionRegression(
   const candidate = (candidateBody ?? "").trim();
   if (!baseline || !candidate) return false;
   if (!isContratosSubstantial(baseline)) return false;
-  if (!isContratosSubstantial(candidate)) return true;
-  if (baseline.length < MIN_CONTRATOS_BASELINE_FOR_REGRESSION_GUARD) return false;
-  const ratio = candidate.length / baseline.length;
-  if (ratio < CONTRATOS_REGRESSION_LENGTH_RATIO) return true;
-  const baselineEndpoints = countContratosEndpointRows(baseline);
-  const candidateEndpoints = countContratosEndpointRows(candidate);
-  if (
-    baselineEndpoints >= 6 &&
-    candidateEndpoints < Math.ceil(baselineEndpoints * CONTRATOS_REGRESSION_ENDPOINT_RATIO)
-  ) {
-    return true;
-  }
-  return false;
+  return !isContratosSubstantial(candidate);
 }
 
 /**

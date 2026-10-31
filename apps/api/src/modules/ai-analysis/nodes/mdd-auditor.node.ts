@@ -1,10 +1,20 @@
 /**
  * @fileoverview Nodo auditor — evalúa calidad de documentación y gaps en el pipeline.
+ *
+ * Lint-first: la validación determinista (estructura, SQL, JSON) se ejecuta en código
+ * sobre el borrador real y se inyecta al prompt. El Auditor hace UNA llamada LLM sin
+ * tools: antes, las tools recibían `mdd_draft` como argumento y el modelo tenía que
+ * re-emitir el documento completo (40-60 KB), que el proveedor truncaba → falsos
+ * "secciones faltantes" / "sin payloads" → score hundido.
+ *
+ * El lint informa, no puntúa ni veredicta: el único cap determinista que se conserva es el de
+ * secciones canónicas faltantes (94 + bloqueo de `done`), por decisión de producto. Los gaps
+ * deterministas (contrato/trazabilidad/BRD) solo viajan como texto `[lint] …` en el feedback;
+ * `critical_gaps` son los del LLM y `syntax_errors` suma solo errores SQL/JSON objetivos.
  */
 
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import { HumanMessage, AIMessage, ToolMessage } from "@langchain/core/messages";
-import type { StructuredToolInterface } from "@langchain/core/tools";
+import { HumanMessage } from "@langchain/core/messages";
 import type { LivePrecisionCalculator } from "../estimation/estimation.types.js";
 import { AUDITOR_MDD_PROMPT } from "../prompts/load-prompts.js";
 import { auditorGapsSchema, mddAuditorDecisionSchema, type MDDStateType } from "../state/index.js";
@@ -13,7 +23,7 @@ import { applyPreDeliveryGateFixes, validateMddStructure } from "../utils/mdd-sa
 import { getInternalDirectivesContext } from "../utils/mdd-mesh-topology.js";
 import { auditorConstitutionRigorAppendix } from "../utils/mdd-complexity-rigor.js";
 import { domainInventoryPromptBlock } from "../utils/mdd-domain-prompt.util.js";
-import { extractLlmText, extractLlmToolCalls, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
+import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
 import { resolveMddAuditorNodeBudgetMs, resolveMddAuditorPerInvokeHardTimeoutMs } from "../utils/mdd-llm-timeout.util.js";
 import {
   buildAuditorFeedbackFromGaps,
@@ -23,6 +33,11 @@ import {
   synthesizeStructuralAuditorGaps,
   truncateDraftForAuditorLlm,
 } from "../utils/mdd-auditor-gaps.util.js";
+import {
+  deterministicLintSyntaxErrors,
+  formatDeterministicLintForPrompt,
+  runDeterministicMddLint,
+} from "../utils/mdd-auditor-lint.util.js";
 import { hasBrdToMddTraceabilityBlockers } from "../estimation/brd-mdd-traceability.util.js";
 import { buildMddAuditorDeepContext } from "../utils/mdd-auditor-context.util.js";
 import type { AuditorGapsState } from "../state/mdd-state.schema.js";
@@ -30,6 +45,9 @@ import { z } from "zod";
 import { draftIsSubstantialForScopedRepair } from "../utils/mdd-section-preserve.util.js";
 
 const AUDIT_PASS_THRESHOLD = MDD_AUDIT_PASS_THRESHOLD;
+
+/** Intentos de la única llamada LLM del Auditor (la segunda solo si la primera vuelve vacía). */
+const AUDITOR_LLM_MAX_ATTEMPTS = 2;
 
 const auditorCriticalGapItemSchema = z.union([
   z.object({
@@ -67,7 +85,6 @@ const auditorOutputSchema = z.object({
 });
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Auditor] ${msg}`, ...args);
-const MAX_TOOL_LOOPS = 3;
 
 /** Auditor califica (score/gaps); el auto-loop lo decide prepare_output vía gate blockers. */
 function resolveAuditorDecisionForSubstantialDraft(
@@ -86,44 +103,45 @@ function resolveAuditorDecisionForSubstantialDraft(
   return baseDecision;
 }
 
-function buildToolsByName(tools: StructuredToolInterface[]): Record<string, StructuredToolInterface> {
-  const byName: Record<string, StructuredToolInterface> = {};
-  for (const t of tools) byName[t.name] = t;
-  return byName;
-}
-
-function resolveAuditorGapsFromLlm(
-  structural: AuditorGapsState,
+/**
+ * Gaps finales del Auditor: `critical_gaps` = SOLO los del LLM. Los gaps deterministas
+ * (estructura/contrato/trazabilidad) son heurísticos y van únicamente al texto de feedback
+ * (`[lint] …`); a `syntax_errors` solo entran errores SQL/JSON objetivos del lint.
+ * El veredicto lo decide el score del LLM (+ el bloqueo estructural de secciones faltantes).
+ */
+export function resolveAuditorGapsFromLlm(
   llmGaps: AuditorGapsState | undefined,
+  lintSyntaxErrors: string[],
   score: number,
+  missingSections: string[] = [],
 ): AuditorGapsState {
-  if (!llmGaps) return { ...structural, score: Math.min(score, structural.score || score) };
-
-  const seen = new Set<string>();
-  const critical_gaps = [...llmGaps.critical_gaps];
-  for (const g of critical_gaps) {
-    seen.add(`${g.issue.slice(0, 80)}::${g.fix.slice(0, 80)}`);
-  }
-  for (const g of structural.critical_gaps) {
-    const key = `${g.issue.slice(0, 80)}::${g.fix.slice(0, 80)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    critical_gaps.push(g);
-  }
-
-  const syntax_errors = [...new Set([...llmGaps.syntax_errors, ...structural.syntax_errors])];
-  const status =
-    score >= AUDIT_PASS_THRESHOLD && critical_gaps.length === 0 && syntax_errors.length === 0
-      ? "APROBADO"
-      : "RECHAZADO";
-
+  const syntax_errors = [...new Set([...(llmGaps?.syntax_errors ?? []), ...lintSyntaxErrors])];
+  const status = score >= AUDIT_PASS_THRESHOLD && missingSections.length === 0 ? "APROBADO" : "RECHAZADO";
   return {
     score,
     status,
-    critical_gaps,
+    critical_gaps: [...(llmGaps?.critical_gaps ?? [])],
     syntax_errors,
-    infrastructure_ready: llmGaps.infrastructure_ready,
+    infrastructure_ready: llmGaps?.infrastructure_ready ?? true,
   };
+}
+
+/** Texto `[lint] …` con los gaps deterministas (informativos) para anexar al feedback. */
+export function formatDeterministicGapsAsLintFeedback(
+  deterministic: AuditorGapsState,
+  options?: { maxItems?: number },
+): string {
+  const maxItems = options?.maxItems ?? 8;
+  const lines: string[] = [];
+  for (const g of deterministic.critical_gaps) {
+    if (/^Falta la sección obligatoria:/i.test(g.issue)) continue; // ya cubierto por el bloqueo estructural
+    lines.push(`[lint] [${(g.sections ?? []).join(", ")}] ${g.issue} Corrección: ${g.fix}`);
+  }
+  for (const e of deterministic.syntax_errors) lines.push(`[lint] ${e}`);
+  if (lines.length === 0) return "";
+  const shown = lines.slice(0, maxItems);
+  if (lines.length > maxItems) shown.push(`[lint] … y ${lines.length - maxItems} observación(es) más`);
+  return shown.join(" ");
 }
 
 function buildStructuralAuditorResult(
@@ -152,34 +170,38 @@ function buildStructuralAuditorResult(
   };
 }
 
-/** Creates the MDD Auditor (quality) node. Optionally with tools and precisionCalculator (semáforo). */
+/**
+ * Creates the MDD Auditor (quality) node. Sin tools: el lint determinista va en el prompt.
+ * `_precisionCalculator` se conserva por compatibilidad de firma (el semáforo regex ya no sobrescribe el score).
+ */
 export function createMddAuditorNode(
   llm: BaseChatModel,
-  tools: StructuredToolInterface[] = [],
   _precisionCalculator?: LivePrecisionCalculator | null,
 ) {
   return async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
-    const allowed = state.currentStepAllowedTools;
-    const toolsToUse = allowed?.length ? tools.filter((t) => allowed.includes(t.name)) : tools;
-    const toolsByName = buildToolsByName(toolsToUse);
-    const llmWithTools = llm.bindTools && toolsToUse.length > 0 ? llm.bindTools(toolsToUse) : llm;
-
-    LOG("entry mddDraftLen=%s tools=%s (allowed=%s)", (state.mddDraft ?? "").length, toolsToUse.length, allowed?.length ?? "all");
+    LOG("entry mddDraftLen=%s (lint determinista previo, sin tools)", (state.mddDraft ?? "").length);
     const draft = applyPreDeliveryGateFixes((state.mddDraft ?? "").trim());
     const validation = validateMddStructure(draft);
+    const lint = runDeterministicMddLint(draft, validation);
     const deterministicBase = synthesizeDeterministicAuditorGaps(
       draft,
       validation,
       computeDeterministicAuditorScore(draft, validation),
       state.brdContent,
     );
+    LOG(
+      "lint: missingSections=%s payloads=%s sqlBlocks=%s sqlErrors=%s jsonBlocks=%s jsonErrors=%s",
+      validation.missingSections.length,
+      validation.section3HasPayloads,
+      lint.sqlBlocks,
+      lint.sqlErrors.length,
+      lint.jsonBlocks,
+      lint.jsonErrors.length,
+    );
 
     try {
       const auditorPerInvokeMs = resolveMddAuditorPerInvokeHardTimeoutMs();
       const auditorNodeBudgetMs = resolveMddAuditorNodeBudgetMs();
-      const auditorStartedAt = Date.now();
-      const auditorRemainingNodeMs = () =>
-        Math.max(0, auditorNodeBudgetMs - (Date.now() - auditorStartedAt));
 
       const draftForLlm = truncateDraftForAuditorLlm(draft);
       let prompt =
@@ -192,87 +214,16 @@ export function createMddAuditorNode(
           inventoryBlock +
           "\n\n**Criterio domain-auth-only-skew:** Si el inventario tiene ≥3 capacidades de negocio y §3 solo lista tablas auth (users/roles/sessions/…), baja el score y registra critical_gap con fix: ampliar §3/§4 al dominio.";
       }
-      if (toolsToUse.length > 0) {
-        prompt +=
-          "\n\n**Obligatorio:** Usa validate_mdd_structure, validate_sql_syntax y validate_json_payloads con el borrador. " +
-          "Usa esos resultados para auditorScore, critical_gaps, syntax_errors e infrastructure_ready. " +
-          "Responde al final solo con el JSON de salida.";
-      }
-      const messages = [new HumanMessage(prompt)];
+      prompt += formatDeterministicLintForPrompt(lint);
+      prompt += "\n**Responde únicamente con el JSON de salida.**";
 
-      let lastContent = "";
-      let loopCount = 0;
-      let emptyFinalAttempts = 0;
-      const MAX_EMPTY_FINAL_ATTEMPTS = 2;
-
-      while (loopCount < MAX_TOOL_LOOPS) {
-        const nodeRemainingMs = auditorRemainingNodeMs();
-        if (nodeRemainingMs <= 0) {
-          LOG("node budget %sms agotado — abortando tool-loop", auditorNodeBudgetMs);
-          break;
-        }
-        const invokeHardTimeoutMs = Math.min(auditorPerInvokeMs, nodeRemainingMs);
-        const isFinalIteration = loopCount === MAX_TOOL_LOOPS - 1;
-        const useRetry =
-          isFinalIteration ||
-          (loopCount > 0 && emptyFinalAttempts > 0 && loopCount < MAX_TOOL_LOOPS - 1);
-        const response = await invokeLlmWithRetry(llmWithTools, messages, {
-          tag: "Auditor:tools",
-          maxAttempts: useRetry ? (isFinalIteration ? 3 : 2) : 1,
-          acceptToolCallsWithoutContent: true,
-          isResponseValid: (text) => text.trim().length > 0,
-          hardTimeoutMs: invokeHardTimeoutMs,
-        });
-        if (!response) {
-          LOG("tool-loop LLM sin respuesta tras reintentos (iter=%s); saliendo del loop", loopCount);
-          lastContent = "";
-          break;
-        }
-        const aiMsg = response as AIMessage;
-        lastContent = extractLlmText(aiMsg);
-        const toolCalls = extractLlmToolCalls(aiMsg);
-        if (toolCalls.length === 0) {
-          if (!lastContent.trim()) {
-            emptyFinalAttempts += 1;
-            if (emptyFinalAttempts >= MAX_EMPTY_FINAL_ATTEMPTS) {
-              LOG(
-                "tool-loop: contenido vacío sin tool_calls tras %s intentos (iter=%s); abortando loop",
-                emptyFinalAttempts,
-                loopCount,
-              );
-              break;
-            }
-            LOG(
-              "tool-loop: contenido vacío sin tool_calls (iter=%s); reintentando iteración",
-              loopCount,
-            );
-            continue;
-          }
-          break;
-        }
-
-        const toolMessages: ToolMessage[] = [];
-        for (const tc of toolCalls) {
-          const tool = toolsByName[tc.name];
-          const toolCallId = tc.id ?? `tc-${loopCount}-${tc.name}`;
-          if (!tool) {
-            toolMessages.push(new ToolMessage({ content: `Unknown tool: ${tc.name}`, tool_call_id: toolCallId, status: "error" }));
-            continue;
-          }
-          const args = typeof tc.args === "object" && tc.args !== null ? tc.args as Record<string, unknown> : {};
-          let result: unknown;
-          try {
-            result = await tool.invoke(args);
-          } catch (toolErr) {
-            console.log("[MDD:Auditor] tool.invoke error: %s args=%s", toolErr instanceof Error ? toolErr.message : String(toolErr), JSON.stringify(args).slice(0, 200));
-            result = `Error: ${toolErr instanceof Error ? toolErr.message : "Tool call failed"}`;
-          }
-          const content = typeof result === "string" ? result : JSON.stringify(result);
-          toolMessages.push(new ToolMessage({ content, tool_call_id: toolCallId }));
-        }
-        messages.push(aiMsg, ...toolMessages);
-        loopCount++;
-      }
+      const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], {
+        tag: "Auditor",
+        maxAttempts: AUDITOR_LLM_MAX_ATTEMPTS,
+        isResponseValid: (text) => text.trim().length > 0,
+        hardTimeoutMs: Math.min(auditorPerInvokeMs, auditorNodeBudgetMs),
+      });
+      const lastContent = response ? extractLlmText(response) : "";
 
       const structuralBase = deterministicBase;
 
@@ -291,6 +242,7 @@ export function createMddAuditorNode(
 
       let score = Math.min(100, Math.max(0, parsed.auditorScore));
 
+      // Único cap determinista conservado: las 7 secciones canónicas son contrato estructural del MDD.
       if (validation.missingSections.length > 0) {
         score = Math.min(score, 94);
         const sectionsNote =
@@ -298,15 +250,6 @@ export function createMddAuditorNode(
         const existing = (parsed.auditorFeedback ?? "").trim();
         parsed.auditorFeedback = existing ? existing + " " + sectionsNote : sectionsNote;
         LOG("missingSections=%s → score capped at 94", validation.missingSections.join(";"));
-      }
-
-      if (tools.length > 0 && !validation.section3HasPayloads && score > 20) {
-        score = Math.min(score, 79);
-        if (!parsed.auditorFeedback?.includes("Contratos de API")) {
-          parsed.auditorFeedback =
-            (parsed.auditorFeedback ?? "").trim() +
-            " Sección 4. Contratos de API: debe incluir endpoints con request/response en ```json.";
-        }
       }
 
       let llmGaps: AuditorGapsState | undefined;
@@ -332,18 +275,28 @@ export function createMddAuditorNode(
         llmGaps = result.data;
       }
 
-      const auditorGaps = resolveAuditorGapsFromLlm(structuralBase, llmGaps, score);
+      const auditorGaps = resolveAuditorGapsFromLlm(
+        llmGaps,
+        deterministicLintSyntaxErrors(lint),
+        score,
+        validation.missingSections,
+      );
       if (!feedback && (auditorGaps.critical_gaps.length > 0 || auditorGaps.syntax_errors.length > 0)) {
         feedback = buildAuditorFeedbackFromGaps(auditorGaps);
       }
+      if (!feedback && score < AUDIT_PASS_THRESHOLD) {
+        feedback =
+          "Faltan: modelo de datos/entidades con tipos y relaciones, contratos u operaciones con entrada/salida, decisiones de seguridad, estrategia de infraestructura/despliegue. Genera preguntas para cubrir estos huecos.";
+      }
+      // Gaps deterministas: informativos, nunca deciden el veredicto.
+      const lintFeedback = formatDeterministicGapsAsLintFeedback(structuralBase);
+      if (lintFeedback) feedback = feedback ? `${feedback} ${lintFeedback}` : lintFeedback;
 
       const hasConflict = auditorGaps.critical_gaps.some((g) => g.issue.includes("[CONFLICTO]"));
 
       const rawDecision = hasConflict
         ? ("blackboard" as const)
-        : score >= AUDIT_PASS_THRESHOLD &&
-            validation.missingSections.length === 0 &&
-            auditorGaps.critical_gaps.length === 0
+        : score >= AUDIT_PASS_THRESHOLD && validation.missingSections.length === 0
           ? ("done" as const)
           : ("clarifier" as const);
       const decision = resolveAuditorDecisionForSubstantialDraft(draft, rawDecision, {
@@ -351,11 +304,7 @@ export function createMddAuditorNode(
       });
       const currentIteration = state.mddIteration ?? 0;
       const iteration = currentIteration + (decision === "clarifier" ? 1 : 0);
-      const finalFeedback =
-        feedback ||
-        (score < AUDIT_PASS_THRESHOLD
-          ? "Faltan: modelo de datos/entidades con tipos y relaciones, contratos u operaciones con entrada/salida, decisiones de seguridad, estrategia de infraestructura/despliegue. Genera preguntas para cubrir estos huecos."
-          : undefined);
+      const finalFeedback = feedback || undefined;
 
       LOG(
         "ok score=%s decision=%s iteration=%s gaps=%s scoreOnly=%s",

@@ -5,8 +5,8 @@ import type { MDDStateType } from "../../state/index.js";
 import { getPlanDirective, getUserBrief } from "../../utils/mdd-user-brief.js";
 import { generateImpactAnalysis } from "../../utils/mdd-impact-analysis.js";
 import { detectLegacyIntegrationIntent, HANDOFF_SPEC_SUGGESTION } from "../../utils/integration-intent.util.js";
-import { LOG } from "./manager-context.util.js";
-import { buildMddPlan, generateMddPlanWithLLM } from "./manager-plan.js";
+import { appendUserInput, dbgaContentWithUserText, LOG } from "./manager-context.util.js";
+import { buildMddPlan, generateMddPlanWithLLM, planWillAutoApprove } from "./manager-plan.js";
 import type { ManagerLlmTurnResult } from "./manager-llm-turn.js";
 
 export type ManagerDelegateContext = {
@@ -43,8 +43,8 @@ export async function handleManagerDelegateOutcome(ctx: ManagerDelegateContext):
     });
   }
   
-  const accumulatedWithRequest = [state.userInputAccumulated?.trim(), userMessage ? `Petición: ${userMessage}` : ""].filter(Boolean).join("\n\n---\n\n");
-  const dbgaWithRequest = [state.dbgaContent?.trim(), userMessage ? `Petición: ${userMessage}` : ""].filter(Boolean).join("\n\n");
+  const accumulatedWithRequest = appendUserInput(state.userInputAccumulated, userMessage, "Petición");
+  const dbgaWithRequest = dbgaContentWithUserText(state, userMessage ? `Petición: ${userMessage}` : "");
   const baseUpdate = {
     userInputAccumulated: accumulatedWithRequest || state.userInputAccumulated,
     dbgaContent: dbgaWithRequest || state.dbgaContent,
@@ -53,11 +53,14 @@ export async function handleManagerDelegateOutcome(ctx: ManagerDelegateContext):
     lastStepFailed: undefined,
   };
   
-  const planDirective = getPlanDirective(state);
-  let mddPlan = await generateMddPlanWithLLM(llm, state, delegateTarget, sectionsToRun);
+  // La directiva y el plan se calculan con el mensaje actual ya acumulado: getPlanDirective excluía el mensaje
+  // cuando el acumulado/alcance ya estaban poblados y, al aprobar ("sí"), la petición real se perdía.
+  const stateForDirective: MDDStateType = { ...state, userInputAccumulated: accumulatedWithRequest || state.userInputAccumulated };
+  const planDirective = getPlanDirective(stateForDirective);
+  let mddPlan = await generateMddPlanWithLLM(llm, stateForDirective, delegateTarget, sectionsToRun);
   if (!mddPlan.length) {
     LOG("plan generado por LLM vacío o inválido, usando buildMddPlan");
-    mddPlan = buildMddPlan(delegateTarget, sectionsToRun, getUserBrief(state), planDirective, state.mddComplexity);
+    mddPlan = buildMddPlan(delegateTarget, sectionsToRun, getUserBrief(stateForDirective), planDirective, state.mddComplexity);
   } else {
     LOG("plan generado por LLM steps=%s", mddPlan.length);
   }
@@ -75,9 +78,15 @@ export async function handleManagerDelegateOutcome(ctx: ManagerDelegateContext):
       gotoNode = "clarifier";
     }
     LOG("delegar a plan_approval mddPlanLen=%s goto=%s", mddPlan.length, gotoNode);
-    const impactSummary = await generateImpactAnalysis(llm, state, userMessage || planDirective || "Re-planificación");
+    const impactSummary = planWillAutoApprove(mddPlan, delegateTarget)
+      ? ""
+      : await generateImpactAnalysis(llm, state, userMessage || planDirective || "Re-planificación");
     return new Command({
       update: {
+        // Persistir la petición: sobrevive a la aprobación (donde lastUserMessage pasa a ser "sí").
+        userInputAccumulated: accumulatedWithRequest || state.userInputAccumulated,
+        dbgaContent: dbgaWithRequest || state.dbgaContent,
+        requestQuestionsOnly: false,
         pendingPlanApproval: {
           mddPlan,
           delegateTarget: delegateTarget ?? "full_pipeline",

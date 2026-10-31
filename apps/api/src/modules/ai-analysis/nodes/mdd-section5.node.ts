@@ -40,10 +40,6 @@ import { closeUnclosedFencesBeforeCanonicalH2 } from "../utils/mdd-sanitize/sect
 import { isMddSectionPipelinePlaceholderBody } from "../utils/mdd-sanitize/section-merge.js";
 import { stripThinkingTags } from "../utils/mdd-security-parse.js";
 import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
-import {
-  isSection5SectionRegression,
-  MIN_SUBSTANTIAL_SECTION5_BODY_LEN,
-} from "../utils/mdd-section-preserve.util.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Section5] ${msg}`, ...args);
 
@@ -128,20 +124,6 @@ export function createMddSection5Node(llm: BaseChatModel) {
         return { section5FormatSkipped: true };
       }
 
-      const baselineBody = section5Now?.trim() ?? "";
-      if (
-        baselineBody.length >= MIN_SUBSTANTIAL_SECTION5_BODY_LEN &&
-        !isMddSectionPipelinePlaceholderBody(baselineBody) &&
-        isSection5SectionRegression(baselineBody, cleaned)
-      ) {
-        LOG(
-          "body regenerado regresión §5 (%d→%d chars) — preservando draft actual",
-          baselineBody.length,
-          cleaned.length,
-        );
-        return { section5FormatSkipped: true };
-      }
-
       const draftForMerge = preflightSanitizeDraftForSection5(currentDraft).draft;
       let merged = replaceMddSection5Body(draftForMerge, cleaned);
       merged = deduplicateMddDraftSections(closeUnclosedFencesBeforeCanonicalH2(merged));
@@ -166,7 +148,10 @@ export function createMddSection5Node(llm: BaseChatModel) {
     } catch (err) {
       LOG("error: %s", err instanceof Error ? err.message : String(err));
       // No tirar el draft — preservar el estado y dejar que el loop lo marque.
-      return { section5FormatSkipped: true };
+      return {
+        section5FormatSkipped: true,
+        lastStepFailed: { node: "section5", error: err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300) },
+      };
     }
   };
 }

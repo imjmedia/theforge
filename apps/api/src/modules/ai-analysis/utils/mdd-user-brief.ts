@@ -73,6 +73,19 @@ export function getUserBrief(state: MDDStateType): string {
 /** Respuestas breves que no son requisitos (sí, ok, de acuerdo, etc.). */
 const TRIVIAL_REPLY = /^(?:Usuario:\s*)?(?:s[ií]|s[ií]\s*,\s*de\s*acuerdo|de\s*acuerdo|ok|vale|correcto|estoy\s+de\s+acuerdo|perfecto|acepto)[\s.]*$/i;
 
+/** Aprobaciones/afirmaciones cortas ("sí, procede", "me parece bien", "claro") que no son requisitos. */
+const TRIVIAL_AFFIRMATION =
+  /^(?:Usuario:\s*|Petici[oó]n:\s*)?(?:s[ií]|no|ok(?:ay)?|vale|dale|va|claro|por\s+supuesto|adelante|aprobado|apru[eé]bo|perfecto|excelente|correcto|de\s+acuerdo|est[aá]\s+bien|me\s+parece\s+bien|proced\w*|ejec[uú]t\w*|conf[ií]rmo|listo|contin[uú]\w*|hazlo|gracias)(?:[\s.,;:!?¡¿]+(?:s[ií]|ok|dale|adelante|procede\w*|ejec[uú]t\w*|el\s+plan|por\s+favor|gracias|perfecto|listo|claro))*[\s.,;:!?¡¿]*$/i;
+
+/** Mensaje sin contenido de requisito (sí/no/ok/procede…). */
+function isTrivialUserText(text: string): boolean {
+  const t = text.trim();
+  return TRIVIAL_REPLY.test(t) || TRIVIAL_AFFIRMATION.test(t);
+}
+
+/** Longitud mínima del último mensaje para entrar como primer bloque de la directiva. */
+const MIN_CURRENT_MESSAGE_LENGTH = 10;
+
 function meetsRequirementsMinLength(text: string, minLen: number): boolean {
   return text.length >= minLen;
 }
@@ -91,7 +104,7 @@ export function getUserExplicitRequirements(state: MDDStateType): string {
     const substantial = blocks.filter(
       (b) =>
         meetsRequirementsMinLength(b, minLengthForExplicitRequirements(b)) &&
-        !TRIVIAL_REPLY.test(b.replace(/^Usuario:\s*/i, "").trim()),
+        !isTrivialUserText(b.replace(/^Usuario:\s*/i, "").trim()),
     );
     if (substantial.length > 0) {
       combined = substantial.join("\n\n");
@@ -106,7 +119,7 @@ export function getUserExplicitRequirements(state: MDDStateType): string {
   }
   const last = (state.lastUserMessage ?? "").trim();
   const lastMinLen = minLengthForExplicitRequirements(last);
-  if (last.length >= lastMinLen && !TRIVIAL_REPLY.test(last)) {
+  if (last.length >= lastMinLen && !isTrivialUserText(last)) {
     const lastNorm = last.replace(/^(Usuario|Petición):\s*/i, "").trim();
     const prefix = lastNorm.slice(0, Math.min(120, lastNorm.length));
     if (!combined.length) {
@@ -126,7 +139,7 @@ const SYSTEM_QUESTION_PATTERN = /^(?:¿Ejecutar\s+este\s+plan|¿Puedes\s+detalla
 /** Indicios de requisito de diseño: entidades, modelo, diagrama, aplicaciones, roles, permisos, stack, arquitectura, despliegue. */
 const DESIGN_REQUIREMENT_REGEX = new RegExp(
   STACK_TECHNOLOGY_REGEX.source +
-    "|\\b(aplicaciones?|diagrama\\s*(er|entidad|relaci[oó]n)?|entidad|entidades|modelo\\s+de\\s+datos|roles?|permisos?|relaci[oó]n(es)?|tablas?|usuarios?|CREATE\\s+TABLE|denue|inegi|contratos?\\s+de\\s+api|endpoints?|documentaci[oó]n\\s+(de\\s+)?api|microservicio|consumo\\s+del\\s+microservicio|otras\\s+aplicaciones|api\\s+propia|secci[oó]n\\s*7|§7)\\b",
+    "|\\b(aplicaciones?|diagrama\\s*(er|entidad|relaci[oó]n)?|entidad|entidades|modelo\\s+de\\s+datos|roles?|permisos?|relaci[oó]n(es)?|tablas?|usuarios?|CREATE\\s+TABLE|contratos?\\s+de\\s+api|endpoints?|documentaci[oó]n\\s+(de\\s+)?api|microservicio|consumo\\s+del\\s+microservicio|otras\\s+aplicaciones|api\\s+propia|secci[oó]n\\s*7|§7)\\b",
   "i",
 );
 
@@ -141,7 +154,7 @@ export function getLastSubstantiveUserMessage(state: MDDStateType): string {
     for (let i = blocks.length - 1; i >= 0; i--) {
       const b = blocks[i];
       const withoutPrefix = b.replace(/^Usuario:\s*|Plan aprobado:\s*/gi, "").trim();
-      if (withoutPrefix.length < MIN_SUBSTANTIVE_LENGTH || TRIVIAL_REPLY.test(withoutPrefix)) continue;
+      if (withoutPrefix.length < MIN_SUBSTANTIVE_LENGTH || isTrivialUserText(withoutPrefix)) continue;
       if (SYSTEM_QUESTION_PATTERN.test(withoutPrefix)) continue;
       if (DESIGN_REQUIREMENT_REGEX.test(withoutPrefix)) return withoutPrefix.slice(0, 800);
       if (!fallback) fallback = withoutPrefix.slice(0, 800);
@@ -149,7 +162,7 @@ export function getLastSubstantiveUserMessage(state: MDDStateType): string {
     if (fallback) return fallback;
   }
   const last = (state.lastUserMessage ?? "").trim();
-  if (last.length >= MIN_SUBSTANTIVE_LENGTH && !TRIVIAL_REPLY.test(last)) return last.slice(0, 800);
+  if (last.length >= MIN_SUBSTANTIVE_LENGTH && !isTrivialUserText(last)) return last.slice(0, 800);
   return "";
 }
 
@@ -162,18 +175,31 @@ const MAX_PLAN_BLOCKS = 4;
 export function getPlanDirective(state: MDDStateType): string {
   const parts: string[] = [];
   const accumulated = (state.userInputAccumulated ?? "").trim();
-  if (accumulated.length >= MIN_SUBSTANTIVE_LENGTH) {
+  const strip = (b: string) => b.replace(/^Usuario:\s*|Plan aprobado:\s*|Petición:\s*/gi, "").trim();
+
+  // Primer bloque: el mensaje actual (si es sustantivo). Sin esto, con acumulado/alcance ya poblados
+  // la petición recién escrita quedaba fuera de la directiva y se perdía al aprobar el plan ("sí").
+  const lastRaw = strip((state.lastUserMessage ?? "").trim());
+  const currentMessage =
+    lastRaw.length >= MIN_CURRENT_MESSAGE_LENGTH && !isTrivialUserText(lastRaw) && !SYSTEM_QUESTION_PATTERN.test(lastRaw)
+      ? lastRaw.slice(0, MDD_MAX_PLAN_BLOCK_CHARS)
+      : "";
+  const sameAsCurrent = (b: string) =>
+    !!currentMessage && (b === currentMessage || b.startsWith(currentMessage.slice(0, 120)) || currentMessage.startsWith(b.slice(0, 120)));
+
+  if (accumulated.length >= MIN_SUBSTANTIVE_LENGTH || currentMessage) {
     const blocks = accumulated.split(/\n\n---\n\n/).map((s) => s.trim()).filter(Boolean);
     const substantial: string[] = [];
     for (let i = blocks.length - 1; i >= 0 && substantial.length < MAX_PLAN_BLOCKS; i--) {
-      const b = blocks[i];
-      const withoutPrefix = b.replace(/^Usuario:\s*|Plan aprobado:\s*|Petición:\s*/gi, "").trim();
-      if (withoutPrefix.length < MIN_SUBSTANTIVE_LENGTH || TRIVIAL_REPLY.test(withoutPrefix)) continue;
+      const withoutPrefix = strip(blocks[i]);
+      if (withoutPrefix.length < MIN_SUBSTANTIVE_LENGTH || isTrivialUserText(withoutPrefix)) continue;
       if (SYSTEM_QUESTION_PATTERN.test(withoutPrefix)) continue;
+      if (sameAsCurrent(withoutPrefix.slice(0, MDD_MAX_PLAN_BLOCK_CHARS))) continue;
       substantial.unshift(withoutPrefix.slice(0, MDD_MAX_PLAN_BLOCK_CHARS));
     }
-    if (substantial.length > 0) {
-      parts.push("Requisitos del usuario (conversación reciente):\n" + substantial.join("\n\n---\n\n"));
+    const ordered = currentMessage ? [currentMessage, ...substantial] : substantial;
+    if (ordered.length > 0) {
+      parts.push("Requisitos del usuario (conversación reciente):\n" + ordered.join("\n\n---\n\n"));
     }
   }
   const scope = (state.clarifiedScope ?? "").trim();

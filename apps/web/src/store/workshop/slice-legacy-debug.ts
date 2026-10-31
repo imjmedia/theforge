@@ -1,3 +1,5 @@
+import { detachMddChatConsumer, hasActiveMddChatConsumer } from "./helpers/mdd-chat-queue";
+import { clearMddChatJob } from "../../utils/mddChatJob";
 import type { StateCreator } from "zustand";
 import type { PlanValidationPersisted, ProjectGenerationStatus } from "@theforge/shared-types";
 import {
@@ -140,7 +142,9 @@ export const createLegacyDebugSlice: StateCreator<
         }
       } else {
         stopGenerationStatusPolling();
-        if (wasBusy) {
+        // Chat vía cola: el consumidor de eventos aplica el MDD del turno (done/interrupt); recargar el MDD del
+        // servidor aquí pisaría el borrador del interrupt antes de que termine su persistencia.
+        if (wasBusy && !hasActiveMddChatConsumer()) {
           void get()
             .fetchProject(requestedId, { preferServerMdd: true })
             .then((project) => {
@@ -166,6 +170,11 @@ export const createLegacyDebugSlice: StateCreator<
           error: await parseErrorMessageFromResponse(r, "No se pudo cancelar el job MDD"),
         });
         return false;
+      }
+      // Chat vía cola: dejar de leer eventos de este job y olvidar el estado de reanudación.
+      if (get().activeChatJobId === jid) {
+        detachMddChatConsumer(jid);
+        clearMddChatJob(pid, get().activeStageId);
       }
       set({
         loading: false,

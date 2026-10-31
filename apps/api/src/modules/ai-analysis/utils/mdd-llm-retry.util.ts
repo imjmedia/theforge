@@ -27,10 +27,14 @@ import type { BaseMessage } from "@langchain/core/messages";
 import { recordTokenUsageFromContext } from "../../ai/utils/token-usage-recorder.js";
 import { isLlmStreamingEnabled, resolveLlmTimeoutMs } from "./mdd-llm-timeout.util.js";
 import {
+  createLlmAbortError,
+  getActiveLlmAbortSignal,
   invokeLlmStreamingWithIdleTimeout,
   supportsStreaming,
   type StreamableLlmLike,
 } from "./mdd-llm-stream-invoke.util.js";
+
+export { getActiveLlmAbortSignal, runWithLlmAbortSignal } from "./mdd-llm-stream-invoke.util.js";
 
 const DEFAULT_BACKOFF_MS = [0, 1500, 4000];
 const DEFAULT_INVOKE_TIMEOUT_MS = resolveLlmTimeoutMs();
@@ -145,9 +149,32 @@ export type InvokeWithRetryOptions = {
   idleTimeoutMs?: number;
   /** Tope duro por invocación en streaming. Default `LANGGRAPH_LLM_HARD_TIMEOUT_MS`. */
   hardTimeoutMs?: number;
+  /**
+   * Señal externa de cancelación (p. ej. `config.signal` de LangGraph). Si no se pasa se usa
+   * `getActiveLlmAbortSignal()` (AsyncLocalStorage fijado por el servicio alrededor de `graph.stream`).
+   * Al dispararse: se aborta la llamada en vuelo, se corta el backoff y NO se reintenta (lanza AbortError).
+   */
+  signal?: AbortSignal;
 };
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Sleep cancelable: resuelve al cumplirse `ms` o rechaza con AbortError si la señal dispara. */
+function sleepAbortable(ms: number, signal: AbortSignal | undefined, tag: string): Promise<void> {
+  if (!signal) return sleep(ms);
+  if (signal.aborted) return Promise.reject(createLlmAbortError(tag));
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(createLlmAbortError(tag));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 /**
  * Tipo del objeto invocable: BaseChatModel directo o Runnable.bindTools(...).
@@ -171,6 +198,7 @@ export async function invokeLlmWithRetry(
   const isValid = options.isResponseValid ?? ((t) => t.trim().length > 0);
   const acceptTools = options.acceptToolCallsWithoutContent === true;
   const tag = options.tag || "LLM";
+  const externalSignal = options.signal ?? getActiveLlmAbortSignal();
   const promptChars = messages.reduce((acc, m) => {
     const c = (m as { content?: unknown }).content;
     if (typeof c === "string") return acc + c.length;
@@ -188,8 +216,9 @@ export async function invokeLlmWithRetry(
   let degradeRefundUsed = false;
 
   for (let attempt = 1; attempt <= max; attempt += 1) {
+    if (externalSignal?.aborted) throw createLlmAbortError(tag);
     const wait = backoff[Math.min(attempt - 1, backoff.length - 1)] ?? 0;
-    if (wait > 0) await sleep(wait);
+    if (wait > 0) await sleepAbortable(wait, externalSignal, tag);
     try {
       const useStreaming =
         !options.disableStreaming &&
@@ -205,6 +234,7 @@ export async function invokeLlmWithRetry(
             tag,
             ...(options.idleTimeoutMs != null ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
             ...(options.hardTimeoutMs != null ? { hardTimeoutMs: options.hardTimeoutMs } : {}),
+            ...(externalSignal ? { signal: externalSignal } : {}),
           });
         } catch (streamErr) {
           const streamMsg = streamErr instanceof Error ? streamErr.message : String(streamErr);
@@ -227,10 +257,13 @@ export async function invokeLlmWithRetry(
         const timeoutMs = options?.timeoutMs ?? DEFAULT_INVOKE_TIMEOUT_MS;
         const abortController = new AbortController();
         const timeoutId = setTimeout(() => abortController.abort(), timeoutMs);
+        const onExternalAbort = (): void => abortController.abort();
+        externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
         try {
           response = await (llm as { invoke: (m: BaseMessage[], opts?: { signal?: AbortSignal }) => Promise<unknown> }).invoke(messages, { signal: abortController.signal });
         } finally {
           clearTimeout(timeoutId);
+          externalSignal?.removeEventListener("abort", onExternalAbort);
         }
       }
       recordLlmUsageFromMessage(llm, response, tag);
@@ -253,6 +286,10 @@ export async function invokeLlmWithRetry(
         `[${tag}] respuesta vacía/inválida (attempt ${attempt}/${max}, promptChars=${promptChars}, outLen=${text.length}, tools=${toolCalls.length}), reintentando...`,
       );
     } catch (err) {
+      // Cancelación externa: cortar de inmediato, sin reintentos ni refund de streaming.
+      if (externalSignal?.aborted) {
+        throw err instanceof Error && err.name === "AbortError" ? err : createLlmAbortError(tag);
+      }
       const msg = err instanceof Error ? err.message : String(err);
       if (streamingDegraded && !degradeRefundUsed) {
         degradeRefundUsed = true;

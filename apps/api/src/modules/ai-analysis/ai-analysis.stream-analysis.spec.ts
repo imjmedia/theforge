@@ -8,17 +8,16 @@ const RECURSION_RAW =
 
 function createServiceWithMockGraph(): AiAnalysisService {
   return new AiAnalysisService(
-    {} as never,
-    { getCheckpointer: async () => null } as never,
-    { getPreferencesForContext: async () => undefined } as never,
-    {} as never,
-    {} as never,
-    {} as never,
-    {} as never,
-    {} as never,
-    {} as never,
-    {} as never,
-    {} as never,
+    {} as never, // prisma
+    { getCheckpointer: async () => null } as never, // checkpointerService
+    { getPreferencesForContext: async () => undefined } as never, // preferences
+    {} as never, // estimationService
+    {} as never, // nodeCacheService
+    {} as never, // projects
+    {} as never, // theforge
+    {} as never, // agentSupervisor
+    {} as never, // ai
+    {} as never, // discovery
     {
       resolveRuntime: async () => ({
         providerId: "openrouter",
@@ -32,7 +31,11 @@ function createServiceWithMockGraph(): AiAnalysisService {
         sttModel: null,
         visionModel: "m",
       }),
-    } as never,
+    } as never, // aiFactory
+    {} as never, // uiMcpClient
+    {} as never, // uiMcp
+    {} as never, // mddUpstreamSync
+    {} as never, // threadLock
     async (_factory, _userId) =>
       ({
         stream: async () => {

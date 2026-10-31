@@ -49,10 +49,52 @@ export type MddIntegrationNodeOptions = {
   trimmedTailContext?: boolean;
 };
 
-/** Schema de salida estructurada: integracion con subsections y manifest opcional. */
-const integrationStructuredSchema = z.object({
-  integracion: mddIntegracionWithManifestSchema,
-});
+function normalizeIntegrationContent(raw: unknown): string[] {
+  if (typeof raw === "string") return [raw];
+  if (Array.isArray(raw)) {
+    return raw.map((c) => (typeof c === "string" ? c : c == null ? "" : JSON.stringify(c)));
+  }
+  if (raw == null) return [];
+  return [typeof raw === "object" ? JSON.stringify(raw) : String(raw)];
+}
+
+function normalizeIntegrationSubsection(raw: unknown): unknown {
+  if (typeof raw === "string") return { title: "Integración", content: [raw] };
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const obj = raw as Record<string, unknown>;
+  const title = obj.title ?? obj.titulo ?? obj["título"] ?? "Integración";
+  const content = obj.content ?? obj.contenido ?? obj.items ?? obj.bullets;
+  return { title: typeof title === "string" ? title : String(title), content: normalizeIntegrationContent(content) };
+}
+
+/**
+ * Tolera variantes frecuentes del LLM antes de validar con el schema estricto:
+ * `integracion` como array desnudo, alias `subsecciones`, `title`/`titulo`, `content` como string.
+ */
+export function normalizeIntegrationStructuredPayload(input: unknown): unknown {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const root = input as Record<string, unknown>;
+  let integ: unknown = root.integracion ?? root["integración"] ?? root.integration;
+  if (integ === undefined && (root.subsections !== undefined || root.subsecciones !== undefined)) {
+    integ = root;
+  }
+  if (Array.isArray(integ)) integ = { subsections: integ };
+  if (!integ || typeof integ !== "object") return input;
+  const obj = integ as Record<string, unknown>;
+  const subsRaw = obj.subsections ?? obj.subsecciones ?? obj["subsecciónes"];
+  const subs = Array.isArray(subsRaw) ? subsRaw.map(normalizeIntegrationSubsection) : subsRaw;
+  const out: Record<string, unknown> = { subsections: subs };
+  if (obj.manifest !== undefined) out.manifest = obj.manifest;
+  return { integracion: out };
+}
+
+/** Schema de salida estructurada: integracion con subsections y manifest opcional (tolerante). */
+export const integrationStructuredSchema = z.preprocess(
+  normalizeIntegrationStructuredPayload,
+  z.object({
+    integracion: mddIntegracionWithManifestSchema,
+  }),
+) as unknown as z.ZodType<{ integracion: z.infer<typeof mddIntegracionWithManifestSchema> }>;
 
 /** Acepta string u objeto legacy; normaliza a string. */
 function sectionToStr(x: unknown): string {
@@ -316,7 +358,10 @@ export function createMddIntegrationNode(llm: BaseChatModel, opts?: MddIntegrati
           logMddNodeOutput("Integration", state.mddDraft ?? "", { inputLen: inputDraftLen });
           return {};
         }
-        LOG("LLM vacío, usando fallback");
+        LOG("LLM vacío, usando fallback (§7 placeholder; lastStepFailed=integration)");
+        const integrationFailed = {
+          lastStepFailed: { node: "integration", error: "LLM vacío tras reintentos; §7 queda como placeholder" },
+        };
         const slice = {
           integracion: mddIntegracionWithManifestSchema.parse({
             subsections: [
@@ -338,6 +383,7 @@ export function createMddIntegrationNode(llm: BaseChatModel, opts?: MddIntegrati
           return {
             mddStructured: { integracion: merged.integracion ?? slice.integracion },
             integrationSectionMd: integracionToSection7Markdown(slice.integracion),
+            ...integrationFailed,
           };
         }
         let fallbackDraft = replaceSection6Or7InDraft(state.mddDraft ?? "", 7, integracionToSection7Markdown(slice.integracion));
@@ -352,7 +398,7 @@ export function createMddIntegrationNode(llm: BaseChatModel, opts?: MddIntegrati
           }
         }
         logMddNodeOutput("Integration", fallbackDraft, { inputLen: inputDraftLen });
-        return { mddStructured: merged, mddDraft: fallbackDraft };
+        return { mddStructured: merged, mddDraft: fallbackDraft, ...integrationFailed };
       }
       const jsonStr = extractFirstJsonObject(text) ?? text.trim();
 

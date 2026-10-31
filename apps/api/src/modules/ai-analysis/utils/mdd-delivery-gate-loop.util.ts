@@ -37,6 +37,30 @@ export type DeliveryGateFixTarget =
   | "clarifier"
   | "section5";
 
+/** Sentinel: el auto-loop no tiene a dónde ir con progreso — prepare_output debe detenerse. */
+export const DELIVERY_GATE_STOP = "stop" as const;
+
+/** fixTarget resuelto, o el sentinel `"stop"` (sin nodo útil que pueda avanzar el gate). */
+export type DeliveryGateFixTargetOrStop = DeliveryGateFixTarget | typeof DELIVERY_GATE_STOP;
+
+/**
+ * Estado del auto-loop del gate a resetear al inicio de cada turno (Manager) y al terminar el
+ * loop. Se spreadea en el update: `{ ...DELIVERY_GATE_RESET_UPDATE, ... }`.
+ */
+export const DELIVERY_GATE_RESET_UPDATE: {
+  deliveryGateAttempt: number;
+  deliveryGateLoopActive: boolean;
+  deliveryGateFixTarget: undefined;
+  deliveryGatePlaceholderFingerprint: undefined;
+  deliveryGateBlockersFingerprint: undefined;
+} = Object.freeze({
+  deliveryGateAttempt: 0,
+  deliveryGateLoopActive: false,
+  deliveryGateFixTarget: undefined,
+  deliveryGatePlaceholderFingerprint: undefined,
+  deliveryGateBlockersFingerprint: undefined,
+});
+
 export type ResolveDeliveryGateFixTargetOptions = {
   /** Pipeline HIGH §2→§3→§4: enruta al nodo acotado según blockers. */
   splitArchitectPipeline?: boolean;
@@ -69,6 +93,32 @@ export function hasRepeatedPlaceholderBlockers(
   return fp.length > 0 && fp === (previousFingerprint ?? "");
 }
 
+/**
+ * Fingerprint estable del conjunto COMPLETO de blockers (no solo placeholders). Sin blockers usa
+ * los warnings auto-reparables (loop de calidad). Idéntico al intento anterior = sin progreso.
+ */
+export function fingerprintGateBlockers(blockers: string[], warnings: string[] = []): string {
+  const norm = (items: string[]) =>
+    items
+      .map((b) => b.replace(/\s+/g, " ").trim().toLowerCase())
+      .filter(Boolean)
+      .sort()
+      .join("||");
+  if (blockers.length > 0) return norm(blockers);
+  const auto = norm(warnings.filter((w) => isAutoRepairableDeliveryGateWarning(w)));
+  return auto ? `w:${auto}` : "";
+}
+
+/** True si el fingerprint de blockers coincide con el del intento anterior (loop sin progreso). */
+export function hasRepeatedGateBlockers(
+  previousFingerprint: string | undefined,
+  blockers: string[],
+  warnings: string[] = [],
+): boolean {
+  const fp = fingerprintGateBlockers(blockers, warnings);
+  return fp.length > 0 && fp === (previousFingerprint ?? "");
+}
+
 const SECTION5_BLOCKER_RE = /5\.\s*Lógica\s+y\s*Edge\s+Cases/i;
 const INTEGRATION_BLOCKER_RE =
   /§7|infraestructura|jwt|manifest|node:|microservicios|hashing_algorithm|jwks|api_prefix|tabla\s+outbox\b/i;
@@ -95,6 +145,8 @@ const MISSING_SECTIONS_67_BLOCKER_RE =
   /secciones obligatorias faltantes:.*(?:6\.\s*seguridad|7\.\s*infraestructura)/i;
 const SECTION6_BLOCKER_RE =
   /§6|6\.\s*seguridad|seguridad.*(?:insuficiente|placeholder|\(pendiente\))/i;
+
+const SECTION7_BLOCKER_RE = /§7|7\.\s*infraestructura|infraestructura|integraci[oó]n/i;
 
 const MISSING_SECTIONS_BLOCKER_RE = /secciones obligatorias faltantes:/i;
 
@@ -178,12 +230,31 @@ export function guardFixTargetAgainstSection5Blockers(
   return target;
 }
 
-/** No re-enruta a nodos scoped que ya sellaron §2–§4 (snapshots + sustancia en draft). */
+/** True si algún issue (blocker o warning) apunta a §6/§7/integración (única razón para fixTarget "integration"). */
+export function gateTextTargetsIntegration(items: string[]): boolean {
+  return items.some(
+    (t) =>
+      SECTION6_BLOCKER_RE.test(t) ||
+      SECTION7_BLOCKER_RE.test(t) ||
+      INTEGRATION_BLOCKER_RE.test(t) ||
+      MISSING_SECTIONS_67_BLOCKER_RE.test(t) ||
+      DUPLICATE_SECTION_BLOCKER_RE.test(t),
+  );
+}
+
+/**
+ * No re-enruta a nodos scoped que ya sellaron §2–§4 (snapshots + sustancia en draft). El sello de §4
+ * usa el MISMO predicado que el gate (`draftHasSubstantialSection4`).
+ *
+ * Si el redirect cae en "integration" pero ningún issue (blockers/warnings) apunta a §6/§7, no hay
+ * nodo que pueda avanzar el gate → devuelve el sentinel `"stop"` (prepare_output corta el loop).
+ */
 export function guardFixTargetAgainstSealedScopedSections(
   target: DeliveryGateFixTarget,
   blockers: string[],
   sealed?: ScopedSectionSealSource,
-): DeliveryGateFixTarget {
+  warnings: string[] = [],
+): DeliveryGateFixTargetOrStop {
   if (!sealed) return target;
   const onlyScopedArchitectBlockers = blockers.every(
     (b) =>
@@ -194,14 +265,17 @@ export function guardFixTargetAgainstSealedScopedSections(
   );
   if (!onlyScopedArchitectBlockers) return target;
 
+  const toIntegration = (): DeliveryGateFixTargetOrStop =>
+    gateTextTargetsIntegration([...blockers, ...warnings]) ? "integration" : DELIVERY_GATE_STOP;
+
   if (target === "stack_architect" && isScopedSectionSealed(2, sealed)) {
-    return gateHasSection5SubstanceBlocker(blockers) ? "section5" : "integration";
+    return gateHasSection5SubstanceBlocker(blockers) ? "section5" : toIntegration();
   }
   if (target === "data_model" && isScopedSectionSealed(3, sealed)) {
     return gateHasSection5SubstanceBlocker(blockers) ? "section5" : "api_contracts";
   }
   if (target === "api_contracts" && isScopedSectionSealed(4, sealed)) {
-    return gateHasSection5SubstanceBlocker(blockers) ? "section5" : "integration";
+    return gateHasSection5SubstanceBlocker(blockers) ? "section5" : toIntegration();
   }
   return target;
 }
@@ -211,13 +285,18 @@ export function resolveDeliveryGateFixTargetFromGate(
   blockers: string[],
   warnings: string[],
   options?: ResolveDeliveryGateFixTargetOptions,
-): DeliveryGateFixTarget {
+): DeliveryGateFixTargetOrStop {
   if (blockers.length > 0) {
     const target = guardFixTargetAgainstSection5Blockers(
       blockers,
       resolveDeliveryGateFixTarget(blockers, options),
     );
-    return guardFixTargetAgainstSealedScopedSections(target, blockers, options?.sealedSections);
+    return guardFixTargetAgainstSealedScopedSections(
+      target,
+      blockers,
+      options?.sealedSections,
+      warnings,
+    );
   }
   const autoWarnings = warnings.filter((w) => isAutoRepairableDeliveryGateWarning(w));
   if (autoWarnings.length > 0) {
@@ -416,6 +495,29 @@ export function shouldContinueDeliveryGateLoop(
   if (!gate || gate.ok) return false;
   if (blockersAreOnlyDuplicateHeadings(gate.blockers)) return false;
   return attempt < MAX_MDD_DELIVERY_GATE_ATTEMPTS;
+}
+
+/**
+ * True si el auto-loop debe detenerse AUNQUE `shouldContinue…` diga que sí:
+ *  - se agotaron los intentos;
+ *  - el fixTarget resuelto es el sentinel `"stop"`;
+ *  - el fixTarget es "integration" pero ningún blocker/warning referencia §6/§7/integración
+ *    (el nodo no puede mejorar nada → loop sin progreso);
+ *  - el fingerprint de TODOS los blockers es idéntico al del intento anterior.
+ */
+export function shouldStopDeliveryGateLoop(
+  gate: MddDeliveryGateResult | undefined,
+  fixTarget: DeliveryGateFixTargetOrStop | undefined,
+  attempt: number,
+  previousBlockersFingerprint?: string,
+): boolean {
+  if (!gate) return true;
+  if (attempt >= MAX_MDD_DELIVERY_GATE_ATTEMPTS) return true;
+  if (fixTarget === DELIVERY_GATE_STOP) return true;
+  if (fixTarget === "integration" && !gateTextTargetsIntegration([...gate.blockers, ...gate.warnings])) {
+    return true;
+  }
+  return hasRepeatedGateBlockers(previousBlockersFingerprint, gate.blockers, gate.warnings);
 }
 
 /**

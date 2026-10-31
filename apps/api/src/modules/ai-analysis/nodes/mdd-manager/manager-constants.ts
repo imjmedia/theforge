@@ -1,15 +1,13 @@
 /** Umbrales y patrones de routing del Manager MDD. */
 
-import { CASCADE_ACCURACY_THRESHOLD } from "@theforge/shared-types";
-
 /** >= 85: done (cede intervención al usuario). < 85: Manager asigna gaps a agentes para corregir. */
 export const QUALITY_THRESHOLD = 85;
-/** Nota < 9/10: por debajo de 90% el documento se devuelve al Clarifier con reporte de gaps para segunda iteración. */
-export const AUDITOR_RETRY_THRESHOLD = CASCADE_ACCURACY_THRESHOLD;
-export const MAX_MDD_ITERATIONS = 2;
 
-/** Usuario pide explícitamente detenerse: done solo si Auditor >= 85% o el usuario lo pide. */
-export const USER_STOP_PATTERN = /^(parar|detener|stop|terminar|salir|no\s+continuar|basta|listo)$/i;
+/**
+ * Usuario pide explícitamente detenerse: done solo si Auditor >= 85% o el usuario lo pide.
+ * NOTA: "listo" NO es palabra de parada: el usuario la usa para confirmar ("listo, ejecuta").
+ */
+export const USER_STOP_PATTERN = /^(parar|detener|stop|terminar|salir|no\s+continuar|basta)$/i;
 
 /** Petición explícita de auditar el documento → disparar solo el Auditor (no todo el pipeline). */
 export const AUDIT_DOCUMENT_PATTERN =
@@ -27,7 +25,7 @@ export const FULL_MDD_REGENERATE_DIRECTIVE =
   "ACCIÓN REQUERIDA — Regeneración completa del MDD (constitución vigente del repo):\n" +
   "1) §2: solo stack que §1 sustente; bloque ```TechnicalMetadata``` **prohibido** en §2 (va en §3).\n" +
   "2) §3: CREATE TABLE + erDiagram + ```TechnicalMetadata```; si hay GEOMETRY, extensiones `postgis` en el SQL; YAGNI.\n" +
-  "3) §4: **obligatorio §4.A** (API del producto: tabla + /health + endpoints alineados a §3). **§4.B** solo para integraciones externas (DENUE, etc.). No dejes §4 = solo terceros.\n" +
+  "3) §4: **obligatorio §4.A** (API del producto: tabla + /health + endpoints alineados a §3). **§4.B** solo para integraciones con servicios de terceros. No dejes §4 = solo terceros.\n" +
   "4) §5: proporcional al alcance; sin checklist genérico interminable.\n" +
   "5) Reescribe §2–§5 desde cero si el borrador contradice lo anterior; conserva §1 salvo que el usuario pida cambiar contexto.\n" +
   "6) §6 y §7: placeholders breves para agentes posteriores si aún no aplican — sin fusionar `## 6. Seguridad` con `###`.";
@@ -44,9 +42,33 @@ export const ASK_WHAT_NEEDED_FOR_85_PATTERN =
 export const SHORT_AGREEMENT_PATTERN =
   /^(?:s[ií]|s[ií]\s*,\s*de\s*acuerdo|de\s*acuerdo|ok|vale|correcto|estoy\s+de\s+acuerdo|perfecto|acepto|aprobado|procedamos?|adelante|hazlo|incorpóralo|agreg(?:ar|uen)(?:lo)?|inclu(?:ir|yan)(?:lo)?)[\s.]*$/i;
 
-/** Confirmación de aprobación del plan (HITL 4.4): ejecutar el plan pendiente. */
+/**
+ * Confirmación de aprobación del plan (HITL 4.4): ejecutar el plan pendiente.
+ * Prefijo afirmativo con fin de palabra por lookahead (no `\b`: "í" no cuenta como \w sin flag u),
+ * así "sí, adelante", "ok, procede", "dale", "me parece bien", "claro", "está bien", "por supuesto",
+ * "procedan" o "continúa" aprueban. Úsese vía `classifyPlanResponse()` / `isPlanApproval()`
+ * (manager-heuristics), que además separa la instrucción extra ("sí, pero agrega X").
+ */
 export const PLAN_APPROVAL_CONFIRM_PATTERN =
-  /^(?:s[ií]|s[ií]\s*,\s*ejecuta|ejecuta(r)?\s*(el\s+)?plan|adelante|aprobado|ok|vale|procedamos?|adelante\s+con\s+el\s+plan|ejecutar)[\s.]*$/i;
+  /^(?:s[ií](?:\s+por\s+favor)?|claro(?:\s+que\s+s[ií])?|por\s+supuesto|ok(?:ay)?|vale|dale|va|adelante|aprobado|apru[eé]bo|perfecto|excelente|genial|correcto|exacto|hecho|de\s+acuerdo|est[aá]\s+bien|todo\s+bien|bien|me\s+parece\s+(?:bien|correcto|perfecto|excelente)|(?:as[ií]\s+)?est[aá]\s+perfecto|proced(?:e|an|amos|er|emos)|ejec[uú]t(?:a|e|en)(?:lo|los|la)?(?:\s+el\s+plan)?|ejecutar(?:lo)?|h[aá]z(?:lo)|h[aá]gan(?:lo)?|conf[ií]rmo|confirmado|listo|contin[uú](?:a|en|ar|amos)|sigue|sigan|seguimos|avanza|avancen|avancemos)(?=[\s.,;:!?¡¿]|$)/i;
+
+/**
+ * Señales de que el usuario quiere CAMBIAR el plan (verbo de modificación), no solo aprobarlo.
+ * Ya no incluye los tokens sueltos `no` / `antes`: "sí, procede, no olvides §6" es aprobación con nota.
+ */
+export const PLAN_MODIFICATION_VERB =
+  /\b(cambia(?:r|lo|n)?|modifica(?:r|lo|n)?|quita(?:r|lo|n)?|elimina(?:r|lo|n)?|agrega(?:r|lo|n)?|a[ñn]ade|a[ñn]adir|incluye|incluir|sustituye|reemplaza|ajusta|corrige|omite|salta|sin\s+(?:el|la|los|las)|no\s+olvides|no\s+olviden|aseg[uú]rate|asegurense|tambi[eé]n|adem[aá]s|pero|excepto|salvo)\b/i;
+
+/** Rechazo claro del plan al INICIO del mensaje ("no", "cancela", "espera"); "no sé" no cuenta. */
+export const PLAN_REJECTION_PATTERN =
+  /^(?:no(?![\s,]+s[eé](?:[\s.,;:!?]|$))(?:[\s.,;:!?]|$)|nel\b|nope\b|mejor\s+no\b|a[uú]n\s+no\b|todav[ií]a\s+no\b|cancela|cancelar|detente|detener|alto\b|espera\b|esp[eé]rate\b|rechazo|rechazado)/i;
+
+/** Freno explícito en cualquier posición ("sí, pero espera", "no ejecutes todavía"): anula una aprobación. */
+export const PLAN_HOLD_PATTERN =
+  /\b(?:no\s+(?:lo\s+)?ejecutes|no\s+ejecuten|no\s+(?:lo\s+)?hagas|no\s+proced(?:as|an)|espera|esperen|detente|cancela)\b/i;
+
+/** Longitud máxima de un mensaje para considerarlo aprobación de plan (más largo = instrucciones). */
+export const PLAN_APPROVAL_MAX_CHARS = 80;
 
 /** Petición explícita de regenerar una sección del MDD (p. ej. «regenera el paso 6»). */
 export const REGENERATE_SECTION_N_PATTERN =

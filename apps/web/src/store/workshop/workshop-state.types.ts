@@ -125,6 +125,10 @@ export interface WorkshopState {
   planValidation: PlanValidationPersisted | null;
   /** ThreadId del flujo Manager (MDD); cuando está definido, el siguiente mensaje en tab MDD va a resume */
   managerThreadId: string | null;
+  /** Job BullMQ del turno de chat MDD en curso (chat vía cola); `null` con el NDJSON legacy o sin turno. */
+  activeChatJobId: string | null;
+  /** Cursor de eventos ya procesados del job de chat (se persiste en localStorage por proyecto+etapa). */
+  activeChatJobCursor: number;
   /** true mientras se ejecuta persistAndReviewMdd (grabar + revisión de consistencia) */
   mddReviewing: boolean;
   /** true mientras reapplyMddFormat persiste el MDD con sanitizers SSOT */
@@ -220,6 +224,13 @@ export interface WorkshopState {
   /** Job de entregables iniciado en esta sesión (p. ej. cascada en cola). */
   activeDeliverablesJobId: string | null;
   cancelMddJob: (projectId: string, jobId: string) => Promise<boolean>;
+  /** Cancela el turno de chat MDD en cola (DELETE del job); no-op si no hay `activeChatJobId`. */
+  cancelActiveChatJob: () => Promise<boolean>;
+  /**
+   * Tras recargar: si hay un job de chat guardado (localStorage proyecto+etapa) y el servidor lo conoce,
+   * reanuda la lectura de sus eventos desde el cursor guardado con el mismo manejo que el chat.
+   */
+  resumeMddChatJob: (projectId: string, stageId?: string | null) => Promise<void>;
   cancelDeliverablesJob: (projectId: string, jobId: string) => Promise<boolean>;
   /** Datos por pluginId (`project.pluginData` sincronizado desde API). */
   pluginData: Record<string, unknown>;

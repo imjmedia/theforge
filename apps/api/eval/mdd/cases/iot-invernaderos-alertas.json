@@ -1,0 +1,111 @@
+{
+  "id": "iot-invernaderos-alertas",
+  "title": "Monitoreo de sensores y alertas para invernaderos",
+  "domain": "IoT",
+  "complexity": "MEDIUM",
+  "brief": "Una empresa agrícola con cinco invernaderos en Querétaro quiere monitorear temperatura, humedad y nivel de riego en tiempo real. Cada invernadero tiene entre 8 y 20 sensores que envían lecturas cada minuto a través de un gateway que publica en MQTT. El sistema debe guardar las lecturas, mostrar tableros por invernadero y por zona, y generar alertas cuando una lectura salga de un rango configurable por cultivo; por ejemplo, temperatura arriba de 35 grados durante más de 10 minutos. Las alertas se envían al encargado del invernadero por correo y se muestran en la aplicación con opción de reconocerlas. Los sensores se dan de alta con su número de serie, ubicación y tipo, y se pueden desactivar cuando fallan. Se requiere conservar las lecturas crudas 90 días y promedios por hora durante dos años. Los encargados solo ven sus invernaderos y el administrador general ve todos. Se espera que el sistema procese hasta 200 lecturas por segundo sin perder datos cuando se corta la conexión del gateway. Restricción: el sistema no usa servicios de mensajería de terceros para las alertas; todo sale por el correo institucional.",
+  "expect": {
+    "entities": [
+      "greenhouses",
+      "sensors",
+      "sensor_readings",
+      "alert_rules",
+      "alerts",
+      "hourly_aggregates"
+    ],
+    "entitySynonyms": {
+      "greenhouses": [
+        "invernaderos",
+        "sites"
+      ],
+      "sensors": [
+        "dispositivos",
+        "devices"
+      ],
+      "sensor_readings": [
+        "readings",
+        "lecturas",
+        "telemetry"
+      ],
+      "alert_rules": [
+        "reglas",
+        "thresholds"
+      ],
+      "alerts": [
+        "alertas"
+      ],
+      "hourly_aggregates": [
+        "readings_hourly",
+        "promedios_horarios"
+      ]
+    },
+    "capabilities": [
+      {
+        "name": "acceso de encargados",
+        "endpointHints": [
+          "/auth/login"
+        ]
+      },
+      {
+        "name": "altas de sensores",
+        "endpointHints": [
+          "/sensors"
+        ]
+      },
+      {
+        "name": "ingesta de lecturas",
+        "endpointHints": [
+          "/readings",
+          "/ingest"
+        ]
+      },
+      {
+        "name": "tableros por invernadero",
+        "endpointHints": [
+          "/greenhouses",
+          "/dashboard"
+        ]
+      },
+      {
+        "name": "reglas y alertas",
+        "endpointHints": [
+          "/alert-rules",
+          "/alerts"
+        ]
+      }
+    ],
+    "security": [
+      "rbac|roles",
+      "tls|mtls",
+      "jwt|sesión|session",
+      "api key|device token|token por dispositivo"
+    ],
+    "infra": [
+      "docker",
+      "postgres|postgresql",
+      "mqtt|broker",
+      "backup|respaldo"
+    ],
+    "forbidden": [
+      "whatsapp",
+      "wasender",
+      "bitrix",
+      "denue",
+      "inegi",
+      "datswhy",
+      "watchlist",
+      "pendiente: arquitecto",
+      "pendiente: clarificador",
+      "(pendiente)",
+      "format_section3_endpoints",
+      "lorem ipsum",
+      "carrito",
+      "expediente"
+    ],
+    "mustMentionInContext": [
+      "sensores",
+      "alertas",
+      "lecturas"
+    ]
+  }
+}

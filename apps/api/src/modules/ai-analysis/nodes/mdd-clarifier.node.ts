@@ -27,6 +27,7 @@ import { enrichClarifiedScopeFromInventory } from "../utils/enrich-clarified-sco
 import { getUserBrief } from "../utils/mdd-user-brief.js";
 import { buildUserDeclaredStackPromptBlock } from "../utils/user-declared-stack.util.js";
 import { extractFirstJsonObject, parseJsonOrThrow } from "../utils/parse-json.js";
+import { fallbackClarifierQuestions, parseClarifierQuestions } from "../utils/mdd-clarifier-questions.util.js";
 import { clarifierComplexityAppendix } from "../utils/mdd-complexity-rigor.js";
 import { buildInventoryFromMddState, domainInventoryPromptBlock } from "../utils/mdd-domain-prompt.util.js";
 import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
@@ -69,10 +70,6 @@ const clarifierOutputSchema = z.object({
 
 /** Tipo de salida tras parse (stringOrObject se transforma a string). */
 type ClarifierParsed = z.output<typeof clarifierOutputSchema>;
-
-const questionsOnlySchema = z.object({
-  questions: z.array(z.string()).min(1).max(2),
-});
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Clarifier] ${msg}`, ...args);
 
@@ -145,18 +142,22 @@ export function createMddClarifierNode(llm: BaseChatModel) {
           ...clarifierLlmOpts,
         });
         if (!response) {
-          LOG("questions-only: LLM sin respuesta tras reintentos — usando fallback");
+          LOG("questions-only: LLM sin respuesta tras reintentos — fallback desde auditorFeedback");
           return {
-            managerQuestions: ["¿Cuáles son los objetivos principales del sistema?", "¿Qué requisitos técnicos o integraciones son prioritarios?"],
+            managerQuestions: fallbackClarifierQuestions(state.auditorFeedback),
             requestQuestionsOnly: false,
             clarifierJustGeneratedQuestions: true,
           };
         }
         const text = extractLlmText(response);
-        const questions = text.trim()
-          ? parseJsonOrThrow(text, questionsOnlySchema).questions.slice(0, 2)
-          : ["¿Cuáles son los objetivos principales del sistema?", "¿Qué requisitos técnicos o integraciones son prioritarios?"];
-        LOG("questions-only ok count=%s", questions.length);
+        // Tolerante: cualquier número de preguntas (se recortan a 2), JSON o prosa con «¿…?».
+        // Antes `.max(2)` convertía 3 preguntas válidas en ZodError → preguntas genéricas.
+        const parsedQuestions = parseClarifierQuestions(text);
+        if (parsedQuestions.length === 0) {
+          LOG("questions-only: salida sin preguntas parseables (len=%s) — fallback desde auditorFeedback", text.length);
+        }
+        const questions = parsedQuestions.length > 0 ? parsedQuestions : fallbackClarifierQuestions(state.auditorFeedback);
+        LOG("questions-only ok count=%s parsed=%s", questions.length, parsedQuestions.length);
         return {
           managerQuestions: questions,
           requestQuestionsOnly: false,
@@ -165,7 +166,7 @@ export function createMddClarifierNode(llm: BaseChatModel) {
       } catch (err) {
         LOG("questions-only error: %s", err instanceof Error ? err.message : String(err));
         return {
-          managerQuestions: ["¿Cuáles son los objetivos principales del sistema?", "¿Qué integraciones o sistemas externos necesitas?"],
+          managerQuestions: fallbackClarifierQuestions(state.auditorFeedback),
           requestQuestionsOnly: false,
           clarifierJustGeneratedQuestions: true,
         };

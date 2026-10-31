@@ -41,7 +41,8 @@ export class ProjectDeliverableGateService {
     const targetStage = pickPrimaryStage(project.stages);
     if (!targetStage) return;
 
-    // Fuente única con el panel Semáforo: EstimationService (docs + BRD→MDD + calidad MDD).
+    // Fuente única con el panel Semáforo: EstimationService (docs + BRD→MDD + calidad MDD / nota del Auditor).
+    // getLiveMetricsForProject es el único escritor de Stage.status (sync interno); aquí sólo se reutiliza el status.
     const metrics = await this.estimation.getLiveMetricsForProject(
       projectId,
       undefined,
@@ -105,6 +106,8 @@ export class ProjectDeliverableGateService {
     const gate = await evaluateMddDeliveryGatePrepared(mdd, {
       brdMarkdown: stage?.brdContent,
       dbgaMarkdown: project.dbgaContent,
+      // Mismo perfil de umbrales que el panel (EstimationService) y el pipeline de persistencia.
+      mddComplexity: cx,
     });
     if (stage?.id) {
       void this.mddPersist.persistMddDeliveryGateSnapshot(stage.id, gate);

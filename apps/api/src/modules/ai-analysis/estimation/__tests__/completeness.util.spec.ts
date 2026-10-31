@@ -1,6 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { computeDocumentCompleteness } from "../completeness.util.js";
+import {
+  computeDocumentCompleteness,
+  DOC_WEIGHTS,
+  MDD_COMPLETENESS_WEIGHT,
+} from "../completeness.util.js";
 
 describe("computeDocumentCompleteness", () => {
   it("returns 100 when all docs have >=300 chars", () => {
@@ -40,7 +44,7 @@ describe("computeDocumentCompleteness", () => {
       tasksContent: "",
     };
     const r = computeDocumentCompleteness(docs);
-    assert.equal(r.overall, 29);
+    assert.equal(r.overall, 20);
     assert.equal(r.brdContent, 100);
     assert.equal(r.specContent, 50);
     assert.equal(r.tasksContent, 0);
@@ -51,14 +55,14 @@ describe("computeDocumentCompleteness", () => {
     const docs = { brdContent: "Hola mundo" };
     const r = computeDocumentCompleteness(docs);
     assert.equal(r.brdContent, 10);
-    assert.equal(r.overall, 2); // 0.22 * 0.10 ≈ 2%
+    assert.equal(r.overall, 2); // 0.154 * 0.10 ≈ 2%
   });
 
   it("scores 50 for partial content (80-299 chars)", () => {
     const docs = { brdContent: "x".repeat(80) };
     const r = computeDocumentCompleteness(docs);
     assert.equal(r.brdContent, 50);
-    assert.equal(r.overall, 11);
+    assert.equal(r.overall, 8); // 0.154 * 0.5 ≈ 8%
   });
 
   it("scores thin ProcessInventory use cases at 100 when processes have steps", () => {
@@ -101,5 +105,25 @@ _Sin procesos en inventario; regenerar BRD/MDD._
 `;
     const r = computeDocumentCompleteness({ useCasesContent: thin });
     assert.ok(r.useCasesContent <= 50);
+  });
+});
+
+describe("computeDocumentCompleteness: peso del MDD", () => {
+  it("los pesos suman 1 y el MDD pesa 0.30", () => {
+    const sum = Object.values(DOC_WEIGHTS).reduce((a, b) => a + b, 0);
+    assert.ok(Math.abs(sum - 1) < 1e-9);
+    assert.equal(DOC_WEIGHTS.mddContent, MDD_COMPLETENESS_WEIGHT);
+    assert.equal(MDD_COMPLETENESS_WEIGHT, 0.3);
+  });
+
+  it("un MDD completo con el resto vacío aporta 30", () => {
+    const r = computeDocumentCompleteness({ mddContent: "x".repeat(400) });
+    assert.equal(r.mddContent, 100);
+    assert.equal(r.overall, 30);
+  });
+
+  it("el resto se reescala proporcionalmente (BRD conserva la mayor cuota)", () => {
+    assert.ok(DOC_WEIGHTS.brdContent > DOC_WEIGHTS.specContent);
+    assert.ok(Math.abs(DOC_WEIGHTS.brdContent - 0.22 * 0.7) < 1e-9);
   });
 });

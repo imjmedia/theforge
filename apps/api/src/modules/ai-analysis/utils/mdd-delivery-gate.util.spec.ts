@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import {
+  resolveDeliveryGateProfile,
   validateMddForDelivery,
   mddDeliveryGateHasBlockers,
   applyDeliveryGateToSemaphoreStatus,
@@ -153,16 +154,12 @@ describe("validateMddForDelivery", () => {
     assert.equal(result.ok, false);
   });
 
-  it("bloquea §4 solo con tabla journey sin ```json ni MÉTODO /ruta", () => {
+  it("bloquea §4 en prosa sin ningún MÉTODO /ruta ni tabla ni ```json", () => {
     const draft = VALID_MDD.replace(
       /## 4\. Contratos de API[\s\S]*?(?=## 5\.)/,
       `## 4. Contratos de API
 
-Resumen de journey sin contratos ejecutables. Texto de relleno para superar el umbral de longitud mínima de sustancia del gate de entrega MDD y evitar falsos negativos por body corto.
-
-| Método | Ruta | Descripción |
-| :----- | :--- | :---------- |
-| GET | /api/v1/tenants/{id}/quota | Quota |
+Resumen de journey sin contratos ejecutables. Texto de relleno para superar el umbral de longitud mínima de sustancia del gate de entrega MDD y evitar falsos negativos por body corto. Se describen flujos de negocio sin ninguna ruta ni verbo HTTP concreto.
 
 `,
     );
@@ -171,6 +168,28 @@ Resumen de journey sin contratos ejecutables. Texto de relleno para superar el u
       result.blockers.some((b) => /4\.\s*Contratos|§4|endpoints reales/i.test(b)),
       result.blockers.join("; "),
     );
+  });
+
+  it("§4 solo con tabla GFM método+ruta (sin ```json) es sustancial: sin blocker, con warning de calidad", () => {
+    const draft = VALID_MDD.replace(
+      /## 4\. Contratos de API[\s\S]*?(?=## 5\.)/,
+      `## 4. Contratos de API
+
+| Método | Ruta | Descripción | Auth |
+| :----- | :--- | :---------- | :--- |
+| GET | /api/v1/orders | Listar pedidos del tenant | Bearer |
+| POST | /api/v1/orders | Crear pedido nuevo | Bearer |
+| GET | /api/v1/orders/{id} | Detalle de pedido | Bearer |
+| DELETE | /api/v1/orders/{id} | Cancelar pedido | Bearer |
+
+`,
+    );
+    const result = validateMddForDelivery(draft);
+    assert.ok(
+      !result.blockers.some((b) => /4\.\s*Contratos|§4|endpoints reales/i.test(b)),
+      result.blockers.join("; "),
+    );
+    assert.ok(result.warnings.some((w) => /sin ejemplos request\/response/.test(w)), result.warnings.join("; "));
   });
 
   it("auto-alinea node:XX en §7 con §2 antes de validar (sin blocker Node)", () => {
@@ -450,12 +469,20 @@ describe("validateMddForDelivery — substance check (CHANGELOG [Unreleased])", 
     assert.ok(s3, "debería bloquear §3 con SQL < 100 chars");
   });
 
-  it("bloquea §1 mínima (solo propósito) cuando mddComplexity es HIGH", () => {
+  it("§1 con solo propósito en HIGH: estructura incompleta es WARNING (no blocker) si la longitud basta", () => {
     const thinS1 = `### Propósito del sistema\n\n${"Copiloto multiempresa vía WhatsApp. ".repeat(30)}`;
     const draft = `# MDD\n\n## 1. Contexto\n\n${thinS1}\n\n## 2. Arquitectura y Stack\n\n${"NestJS ".repeat(40)}\n\n## 3. Modelo de Datos\n\n${"CREATE TABLE x (id UUID PRIMARY KEY); ".repeat(15)}\n\n\`\`\`TechnicalMetadata\n[high_security]\n\`\`\`\n\n## 4. Contratos de API\n\n${"POST /api/v1/x JSON. ".repeat(30)}\n\n## 5. Lógica y Edge Cases\n\n${"Reglas. ".repeat(40)}\n\n## 6. Seguridad\n\n${"Argon2id. ".repeat(40)}\n\n## 7. Infraestructura\n\n${"Docker. ".repeat(40)}`;
     const result = validateMddForDelivery(draft, { mddComplexity: "HIGH" });
+    assert.ok(!result.blockers.some((b) => /estructura constitución incompleta/i.test(b)), result.blockers.join("; "));
+    assert.ok(result.warnings.some((w) => /estructura constitución incompleta/i.test(w)));
+  });
+
+  it("§1 más corta que el mínimo de HIGH (900) SÍ bloquea por longitud", () => {
+    const thinS1 = `### Propósito del sistema\n\n${"Copiloto multiempresa. ".repeat(10)}`;
+    const draft = VALID_MDD.replace(/## 1\. Contexto[\s\S]*?(?=## 2\.)/, `## 1. Contexto\n\n${thinS1}\n\n`);
+    const result = validateMddForDelivery(draft, { mddComplexity: "HIGH" });
     assert.equal(result.ok, false);
-    assert.ok(result.blockers.some((b) => /estructura constitución incompleta/i.test(b)));
+    assert.ok(result.blockers.some((b) => /1\. Contexto.*insuficiente/i.test(b)), result.blockers.join("; "));
   });
 
   it("acepta MDD con todas las secciones sustanciales (200+ chars)", () => {
@@ -575,15 +602,15 @@ describe("validateMddForDelivery — substance check (CHANGELOG [Unreleased])", 
       assert.equal(result.ok, true, "no bloquea fuera de HIGH");
     });
 
-    it("§4 catálogo sin schemas (ratio bajo) → BLOQUEA en HIGH (más grave que solo catálogo)", () => {
+    it("§4 catálogo sin schemas (ratio bajo) → warning también en HIGH (no bloquea)", () => {
       const s4Catalog = Array.from({ length: 8 }, (_, i) =>
         i === 0
           ? `### GET /v1/resource-${i}\n\n\`\`\`json\n{ "id": "uuid" }\n\`\`\``
           : `### GET /v1/resource-${i}\n\nDescripción sin schema, solo fila de tabla-resumen.`,
       ).join("\n\n");
       const result = validateMddForDelivery(buildDraft({ s4: s4Catalog }), { mddComplexity: "HIGH" });
-      assert.equal(result.ok, false);
-      assert.ok(result.blockers.some((b) => /Contratos de API: solo/.test(b)));
+      assert.ok(!result.blockers.some((b) => /Contratos de API: solo/.test(b)), result.blockers.join("; "));
+      assert.ok(result.warnings.some((w) => /Contratos de API: solo/.test(w)));
     });
 
     it("§5 con subsección final truncada (heading sin desarrollo) → warning", () => {
@@ -624,5 +651,74 @@ describe("validateMddForDelivery — substance check (CHANGELOG [Unreleased])", 
       });
       assert.ok(!result.warnings.some((w) => /scheduled_tasks/.test(w)));
     });
+  });
+});
+
+describe("validateMddForDelivery — un solo gate, un solo set de umbrales", () => {
+  const sec = (n: number, title: string, body: string) => `## ${n}. ${title}\n\n${body}\n\n`;
+  const mid = (len: number) => "Contenido real del sistema con detalle. ".repeat(Math.ceil(len / 40)).slice(0, len);
+  const draftWithSectionLen = (len: number) =>
+    "# MDD\n\n" +
+    sec(1, "Contexto", mid(300)) +
+    sec(2, "Arquitectura y Stack", mid(len)) +
+    sec(3, "Modelo de Datos", `${"CREATE TABLE x (id UUID PRIMARY KEY); ".repeat(8)}\n\n\`\`\`TechnicalMetadata\n[high_security]\n\`\`\``) +
+    sec(4, "Contratos de API", "| GET | /api/v1/x | listar |\n".repeat(8)) +
+    sec(5, "Lógica y Edge Cases", mid(300)) +
+    sec(6, "Seguridad", mid(300)) +
+    sec(7, "Infraestructura", mid(300));
+
+  it("resolveDeliveryGateProfile: sin complejidad usa el perfil indulgente (nunca los 200/100 legacy)", () => {
+    const lenient = resolveDeliveryGateProfile(undefined);
+    assert.equal(lenient.lenient, true);
+    assert.equal(lenient.complexity, null);
+    assert.ok(lenient.minSectionBodyLength <= resolveDeliveryGateProfile("MEDIUM").minSectionBodyLength);
+    assert.ok(lenient.minSection3BodyLength <= resolveDeliveryGateProfile("MEDIUM").minSection3BodyLength);
+    assert.ok(lenient.minSection1BodyLength <= resolveDeliveryGateProfile("MEDIUM").minSection1BodyLength);
+    assert.equal(resolveDeliveryGateProfile("HIGH").minSectionBodyLength, 150);
+  });
+
+  it("§2 de 170 chars: pasa sin complejidad (lenient) y con HIGH; bloquea con MEDIUM", () => {
+    const d = draftWithSectionLen(170);
+    const opts = { skipDeterministicRepair: true } as const;
+    assert.ok(!validateMddForDelivery(d, opts).blockers.some((b) => /2\. Arquitectura/.test(b)));
+    assert.ok(!validateMddForDelivery(d, { ...opts, mddComplexity: "HIGH" }).blockers.some((b) => /2\. Arquitectura/.test(b)));
+    assert.ok(validateMddForDelivery(d, { ...opts, mddComplexity: "MEDIUM" }).blockers.some((b) => /2\. Arquitectura/.test(b)));
+  });
+
+  it("score < 90 sin blockers → ok=true (las deducciones por warnings no bloquean)", () => {
+    const uat = `### Criterios UAT
+- Login exitoso con credenciales válidas.
+- Exportación rechazada sin aprobación dual.
+- Auditoría registra cada intento fallido.`;
+    const generic = "## UI/UX Design Intent\n\n" + "- Pantalla con columnas id, name, status\n".repeat(5);
+    let d = draftWithSectionLen(300);
+    d = d.replace("## 1. Contexto\n\n", `## 1. Contexto\n\n${uat}\n\n`).replace("## 5. Lógica y Edge Cases\n\n", `## 5. Lógica y Edge Cases\n\n${uat}\n\n`);
+    d += generic;
+    const result = validateMddForDelivery(d, { skipDeterministicRepair: true });
+    assert.equal(result.blockers.length, 0, result.blockers.join("; "));
+    assert.equal(result.ok, true);
+    assert.ok(result.score >= 0);
+  });
+
+  it("placeholder: sección con >= minLength de contenido real que menciona 'Pendiente: Arquitecto' en medio NO es placeholder", () => {
+    const body = `${mid(400)}\n\nNota: Pendiente: Arquitecto debe revisar el apartado de colas.\n\n${mid(200)}`;
+    const d = draftWithSectionLen(300).replace(/## 2\. Arquitectura y Stack[\s\S]*?(?=## 3\.)/, `## 2. Arquitectura y Stack\n\n${body}\n\n`);
+    const result = validateMddForDelivery(d, { skipDeterministicRepair: true });
+    assert.ok(!result.blockers.some((b) => /placeholder del pipeline/.test(b)), result.blockers.join("; "));
+  });
+
+  it("placeholder: sección larga que ARRANCA con 'Pendiente: Arquitecto' sigue siendo placeholder", () => {
+    const body = `Pendiente: Arquitecto\n\n${mid(500)}`;
+    const d = draftWithSectionLen(300).replace(/## 2\. Arquitectura y Stack[\s\S]*?(?=## 3\.)/, `## 2. Arquitectura y Stack\n\n${body}\n\n`);
+    const result = validateMddForDelivery(d, { skipDeterministicRepair: true });
+    assert.ok(result.blockers.some((b) => /placeholder del pipeline/.test(b)), result.blockers.join("; "));
+  });
+
+  it("§4 HIGH truncado (<800 chars, <8 filas) es warning, no blocker", () => {
+    const rows = Array.from({ length: 5 }, (_, i) => `| GET | /api/v1/recurso-${i} | Listar recurso número ${i} del tenant | Bearer |`).join("\n");
+    const d = draftWithSectionLen(300).replace(/## 4\. Contratos de API[\s\S]*?(?=## 5\.)/, `## 4. Contratos de API\n\n${rows}\n\n`);
+    const result = validateMddForDelivery(d, { mddComplexity: "HIGH", skipDeterministicRepair: true });
+    assert.ok(!result.blockers.some((b) => /truncado o incompleto/.test(b)), result.blockers.join("; "));
+    assert.ok(result.warnings.some((w) => /truncado o incompleto/.test(w)));
   });
 });

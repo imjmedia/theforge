@@ -1,0 +1,124 @@
+{
+  "id": "clinica-citas-historial",
+  "title": "Citas e historial clínico electrónico para clínica multidisciplinaria",
+  "domain": "clínica",
+  "complexity": "HIGH",
+  "brief": "Una clínica multidisciplinaria con cinco consultorios en Monterrey, con medicina general, nutrición, psicología y fisioterapia, quiere sustituir sus agendas en papel por un sistema de citas e historial clínico electrónico. Los pacientes pueden reservar, reprogramar y cancelar citas desde un portal web, y reciben recordatorios por correo 24 horas antes. Cada médico ve su agenda, registra la nota de cada consulta (diagnóstico, signos vitales, indicaciones y receta), y puede consultar los antecedentes del paciente. La recepcionista administra los horarios de cada consultorio y los bloqueos por vacaciones. Los datos clínicos son sensibles: solo el personal asignado al paciente puede leer su historial, todos los accesos quedan registrados, y las notas no pueden editarse después de firmarse, solo corregirse con una nota de aclaración. Se requiere integración con el sistema de facturación externo para enviar a cobro cada consulta, sin guardar datos de tarjetas. Se necesitan respaldos cifrados y retención de expedientes por diez años conforme a la norma oficial mexicana de expediente clínico. Se espera operar con unas 200 consultas al día desde computadoras de consultorio y tabletas. Restricción: el sistema no almacena imágenes radiológicas; los estudios se consultan en el sistema de imagen existente mediante un enlace.",
+  "brd": "RC-01. Los pacientes reservan citas en línea solo en horarios libres del consultorio y del médico, y reciben recordatorio con 24 horas de anticipación.\nRC-02. Una cita no puede traslaparse con otra del mismo médico ni del mismo consultorio.\nRC-03. Las cancelaciones con menos de 4 horas de anticipación quedan marcadas para seguimiento de recepción.\nRC-04. Toda nota clínica firmada es inmutable; las correcciones se hacen con una nota de aclaración vinculada a la original.\nRC-05. Solo el médico tratante, los médicos con interconsulta autorizada y la jefatura de clínica pueden leer el historial del paciente.\nRC-06. Cada lectura o escritura de historial registra usuario, fecha, hora y consultorio de origen, y los registros de acceso se conservan diez años.\nRC-07. La consulta se envía al sistema de facturación externo al cerrar la nota; no se almacenan datos de tarjetas.\nRC-08. Los estudios de imagen se consultan mediante enlace al sistema de imagen existente.\nRC-09. Respaldo diario cifrado y prueba de restauración mensual.\nRC-10. Fuera de alcance en esta fase: telemedicina, laboratorio y farmacia.",
+  "expect": {
+    "entities": [
+      "patients",
+      "doctors",
+      "appointments",
+      "clinical_notes",
+      "prescriptions",
+      "consulting_rooms",
+      "access_logs"
+    ],
+    "entitySynonyms": {
+      "patients": [
+        "pacientes",
+        "clients"
+      ],
+      "doctors": [
+        "medicos",
+        "professionals",
+        "practitioners"
+      ],
+      "appointments": [
+        "citas",
+        "bookings"
+      ],
+      "clinical_notes": [
+        "notas_clinicas",
+        "medical_records",
+        "consultation_notes"
+      ],
+      "prescriptions": [
+        "recetas"
+      ],
+      "consulting_rooms": [
+        "consultorios",
+        "rooms"
+      ],
+      "access_logs": [
+        "bitacora",
+        "audit_logs"
+      ]
+    },
+    "capabilities": [
+      {
+        "name": "agenda y citas",
+        "endpointHints": [
+          "/appointments"
+        ]
+      },
+      {
+        "name": "portal de pacientes y reservas",
+        "endpointHints": [
+          "/patients"
+        ]
+      },
+      {
+        "name": "notas clínicas",
+        "endpointHints": [
+          "/clinical-notes",
+          "/notes"
+        ]
+      },
+      {
+        "name": "recetas",
+        "endpointHints": [
+          "/prescriptions"
+        ]
+      },
+      {
+        "name": "consultorios y bloqueos de horario",
+        "endpointHints": [
+          "/consulting-rooms",
+          "/blocks"
+        ]
+      },
+      {
+        "name": "autenticación del personal",
+        "endpointHints": [
+          "/auth/login"
+        ]
+      }
+    ],
+    "security": [
+      "rbac|roles",
+      "jwt|sesión|session",
+      "argon2|bcrypt",
+      "cifrado|encrypt|aes",
+      "auditoría|audit|bitácora"
+    ],
+    "infra": [
+      "docker",
+      "postgres|postgresql",
+      "backup|respaldo",
+      "health"
+    ],
+    "forbidden": [
+      "whatsapp",
+      "wasender",
+      "bitrix",
+      "denue",
+      "inegi",
+      "datswhy",
+      "watchlist",
+      "pendiente: arquitecto",
+      "pendiente: clarificador",
+      "(pendiente)",
+      "format_section3_endpoints",
+      "lorem ipsum",
+      "pedido",
+      "carrito"
+    ],
+    "mustMentionInContext": [
+      "citas",
+      "historial clínico",
+      "consultorios"
+    ]
+  }
+}
