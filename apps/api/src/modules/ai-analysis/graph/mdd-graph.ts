@@ -1025,7 +1025,7 @@ export async function createMddGraphWithManager(
   const builder = new StateGraph(MDDStateAnnotation)
     .addNode("manager", managerNode, { ends: [...managerEnds] })
     .addNode("ask_initial_topic", askInitialTopicNode, { ends: ["clarifier"] })
-    .addNode("plan_approval", planApprovalNode, { ends: ["manager"] })
+    .addNode("plan_approval", planApprovalNode, { ends: ["manager", "executor"] })
     .addNode("executor", executorNode, { ends: [...executorEnds] })
     .addNode("clarifier", clarifierNode)
     .addNode("merge_section1_only", mergeSection1Node)

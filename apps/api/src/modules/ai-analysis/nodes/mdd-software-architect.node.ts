@@ -74,6 +74,7 @@ import { getInternalDirectivesContext, extractInternalDirectives } from "../util
 import { softwareArchitectComplexityAppendix } from "../utils/mdd-complexity-rigor.js";
 import { buildUiMcpFrontendArchitectHint } from "../utils/mdd-inject-ui-mcp-frontend.util.js";
 import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
+import { forceFinalAnswer } from "../utils/tool-loop.js";
 import { invokeScopedArchitectLlmWithHeadingCap } from "../utils/mdd-scoped-stream.util.js";
 import { buildArchitectScopedContext } from "../utils/build-architect-scoped-context.util.js";
 import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
@@ -761,6 +762,7 @@ export function createMddSoftwareArchitectNode(
       let text = "";
       if (toolsToUse.length > 0) {
         let loopCount = 0;
+        let lastHadToolCalls = false;
         while (loopCount < maxToolLoops) {
           // Retry sólo en la última iteración del tool-loop (cuando ya no hay
           // tool_calls y se genera el texto final). Iteraciones intermedias
@@ -778,6 +780,7 @@ export function createMddSoftwareArchitectNode(
           const aiMsg = response as AIMessage;
           text = extractLlmText(aiMsg);
           const toolCalls = aiMsg.tool_calls ?? [];
+          lastHadToolCalls = toolCalls.length > 0;
           if (toolCalls.length === 0) break;
           const toolMessages: ToolMessage[] = [];
           for (const tc of toolCalls) {
@@ -800,6 +803,11 @@ export function createMddSoftwareArchitectNode(
           }
           messages.push(aiMsg, ...toolMessages);
           loopCount++;
+        }
+        // Bucle agotado con tool_calls pendientes (o sin texto): turno final forzado sin tools.
+        if (!text.trim() || lastHadToolCalls) {
+          LOG("tool-loop sin respuesta final (iter=%s, toolCalls=%s) → forzando respuesta sin tools", loopCount, lastHadToolCalls);
+          text = await forceFinalAnswer(llm, llmWithTools, messages);
         }
       } else {
         const response =

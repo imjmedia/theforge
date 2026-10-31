@@ -10,6 +10,7 @@ import { runAgentToolsRound } from "../../utils/mdd-agent-tools-invoke.js";
 import type { MddManagerToolDeps } from "./manager-types.js";
 import { LOG } from "./manager-context.util.js";
 import {
+  inferAgentsFromAuditorFeedback,
   inferSectionsFromMessage,
   looksLikeExplicitMddModificationRequest,
   replyClaimsDocumentWasModified,
@@ -93,16 +94,50 @@ function buildManagerPromptContext(
   return `${MANAGER_MDD_PROMPT}\n\n---\nRonda ${round}.\n\n${context}`;
 }
 
+type ManagerParseFallback = {
+  /** Hay borrador MDD con contenido: el fallback delega a sections en vez de full_pipeline. */
+  hasDraft: boolean;
+  /** Mensaje del usuario, para inferir qué agentes tocar en el fallback. */
+  userMessage: string;
+};
+
+/**
+ * Salida del Manager vacía o no parseable → delegar (no contestar un reply genérico).
+ * El reply genérico era el falso negativo clásico: el usuario pedía un cambio y recibía
+ * "¿En qué más puedo ayudarte?" sin que corriera ningún agente.
+ */
+export function managerParseFallbackDecision(
+  fallback: ManagerParseFallback,
+  complexity?: MDDStateType["mddComplexity"],
+): Pick<ManagerLlmTurnResult, "action" | "delegateTarget" | "sectionsToRun"> {
+  if (!fallback.hasDraft) return { action: "delegate", delegateTarget: "full_pipeline", sectionsToRun: undefined };
+  const inferred = inferSectionsFromMessage(fallback.userMessage);
+  const agents = inferred.length > 0 ? inferred : inferAgentsFromAuditorFeedback(fallback.userMessage);
+  return {
+    action: "delegate",
+    delegateTarget: "sections",
+    sectionsToRun: expandSectionsToRun(agents, { complexity }),
+  };
+}
+
 async function parseManagerLlmResponse(
   llm: BaseChatModel,
   messages: HumanMessage[],
-  complexity?: MDDStateType["mddComplexity"],
+  complexity: MDDStateType["mddComplexity"] | undefined,
+  fallback: ManagerParseFallback,
 ): Promise<Pick<ManagerLlmTurnResult, "action" | "replyContent" | "delegateTarget" | "sectionsToRun"> & { memoryQuery?: string }> {
   let action: "reply" | "delegate" | "search_memory" = "reply";
   let replyContent = "¿En qué más puedo ayudarte con el MDD? Puedes pedir refinamientos o revisar el documento.";
   let delegateTarget: "clarifier_only" | "full_pipeline" | "sections" | undefined;
   let sectionsToRun: string[] | undefined;
   let memoryQuery: string | undefined;
+  const applyParseFallback = (reason: string) => {
+    const decision = managerParseFallbackDecision(fallback, complexity);
+    LOG("salida del Manager %s → delegate por defecto (target=%s sections=%s)", reason, decision.delegateTarget, decision.sectionsToRun?.join(",") ?? "-");
+    action = decision.action;
+    delegateTarget = decision.delegateTarget;
+    sectionsToRun = decision.sectionsToRun;
+  };
 
   const useStructuredOutput =
     "withStructuredOutput" in llm && typeof (llm as { withStructuredOutput?: (schema: unknown, config?: unknown) => unknown }).withStructuredOutput === "function";
@@ -143,7 +178,11 @@ async function parseManagerLlmResponse(
           if (parsed.action === "search_memory") {
             memoryQuery = parsed.memorySearchQuery;
           }
-        } catch { /* keep defaults */ }
+        } catch {
+          applyParseFallback("no parseable");
+        }
+      } else {
+        applyParseFallback("vacía");
       }
     }
   } else {
@@ -163,7 +202,11 @@ async function parseManagerLlmResponse(
         if (parsed.action === "search_memory") {
           memoryQuery = parsed.memorySearchQuery;
         }
-      } catch { /* keep defaults */ }
+      } catch {
+        applyParseFallback("no parseable");
+      }
+    } else {
+      applyParseFallback("vacía");
     }
   }
 
@@ -183,7 +226,7 @@ export async function runManagerLlmTurn(options: RunManagerLlmTurnOptions): Prom
   let sectionsToRun: string[] | undefined;
 
   for (let i = 0; i < 2; i++) {
-    const parsed = await parseManagerLlmResponse(llm, messages, state.mddComplexity);
+    const parsed = await parseManagerLlmResponse(llm, messages, state.mddComplexity, { hasDraft, userMessage });
     action = parsed.action;
     replyContent = parsed.replyContent;
     delegateTarget = parsed.delegateTarget;

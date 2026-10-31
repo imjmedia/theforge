@@ -4,6 +4,25 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 
 ## [Unreleased]
 
+> **Cirugía del harness de agentes (LangGraph DBGA + MDD)** — Port selectivo desde MaxPrime (`feat/harness-surgery`) de los puntos que eliminaban falsos negativos en el bucle de agentes: turno final forzado tras agotar las tool-calls, Scout/Critic tolerantes, aprobación de plan por prefijo afirmativo, auto-aprobación de planes triviales, juez único en el % mostrado, Benchmark intacto y purga del hilo LangGraph al limpiar checkpoints. Lo que theforge ya tenía (BullMQ, heartbeat, AbortSignal, timeouts por nodo, `lastStepFailed`, tope de rondas Critic, Auditor sin override del semáforo) no se duplica.
+
+### Fixed
+
+- **Tool loops terminaban sin respuesta final** (`utils/tool-loop.ts`, nuevo): cuando Scout, Auditor DBGA, Auditor MDD, Software Architect, Redactor o `runAgentToolsRound` agotaban `MAX_TOOL_LOOPS` con el último mensaje todavía pidiendo herramientas (o vacío), el nodo caía al fallback estructural / documento sin cambios. `forceFinalAnswer()` añade la instrucción "responde ahora sin herramientas", intenta `tool_choice: "none"` y cae al LLM base; nunca lanza. En el Auditor MDD respeta el presupuesto del nodo.
+- **Scout descartaba toda la ronda por un competidor inválido** (`scout.node.ts`): parseo por competidor con `safeParse`, `https://` a dominios sin protocolo, sin `.max(5)` en el schema (recorte con `slice`). `parseScoutCompetitors()` nunca lanza. **Critic** con salida no parseable → `synthesis` en vez de reventar el stream (el tope de rondas ya lo aplica `routeDbgaAfterCritic`).
+- **Manager** (`mdd-manager/`): `"listo"` ya no es palabra de parada (el usuario lo usa para confirmar); `isPlanApproval()` acepta "sí, adelante", "ok, procede", "dale", "listo, ejecuta" y rechaza mensajes con señales de modificación ("sí, pero cambia…"); salida del Manager vacía o no parseable → `delegate` (sections inferidas del mensaje si hay borrador; `full_pipeline` si no) en vez del reply genérico "¿En qué más puedo ayudarte?".
+- **Juez único en el % mostrado** (`ai-analysis.service.ts`): `estimationOpts()` pasa `auditorGaps` del último estado a `calculateLiveMetrics`, así el porcentaje de interrupt/done es el del Auditor LLM cuando existe y no el semáforo regex.
+- **Benchmark intacto** (`manager-context.util.ts`): con Benchmark real, `dbgaContent` deja de mutarse con "Petición: …" / "Usuario: …" / respuestas a preguntas (viven en `userInputAccumulated`); sin Benchmark (placeholder) se sigue anexando como entrada.
+- **Checkpoints LangGraph huérfanos** (`clearMddCheckpoint`): además de borrar la fila `agentStateCheckpoint`, llama `PostgresSaver.deleteThread(threadId)` para purgar `checkpoints` / `checkpoint_writes` / `checkpoint_blobs` del hilo.
+
+### Changed
+
+- **Auto-aprobación de planes triviales** (`mdd-plan-approval.node.ts`, `planWillAutoApprove()`): plan de 1 paso, un solo agente escritor en `sections`, o `autoApprove` explícito (tras responder preguntas del Clarifier) → se ejecuta directo en el Executor sin interrumpir; HITL 4.4 queda para planes con varios escritores. El Manager usa la misma regla para no gastar la llamada LLM de análisis de impacto cuando el resumen no se va a mostrar. Nuevo campo `pendingPlanApproval.autoApprove`; `plan_approval` puede ir a `executor`.
+
+### Added
+
+- Specs `node:test`: `utils/tool-loop.spec.ts`, `nodes/scout.node.spec.ts`, `mdd-manager/manager-heuristics.spec.ts`, casos `planWillAutoApprove` en `manager-plan.spec.ts`.
+
 > **Arquitectura Compiler-First & Transición de Cascada Multi-Agente a Grafos Deterministas** — Rediseño integral de la cascada de generación de documentos técnicos para eliminar bucles infinitos, alucinación de especificaciones y consumo descontrolado de tokens. Introduce el **Project Architecture Graph (PAG)** con validación semántica OpenAPI 3.1, compilación determinista sin LLM a Markdown (`DocumentCompiler`), persistencia del AST en `Stage.documentAst`, Circuit Breaker global acotado a 3 intentos máximos y soporte para enfoques metodológicos UX-First y Domain-First.
 
 ### Added

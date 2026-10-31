@@ -8,8 +8,11 @@ export const QUALITY_THRESHOLD = 85;
 export const AUDITOR_RETRY_THRESHOLD = CASCADE_ACCURACY_THRESHOLD;
 export const MAX_MDD_ITERATIONS = 2;
 
-/** Usuario pide explícitamente detenerse: done solo si Auditor >= 85% o el usuario lo pide. */
-export const USER_STOP_PATTERN = /^(parar|detener|stop|terminar|salir|no\s+continuar|basta|listo)$/i;
+/**
+ * Usuario pide explícitamente detenerse: done solo si Auditor >= 85% o el usuario lo pide.
+ * NOTA: "listo" NO es palabra de parada: el usuario la usa para confirmar ("listo, ejecuta").
+ */
+export const USER_STOP_PATTERN = /^(parar|detener|stop|terminar|salir|no\s+continuar|basta)$/i;
 
 /** Petición explícita de auditar el documento → disparar solo el Auditor (no todo el pipeline). */
 export const AUDIT_DOCUMENT_PATTERN =
@@ -44,9 +47,20 @@ export const ASK_WHAT_NEEDED_FOR_85_PATTERN =
 export const SHORT_AGREEMENT_PATTERN =
   /^(?:s[ií]|s[ií]\s*,\s*de\s*acuerdo|de\s*acuerdo|ok|vale|correcto|estoy\s+de\s+acuerdo|perfecto|acepto|aprobado|procedamos?|adelante|hazlo|incorpóralo|agreg(?:ar|uen)(?:lo)?|inclu(?:ir|yan)(?:lo)?)[\s.]*$/i;
 
-/** Confirmación de aprobación del plan (HITL 4.4): ejecutar el plan pendiente. */
+/**
+ * Confirmación de aprobación del plan (HITL 4.4): ejecutar el plan pendiente.
+ * Prefijo afirmativo con fin de palabra por lookahead (no `\b`: "í" no cuenta como \w sin flag u),
+ * así "sí, adelante", "ok, procede" o "dale" aprueban. Úsese vía `isPlanApproval()` (manager-heuristics),
+ * que además rechaza mensajes con señales de modificación ("sí, pero cambia…").
+ */
 export const PLAN_APPROVAL_CONFIRM_PATTERN =
-  /^(?:s[ií]|s[ií]\s*,\s*ejecuta|ejecuta(r)?\s*(el\s+)?plan|adelante|aprobado|ok|vale|procedamos?|adelante\s+con\s+el\s+plan|ejecutar)[\s.]*$/i;
+  /^(?:s[ií]|ok(?:ay)?|vale|dale|va|adelante|aprobado|apru[eé]bo|perfecto|correcto|de\s+acuerdo|procede(?:mos|r)?|ejec[uú]ta(?:lo|r)?(?:\s+el\s+plan)?|hazlo|confirmo|confirmado|listo)(?=[\s.,;:!?¡¿]|$)/i;
+
+/** Señales de rechazo o modificación dentro de un mensaje que empieza afirmando ("sí, pero quita §6"). */
+export const PLAN_REJECTION_HINT = /\b(no|pero|cambia|modifica|quita|agrega|añade|antes|espera|excepto|salvo)\b/i;
+
+/** Longitud máxima de un mensaje para considerarlo aprobación de plan (más largo = instrucciones). */
+export const PLAN_APPROVAL_MAX_CHARS = 80;
 
 /** Petición explícita de regenerar una sección del MDD (p. ej. «regenera el paso 6»). */
 export const REGENERATE_SECTION_N_PATTERN =
