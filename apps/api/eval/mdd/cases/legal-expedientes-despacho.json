@@ -1,0 +1,122 @@
+{
+  "id": "legal-expedientes-despacho",
+  "title": "Gestión de expedientes para despacho jurídico",
+  "domain": "legal",
+  "complexity": "MEDIUM",
+  "brief": "Un despacho jurídico mediano con 12 abogados y 3 asistentes quiere reemplazar sus carpetas compartidas por un sistema para gestionar expedientes de litigio civil y mercantil. Cada expediente tiene número interno, cliente, contraparte, juzgado, materia, responsable y estado (abierto, en trámite, suspendido o cerrado). Dentro de cada expediente se guardan actuaciones (escritos, audiencias y vencimientos) y documentos adjuntos en PDF. El sistema debe generar alertas de plazos procesales con varios días de anticipación y enviarlas al responsable por correo. Solo los abogados asignados ven el expediente; los socios pueden ver todo. Cada consulta o cambio de un documento debe quedar en una bitácora inmutable con usuario, fecha y dirección IP, porque el despacho debe poder demostrar quién accedió a un expediente. Los documentos se conservan al menos diez años y no se pueden borrar, solo archivar. Se necesita buscar por número de expediente, nombre de cliente o texto dentro de los escritos. Las facturas de honorarios se preparan fuera del sistema. Restricción: los documentos se guardan dentro del servidor del despacho, no en servicios de almacenamiento público en la nube. Se esperan unos 300 expedientes activos y ocho usuarios conectados a la vez.",
+  "expect": {
+    "entities": [
+      "clients",
+      "cases",
+      "case_actions",
+      "documents",
+      "deadlines",
+      "lawyers",
+      "audit_logs"
+    ],
+    "entitySynonyms": {
+      "clients": [
+        "clientes",
+        "customers"
+      ],
+      "cases": [
+        "expedientes",
+        "matters"
+      ],
+      "case_actions": [
+        "actuaciones",
+        "case_events"
+      ],
+      "documents": [
+        "documentos",
+        "escritos",
+        "files"
+      ],
+      "deadlines": [
+        "plazos",
+        "vencimientos"
+      ],
+      "lawyers": [
+        "abogados",
+        "attorneys",
+        "users"
+      ],
+      "audit_logs": [
+        "bitacora",
+        "access_logs"
+      ]
+    },
+    "capabilities": [
+      {
+        "name": "acceso y roles de abogados",
+        "endpointHints": [
+          "/auth/login"
+        ]
+      },
+      {
+        "name": "expedientes",
+        "endpointHints": [
+          "/cases"
+        ]
+      },
+      {
+        "name": "actuaciones",
+        "endpointHints": [
+          "/case-actions"
+        ]
+      },
+      {
+        "name": "vencimientos y alertas de plazos",
+        "endpointHints": [
+          "/deadlines",
+          "/alerts"
+        ]
+      },
+      {
+        "name": "documentos adjuntos",
+        "endpointHints": [
+          "/documents"
+        ]
+      },
+      {
+        "name": "bitácora de accesos",
+        "endpointHints": [
+          "/audit-logs"
+        ]
+      }
+    ],
+    "security": [
+      "rbac|roles",
+      "jwt|sesión|session",
+      "auditoría|audit|bitácora",
+      "cifrado|encrypt|aes"
+    ],
+    "infra": [
+      "docker",
+      "postgres|postgresql",
+      "backup|respaldo",
+      "volumen|volume|almacenamiento"
+    ],
+    "forbidden": [
+      "whatsapp",
+      "wasender",
+      "bitrix",
+      "denue",
+      "inegi",
+      "datswhy",
+      "watchlist",
+      "pendiente: arquitecto",
+      "pendiente: clarificador",
+      "(pendiente)",
+      "format_section3_endpoints",
+      "lorem ipsum",
+      "carrito",
+      "paciente"
+    ],
+    "mustMentionInContext": [
+      "expedientes",
+      "plazos",
+      "bitácora"
+    ]
+  }
+}

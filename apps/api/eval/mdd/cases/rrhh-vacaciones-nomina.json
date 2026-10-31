@@ -1,0 +1,130 @@
+{
+  "id": "rrhh-vacaciones-nomina",
+  "title": "Vacaciones, incidencias y cálculo previo de nómina",
+  "domain": "RR.HH.",
+  "complexity": "HIGH",
+  "brief": "Una empresa de servicios con 450 empleados en tres estados quiere centralizar en un sistema propio la gestión de vacaciones, incidencias (faltas, incapacidades y permisos) y el cálculo previo de nómina. Cada empleado solicita vacaciones desde el portal, su jefe directo las aprueba o rechaza, y el sistema verifica el saldo según la antigüedad conforme a la Ley Federal del Trabajo y no permite traslapes con otros periodos aprobados del mismo equipo. Recursos humanos registra incidencias y genera cada quincena un archivo de percepciones y deducciones que se envía al proveedor de nómina por SFTP; el sistema no timbra recibos. Los salarios y datos bancarios son confidenciales: solo RH y el área de nómina pueden verlos, y cualquier cambio de salario queda en bitácora con autor y valor anterior. Se requiere integración con el directorio corporativo para altas y bajas, y con los relojes de asistencia que entregan marcaciones en un archivo diario. Las incapacidades se cargan con su folio del IMSS y el documento escaneado, que debe conservarse siete años. Se necesita inicio de sesión con segundo factor para RH y nómina, y los empleados ven solo su propia información. Restricción: los datos biométricos del reloj nunca se guardan en el sistema, solo las marcaciones ya procesadas. Se esperan picos de uso el día 1 y el día 15 de cada mes.",
+  "expect": {
+    "entities": [
+      "employees",
+      "vacation_requests",
+      "vacation_balances",
+      "incidents",
+      "payroll_runs",
+      "payroll_lines",
+      "time_punches",
+      "salary_changes"
+    ],
+    "entitySynonyms": {
+      "employees": [
+        "empleados",
+        "staff",
+        "collaborators"
+      ],
+      "vacation_requests": [
+        "solicitudes_vacaciones",
+        "leave_requests"
+      ],
+      "vacation_balances": [
+        "saldos_vacaciones",
+        "leave_balances"
+      ],
+      "incidents": [
+        "incidencias",
+        "absences"
+      ],
+      "payroll_runs": [
+        "nominas",
+        "payroll_periods"
+      ],
+      "payroll_lines": [
+        "percepciones_deducciones",
+        "payroll_items"
+      ],
+      "time_punches": [
+        "marcaciones",
+        "punches",
+        "attendance_punches"
+      ],
+      "salary_changes": [
+        "cambios_salario",
+        "compensation_history"
+      ]
+    },
+    "capabilities": [
+      {
+        "name": "autenticación con segundo factor",
+        "endpointHints": [
+          "/auth/login",
+          "/auth/mfa"
+        ]
+      },
+      {
+        "name": "solicitudes de vacaciones y aprobación",
+        "endpointHints": [
+          "/vacation-requests"
+        ]
+      },
+      {
+        "name": "saldos de vacaciones",
+        "endpointHints": [
+          "/vacation-balances",
+          "/balances"
+        ]
+      },
+      {
+        "name": "incidencias e incapacidades",
+        "endpointHints": [
+          "/incidents"
+        ]
+      },
+      {
+        "name": "exportación de nómina",
+        "endpointHints": [
+          "/payroll/runs",
+          "/payroll/export"
+        ]
+      },
+      {
+        "name": "altas y bajas de empleados",
+        "endpointHints": [
+          "/employees"
+        ]
+      }
+    ],
+    "security": [
+      "mfa|2fa|totp",
+      "rbac|roles",
+      "argon2|bcrypt",
+      "cifrado|encrypt|aes",
+      "auditoría|audit|bitácora"
+    ],
+    "infra": [
+      "docker",
+      "postgres|postgresql",
+      "backup|respaldo",
+      "sftp|ssh"
+    ],
+    "forbidden": [
+      "whatsapp",
+      "wasender",
+      "bitrix",
+      "denue",
+      "inegi",
+      "datswhy",
+      "watchlist",
+      "pendiente: arquitecto",
+      "pendiente: clarificador",
+      "(pendiente)",
+      "format_section3_endpoints",
+      "lorem ipsum",
+      "paciente",
+      "carrito"
+    ],
+    "mustMentionInContext": [
+      "vacaciones",
+      "incidencias",
+      "salario"
+    ]
+  }
+}

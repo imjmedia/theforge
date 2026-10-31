@@ -1,0 +1,111 @@
+{
+  "id": "educacion-talleres",
+  "title": "Gestión de talleres y cursos presenciales",
+  "domain": "educación",
+  "complexity": "LOW",
+  "brief": "Somos un centro de formación que ofrece unos 25 talleres presenciales cada trimestre: idiomas, computación y oficios. Necesitamos un sistema pequeño para publicar cada taller con su temario, instructor, fechas, cupo máximo y costo, y para que los alumnos se inscriban desde un formulario web. La administración quiere ver la lista de inscritos por taller, marcar la asistencia de cada sesión y emitir una constancia en PDF al terminar un taller con al menos 80 por ciento de asistencia. Los instructores solo deben ver sus propios talleres y capturar asistencia; no editan precios ni inscripciones. Los alumnos crean una cuenta con correo y contraseña para consultar sus cursos anteriores. El pago se hace en caja o por transferencia, y el sistema solo registra si el alumno ya pagó; no cobramos en línea. Restricción: no se debe guardar ningún dato de tarjetas bancarias en el sistema. Se espera poco tráfico, unos cien alumnos activos, y queremos respaldos diarios de la base de datos y una instalación sencilla en un servidor pequeño.",
+  "expect": {
+    "entities": [
+      "courses",
+      "course_sessions",
+      "enrollments",
+      "students",
+      "instructors",
+      "attendance_records"
+    ],
+    "entitySynonyms": {
+      "courses": [
+        "talleres",
+        "workshops"
+      ],
+      "course_sessions": [
+        "sesiones",
+        "sessions"
+      ],
+      "enrollments": [
+        "inscripciones",
+        "registrations"
+      ],
+      "students": [
+        "alumnos",
+        "learners"
+      ],
+      "instructors": [
+        "instructores",
+        "teachers"
+      ],
+      "attendance_records": [
+        "asistencias",
+        "attendance"
+      ]
+    },
+    "capabilities": [
+      {
+        "name": "catálogo de talleres",
+        "endpointHints": [
+          "/courses"
+        ]
+      },
+      {
+        "name": "inscripciones",
+        "endpointHints": [
+          "/enrollments"
+        ]
+      },
+      {
+        "name": "asistencia por sesión",
+        "endpointHints": [
+          "/sessions",
+          "/attendance"
+        ]
+      },
+      {
+        "name": "constancias en PDF",
+        "endpointHints": [
+          "/certificates"
+        ]
+      },
+      {
+        "name": "registro y acceso de alumnos",
+        "endpointHints": [
+          "/auth/register",
+          "/auth/login"
+        ]
+      }
+    ],
+    "security": [
+      "argon2|bcrypt",
+      "jwt|sesión|session",
+      "rbac|roles"
+    ],
+    "infra": [
+      "docker",
+      "postgres|postgresql",
+      "backup|respaldo"
+    ],
+    "forbidden": [
+      "whatsapp",
+      "wasender",
+      "bitrix",
+      "denue",
+      "inegi",
+      "datswhy",
+      "watchlist",
+      "pendiente: arquitecto",
+      "pendiente: clarificador",
+      "(pendiente)",
+      "format_section3_endpoints",
+      "lorem ipsum",
+      "carrito",
+      "paciente"
+    ],
+    "mustMentionInContext": [
+      "talleres",
+      "inscripciones",
+      "asistencia"
+    ]
+  },
+  "thresholds": {
+    "minRubric": 75
+  }
+}

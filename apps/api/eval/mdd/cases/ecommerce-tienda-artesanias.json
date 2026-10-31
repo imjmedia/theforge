@@ -1,0 +1,135 @@
+{
+  "id": "ecommerce-tienda-artesanias",
+  "title": "Tienda en línea de artesanías de Oaxaca",
+  "domain": "e-commerce",
+  "complexity": "MEDIUM",
+  "brief": "Una cooperativa de artesanos de Oaxaca quiere vender sus productos directamente al público en una tienda en línea. El catálogo tiene unos 400 productos (cerámica, textiles y joyería) con variantes por color y talla. Cada artesano sube sus piezas, precios y existencias desde un panel propio, y el administrador de la cooperativa aprueba los productos nuevos antes de publicarlos. Los clientes navegan por categorías, buscan por nombre, agregan productos al carrito, guardan favoritos y pagan con tarjeta, transferencia o pago en tienda. El envío se cotiza por código postal con un proveedor de paquetería, y el cliente puede rastrear su pedido. Cuando una pieza se agota, la compra debe bloquearse sin vender de más, aunque varias personas compren el mismo producto al mismo tiempo. Solo quienes compraron un producto pueden dejar una reseña con calificación. El administrador también gestiona cupones de descuento. Los clientes se registran con correo y contraseña y conservan el historial de sus pedidos. Restricción: los datos de tarjeta nunca se guardan en nuestros servidores; el cobro se hace solo con una pasarela de pagos certificada que devuelve un token. Se espera mucho tráfico en fechas como el Día de Muertos.",
+  "dbga": "Competidores directos: Mercado Libre, que da alcance masivo pero cobra comisiones altas y ofrece poca diferenciación a los artesanos; Etsy, fuerte en artesanía internacional pero sin foco regional en México y con cobro por publicación; y las tiendas propias de algunos artesanos en plataformas de comercio genéricas, que dan control de marca pero no un catálogo colectivo ni un cobro unificado. Brechas que la cooperativa sí puede cubrir: un solo punto de compra para piezas de varios talleres, un panel sencillo para que cada artesano gestione existencias sin conocimientos técnicos, historias de origen por producto y envío consolidado por zona. Fuera de alcance en esta fase: marketplace con vendedores externos, programa de afiliados y venta internacional. Riesgo a vigilar: el abandono de carrito en tiendas artesanales, que se busca reducir con guardado de carrito y pago en tienda.",
+  "expect": {
+    "entities": [
+      "products",
+      "product_variants",
+      "artisans",
+      "customers",
+      "orders",
+      "order_items",
+      "reviews",
+      "coupons"
+    ],
+    "entitySynonyms": {
+      "products": [
+        "productos",
+        "items",
+        "catalog_items"
+      ],
+      "product_variants": [
+        "variantes",
+        "skus"
+      ],
+      "artisans": [
+        "artesanos",
+        "sellers",
+        "producers"
+      ],
+      "customers": [
+        "clientes",
+        "clients",
+        "users"
+      ],
+      "orders": [
+        "pedidos",
+        "purchases"
+      ],
+      "order_items": [
+        "order_lines",
+        "line_items",
+        "partidas"
+      ],
+      "reviews": [
+        "reseñas",
+        "resenas",
+        "ratings"
+      ],
+      "coupons": [
+        "cupones",
+        "discount_codes"
+      ]
+    },
+    "capabilities": [
+      {
+        "name": "catálogo y variantes",
+        "endpointHints": [
+          "/products"
+        ]
+      },
+      {
+        "name": "carrito y compra",
+        "endpointHints": [
+          "/cart",
+          "/orders"
+        ]
+      },
+      {
+        "name": "cobro con pasarela",
+        "endpointHints": [
+          "/payments",
+          "/checkout"
+        ]
+      },
+      {
+        "name": "cotización y seguimiento de envío",
+        "endpointHints": [
+          "/shipping/quotes",
+          "/orders/track"
+        ]
+      },
+      {
+        "name": "reseñas y cupones",
+        "endpointHints": [
+          "/reviews",
+          "/coupons"
+        ]
+      },
+      {
+        "name": "registro e inicio de sesión de clientes",
+        "endpointHints": [
+          "/auth/register",
+          "/auth/login"
+        ]
+      }
+    ],
+    "security": [
+      "jwt|sesión|session",
+      "argon2|bcrypt",
+      "pci|tokeniz",
+      "rbac|roles"
+    ],
+    "infra": [
+      "docker",
+      "postgres|postgresql",
+      "redis",
+      "backup|respaldo"
+    ],
+    "forbidden": [
+      "whatsapp",
+      "wasender",
+      "bitrix",
+      "denue",
+      "inegi",
+      "datswhy",
+      "watchlist",
+      "pendiente: arquitecto",
+      "pendiente: clarificador",
+      "(pendiente)",
+      "format_section3_endpoints",
+      "lorem ipsum",
+      "paciente",
+      "expediente"
+    ],
+    "mustMentionInContext": [
+      "catálogo",
+      "carrito",
+      "pasarela"
+    ]
+  }
+}

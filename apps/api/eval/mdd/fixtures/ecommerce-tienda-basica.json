@@ -1,0 +1,28 @@
+{
+  "id": "ecommerce-tienda-basica",
+  "title": "Tienda en línea con catálogo, carrito y pagos",
+  "domain": "ecommerce",
+  "complexity": "MEDIUM",
+  "brief": "Quiero una tienda en línea para vender ropa y accesorios a clientes de todo el país. Los clientes deben poder registrarse e iniciar sesión, explorar el catálogo por categorías, agregar productos a un carrito y confirmar un pedido. El pago se cobra con tarjeta a través de un proveedor externo, y el sistema debe registrar cada intento de cobro y actualizar el estado del pedido cuando llegue la confirmación. El personal administrativo necesita ver los pedidos, cambiar su estado y revisar los pagos. Hay que evitar vender más piezas de las que existen en inventario, así que el stock debe descontarse al confirmar el pedido. Los precios pueden cambiar, pero los pedidos ya creados deben conservar el precio con el que se compraron. Por ahora no necesitamos marketplace ni facturación electrónica.",
+  "expect": {
+    "entities": ["users", "categories", "products", "orders", "order_items", "payments"],
+    "entitySynonyms": {
+      "payments": ["transacciones", "payment_intents"]
+    },
+    "capabilities": [
+      { "name": "Autenticación de usuarios", "endpointHints": ["/auth/login", "/auth/register"] },
+      { "name": "Catálogo de productos", "endpointHints": ["/products"] },
+      { "name": "Carrito de compras", "endpointHints": ["/cart"] },
+      { "name": "Pedidos", "endpointHints": ["/orders"] },
+      { "name": "Pagos", "endpointHints": ["/payments", "/checkout"] }
+    ],
+    "security": ["jwt", "rbac", "argon2|bcrypt", "tls", "rate limit"],
+    "infra": ["docker", "postgres", "redis", "backup"],
+    "forbidden": ["whatsapp", "wasender", "denue", "bitrix", "(pendiente)", "pendiente: arquitecto"],
+    "mustMentionInContext": ["tienda", "pedidos", "pagos"]
+  },
+  "thresholds": {
+    "minRubric": 80,
+    "minAuditor": 85
+  }
+}

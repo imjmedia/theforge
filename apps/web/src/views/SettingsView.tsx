@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, BookOpen, Cable, LayoutTemplate, Puzzle, Settings, Shield, SlidersHorizontal, Sparkles } from "lucide-react";
+import { Activity, BookOpen, Cable, FlaskConical, LayoutTemplate, Puzzle, Settings, Shield, SlidersHorizontal, Sparkles } from "lucide-react";
 import { ProviderInstancesCard } from "@/components/ProviderInstancesCard";
 import { AccountConfigCard } from "@/components/AccountConfigCard";
 import { AriadneConfigCard } from "@/components/AriadneConfigCard";
@@ -9,9 +9,10 @@ import { PluginSettingsSection } from "@/components/PluginSettingsSection";
 import { SystemConfigCard } from "@/components/SystemConfigCard";
 import { WorkerJobsConfigCard } from "@/components/WorkerJobsConfigCard";
 import { UnderlineTabs, type UnderlineTabItem } from "@/components/ui/UnderlineTabs";
+import { MddEvalPanel } from "@/views/settings/MddEvalPanel";
 import { getStoredUser } from "@/utils/apiClient";
 
-type SettingsTab = "providers" | "plugins" | "ariadne" | "tech-docs" | "ui-mcp" | "workers" | "system" | "account";
+type SettingsTab = "providers" | "plugins" | "ariadne" | "tech-docs" | "ui-mcp" | "workers" | "mdd-eval" | "system" | "account";
 
 const BASE_SETTINGS_TABS: UnderlineTabItem<SettingsTab>[] = [
   { id: "providers", label: "Proveedores de IA", shortLabel: "Proveedores", icon: Sparkles },
@@ -36,6 +37,13 @@ const WORKERS_SETTINGS_TAB: UnderlineTabItem<SettingsTab> = {
   icon: Activity,
 };
 
+const MDD_EVAL_SETTINGS_TAB: UnderlineTabItem<SettingsTab> = {
+  id: "mdd-eval",
+  label: "Evaluación MDD",
+  shortLabel: "Eval. MDD",
+  icon: FlaskConical,
+};
+
 interface SettingsViewProps {
   showIaCost: boolean;
   onToggleIaCost: () => void;
@@ -54,6 +62,7 @@ export default function SettingsView({ showIaCost, onToggleIaCost }: SettingsVie
     const tabs = [...BASE_SETTINGS_TABS];
     if (isAdmin) {
       tabs.splice(tabs.length - 1, 0, WORKERS_SETTINGS_TAB);
+      tabs.splice(tabs.length - 1, 0, MDD_EVAL_SETTINGS_TAB);
     }
     if (isSuperAdmin) {
       tabs.splice(tabs.length - 1, 0, SYSTEM_SETTINGS_TAB);
@@ -159,6 +168,16 @@ export default function SettingsView({ showIaCost, onToggleIaCost }: SettingsVie
               className={activeTab === "workers" ? "space-y-6" : undefined}
             >
               {activeTab === "workers" ? <WorkerJobsConfigCard /> : null}
+            </div>
+
+            <div
+              id="settings-panel-mdd-eval"
+              role="tabpanel"
+              aria-labelledby="settings-tab-mdd-eval"
+              hidden={activeTab !== "mdd-eval"}
+              className={activeTab === "mdd-eval" ? "space-y-6" : undefined}
+            >
+              {activeTab === "mdd-eval" && isAdmin ? <MddEvalPanel /> : null}
             </div>
 
             <div

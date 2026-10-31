@@ -1,0 +1,126 @@
+{
+  "id": "logistica-flota-rutas",
+  "title": "Gestión de flota y rutas de reparto",
+  "domain": "logística",
+  "complexity": "HIGH",
+  "brief": "Una empresa de distribución de bebidas con 60 vehículos y cuatro centros de distribución en el Bajío necesita un sistema para planear rutas diarias, asignar conductores y dar seguimiento a las entregas. Cada mañana el despachador importa los pedidos de los clientes desde un archivo o desde el ERP; el sistema agrupa las paradas por zona y propone rutas respetando la capacidad de carga, las ventanas horarias de cada cliente y el tiempo máximo de manejo por chofer. Los conductores usan una app móvil para ver su ruta, marcar llegadas, capturar firma y evidencia fotográfica, y registrar incidencias como cliente cerrado o producto dañado. La ubicación GPS de cada vehículo llega cada 30 segundos y se muestra en un mapa en vivo; si un vehículo se desvía más de 2 km de su ruta, se genera una alerta. Hay mantenimiento preventivo por kilometraje y fechas, con órdenes de trabajo para los talleres. El sistema debe funcionar aunque el teléfono del chofer pierda conexión durante horas: las entregas se guardan localmente y se sincronizan sin duplicados. Restricción: los datos de ubicación de los choferes solo se conservan 12 meses, y consultar ubicaciones históricas requiere una justificación registrada. Integración: el ERP existente envía los pedidos por API y recibe el estado de entrega al cerrar cada ruta.",
+  "expect": {
+    "entities": [
+      "vehicles",
+      "drivers",
+      "orders",
+      "routes",
+      "route_stops",
+      "deliveries",
+      "gps_positions",
+      "maintenance_orders"
+    ],
+    "entitySynonyms": {
+      "vehicles": [
+        "vehiculos",
+        "trucks"
+      ],
+      "drivers": [
+        "conductores",
+        "choferes"
+      ],
+      "orders": [
+        "pedidos"
+      ],
+      "routes": [
+        "rutas"
+      ],
+      "route_stops": [
+        "paradas",
+        "stops"
+      ],
+      "deliveries": [
+        "entregas"
+      ],
+      "gps_positions": [
+        "ubicaciones",
+        "locations",
+        "tracking_points"
+      ],
+      "maintenance_orders": [
+        "ordenes_mantenimiento",
+        "work_orders"
+      ]
+    },
+    "capabilities": [
+      {
+        "name": "autenticación de despacho y choferes",
+        "endpointHints": [
+          "/auth/login"
+        ]
+      },
+      {
+        "name": "importación de pedidos",
+        "endpointHints": [
+          "/orders/import",
+          "/orders"
+        ]
+      },
+      {
+        "name": "planeación de rutas",
+        "endpointHints": [
+          "/routes",
+          "/routes/plan"
+        ]
+      },
+      {
+        "name": "entregas y evidencias desde la app del chofer",
+        "endpointHints": [
+          "/deliveries",
+          "/deliveries/sync"
+        ]
+      },
+      {
+        "name": "ubicación GPS y alertas de desvío",
+        "endpointHints": [
+          "/vehicles/positions",
+          "/alerts"
+        ]
+      },
+      {
+        "name": "mantenimiento preventivo",
+        "endpointHints": [
+          "/maintenance-orders"
+        ]
+      }
+    ],
+    "security": [
+      "rbac|roles",
+      "jwt|sesión|session",
+      "tls|https|mtls",
+      "auditoría|audit|bitácora"
+    ],
+    "infra": [
+      "docker",
+      "postgres|postgresql",
+      "redis",
+      "backup|respaldo"
+    ],
+    "forbidden": [
+      "whatsapp",
+      "wasender",
+      "bitrix",
+      "denue",
+      "inegi",
+      "datswhy",
+      "watchlist",
+      "pendiente: arquitecto",
+      "pendiente: clarificador",
+      "(pendiente)",
+      "format_section3_endpoints",
+      "lorem ipsum",
+      "paciente",
+      "expediente"
+    ],
+    "mustMentionInContext": [
+      "rutas",
+      "conductores",
+      "entregas"
+    ]
+  }
+}
