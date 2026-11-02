@@ -1,4 +1,7 @@
 import { BadRequestException, Body, Controller, Get, Inject, Param, Patch, Post, forwardRef } from "@nestjs/common";
+import type { ProjectAccessLevel } from "../../common/access/project-access.policy.js";
+import { ProjectAccessService } from "../../common/access/project-access.service.js";
+import { ProjectAccessExempt, ProjectScoped } from "../../common/access/project-scoped.decorator.js";
 import { parseChatImageAttachments } from "../ai/utils/chat-image-attachments.util.js";
 import { AiOrchestratorService } from "../ai-orchestrator/ai-orchestrator.service.js";
 import { SessionsService } from "./sessions.service.js";
@@ -10,26 +13,46 @@ export class SessionsController {
     private readonly sessions: SessionsService,
     @Inject(forwardRef(() => AiOrchestratorService))
     private readonly orchestrator: AiOrchestratorService,
+    private readonly access: ProjectAccessService,
   ) {}
 
+  /**
+   * Las rutas `:id` son de sesión, no de proyecto: se carga la sesión con el scope del usuario (404 si no es
+   * suya) y se exige `level` sobre el proyecto de la sesión. Así un antiguo colaborador pierde el acceso si el
+   * proyecto pasa a PRIVATE, y quien solo puede contribuir no gasta el LLM del dueño (`spend`).
+   */
+  private async authorizeSession(sessionId: string, level: ProjectAccessLevel): Promise<void> {
+    const projectId = await this.sessions.getSessionProjectId(sessionId);
+    await this.access.assertProject(this.access.actorFromRequest(), projectId, level);
+  }
+
+  @ProjectScoped({ from: "body", key: "projectId", level: "contribute" })
   @Post()
   create(@Body() body: unknown) {
     return this.sessions.create(createSessionSchema.parse(body));
   }
 
+  @ProjectScoped({ key: "projectId", level: "read" })
   @Get("project/:projectId")
   findByProject(@Param("projectId") projectId: string) {
     return this.sessions.findByProject(projectId);
   }
 
+  @ProjectAccessExempt("autorizado en el handler por el proyecto de la sesión (read)")
   @Get(":id")
-  findOne(@Param("id") id: string) {
+  async findOne(@Param("id") id: string) {
+    await this.authorizeSession(id, "read");
     return this.sessions.findOne(id);
   }
 
+  /** Con imágenes (rol user) se invoca el modelo de visión con el LLM del dueño: `spend`; si no, `contribute`. */
+  @ProjectAccessExempt("autorizado en el handler por el proyecto de la sesión (spend con imágenes, contribute sin ellas)")
   @Post(":id/messages")
-  appendMessage(@Param("id") id: string, @Body() body: unknown) {
-    return this.sessions.appendMessage(id, appendChatSchema.parse(body));
+  async appendMessage(@Param("id") id: string, @Body() body: unknown) {
+    const parsed = appendChatSchema.parse(body);
+    const callsVision = parsed.role === "user" && (parsed.images?.length ?? 0) > 0;
+    await this.authorizeSession(id, callsVision ? "spend" : "contribute");
+    return this.sessions.appendMessage(id, parsed);
   }
 
   /**
@@ -38,6 +61,7 @@ export class SessionsController {
    * persistencia de documentos devueltos por la IA, ingest SDD, `evaluatorCritique`).
    * Respuesta: `{ session, project, uxUiGuideContent?, evaluatorCritique? }` (no el objeto crudo de `SessionsService.chat`).
    */
+  @ProjectAccessExempt("autorizado en el handler por el proyecto de la sesión (spend)")
   @Post(":id/chat")
   async chat(
     @Param("id") id: string,
@@ -54,6 +78,7 @@ export class SessionsController {
       phase0SummaryContent?: string | null;
     },
   ) {
+    await this.authorizeSession(id, "spend");
     const images = parseChatImageAttachments(body?.images);
     const msg = typeof body?.message === "string" ? body.message.trim() : "";
     if (!msg && !images.length) {
@@ -73,16 +98,19 @@ export class SessionsController {
     });
   }
 
+  @ProjectScoped({ key: "projectId", level: "spend" })
   @Post("project/:projectId/salvage-dbga")
   salvageDbgaFromChat(@Param("projectId") projectId: string) {
     return this.sessions.salvageAndRestoreDbgaFromChat(projectId);
   }
 
+  @ProjectAccessExempt("autorizado en el handler por el proyecto de la sesión (contribute)")
   @Patch(":id/context")
-  updateContextStep(
+  async updateContextStep(
     @Param("id") id: string,
     @Body() body: { contextStep: string },
   ) {
+    await this.authorizeSession(id, "contribute");
     return this.sessions.updateContextStep(id, body.contextStep);
   }
 }

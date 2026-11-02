@@ -32,7 +32,8 @@ Estas variables **siguen en env**; no están en la pantalla Sistema (o no deben 
 | `THEFORGE_RUNTIME_ROLE` | `http` (API) o `worker` (worker) |
 | `PORT` | Puerto HTTP (solo API) |
 | `CORS_ORIGINS` | CORS producción |
-| `JWT_SECRET`, `JWT_EXPIRES_IN` | Auth |
+| `JWT_SECRET`, `JWT_EXPIRES_IN` | Auth. `JWT_SECRET` es **obligatorio** (mínimo 32 caracteres, `openssl rand -hex 32`); sin default: el compose y el entrypoint abortan si falta |
+| `POSTGRES_PASSWORD` | **Obligatoria**; contraseña del rol `theforge` (`openssl rand -hex 24`). El compose construye `DATABASE_URL` con ella (api y worker). **Volumen existente:** Postgres solo aplica esta variable al inicializar el volumen; antes del primer deploy con la variable nueva ejecuta en la BD actual `ALTER USER theforge PASSWORD '<mismo valor>';` (Adminer local con `--profile tools` o `psql` en el contenedor `theforge-db`). Si no, api y worker no conectan y entran en bucle de reinicios |
 | `TOKEN_MASTER_KEYS`, `TOKEN_ACTIVE_KEY_VERSION` | Cifrado en servidor de tokens guardados en UI (no es configuración de proveedor) |
 | `MCP_M2M_SECRET` | Auth MCP ↔ API (header por cliente; opcional en env) |
 | `FALKORDB_URL` / `FALKORDB_SDD_URL` | Grafo SDD (si aplica) |
@@ -181,7 +182,9 @@ No borres estas si las usas; la pantalla Sistema **no** las gestiona aún:
 
 ### Fase 3 — Verificación post-migración
 
-- [ ] API arranca sin error (`REDIS_URL`, `JWT_SECRET`, `TOKEN_MASTER_KEYS` presentes)
+- [ ] `ALTER USER theforge PASSWORD` ejecutado en el volumen existente con el mismo valor que `POSTGRES_PASSWORD` (antes del deploy)
+- [ ] API arranca sin error (`REDIS_URL`, `JWT_SECRET` de 32+ caracteres, `POSTGRES_PASSWORD`, `TOKEN_MASTER_KEYS` presentes)
+- [ ] Adminer sin dominio público en Dokploy (el servicio `theforge-adminer` está en el perfil `tools` y no arranca en el deploy)
 - [ ] `GET /admin/system-config` (como super_admin) refleja valores esperados
 - [ ] Job MDD en cola completa (worker vivo con `THEFORGE_RUNTIME_ROLE=worker`)
 - [ ] Legacy: `THEFORGE_MCP_URL` resuelve desde BD (brownfield / doc. partida)

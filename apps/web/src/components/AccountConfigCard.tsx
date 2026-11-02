@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { Button, Input } from "./ui";
 import { ListRowIconButton } from "@/components/ListRowIconButton";
-import { api } from "@/lib/api";
+import { api, setAccessToken } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const ACCOUNT_FEATURES = [
@@ -84,6 +84,8 @@ export function AccountConfigCard({ showIaCost, onToggleIaCost }: AccountConfigC
       const res = await api.post("/api/auth/mcp-secret/regenerate");
       if (!res.ok) throw new Error("No se pudo regenerar el secret");
       const data = await res.json();
+      // La rotación revoca los JWT anteriores: guarda el token nuevo antes de cualquier otra petición.
+      if (typeof data.accessToken === "string" && data.accessToken) setAccessToken(data.accessToken);
       setMcpSecret(data.mcpSecret ?? "");
       setMessage("Secret regenerado. Guárdalo de inmediato.");
       window.setTimeout(() => setMessage(""), 4000);

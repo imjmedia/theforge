@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException, Logger } from "@nestjs/common";
 import type { Session } from "@theforge/database";
-import { getRequestUserId } from "../../common/request-user.store.js";
+import { canAccessProject } from "../../common/access/project-access.policy.js";
+import { getRequestUserId, getRequestUserRole } from "../../common/request-user.store.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
 import { AiService } from "../ai/ai.service.js";
 import { IntentRouterService } from "../ai/intent-router.service.js";
@@ -460,15 +461,14 @@ export class SessionsService {
 
   /** Misma regla que ProjectsService.assertProjectAccess: owner o SHARED. */
   private async assertProjectAccess(projectId: string): Promise<void> {
-    const userId = getRequestUserId();
+    const actor = { userId: getRequestUserId(), role: getRequestUserRole() };
     const project = await this.prisma.project.findFirst({
       where: { id: projectId },
       select: { userId: true, visibility: true },
     });
-    if (!project) throw new NotFoundException("Project not found");
-    const isOwner = project.userId === userId;
-    const isShared = project.visibility === "SHARED";
-    if (!isOwner && !isShared) throw new NotFoundException("Project not found");
+    if (!project || !canAccessProject(actor, project, "read")) {
+      throw new NotFoundException("Project not found");
+    }
   }
 
   async create(data: { projectId: string; contextStep?: string; chatLog?: ChatMessage[] }) {
@@ -492,13 +492,28 @@ export class SessionsService {
     });
   }
 
+  /** Proyecto de una sesión propia (scope por usuario); 404 si la sesión no existe o es de otro usuario. */
+  async getSessionProjectId(sessionId: string): Promise<string> {
+    const session = await this.prisma.session.findFirst({
+      where: this.sessionScope(sessionId),
+      select: { projectId: true },
+    });
+    if (!session) throw new NotFoundException("Session not found");
+    return session.projectId;
+  }
+
   async findOne(id: string) {
     const session = await this.prisma.session.findFirst({
       where: this.sessionScope(id),
       include: { project: true },
     });
     if (!session) throw new NotFoundException("Session not found");
-    return session;
+    // El secreto del webhook de converge solo lo ve el dueño del proyecto (paridad con `toApiProject`).
+    const isOwner = session.project.userId === getRequestUserId();
+    return {
+      ...session,
+      project: { ...session.project, convergeWebhookSecret: isOwner ? session.project.convergeWebhookSecret : null },
+    };
   }
 
   async clearChat(sessionId: string) {

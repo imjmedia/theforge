@@ -73,7 +73,7 @@ export class ProjectLifecycleService {
       },
     });
 
-    const apiProject = toApiProject(created);
+    const apiProject = toApiProject(created, { isOwner: true });
 
     void this.pluginPipeline.runOnProjectCreate({
       projectId: created.id,
@@ -117,7 +117,7 @@ export class ProjectLifecycleService {
     });
 
     return {
-      ...toApiProject(created),
+      ...toApiProject(created, { isOwner: true }),
       clonedFromProjectId: sourceId,
     };
   }

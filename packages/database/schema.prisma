@@ -20,6 +20,9 @@ model User {
   /// Usado para autenticar peticiones del MCP server como este usuario.
   /// Generado automáticamente en el primer login OTP. Roteable desde la UI.
   mcpSecret String?   @unique
+  /// Versión de sesiones del usuario: el JWT lleva el claim `tv` y se rechaza si no coincide.
+  /// Se incrementa al rotar el secret MCP o al cambiar rol/email para revocar los tokens ya emitidos.
+  tokenVersion Int    @default(0)
   /// URL del MCP de Ariadne configurada por el usuario (opcional).
   /// Usada para llamar a AriadneSpecs MCP. Si no está definida, se usa el fallback global.
   ariadneMcpUrl String?

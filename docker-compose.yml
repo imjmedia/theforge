@@ -30,7 +30,9 @@ services:
       - default
     environment:
       POSTGRES_USER: theforge
-      POSTGRES_PASSWORD: theforge
+      # Obligatoria: sin valor por defecto en el repo. Definir en Dokploy/Coolify o en `.env` (ver .env.example).
+      # Postgres solo aplica este valor al inicializar el volumen; en una BD existente hay que rotar el rol con ALTER USER.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatorio}
       POSTGRES_DB: theforge
     volumes:
       - theforge_db_data:/var/lib/postgresql/data
@@ -77,11 +79,12 @@ services:
     # Nest lee el entorno fusionado: variables del bloque `environment` + claves de `.env` (env_file).
     # IA BYOK: claves LLM por usuario (UI). Servidor: TOKEN_MASTER_KEYS + TOKEN_ACTIVE_KEY_VERSION.
     environment:
-      DATABASE_URL: postgresql://theforge:theforge@theforge-db:5432/theforge
+      DATABASE_URL: postgresql://theforge:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatorio}@theforge-db:5432/theforge
       # BullMQ: REDIS_URL apunta al Redis de cola (servicio siguiente). Requerido para entregables asíncronos resilientes.
       REDIS_URL: ${REDIS_URL:-redis://theforge-redis-queue:6379}
-      # Obligatorio en producción; en local Dokploy sustituir por secreto fuerte.
-      JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-replace-in-dokploy}
+      # Obligatorio: mínimo 32 caracteres (`openssl rand -hex 32`). Sin default en el repo;
+      # docker-entrypoint.sh y el esquema de entorno del API también lo rechazan en producción.
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET es obligatorio}
       # Evaluador legacy + crítica en respuesta chat (opcional; por defecto desactivado).
       AGENT_EVALUATOR_LEGACY: ${AGENT_EVALUATOR_LEGACY:-}
       TOKEN_MASTER_KEYS: ${TOKEN_MASTER_KEYS:-}
@@ -152,14 +155,14 @@ services:
     networks:
       - default
     environment:
-      DATABASE_URL: postgresql://theforge:theforge@theforge-db:5432/theforge
+      DATABASE_URL: postgresql://theforge:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatorio}@theforge-db:5432/theforge
       REDIS_URL: ${REDIS_URL:-redis://theforge-redis-queue:6379}
       NODE_ENV: production
       THEFORGE_RUNTIME_ROLE: worker
       MDD_BULLMQ_CONCURRENCY: ${MDD_BULLMQ_CONCURRENCY:-2}
       DELIVERABLES_BULLMQ_CONCURRENCY: ${DELIVERABLES_BULLMQ_CONCURRENCY:-2}
       LEGACY_DELIVERABLES_BULLMQ_CONCURRENCY: ${LEGACY_DELIVERABLES_BULLMQ_CONCURRENCY:-1}
-      JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-replace-in-dokploy}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET es obligatorio}
       TOKEN_MASTER_KEYS: ${TOKEN_MASTER_KEYS:-}
       TOKEN_ACTIVE_KEY_VERSION: ${TOKEN_ACTIVE_KEY_VERSION:-1}
       OPENAI_EMBEDDING_DIM: ${OPENAI_EMBEDDING_DIM:-}
@@ -245,14 +248,15 @@ services:
       start_period: 20s
       retries: 3
 
-  # Adminer — gestor de BD web (auto-fill, solo falta la password)
-  # Exponer en Dokploy: dominio theforge.kreoint.mx, path /adminer, puerto 8080
+  # Adminer — gestor de BD web. Herramienta de desarrollo: NO arranca por defecto y NO se une a
+  # dokploy-network (sin ruta pública). Solo con `--profile tools` (ver README-LOCAL.md).
+  # Nunca asignarle dominio en Dokploy/Coolify.
   theforge-adminer:
     image: adminer:4.8.1
     container_name: theforge-adminer
+    profiles: ["tools"]
     networks:
       - default
-      - dokploy-network
     depends_on:
       theforge-db:
         condition: service_healthy

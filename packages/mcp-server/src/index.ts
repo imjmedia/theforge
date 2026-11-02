@@ -13,7 +13,7 @@
  * @license Apache-2.0
  */
 
-import { login, mcpApiClient } from "./mcp-api-client.js";
+import { login, mcpApiClient, runWithMcpSecret } from "./mcp-api-client.js";
 import { setMcpClientName } from "./mcp-client-context.js";
 import type { McpHandler } from "./mcp-tool.types.js";
 import { buildMcpHandlers, buildMcpTools } from "./tools/index.js";
@@ -192,7 +192,7 @@ async function main(): Promise<void> {
 
       try {
         const json: JSONRPCRequest = JSON.parse(body);
-        const response = await handleJSONRPC(json);
+        const response = await runWithMcpSecret(clientSecret, () => handleJSONRPC(json));
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(response));
       } catch (err) {
@@ -216,6 +216,8 @@ async function main(): Promise<void> {
     console.error("[theforge-mcp] Iniciando en modo stdio");
     const readline = await import("node:readline");
     const rl = readline.createInterface({ input: process.stdin });
+    // Stdio es un proceso de un solo usuario: su secret viene del entorno (MCP_M2M_SECRET).
+    const stdioSecret = (process.env.MCP_M2M_SECRET ?? "").trim();
 
     rl.on("line", async (line) => {
       line = line.trim();
@@ -223,7 +225,9 @@ async function main(): Promise<void> {
 
       try {
         const request: JSONRPCRequest = JSON.parse(line);
-        const response = await handleJSONRPC(request);
+        const response = stdioSecret
+          ? await runWithMcpSecret(stdioSecret, () => handleJSONRPC(request))
+          : await handleJSONRPC(request);
         if (response.id !== undefined && response.id !== null) {
           process.stdout.write(JSON.stringify(response) + "\n");
         }

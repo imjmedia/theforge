@@ -1,5 +1,6 @@
 import { Controller, Get, Param } from "@nestjs/common";
 import { AgentSupervisorService } from "./agent-supervisor.service.js";
+import { ProjectScoped } from "../../common/access/index.js";
 
 /**
  * Inspección de memoria episódica por proyecto (Workshop / debugging).
@@ -8,6 +9,7 @@ import { AgentSupervisorService } from "./agent-supervisor.service.js";
 export class AgentSupervisorController {
   constructor(private readonly supervisor: AgentSupervisorService) { }
 
+  @ProjectScoped({ key: "projectId", level: "read" })
   @Get("episodic/:projectId")
   async getEpisodic(@Param("projectId") projectId: string) {
     const route = await this.supervisor.resolveRoute(projectId);

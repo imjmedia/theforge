@@ -218,6 +218,12 @@ export const createSessionChatSlice: StateCreator<WorkshopState, [], [], Session
       });
       if (!r.ok) {
         const payload = await parseApiErrorPayloadFromResponse(r, "Error al cargar bienvenida");
+        // Colaborador de un proyecto SHARED: la bienvenida gasta LLM (nivel `spend`, solo dueño).
+        // No es un error del usuario; se omite en silencio y el chat queda disponible sin saludo.
+        if (payload.code === "PROJECT_LEVEL_FORBIDDEN") {
+          set({ synced: true, ...(skipLoading ? {} : { loading: false }) });
+          return;
+        }
         set({
           ...streamErrorPatch(payload),
           synced: true,

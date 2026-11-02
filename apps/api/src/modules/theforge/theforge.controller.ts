@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Logger, Post } from "@nestjs/common";
+import { ProjectAccessExempt, ProjectScoped } from "../../common/access/project-scoped.decorator.js";
 import { ProjectIntegrationService } from "../projects/integration/project-integration.service.js";
 import { ProjectAriadneLinkService } from "./project-ariadne-link.service.js";
 import { TheForgeService } from "./theforge.service.js";
@@ -50,6 +51,7 @@ export class TheForgeController {
    * Resuelve un proyecto Workshop desde identificadores Ariadne (MCP `resolve_forge_project_for_ariadne`).
    * 404 si no hay match; 409 con `candidates[]` si hay ambigüedad.
    */
+  @ProjectAccessExempt("lista filtrada por userId/SHARED en el servicio")
   @Post("resolve-forge-project-for-ariadne")
   async resolveForgeProjectForAriadne(@Body() body: unknown) {
     this.logger.log("[TheForge] POST /theforge/resolve-forge-project-for-ariadne");
@@ -58,7 +60,14 @@ export class TheForgeController {
 
   /**
    * Crea etapa LEGACY o importa pack en etapa existente (MCP `create_stage_from_ariadne_change_pack`).
+   * El proyecto viaja en `forgeProjectId` del body; el `stageId` opcional debe ser de ese proyecto.
    */
+  @ProjectScoped({
+    from: "body",
+    key: "forgeProjectId",
+    level: "spend",
+    stage: { from: "body", key: "stageId", optional: true },
+  })
   @Post("create-stage-from-ariadne-change-pack")
   async createStageFromAriadneChangePack(@Body() body: unknown) {
     this.logger.log("[TheForge] POST /theforge/create-stage-from-ariadne-change-pack");

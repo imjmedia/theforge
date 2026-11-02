@@ -14,18 +14,21 @@ import { JwtService } from "@nestjs/jwt";
 import { randomInt, randomBytes } from "node:crypto";
 import nodemailer from "nodemailer";
 import { PrismaService } from "../../prisma/prisma.service.js";
-import { isSuperAdmin } from "../../common/roles.js";
+import { assertCanManageUser, isSuperAdmin } from "../../common/roles.js";
 import { UserProvidersService } from "../user-providers/user-providers.service.js";
 import type { ForgeOpsProvisionUserBody, ForgeOpsProvisionUserResult } from "@theforge/shared-types";
+import { JwtUserCache } from "./jwt-user-cache.js";
 import { assertForgeOpsProvisionAuthorized } from "./forgeops-provision-auth.util.js";
+import { resolveOtpDevExposeCode } from "./otp-dev-expose.util.js";
+import { AuthRedisStore } from "./auth-redis.store.js";
 import {
   resolvePlatformConfigBoolean,
   resolvePlatformConfigNumber,
   resolvePlatformConfigString,
 } from "../system-config/platform-config.runtime.js";
 
-const OTP_TTL_MS = 10 * 60 * 1000;
-const OTP_RESEND_MS = 60 * 1000;
+const OTP_TTL_SECONDS = 10 * 60;
+const OTP_RESEND_SECONDS = 60;
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -51,16 +54,27 @@ function isProduction(): boolean {
   return process.env.NODE_ENV === "production";
 }
 
-/** 1|true|yes|on — devuelve el OTP en la respuesta sin enviar correo. Con 0 u omitido, se envía email si hay SMTP. */
+let otpDevExposeIgnoredWarned = false;
+
+/**
+ * 1|true|yes|on — devuelve el OTP en la respuesta sin enviar correo. Con 0 u omitido, se envía email si hay SMTP.
+ * En producción se ignora siempre (ver `otp-dev-expose.util.ts`); se avisa una vez en el log.
+ */
 function otpDevExposeCode(): boolean {
-  return resolvePlatformConfigBoolean("otp_dev_expose_code");
+  const configured = resolvePlatformConfigBoolean("otp_dev_expose_code");
+  const effective = resolveOtpDevExposeCode(configured, isProduction());
+  if (configured && !effective && !otpDevExposeIgnoredWarned) {
+    otpDevExposeIgnoredWarned = true;
+    new Logger(AuthService.name).error(
+      "otp_dev_expose_code está activo pero se ignora en producción: el OTP nunca se devuelve en la respuesta.",
+    );
+  }
+  return effective;
 }
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
-  private readonly otpByEmail = new Map<string, { code: string; expiresAt: number }>();
-  private readonly lastOtpRequestAt = new Map<string, number>();
   private transporter: nodemailer.Transporter | null | undefined;
   private smtpTransportCacheKey: string | null = null;
 
@@ -69,6 +83,8 @@ export class AuthService {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly userProviders: UserProvidersService,
+    private readonly authStore: AuthRedisStore,
+    private readonly jwtUserCache: JwtUserCache,
   ) {}
 
   private smtpConfig():
@@ -226,18 +242,11 @@ export class AuthService {
     }
   }
 
-  private storeOtp(email: string): string {
-    const now = Date.now();
+  /** Genera un OTP de 6 dígitos y lo guarda en el store (Redis) con TTL de 10 min; reinicia el contador de intentos. */
+  private async storeOtp(email: string): Promise<string> {
     const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
-    this.otpByEmail.set(email, { code, expiresAt: now + OTP_TTL_MS });
-    this.lastOtpRequestAt.set(email, now);
+    await this.authStore.setOtp(email, code, OTP_TTL_SECONDS);
     return code;
-  }
-
-  private otpThrottleAllowsSend(email: string): boolean {
-    const now = Date.now();
-    const last = this.lastOtpRequestAt.get(email) ?? 0;
-    return now - last >= OTP_RESEND_MS;
   }
 
   private async sendMailMessage(args: {
@@ -245,7 +254,7 @@ export class AuthService {
     subject: string;
     text: string;
     html: string;
-    onFailure?: () => void;
+    onFailure?: () => void | Promise<void>;
   }): Promise<void> {
     const transport = this.smtpTransport();
     if (!transport) {
@@ -267,7 +276,7 @@ export class AuthService {
         html: args.html,
       });
     } catch (err) {
-      args.onFailure?.();
+      await Promise.resolve(args.onFailure?.()).catch(() => undefined);
       const e = err as Error & { responseCode?: number | string; response?: string; command?: string };
       const detail = [e.message, e.responseCode, e.response].filter(Boolean).join(" | ");
       this.logger.error(`Fallo SMTP al enviar correo: ${detail || String(err)}`);
@@ -410,7 +419,7 @@ export class AuthService {
   }): Promise<{ devCode?: string }> {
     this.assertSmtpAvailableForAccessEmail();
 
-    const code = this.storeOtp(args.email);
+    const code = await this.storeOtp(args.email);
 
     if (otpDevExposeCode()) {
       this.logger.warn(
@@ -432,10 +441,7 @@ export class AuthService {
       subject,
       text,
       html,
-      onFailure: () => {
-        this.otpByEmail.delete(args.email);
-        this.lastOtpRequestAt.delete(args.email);
-      },
+      onFailure: () => this.authStore.deleteOtp(args.email),
     });
     this.logger.log(`Acceso ForgeOps enviado por SMTP a ${args.email}`);
     return {};
@@ -532,13 +538,14 @@ export class AuthService {
         return { ok: true };
       }
 
-      if (!this.otpThrottleAllowsSend(email)) {
+      // Reenvío: como máximo 1 OTP por minuto y email (silencioso, igual que antes).
+      if (!(await this.authStore.reserveOtpSend(email, OTP_RESEND_SECONDS))) {
         return { ok: true };
       }
 
       this.assertSmtpAvailableForAccessEmail();
 
-      const code = this.storeOtp(email);
+      const code = await this.storeOtp(email);
 
       if (otpDevExposeCode()) {
         this.logger.warn(
@@ -564,10 +571,7 @@ export class AuthService {
         subject,
         text,
         html,
-        onFailure: () => {
-          this.otpByEmail.delete(email);
-          this.lastOtpRequestAt.delete(email);
-        },
+        onFailure: () => this.authStore.deleteOtp(email),
       });
       this.logger.log(`OTP enviado por SMTP a ${email}`);
 
@@ -597,8 +601,12 @@ export class AuthService {
       throw new BadRequestException("code inválido");
     }
 
-    const entry = this.otpByEmail.get(email);
-    if (!entry || Date.now() > entry.expiresAt || entry.code !== code) {
+    // Cuenta el intento y compara en tiempo constante; 5 fallos descartan el OTP (locked).
+    const outcome = await this.authStore.consumeOtpAttempt(email, code);
+    if (outcome === "locked") {
+      throw new UnauthorizedException("Demasiados intentos; solicita un código nuevo");
+    }
+    if (outcome !== "ok") {
       throw new UnauthorizedException("Código o correo inválido");
     }
 
@@ -606,8 +614,6 @@ export class AuthService {
     if (!user) {
       throw new UnauthorizedException("Código o correo inválido");
     }
-
-    this.otpByEmail.delete(email);
 
     // Generar mcpSecret automático si no existe (primera vez) — NO ROMPER
     if (!user.mcpSecret) {
@@ -627,6 +633,7 @@ export class AuthService {
       email: user.email,
       role: userRole,
       name: user.name ?? undefined,
+      tv: user.tokenVersion,
     });
 
     return {
@@ -652,6 +659,7 @@ export class AuthService {
       email: user.email,
       role: userRole,
       name: user.name ?? undefined,
+      tv: user.tokenVersion,
     });
     return {
       accessToken,
@@ -667,7 +675,10 @@ export class AuthService {
     if (!user) throw new UnauthorizedException("Usuario no encontrado");
     // Si no tiene secret, generarlo automáticamente
     if (!user.mcpSecret) {
-      const { mcpSecret } = await this.regenerateMcpSecret(userId);
+      // Primera generación: no había secret que revocar, así que no se sube tokenVersion (no cierra la sesión actual).
+      const mcpSecret = this.generateMcpSecret();
+      await this.prisma.user.update({ where: { id: userId }, data: { mcpSecret } });
+      this.logger.log(`MCP secret generado para usuario ${userId}`);
       return {
         message: "Se generó un nuevo secret para tu cuenta. Guárdalo de inmediato.",
         mcpSecret,
@@ -677,16 +688,29 @@ export class AuthService {
     return { mcpSecret: user.mcpSecret, email: user.email };
   }
 
-  async regenerateMcpSecret(userId: string) {
+  /**
+   * Rota el secret MCP del propio usuario. Revoca todos los JWT emitidos (sube `tokenVersion`), pero devuelve
+   * un `accessToken` nuevo firmado con el `tv` incrementado para que la sesión web que rota no se cierre sola.
+   */
+  async regenerateMcpSecret(userId: string): Promise<{ mcpSecret: string; accessToken: string }> {
     const mcpSecret = randomBytes(32).toString("hex");
 
-    await this.prisma.user.update({
+    const user = await this.prisma.user.update({
       where: { id: userId },
-      data: { mcpSecret },
+      data: { mcpSecret, tokenVersion: { increment: 1 } },
+    });
+    this.jwtUserCache.invalidate(userId);
+
+    const accessToken = await this.jwt.signAsync({
+      sub: user.id,
+      email: user.email,
+      role: user.role ?? "developer",
+      name: user.name ?? undefined,
+      tv: user.tokenVersion,
     });
 
     this.logger.log(`MCP secret regenerado para usuario ${userId}`);
-    return { mcpSecret };
+    return { mcpSecret, accessToken };
   }
 
   /** Obtiene la URL y token del MCP de Ariadne configurados por el usuario. */
@@ -779,6 +803,8 @@ export class AuthService {
       create: { email, name, role },
       update: { name, role },
     });
+    // El upsert puede haber cambiado el rol: la caché del JWT no debe servir el anterior.
+    this.jwtUserCache.invalidate(user.id);
 
     // Asegurar mcpSecret (NO ROMPER)
     if (!user.mcpSecret) {
@@ -794,6 +820,7 @@ export class AuthService {
       email: user.email,
       role: user.role,
       name: user.name ?? undefined,
+      tv: user.tokenVersion,
     });
 
     return {
@@ -882,12 +909,16 @@ export class AuthService {
   }
 
   /** Obtener mcpSecret de cualquier usuario (admin-only). Genera uno si falta. */
-  async getUserMcpSecretAdmin(userId: string): Promise<{ mcpSecret: string; email: string }> {
+  async getUserMcpSecretAdmin(
+    userId: string,
+    actorRole: string,
+  ): Promise<{ mcpSecret: string; email: string }> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { mcpSecret: true, email: true },
+      select: { mcpSecret: true, email: true, role: true },
     });
     if (!user) throw new NotFoundException("Usuario no encontrado");
+    assertCanManageUser(actorRole, user.role);
     if (!user.mcpSecret) {
       const mcpSecret = this.generateMcpSecret();
       await this.prisma.user.update({ where: { id: userId }, data: { mcpSecret } });
@@ -898,33 +929,47 @@ export class AuthService {
   }
 
   /** Regenerar mcpSecret de cualquier usuario (admin-only). */
-  async regenerateUserMcpSecretAdmin(userId: string): Promise<{ mcpSecret: string; email: string }> {
+  async regenerateUserMcpSecretAdmin(
+    userId: string,
+    actorRole: string,
+  ): Promise<{ mcpSecret: string; email: string }> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { email: true },
+      select: { email: true, role: true },
     });
     if (!user) throw new NotFoundException("Usuario no encontrado");
+    assertCanManageUser(actorRole, user.role);
     const mcpSecret = this.generateMcpSecret();
-    await this.prisma.user.update({ where: { id: userId }, data: { mcpSecret } });
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { mcpSecret, tokenVersion: { increment: 1 } },
+    });
+    this.jwtUserCache.invalidate(userId);
     this.logger.log(`MCP secret regenerado por admin para usuario ${userId}`);
     return { mcpSecret, email: user.email };
   }
 
-  /** Cambiar rol de un usuario (admin-only). No permite degradarse a sí mismo (developer). */
-  async updateUserRole(targetUserId: string, role: string, actorUserId: string) {
+  /**
+   * Cambiar rol de un usuario (admin-only). Matriz en `assertCanManageUser`: solo super_admin
+   * asigna o modifica super_admin; nadie cambia su propio rol.
+   */
+  async updateUserRole(targetUserId: string, role: string, actorUserId: string, actorRole: string) {
     if (role !== "admin" && role !== "developer" && role !== "super_admin") {
       throw new BadRequestException("Rol inválido. Use 'super_admin', 'admin' o 'developer'.");
     }
-    if (targetUserId === actorUserId && role === "developer") {
-      throw new ForbiddenException("No puedes degradar tu propio rol de administrador");
-    }
     const user = await this.prisma.user.findUnique({ where: { id: targetUserId } });
     if (!user) throw new NotFoundException("Usuario no encontrado");
+    assertCanManageUser(actorRole, user.role, role, { actorUserId, targetUserId });
 
+    // Mismo rol: no hay nada que revocar; no se sube tokenVersion ni se fuerza logout.
+    if (user.role === role) return { id: targetUserId, email: user.email, role };
+
+    // Cambiar el rol revoca los JWT ya emitidos al usuario.
     await this.prisma.user.update({
       where: { id: targetUserId },
-      data: { role },
+      data: { role, tokenVersion: { increment: 1 } },
     });
+    this.jwtUserCache.invalidate(targetUserId);
 
     return { id: targetUserId, email: user.email, role };
   }
@@ -936,11 +981,13 @@ export class AuthService {
   async updateUserProfile(
     targetUserId: string,
     patch: { email?: string; name?: string | null },
+    actorRole: string,
   ): Promise<{ id: string; email: string; role: string; name: string | null }> {
     const user = await this.prisma.user.findUnique({ where: { id: targetUserId } });
     if (!user) throw new NotFoundException("Usuario no encontrado");
+    assertCanManageUser(actorRole, user.role);
 
-    const data: { email?: string; name?: string | null } = {};
+    const data: { email?: string; name?: string | null; tokenVersion?: { increment: number } } = {};
 
     if (patch.email !== undefined) {
       const normalized = patch.email.trim().toLowerCase();
@@ -950,6 +997,8 @@ export class AuthService {
           throw new BadRequestException("El email ya está registrado");
         }
         data.email = normalized;
+        // Cambiar el email revoca los JWT ya emitidos (el claim `email` ya no sería válido).
+        data.tokenVersion = { increment: 1 };
       }
     }
 
@@ -966,6 +1015,7 @@ export class AuthService {
       where: { id: targetUserId },
       data,
     });
+    this.jwtUserCache.invalidate(targetUserId);
     return { id: updated.id, email: updated.email, role: updated.role, name: updated.name };
   }
 
@@ -1019,9 +1069,12 @@ export class AuthService {
   /** POST /users — crear usuario manualmente (admin). */
   async createUser(
     email: string,
-    name?: string,
-    role?: string,
+    name: string | undefined,
+    role: string | undefined,
+    actorRole: string,
   ): Promise<{ id: string; email: string; role: string }> {
+    const effectiveRole = role === "super_admin" || role === "admin" ? role : "developer";
+    assertCanManageUser(actorRole, null, effectiveRole);
     const normalized = email.trim().toLowerCase();
     const existing = await this.prisma.user.findUnique({ where: { email: normalized } });
     if (existing) {
@@ -1031,8 +1084,7 @@ export class AuthService {
       data: {
         email: normalized,
         name: name?.trim() || null,
-        role:
-          role === "super_admin" || role === "admin" ? role : "developer",
+        role: effectiveRole,
         mcpSecret: this.generateMcpSecret(),
       },
     });
@@ -1040,12 +1092,23 @@ export class AuthService {
   }
 
   /** DELETE /users/:id — eliminar usuario (admin). No permite borrar la propia cuenta. */
-  async deleteUser(targetUserId: string, actorUserId: string): Promise<{ deleted: boolean }> {
+  async deleteUser(
+    targetUserId: string,
+    actorUserId: string,
+    actorRole: string,
+  ): Promise<{ deleted: boolean }> {
     if (targetUserId === actorUserId) {
       throw new ForbiddenException("No puedes eliminar tu propia cuenta");
     }
+    const target = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { role: true },
+    });
+    if (!target) throw new NotFoundException("Usuario no encontrado");
+    assertCanManageUser(actorRole, target.role);
     try {
       await this.prisma.user.delete({ where: { id: targetUserId } });
+      this.jwtUserCache.invalidate(targetUserId);
       return { deleted: true };
     } catch {
       throw new NotFoundException("Usuario no encontrado");

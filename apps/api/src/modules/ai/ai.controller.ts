@@ -1,4 +1,5 @@
 import { BadRequestException, Body, Controller, Post } from "@nestjs/common";
+import { ProjectScoped } from "../../common/access/project-scoped.decorator.js";
 import { PreferencesService } from "./preferences.service.js";
 import { AiService } from "./ai.service.js";
 
@@ -13,6 +14,7 @@ export class AiController {
    * Cuando el usuario aprueba un MDD: extrae preferencias arquitectónicas y las guarda (memoria semántica).
    * Body: { projectId?: string, mddContent: string }
    */
+  @ProjectScoped({ from: "body", key: "projectId", level: "spend", optional: true })
   @Post("preferences/learn-from-mdd")
   async learnFromMdd(
     @Body() body: { projectId?: string; mddContent?: string },

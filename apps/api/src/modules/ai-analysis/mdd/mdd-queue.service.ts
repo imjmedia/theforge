@@ -191,6 +191,9 @@ type InMemoryMddJobRecord = {
   finishedAt?: number;
 };
 
+/** Prefijo del jobId (BullMQ rechaza ":" en ids personalizados). */
+const MDD_JOB_ID_PREFIX = "mdd-";
+
 type MddActiveJobRef = { jobId: string; mode: MddJobMode; status: "queued" | "active" };
 
 @Injectable()
@@ -795,14 +798,16 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
 
     if (this.queue) {
       // Un turno de chat no es idempotente (re-ejecutarlo duplica mensajes y gasta tokens): sin reintentos.
-      const job = await this.queue.add(payload.mode, payload, isChat ? { attempts: 1 } : undefined);
+      // jobId no adivinable (los IDs secuenciales de BullMQ permitían leer jobs ajenos).
+      const jobId = `${MDD_JOB_ID_PREFIX}${randomUUID()}`;
+      const job = await this.queue.add(payload.mode, payload, isChat ? { attempts: 1, jobId } : { jobId });
       return String(job.id);
     }
     return this.enqueueInMemory(payload);
   }
 
   private enqueueInMemory(data: MddJobData): string {
-    const jobId = randomUUID();
+    const jobId = `${MDD_JOB_ID_PREFIX}${randomUUID()}`;
     this.inMemoryJobs.set(jobId, {
       data,
       status: "queued",
@@ -981,6 +986,22 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
     return result;
   }
 
+  /**
+   * Referencia mínima para autorizar el acceso a un job (proyecto y quien lo encoló).
+   * Solo lectura: no reconcilia ni muta nada (a diferencia de `getJobStatus`).
+   * `userId: null` en jobs antiguos sin `userId` en data.
+   */
+  async getJobAccessRef(jobId: string): Promise<{ projectId: string; userId: string | null } | null> {
+    if (typeof jobId !== "string" || jobId.length === 0) return null;
+    const mem = this.inMemoryJobs.get(jobId);
+    if (mem) return { projectId: mem.data.projectId, userId: mem.data.userId ?? null };
+    if (!this.queue) return null;
+    const job = await this.queue.getJob(jobId);
+    const data = job?.data as MddJobData | undefined;
+    if (!data?.projectId) return null;
+    return { projectId: data.projectId, userId: data.userId ?? null };
+  }
+
   async getJobStatus(jobId: string): Promise<MddJobStatus> {
     const mem = this.inMemoryJobs.get(jobId);
     if (mem) {
@@ -1032,9 +1053,9 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
     }
     let status: MddJobStatus["status"];
     if (state === "completed") status = "completed";
-    else if (state === "failed") {
-      status = job.attemptsMade < (job.opts?.attempts ?? 1) ? "retrying" : "failed";
-    } else if (state === "active") status = "active";
+    // "failed" en BullMQ es terminal: los reintentos reales pasan por "delayed"/"waiting".
+    else if (state === "failed") status = "failed";
+    else if (state === "active") status = "active";
     else if (state === "delayed") status = "retrying";
     else if (state === "waiting" || state === "waiting-children") status = "queued";
     else status = "unknown";

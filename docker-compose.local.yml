@@ -3,7 +3,12 @@
 #
 # App: http://localhost:8080  (nginx proxy /api → theforge-api)
 # API directa (debug): http://localhost:3000
-# Adminer: http://localhost:8081
+# Adminer: http://localhost:8081 (solo con `--profile tools`)
+#
+# Requiere JWT_SECRET (>=32 caracteres) y POSTGRES_PASSWORD en `.env` (ver .env.example):
+# Compose interpola cada archivo por separado, así que este override no puede suplir los
+# valores obligatorios del compose base.
+# Con Adminer: docker compose -f docker-compose.yml -f docker-compose.local.yml --profile tools up --build
 
 services:
   theforge-api:

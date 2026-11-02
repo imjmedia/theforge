@@ -50,7 +50,8 @@ Inyecta las mismas que en Dokploy (servicio **`theforge-api`** como mínimo):
 
 | Variable | Obligatoria prod |
 |----------|------------------|
-| `JWT_SECRET` | Sí |
+| `JWT_SECRET` | Sí (mínimo 32 caracteres, `openssl rand -hex 32`; el stack no arranca sin él) |
+| `POSTGRES_PASSWORD` | Sí (contraseña del rol `theforge`; `openssl rand -hex 24`; el stack no arranca sin ella) |
 | `TOKEN_MASTER_KEYS` | Sí |
 | `TOKEN_ACTIVE_KEY_VERSION` | Sí |
 | `CORS_ORIGINS` | Sí (dominio Coolify + localhost dev si aplica) |
@@ -60,7 +61,7 @@ Inyecta las mismas que en Dokploy (servicio **`theforge-api`** como mínimo):
 | `REDIS_URL` | Ya en compose: `redis://theforge-redis-queue:6379` |
 | `FALKORDB_SDD_URL` | Ya en compose: `redis://theforge-falkor-sdd:6379` |
 
-`DATABASE_URL` viene fijada en compose hacia `theforge-db`. No sobrescribas el **CMD/entrypoint** del API (`docker-entrypoint.sh` ejecuta migraciones Prisma).
+`DATABASE_URL` viene fijada en compose hacia `theforge-db` y se construye con `POSTGRES_PASSWORD`. Si el volumen de Postgres ya existía, la contraseña anterior sigue vigente hasta rotarla con `ALTER USER theforge PASSWORD '...'` (Postgres solo aplica `POSTGRES_PASSWORD` al inicializar el volumen). No sobrescribas el **CMD/entrypoint** del API (`docker-entrypoint.sh` ejecuta migraciones Prisma).
 
 ## Healthchecks
 
@@ -70,7 +71,7 @@ Inyecta las mismas que en Dokploy (servicio **`theforge-api`** como mínimo):
 ## Servicios opcionales
 
 - **`theforge-mcp`:** expón path `/mcp` si Hermes/Cursor deben llamar al MCP HTTP.
-- **`theforge-adminer`:** solo interno o detrás de auth; no exponer a internet sin restricción.
+- **`theforge-adminer`:** perfil `tools` (no arranca por defecto) y sin red `dokploy-network`. No le asignes dominio ni lo expongas a internet; actívalo solo puntualmente con `--profile tools`.
 
 ## Dokploy vs Coolify
 

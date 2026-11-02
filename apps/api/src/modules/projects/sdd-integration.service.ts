@@ -48,7 +48,8 @@ import { TheForgeService } from "../theforge/theforge.service.js";
 import { CONVERGE_PROMPT } from "../ai/prompts/converge-prompt.js";
 import { loadConsumptionGuideMarkdown } from "./consumption-guide.util.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
-import { getRequestUserId } from "../../common/request-user.store.js";
+import { canAccessProject } from "../../common/access/project-access.policy.js";
+import { getRequestUserId, getRequestUserRole } from "../../common/request-user.store.js";
 import { pickPrimaryStage } from "./stage-helpers.js";
 import { resolveStageDeliverables } from "./stage-deliverables.util.js";
 import { persistStageAndProjectDeliverables } from "./stage-deliverable-persist.util.js";
@@ -1180,15 +1181,14 @@ export class SddIntegrationService {
   }
 
   private async loadProject(projectId: string): Promise<ProjectWithStages> {
-    const userId = getRequestUserId();
+    const actor = { userId: getRequestUserId(), role: getRequestUserRole() };
     const project = await this.prisma.project.findFirst({
       where: { id: projectId },
       include: { stages: { orderBy: { ordinal: "asc" } } },
     });
-    if (!project) throw new NotFoundException("Proyecto no encontrado");
-    const isOwner = project.userId === userId;
-    const isShared = project.visibility === "SHARED";
-    if (!isOwner && !isShared) throw new NotFoundException("Proyecto no encontrado");
+    if (!project || !canAccessProject(actor, project, "read")) {
+      throw new NotFoundException("Proyecto no encontrado");
+    }
     return project as ProjectWithStages;
   }
 }

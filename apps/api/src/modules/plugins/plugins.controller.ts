@@ -25,6 +25,7 @@ import { PluginWorkshopUiService } from "../../plugins/plugin-workshop-ui.servic
 import { PluginInstanceSettingsService } from "../../plugins/plugin-instance-settings.service.js";
 import { DeliverablesQueueService } from "../projects/deliverables-queue.service.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
+import { ProjectScoped } from "../../common/access/project-scoped.decorator.js";
 import { getRequestUserId } from "../../common/request-user.store.js";
 import { requireAdmin } from "../../common/guards/role.helpers.js";
 import type {
@@ -174,6 +175,7 @@ export class PluginsController {
     return this.pluginUserSettings.getAllForUser(getRequestUserId());
   }
 
+  @ProjectScoped("read")
   @Get("projects/:id/plugin-data/:pluginId")
   async getPluginData(
     @Param("id") id: string,
@@ -189,6 +191,7 @@ export class PluginsController {
     return res.status(200).json(data?.[pluginId] ?? null);
   }
 
+  @ProjectScoped("contribute")
   @Put("projects/:id/plugin-data/:pluginId")
   async setPluginData(
     @Param("id") id: string,
@@ -211,6 +214,7 @@ export class PluginsController {
     return body;
   }
 
+  @ProjectScoped({ level: "spend", stage: { from: "body", key: "stageId", optional: true } })
   @Post("projects/:id/generate/:pluginId/:artifactId")
   async generatePluginArtifact(
     @Param("id") projectId: string,
@@ -238,6 +242,7 @@ export class PluginsController {
     return { queued: false, ...result };
   }
 
+  @ProjectScoped("read")
   @Get("projects/:id/export/:pluginId/:artifactId")
   async exportPluginArtifact(
     @Param("id") projectId: string,

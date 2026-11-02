@@ -18,6 +18,11 @@ Punto de entrada para humanos y agentes. **Arquitectura y producto (NotebookLM):
 | Cliente HTTP The Forge ↔ MCP AriadneSpecs | [notebooklm/integracion-theforge/README.md](notebooklm/integracion-theforge/README.md) |
 | Despliegue Coolify (override compose) | [DEPLOY-COOLIFY.md](DEPLOY-COOLIFY.md) |
 | Migración env → Ajustes → Sistema (Dokploy v1.3.0+) | [DOKPLOY-MIGRACION-CONFIG-SISTEMA.md](DOKPLOY-MIGRACION-CONFIG-SISTEMA.md) |
+| Seguridad: auditoría de aplicación, secretos e infra (ID-101 a ID-125) | [seguridad/auditoria-2026-11-02-app-infra.md](seguridad/auditoria-2026-11-02-app-infra.md) |
+| Seguridad: revisión del lote 1, veredicto por ID | [seguridad/auditoria-2026-11-02-lote1.md](seguridad/auditoria-2026-11-02-lote1.md) |
+| Lote 1 de seguridad: pasos operativos antes del deploy y pendientes | [handoffs/2026-11-02-seguridad-lote1-handoff.md](handoffs/2026-11-02-seguridad-lote1-handoff.md) |
+| Auditoría global 2026-11-02 | [handoffs/2026-11-02-auditoria-global.md](handoffs/2026-11-02-auditoria-global.md) |
+| Decisiones de arquitectura (ADR) | [adr/0001-autorizacion-por-proyecto.md](adr/0001-autorizacion-por-proyecto.md) |
 | Histórico / roadmaps no prioritarios | [archive/README.md](archive/README.md) |
 
 ## Raíz del monorepo (no están en `docs/`)

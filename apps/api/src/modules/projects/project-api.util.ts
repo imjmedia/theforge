@@ -23,13 +23,23 @@ export function summarizePluginDataPresence(
   return Object.keys(out).length > 0 ? out : null;
 }
 
-/** Proyecto completo aplanado para API (MDD/semáforo desde etapa principal). */
-export function toApiProject<P extends { stages: StageWithEst[] } & Record<string, unknown>>(project: P) {
+/**
+ * Proyecto completo aplanado para API (MDD/semáforo desde etapa principal).
+ *
+ * `convergeWebhookSecret` es un secreto del dueño: solo viaja con `isOwner: true`. Un lector SHARED ajeno
+ * recibe `null` (por defecto), nunca el valor; la clave se conserva para no cambiar el tipo del DTO que
+ * consumen los servicios internos.
+ */
+export function toApiProject<P extends { stages: StageWithEst[] } & Record<string, unknown>>(
+  project: P,
+  options: { isOwner?: boolean } = {},
+) {
   const flat = flattenStageDeliverables(project.stages, project as ProjectDeliverableSource);
   const group = project.group as { name: string } | undefined;
   const { group: _g, ...rest } = project;
   return {
     ...rest,
+    ...(options.isOwner === true ? {} : { convergeWebhookSecret: null }),
     ...flat,
     groupId: project.groupId as string,
     groupName: group?.name,

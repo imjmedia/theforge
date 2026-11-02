@@ -2,7 +2,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { UnauthorizedException } from "@nestjs/common";
 import { AuthService } from "./auth.service.js";
+import { JwtUserCache } from "./jwt-user-cache.js";
 import { setPlatformConfigOverrides } from "../system-config/platform-config.runtime.js";
+
+function makeStoreMock() {
+  const otps = new Map<string, string>();
+  return {
+    setOtp: async (email: string, code: string) => {
+      otps.set(email, code);
+    },
+    deleteOtp: async (email: string) => {
+      otps.delete(email);
+    },
+    reserveOtpSend: async () => true,
+    consumeOtpAttempt: async () => "invalid",
+  };
+}
 
 function makeAuthService(prisma: {
   user: {
@@ -16,6 +31,8 @@ function makeAuthService(prisma: {
     {} as never,
     { user: prisma.user } as never,
     {} as never,
+    makeStoreMock() as never,
+    new JwtUserCache(),
   );
 }
 

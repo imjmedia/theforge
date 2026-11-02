@@ -63,3 +63,19 @@ Ver plan histórico en `docs/archive/PLAN-FLUJO-LEGACY-V2.md`.
 - **`generate-mdd`:** `validate_before_edit` / `get_definitions` usan un nombre de nodo inferido desde `get_functions_in_file` (`legacy-graph-node-name.util.ts`), no solo el stem del path.
 - **`ask_codebase` en legacy:** Por defecto `raw_evidence` + `deterministicRetriever` + `twoPhase` (`getLegacyAskCodebaseOptions` / default en `TheForgeService.askCodebase`); prosa clásica sin flags: `LEGACY_ASK_CODEBASE_EVIDENCE_FIRST=0`.
 - **Sugerencias de respuestas:** Tras obtener las preguntas, se llama `ask_codebase` para rellenar sugerencias desde el codebase.
+
+## Autorización por proyecto
+
+Las rutas `projects/:projectId/legacy/*` declaran su nivel con `@ProjectScoped` (`common/access`). Un `stageId` del body debe pertenecer al proyecto (`404 Etapa no encontrada`). Un colaborador de un proyecto `SHARED` puede editar y responder, pero no gasta LLM.
+
+Niveles de las rutas principales (`legacy-flow.controller.ts`):
+
+| Nivel | Rutas |
+|---|---|
+| `read` | `transition-status`, `mdd-jobs/:jobId`, `deliverables-jobs/:jobId` |
+| `contribute` | `answer`, `codebase-doc` (PATCH), `resolve-index-sdd-conflict`, `resolve-change-to-files`, `check-navigation-impact`, `execute-transition` |
+| `spend` | `generate-codebase-doc`, `start`, `generate-mdd`, `suggest-brd-from-codebase-doc`, `suggest-brd-tobe-from-codebase-doc`, `generate-deliverables`, `generate-from-codebase` |
+
+- Un `spend` denegado a un colaborador responde `403` con `code: "PROJECT_LEVEL_FORBIDDEN"`.
+- Los jobs denegados responden `404 Job no encontrado` (ver la sección de jobs de `projects/README.md`).
+- **Entrevista de cambio** (`projects/:projectId/legacy/interview`, `change-interview.controller.ts`): `start` y `:sessionId/chat` exigen `spend`; `:sessionId/confirm` y `:sessionId/cancel` exigen `contribute`; `GET :sessionId` exige `read`. Una sesión inexistente o de otro proyecto responde `404 Session not found` (antes 400).

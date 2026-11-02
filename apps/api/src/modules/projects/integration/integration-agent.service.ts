@@ -1,6 +1,7 @@
 import { BadRequestException, forwardRef, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../../../prisma/prisma.service.js";
-import { getRequestUserId } from "../../../common/request-user.store.js";
+import { canAccessProject } from "../../../common/access/project-access.policy.js";
+import { getRequestUserId, getRequestUserRole } from "../../../common/request-user.store.js";
 import { AIFactory } from "../../ai/ai.factory.js";
 import { TheForgeService } from "../../theforge/theforge.service.js";
 import { runIntegrationAgent } from "../../ai-analysis/nodes/integration-agent.node.js";
@@ -35,6 +36,7 @@ export class IntegrationAgentService {
     stageId?: string | null,
   ): Promise<{ stageId: string; itemsCount: number; itemsWithoutEvidence: string[] }> {
     const userId = getRequestUserId();
+    const actor = { userId, role: getRequestUserRole() };
     const project = await this.prisma.project.findFirst({
       where: { id: projectId },
       include: {
@@ -42,8 +44,7 @@ export class IntegrationAgentService {
         linkedLegacyProject: { select: { id: true, name: true, theforgeProjectId: true } },
       },
     });
-    if (!project) throw new NotFoundException("Project not found");
-    if (project.userId !== userId && project.visibility !== "SHARED") {
+    if (!project || !canAccessProject(actor, project, "read")) {
       throw new NotFoundException("Project not found");
     }
 

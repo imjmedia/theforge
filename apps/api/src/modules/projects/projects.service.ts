@@ -153,7 +153,7 @@ export class ProjectsService implements IOrchestratorProjectsPort {
     const fav = await this.prisma.favoriteProject.findUnique({
       where: { userId_projectId: { userId, projectId: id } },
     });
-    const apiProject = toApiProject(project);
+    const apiProject = toApiProject(project, { isOwner: project.userId === userId });
     return {
       ...apiProject,
       ...(options?.forHttpClient

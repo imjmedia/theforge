@@ -97,10 +97,31 @@ if [ -z "${TOKEN_MASTER_KEYS:-}" ]; then
   exit 1
 fi
 
-if [ -z "${JWT_SECRET:-}" ]; then
-  echo "WARN: JWT_SECRET unset; using insecure compose fallback — set a strong secret in Dokploy."
-  export JWT_SECRET="local-dev-jwt-secret-replace-in-dokploy"
-fi
+# JWT_SECRET: en producción falla cerrado (vacío, <32 caracteres o literal conocido del repo).
+# Fuera de producción conserva un fallback inseguro con WARN. No imprime nunca el valor.
+require_jwt_secret() {
+  if [ "${NODE_ENV:-}" = "production" ]; then
+    if [ -z "${JWT_SECRET:-}" ]; then
+      echo "ERROR: JWT_SECRET es obligatorio en producción y no está definido. Defínelo en Dokploy (theforge-api y theforge-worker) con al menos 32 caracteres: openssl rand -hex 32"
+      exit 1
+    fi
+    if [ "${#JWT_SECRET}" -lt 32 ]; then
+      echo "ERROR: JWT_SECRET tiene menos de 32 caracteres. Genera uno nuevo: openssl rand -hex 32"
+      exit 1
+    fi
+    case "$JWT_SECRET" in
+      local-dev-jwt-secret-replace-in-dokploy|dev-only-insecure-jwt-secret)
+        echo "ERROR: JWT_SECRET es un valor de ejemplo conocido del repositorio. Genera uno nuevo: openssl rand -hex 32"
+        exit 1
+        ;;
+    esac
+  elif [ -z "${JWT_SECRET:-}" ]; then
+    echo "WARN: JWT_SECRET sin definir fuera de producción; usando fallback inseguro solo para desarrollo."
+    export JWT_SECRET="dev-only-insecure-jwt-secret"
+  fi
+}
+
+require_jwt_secret
 
 if [ "${NODE_ENV:-}" = "production" ] && [ -z "${REDIS_URL:-}" ]; then
   echo "ERROR: REDIS_URL is required in production (BullMQ queue). Set redis://theforge-redis-queue:6379 or equivalent."
