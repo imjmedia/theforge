@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, it } from "node:test";
+import assert from "node:assert";
 import { createMddSection5Node } from "./mdd-section5.node.js";
 
 class FakeLlm {
@@ -43,19 +44,19 @@ describe("createMddSection5Node (CHANGELOG [Unreleased] → Added → \"Dedicate
       clarifiedScope: "Licenciamiento de plugins comerciales sobre The Forge",
       dbgaContent: "Capacidades: licencias, multi-tenant, aprovisionamiento, billing.",
     } as never);
-    expect(result.mddDraft).toBeDefined();
+    assert.notStrictEqual(result.mddDraft, undefined);
     const out = result.mddDraft!;
     // §1, §2, §3, §4, §6, §7 preservadas
-    expect(out).toContain("ForgeOps es una plataforma SaaS");
-    expect(out).toContain("NestJS + PostgreSQL");
-    expect(out).toContain("CREATE TABLE tenants");
-    expect(out).toContain("Argon2id");
-    expect(out).toContain("Docker");
+    assert.ok(out.includes("ForgeOps es una plataforma SaaS"));
+    assert.ok(out.includes("NestJS + PostgreSQL"));
+    assert.ok(out.includes("CREATE TABLE tenants"));
+    assert.ok(out.includes("Argon2id"));
+    assert.ok(out.includes("Docker"));
     // §5 regenerada con el contenido del LLM
-    expect(out).toContain("JWT");
-    expect(out).toContain("Refresh");
-    expect(out).toContain("Rate limit");
-    expect(out).not.toContain("(Pendiente: Ingeniero de Lógica)");
+    assert.ok(out.includes("JWT"));
+    assert.ok(out.includes("Refresh"));
+    assert.ok(out.includes("Rate limit"));
+    assert.ok(!out.includes("(Pendiente: Ingeniero de Lógica)"));
   });
 
   it("preserva el draft si el LLM devuelve un placeholder (fallback defensivo)", async () => {
@@ -63,21 +64,21 @@ describe("createMddSection5Node (CHANGELOG [Unreleased] → Added → \"Dedicate
     const node = createMddSection5Node(llm as never);
     const result = await node({ mddDraft: VALID_FULL_DRAFT } as never);
     // No debe tocar el draft — el (Pendiente) del LLM es peor que el actual
-    expect(result.mddDraft).toBeUndefined();
+    assert.strictEqual(result.mddDraft, undefined);
   });
 
   it("preserva el draft si el LLM devuelve respuesta vacía tras retries", { timeout: 15_000 }, async () => {
     const llm = new FakeLlm("");
     const node = createMddSection5Node(llm as never);
     const result = await node({ mddDraft: VALID_FULL_DRAFT } as never);
-    expect(result.mddDraft).toBeUndefined();
+    assert.strictEqual(result.mddDraft, undefined);
   });
 
   it("preserva el draft si el LLM devuelve body demasiado corto (<100 chars)", async () => {
     const llm = new FakeLlm("## 5. Lógica y Edge Cases\n\ncorto");
     const node = createMddSection5Node(llm as never);
     const result = await node({ mddDraft: VALID_FULL_DRAFT } as never);
-    expect(result.mddDraft).toBeUndefined();
+    assert.strictEqual(result.mddDraft, undefined);
   });
 
   it("acepta un §5 fresco más corto que el baseline (sin auto-rechazo por ratio)", async () => {
@@ -89,9 +90,9 @@ describe("createMddSection5Node (CHANGELOG [Unreleased] → Added → \"Dedicate
     const llm = new FakeLlm(`## 5. Lógica y Edge Cases\n\n${"Resumen corto. ".repeat(20)}`);
     const node = createMddSection5Node(llm as never);
     const result = await node({ mddDraft: richDraft } as never);
-    expect(result.mddDraft).toBeDefined();
-    expect(result.mddDraft).toContain("Resumen corto.");
-    expect(result.mddDraft).not.toContain("Regla BDD KMS con rotación");
+    assert.notStrictEqual(result.mddDraft, undefined);
+    assert.ok(result.mddDraft.includes("Resumen corto."));
+    assert.ok(!result.mddDraft.includes("Regla BDD KMS con rotación"));
   });
 
   it("inserta §5 cuando el heading canónico no existía (salto §4→§6)", async () => {
@@ -117,10 +118,10 @@ ${"Docker. ".repeat(40)}`;
     const node = createMddSection5Node(llm as never);
     const result = await node({ mddDraft: draftWithout5 } as never);
     const out = result.mddDraft!;
-    expect(out).toMatch(/##\s*5\.\s*Lógica\s+y\s*Edge\s+Cases/i);
-    expect(out).toContain("JWT");
-    expect(out.indexOf("## 4. Contratos de API")).toBeLessThan(out.indexOf("## 5. Lógica y Edge Cases"));
-    expect(out.indexOf("## 5. Lógica y Edge Cases")).toBeLessThan(out.indexOf("## 6. Seguridad"));
+    assert.match(out, /##\s*5\.\s*Lógica\s+y\s*Edge\s+Cases/i);
+    assert.ok(out.includes("JWT"));
+    assert.ok(out.indexOf("## 4. Contratos de API") < out.indexOf("## 5. Lógica y Edge Cases"));
+    assert.ok(out.indexOf("## 5. Lógica y Edge Cases") < out.indexOf("## 6. Seguridad"));
   });
 
   it("recorta el bloque ## 5 si el LLM devuelve múltiples secciones (defensivo)", async () => {
@@ -138,9 +139,9 @@ ${"Docker. ".repeat(40)}`;
     const result = await node({ mddDraft: VALID_FULL_DRAFT } as never);
     const out = result.mddDraft!;
     // El §6 original debe preservarse, no ser sobrescrito por el LLM
-    expect(out).toContain("Argon2id");
-    expect(out).not.toContain("Algo de seguridad");
+    assert.ok(out.includes("Argon2id"));
+    assert.ok(!out.includes("Algo de seguridad"));
     // §5 debe tener el contenido de las reglas
-    expect(out).toContain("Regla BDD 1");
+    assert.ok(out.includes("Regla BDD 1"));
   });
 });

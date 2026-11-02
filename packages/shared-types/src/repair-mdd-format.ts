@@ -81,7 +81,8 @@ export function repairBrokenJsonArrayElements(text: string): string {
       const trimmed = line.trim();
       const next = (lines[i + 1] ?? "").trim();
       if (!next.startsWith("{")) continue;
-      if (trimmed.endsWith(",") || trimmed.endsWith("{") || trimmed === "[") continue;
+      // Un abridor de array (`"k": [`) seguido de `{` no es un elemento sin coma.
+      if (trimmed.endsWith(",") || trimmed.endsWith("{") || trimmed.endsWith("[")) continue;
       if (/^["\]}]|null|true|false|-?\d/.test(trimmed) || trimmed.endsWith("}")) {
         fixed[fixed.length - 1] = `${line.replace(/\s*$/, "")},`;
       }

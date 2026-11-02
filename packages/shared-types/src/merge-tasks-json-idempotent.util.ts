@@ -44,7 +44,8 @@ export function mergeTasksJsonIdempotent(
   if (
     incomingMs != null &&
     Number.isFinite(incomingMs) &&
-    (existingMs == null || !Number.isFinite(existingMs) || incomingMs > existingMs)
+    // Sin timestamp válido en el existente no se reemplaza: se hace merge y las tareas done se conservan.
+    existingMs != null && Number.isFinite(existingMs) && incomingMs > existingMs
   ) {
     return incoming;
   }

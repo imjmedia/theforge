@@ -18,10 +18,14 @@ describe("cascade-w4-post-pass.util", () => {
   });
 
   it("shouldRunAnotherCascadeW4Pass respeta max intentos", () => {
+    // Límite explícito: el default viene de CASCADE_W4_MAX_ATTEMPTS (1 por defecto) y no debe
+    // condicionar la regla que prueba este caso.
     const gaps = ["[Scheduler] x"];
-    assert.equal(shouldRunAnotherCascadeW4Pass(gaps, 0, CASCADE_W4_PRECISION_MAX_ATTEMPTS), true);
-    assert.equal(shouldRunAnotherCascadeW4Pass(gaps, 1, CASCADE_W4_PRECISION_MAX_ATTEMPTS), true);
-    assert.equal(shouldRunAnotherCascadeW4Pass(gaps, 2, CASCADE_W4_PRECISION_MAX_ATTEMPTS), false);
-    assert.equal(shouldRunAnotherCascadeW4Pass([], 0, CASCADE_W4_PRECISION_MAX_ATTEMPTS), false);
+    const max = 3;
+    assert.equal(shouldRunAnotherCascadeW4Pass(gaps, 0, max), true);
+    assert.equal(shouldRunAnotherCascadeW4Pass(gaps, 1, max), true);
+    assert.equal(shouldRunAnotherCascadeW4Pass(gaps, 2, max), false);
+    assert.equal(shouldRunAnotherCascadeW4Pass([], 0, max), false);
+    assert.ok(CASCADE_W4_PRECISION_MAX_ATTEMPTS >= 1);
   });
 });

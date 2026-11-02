@@ -92,13 +92,19 @@ POST /api/v1/auth/login
     assert.match(result.infraContent ?? "", /JWT_PRIVATE_KEY/);
   });
 
-  it("no marca changed cuando ya está alineado", () => {
+  it("no marca changed cuando ya está alineado (punto fijo)", () => {
     const tasks = "Worker RabbitMQ con TypeORM\nJWT_PRIVATE_KEY en .env";
-    const result = alignSddDeliverablesAtPersist({
+    // Primera pasada: forma persistida (p. ej. separadores --- antes de cada H2).
+    const first = alignSddDeliverablesAtPersist({
       mddContent: MDD_TYPEORM,
       tasksContent: tasks,
     });
-    assert.equal(result.changed, false);
+    // Segunda pasada sobre la forma ya persistida: no debe cambiar nada.
+    const second = alignSddDeliverablesAtPersist({
+      mddContent: first.mddContent,
+      tasksContent: first.tasksContent,
+    });
+    assert.equal(second.changed, false);
   });
 
   it("normaliza recuento de tablas en user stories según §3 SQL", () => {

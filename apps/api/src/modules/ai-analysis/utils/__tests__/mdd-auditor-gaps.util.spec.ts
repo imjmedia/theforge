@@ -71,7 +71,7 @@ describe("mdd-auditor-gaps util", () => {
     assert.ok(badGaps.critical_gaps.length > gaps.critical_gaps.length);
   });
 
-  it("detecta mismatch Node §2↔§7 en gaps del auditor", () => {
+  it("no reporta mismatch Node §2↔§7: la reparación previa al gate lo alinea", () => {
     const draft = `## 2. Arquitectura y Stack
 
 | Backend | Node.js | 20 |
@@ -108,7 +108,7 @@ x
       computeDeterministicAuditorScore(draft, validation),
     );
     assert.ok(
-      gaps.critical_gaps.some((g) => g.issue.includes("versión Node distinta")),
+      !gaps.critical_gaps.some((g) => g.issue.includes("versión Node distinta")),
     );
   });
 

@@ -1,12 +1,14 @@
-import { formatIntegrationHandoffPreviewStory, nextNewLegId } from "@theforge/shared-types";
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { formatIntegrationHandoffPreviewStory, nextNewLegId } from "./project-integration.js";
 
 describe("nextNewLegId", () => {
   it("starts at NEW-LEG-01", () => {
-    expect(nextNewLegId([])).toBe("NEW-LEG-01");
+    assert.strictEqual(nextNewLegId([]), "NEW-LEG-01");
   });
 
   it("increments from max existing", () => {
-    expect(nextNewLegId([{ id: "NEW-LEG-03" }, { id: "NEW-LEG-01" }])).toBe("NEW-LEG-04");
+    assert.strictEqual(nextNewLegId([{ id: "NEW-LEG-03" }, { id: "NEW-LEG-01" }]), "NEW-LEG-04");
   });
 });
 
@@ -19,11 +21,11 @@ describe("formatIntegrationHandoffPreviewStory", () => {
       actor: "vendedor",
       acceptanceCriteria: ["Se ve el costo unitario"],
     });
-    expect(md).toContain("NEW-LEG-01");
-    expect(md).toContain("Costos en cotizador");
-    expect(md).toContain("costos desglosados");
-    expect(md).toContain("**Como:** vendedor");
-    expect(md).toContain("Se ve el costo unitario");
-    expect(md).toContain("No** forma parte del documento **Historias de Usuario**");
+    assert.ok(md.includes("NEW-LEG-01"));
+    assert.ok(md.includes("Costos en cotizador"));
+    assert.ok(md.includes("costos desglosados"));
+    assert.ok(md.includes("**Como:** vendedor"));
+    assert.ok(md.includes("Se ve el costo unitario"));
+    assert.ok(md.includes("No** forma parte del documento **Historias de Usuario**"));
   });
 });

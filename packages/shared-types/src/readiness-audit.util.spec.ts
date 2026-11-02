@@ -96,8 +96,10 @@ test("buildConvergenceRetryPlan HIGH: mezcla auto + llm", () => {
 });
 
 test("computeMddCascadeDelta: cambio §3 afecta blueprint y api", () => {
-  const prev = "## 3. Modelo de Datos\n\nusers table\n";
-  const next = "## 3. Modelo de Datos\n\nusers and orders tables\n";
+  // Fixtures por encima del mínimo de 80 caracteres (por debajo es "MDD nuevo o vacío").
+  const ctx = "## 1. Contexto\n\nSistema de pedidos para una tienda en línea con catálogo, carrito y pagos.\n\n";
+  const prev = `${ctx}## 3. Modelo de Datos\n\nusers table\n`;
+  const next = `${ctx}## 3. Modelo de Datos\n\nusers and orders tables\n`;
   const delta = computeMddCascadeDelta(prev, next);
   assert.ok(delta.changedSections.includes("3"));
   assert.ok(delta.affectedDeliverables.includes("blueprint"));

@@ -17,6 +17,8 @@ Usar flowchart para el onboarding y validaciones MFA.
 
 ## Onboarding
 
+Validación de email corporativo y verificación MFA al completar el registro.
+
 \`\`\`mermaid
 sequenceDiagram
   participant U as Usuario
