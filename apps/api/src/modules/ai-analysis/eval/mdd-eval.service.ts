@@ -22,6 +22,7 @@ import {
 import { getRequestUserId } from "../../../common/request-user.store.js";
 import { PrismaService } from "../../../prisma/prisma.service.js";
 import { AIFactory } from "../../ai/ai.factory.js";
+import { MddEvalArtifactStore } from "./mdd-eval-artifact-store.js";
 import { loadMddEvalCases } from "./mdd-eval-cases.util.js";
 import {
   buildMddEvalCompareDto,
@@ -39,10 +40,18 @@ import {
   metaFromSummary,
   type MddEvalRunMeta,
 } from "./mdd-eval-run-store.util.js";
+import { evalFileKeys } from "./mdd-eval-report.util.js";
 import { readGitSha } from "./mdd-eval-runner.js";
 import type { MddEvalCase, MddEvalSummary } from "./mdd-eval.types.js";
 
 const MAX_LISTED_RUNS = 50;
+
+/** Clave de archivo (`evalFileKeys`) del caso al que apunta `caseId` (id o clave); undefined si no está. */
+function caseKeyFor(summary: MddEvalSummary, caseId: string): string | undefined {
+  const keys = evalFileKeys(summary.cases);
+  const index = summary.cases.findIndex((record, i) => record.caseId === caseId || keys[i] === caseId);
+  return index < 0 ? undefined : keys[index];
+}
 
 @Injectable()
 export class MddEvalService {
@@ -55,6 +64,7 @@ export class MddEvalService {
     private readonly prisma: PrismaService,
     private readonly aiFactory: AIFactory,
     private readonly queue: MddEvalQueueService,
+    private readonly artifacts: MddEvalArtifactStore = new MddEvalArtifactStore(),
   ) {}
 
   // ── Casos ───────────────────────────────────────────────────────────────
@@ -179,16 +189,16 @@ export class MddEvalService {
       liveUnavailable,
       metaError: diskMeta?.error,
     });
+    // Una lectura al almacén Redis por corrida: claves con markdown; el disco de este proceso se mira aparte.
+    const storedKeys = new Set(summary ? await this.artifacts.listCaseKeys(runId) : []);
     return buildMddEvalRunDto({
       meta,
       status,
       error,
       summary: status === "completed" || status === "failed" ? summary : undefined,
       progress: live?.state === "active" || live?.state === "waiting" ? (live.progress ?? meta.progress) : undefined,
-      hasMarkdown: (record) => {
-        if (!diskSummary) return false;
-        return Boolean(this.store.markdownPath(runId, diskSummary, record.caseId));
-      },
+      hasMarkdown: (_record, key) =>
+        storedKeys.has(key) || (diskSummary ? Boolean(this.store.markdownPath(runId, diskSummary, key)) : false),
     });
   }
 
@@ -224,15 +234,33 @@ export class MddEvalService {
     return this.getRun(runId);
   }
 
-  /** Markdown del MDD generado para un caso de una corrida; 404 si no existe. */
-  getCaseMarkdown(runId: string, caseId: string): string {
+  /**
+   * Markdown del MDD de un caso: primero el fichero de este proceso (si la carpeta de la corrida es
+   * visible) y después el almacén Redis; 404 si ninguno lo tiene. Sin resumen en disco, la clave es el
+   * `caseId` tal cual (la del ejecutor para el primer caso con ese id).
+   */
+  async getCaseMarkdown(runId: string, caseId: string): Promise<string> {
     if (!isSafeMddEvalId(runId) || !isSafeMddEvalId(caseId)) {
       throw new NotFoundException("Markdown no encontrado");
     }
-    const summary = this.store.readSummary(runId);
-    const file = summary ? this.store.markdownPath(runId, summary, caseId) : undefined;
-    if (!file || !existsSync(file)) throw new NotFoundException("Markdown no encontrado");
-    return readFileSync(file, "utf8");
+    const diskSummary = this.store.readSummary(runId);
+    const file = diskSummary ? this.store.markdownPath(runId, diskSummary, caseId) : undefined;
+    if (file && existsSync(file)) return readFileSync(file, "utf8");
+
+    const summary = diskSummary ?? (await this.liveSummary(runId));
+    const key = summary ? caseKeyFor(summary, caseId) : caseId;
+    const stored = key ? await this.artifacts.getMarkdown(runId, key) : undefined;
+    if (stored === undefined) throw new NotFoundException("Markdown no encontrado");
+    return stored;
+  }
+
+  /** Summary que devuelve el worker al completar (cola), si Redis responde. */
+  private async liveSummary(runId: string): Promise<MddEvalSummary | undefined> {
+    try {
+      return (await this.queue.getLiveState(runId))?.summary;
+    } catch {
+      return undefined;
+    }
   }
 
   compare(base: string | undefined, target: string | undefined): MddEvalCompareDto {

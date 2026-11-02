@@ -5,7 +5,9 @@
  * Lo usan el worker BullMQ y el fallback en proceso (sin Redis); los tests inyectan fakes.
  */
 
+import { Logger } from "@nestjs/common";
 import type { MddEvalRunProgressDto } from "@theforge/shared-types";
+import type { MddEvalArtifactStore } from "./mdd-eval-artifact-store.js";
 import { evalFileKeys, writeEvalResults } from "./mdd-eval-report.util.js";
 import type { MddEvalRunMeta, MddEvalRunStore } from "./mdd-eval-run-store.util.js";
 import {
@@ -17,6 +19,8 @@ import {
 import type { MddEvalCase, MddEvalRunRecord, MddEvalSummary } from "./mdd-eval.types.js";
 
 export const MDD_EVAL_CANCELLED_MESSAGE = "Corrida cancelada por el usuario";
+
+const logger = new Logger("MddEvalRunExecutor");
 
 /** Mínimo entre emisiones de progreso por mensajes del pipeline (los cambios de caso siempre se emiten). */
 const PROGRESS_THROTTLE_MS = 1000;
@@ -30,6 +34,8 @@ export interface ExecuteMddEvalRunInput {
   meta: MddEvalRunMeta;
   cases: readonly MddEvalCase[];
   store: MddEvalRunStore;
+  /** Almacén Redis de los MDD por caso (opcional). Sus fallos se registran y no paran la corrida. */
+  artifacts?: Pick<MddEvalArtifactStore, "putMarkdown">;
   deps: MddEvalRunnerDeps;
   signal: AbortSignal;
   /** Sustituible en tests. */
@@ -40,6 +46,25 @@ export interface ExecuteMddEvalRunInput {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Guarda el MDD de cada caso en el almacén, con las mismas claves que los ficheros `<key>.md`.
+ * Nunca lanza: si el almacén falla, la corrida sigue y la web usará solo el disco.
+ */
+async function storeMarkdownArtifacts(
+  artifacts: Pick<MddEvalArtifactStore, "putMarkdown">,
+  runId: string,
+  markdownByKey: ReadonlyMap<string, string>,
+): Promise<void> {
+  for (const [key, markdown] of markdownByKey) {
+    if (!markdown.trim()) continue;
+    try {
+      await artifacts.putMarkdown(runId, key, markdown);
+    } catch (error) {
+      logger.warn(`mdd-eval ${runId}: no se pudo guardar el MDD de ${key} en Redis: ${errorMessage(error)}`);
+    }
+  }
 }
 
 /**
@@ -192,6 +217,7 @@ export async function executeMddEvalRun(input: ExecuteMddEvalRunInput): Promise<
       if (markdown !== undefined) markdownByKey.set(keys[index], markdown);
     });
     const written = await writeEvalResults(summary, store.runDir(meta.runId), markdownByKey);
+    if (input.artifacts) await storeMarkdownArtifacts(input.artifacts, meta.runId, markdownByKey);
     done = total;
     await finish({
       status: "completed",

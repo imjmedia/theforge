@@ -155,12 +155,14 @@ ficheros que el CLI más `run.json` (estado, solicitante, grupo, casos, concurre
 Una corrida terminada se reconstruye por completo desde disco tras un reinicio, y las del CLI
 (sin `run.json`) también aparecen en el listado. Cambia la carpeta con `MDD_EVAL_RESULTS_DIR`.
 
+El MDD de cada caso también se guarda en Redis durante 7 días (`MDD_EVAL_ARTIFACT_TTL_SECONDS` lo cambia): claves `theforge:mdd-eval:md:<runId>:<caso>` y el índice `theforge:mdd-eval:md-index:<runId>`. Así la API puede servir el botón "Ver MDD" y marcar los casos con MDD aunque el worker escriba en otro contenedor sin volumen compartido: primero lee el `.md` del disco local y, si no está, el de Redis. Sin `REDIS_URL` se usa la memoria del proceso (solo desarrollo), y si Redis no responde la web vuelve a depender solo del disco.
+
 Prerrequisitos:
 
 - **Producción**: `REDIS_URL` y un proceso con rol worker (`THEFORGE_RUNTIME_ROLE=worker` o `all`) que
   consuma `mdd-eval`. Con rol `http` solo se encola. Los procesos HTTP y worker deben **compartir la
   carpeta `eval/mdd/results`** (volumen) para que la web lea `summary.json` y los `.md`; sin volumen
-  compartido el listado y el estado funcionan (vía Redis, 24 h) pero no el markdown de cada caso.
+  compartido el listado y el estado funcionan (vía Redis, 24 h) y el markdown de cada caso se sirve desde Redis (ver abajo).
 - **Desarrollo sin `REDIS_URL`**: la corrida se ejecuta en el propio proceso de la API, en serie y de
   forma asíncrona (la petición responde enseguida con estado `queued`). El estado vive en memoria y en
   `run.json`; si reinicias la API a mitad de corrida queda como `failed` (interrumpida).

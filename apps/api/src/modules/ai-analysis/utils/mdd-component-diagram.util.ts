@@ -10,6 +10,7 @@ import {
   mermaidBlockHasUsableStructure,
 } from "../../engine/mdd-pre-render.js";
 import { mddExcludesWebUiSurface } from "./mdd-sanitize/internal.js";
+import { getSectionBody } from "./mdd-sanitize/section-fence.util.js";
 
 export type DomainModuleSignal = {
   key: string;
@@ -77,21 +78,6 @@ function sanitizeMermaidId(raw: string): string {
     .replace(/_+/g, "_")
     .replace(/^_|_$/g, "")
     .slice(0, 48) || "node";
-}
-
-function getSectionBody(
-  draft: string,
-  headingPattern: RegExp,
-): { body: string; startIndex: number; endIndex: number } | null {
-  const match = draft.match(headingPattern);
-  if (!match) return null;
-  const idx = draft.indexOf(match[0]);
-  const sectionStart = idx + match[0].length;
-  const rest = draft.slice(sectionStart).replace(/^\s*\n+/, "");
-  const nextH2 = rest.search(/\n##\s+/);
-  const body = nextH2 !== -1 ? rest.slice(0, nextH2).trim() : rest.trim();
-  const endIndex = nextH2 !== -1 ? sectionStart + nextH2 : draft.length;
-  return { body, startIndex: sectionStart, endIndex };
 }
 
 function firstMatchLabel(text: string, patterns: Array<{ re: RegExp; label: string }>): string | undefined {
@@ -417,20 +403,20 @@ export function parseGreenfieldMddSignals(draft: string): GreenfieldStackSignals
   const section2 = getSectionBody(trimmed, /^##\s*2\.\s*Arquitectura[^\n]*/im);
   const section3 = getSectionBody(trimmed, /^##\s*3\.\s*Modelo\s+(?:de\s+)?datos/im);
   const section4 = getSectionBody(trimmed, /^##\s*4\.\s*Contratos\s+de\s+API/im);
-  if (!section2?.body || section2.body.length < 40) return null;
-  if (/^\s*\(Pendiente\)\s*$/i.test(section2.body)) return null;
+  if (!section2 || section2.length < 40) return null;
+  if (/^\s*\(Pendiente\)\s*$/i.test(section2)) return null;
 
-  const stackText = [section2.body, section3?.body ?? "", section4?.body ?? ""].join("\n");
-  const uiExcluded = section2ExcludesUiSurface(section2.body);
-  const frontend = uiExcluded ? undefined : firstMatchLabel(section2.body, FRONTEND_PATTERNS);
-  const backend = resolveBackendFromStackTable(section2.body);
+  const stackText = [section2, section3 ?? "", section4 ?? ""].join("\n");
+  const uiExcluded = section2ExcludesUiSurface(section2);
+  const frontend = uiExcluded ? undefined : firstMatchLabel(section2, FRONTEND_PATTERNS);
+  const backend = resolveBackendFromStackTable(section2);
   const primaryDb = firstMatchLabel(stackText, DB_PATTERNS);
   const graphDb = firstMatchLabel(stackText, GRAPH_PATTERNS);
-  const cacheOrQueue = resolveMessageBrokerLabel(section2.body);
+  const cacheOrQueue = resolveMessageBrokerLabel(section2);
   const hasCypherGraph =
-    /```cypher/i.test(section3?.body ?? "") ||
-    /```(?:text|plaintext)[\s\S]*?(?:CREATE|MERGE)\s*\(/i.test(section3?.body ?? "") ||
-    /\bgraph\s+TD\b/i.test(section3?.body ?? "");
+    /```cypher/i.test(section3 ?? "") ||
+    /```(?:text|plaintext)[\s\S]*?(?:CREATE|MERGE)\s*\(/i.test(section3 ?? "") ||
+    /\bgraph\s+TD\b/i.test(section3 ?? "");
 
   return {
     frontend,
@@ -438,13 +424,13 @@ export function parseGreenfieldMddSignals(draft: string): GreenfieldStackSignals
     primaryDb,
     graphDb: graphDb ?? (hasCypherGraph ? "Grafo" : undefined),
     cacheOrQueue,
-    tableCount: countCreateTables(section3?.body ?? ""),
-    endpointCount: countApiEndpoints(section4?.body ?? "", trimmed),
+    tableCount: countCreateTables(section3 ?? ""),
+    endpointCount: countApiEndpoints(section4 ?? "", trimmed),
     hasCypherGraph,
     domainModules: extractDomainModulesFromMddSections({
-      section2Body: section2.body,
-      section3Body: section3?.body ?? "",
-      section4Body: section4?.body ?? "",
+      section2Body: section2,
+      section3Body: section3 ?? "",
+      section4Body: section4 ?? "",
       fullDraft: trimmed,
     }),
   };
@@ -714,7 +700,7 @@ export function injectProposedComponentDiagramIntoSection2(draft: string): strin
   if (!mdd || hasLegacyComponentDiagramSection(mdd)) return draft;
 
   const section2 = getSectionBody(mdd, /^##\s*2\.\s*Arquitectura[^\n]*/im);
-  if (section2?.body && section2HasValidComponentDiagram(section2.body)) {
+  if (section2 && section2HasValidComponentDiagram(section2)) {
     return draft;
   }
 

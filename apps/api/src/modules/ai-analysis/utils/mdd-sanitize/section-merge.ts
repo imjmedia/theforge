@@ -21,13 +21,102 @@ import {
   closeUnclosedFencesBeforeCanonicalH2,
   ensureDocumentFenceParity,
   findH2HeadingMatch,
-  getSectionBody,
-  indexOfNextH2OutsideFenced,
   RE_SECTION5_H2,
 } from "./section-fence.util.js";
 import { guardCanonicalH2Loss } from "./section-invariant.util.js";
 
 const RE_SECTION6_H2_LINE = /^##\s+(?:6\.\s+)?Seguridad/i;
+
+/** Heading H1 de una línea (`# …`). */
+const RE_H1_LINE = /^#(?!#)(?=\s|$)/;
+/** Heading H2 de una línea (`## …`; un `###` no es H2). */
+const RE_H2_LINE = /^##(?!#)(?=\s|$)/;
+/** H2 con número entero al inicio: `## 3. …`, `## 3.1 …`, `## 3 …`, `## 3) …`. */
+const RE_H2_INTEGER_NUMBER = /^##[ \t]+(\d+)(?!\d)/;
+
+/**
+ * Número de sección de un heading H2 (`## 3. …`, `## 3.1 …` → 3). Si no lleva número
+ * (`## Seguridad`), devuelve `fallback`.
+ */
+export function sectionNumberFromH2Heading(heading: string, fallback: number | null): number | null {
+  const m = /^\s*##\s*(\d+)(?!\d)/.exec(heading ?? "");
+  return m ? parseInt(m[1]!, 10) : fallback;
+}
+
+/** ¿La línea abre un heading que termina la sección actual? (no considera fences). */
+function isCanonicalSectionBoundaryLine(line: string, currentSectionNumber: number | null): boolean {
+  if (RE_H1_LINE.test(line)) return true;
+  if (!RE_H2_LINE.test(line)) return false;
+  const numbered = RE_H2_INTEGER_NUMBER.exec(line);
+  if (!numbered) return true; // `## Título` sin número (Seguridad, Infraestructura, UI/UX…)
+  if (currentSectionNumber == null) return true; // sección desconocida: cualquier `## ` corta (legado)
+  if (parseInt(numbered[1]!, 10) !== currentSectionNumber) return true; // otra sección
+  // Misma sección N: `## N.M …` es subencabezado y no corta. Un `## N. …` repetido (duplicado del
+  // heading de la sección) sí corta, como antes.
+  return !/^##[ \t]+\d+\.\d/.test(line);
+}
+
+/**
+ * Índice del `\n` que precede al siguiente heading que cierra la sección `currentSectionNumber`,
+ * o -1 si la sección llega hasta el final de `text`.
+ *
+ * Frontera: `## N.` / `## N ` / `## N)` con N entero distinto de la sección actual, un `## Título`
+ * sin número (p. ej. `## Seguridad`, `## Infraestructura`) o un H1 `# `. Un `## N.M …` de la misma
+ * sección N NO es frontera (antes el corte era en cualquier `## `, así que §3.1/§3.2/§4.1 quedaban
+ * fuera del cuerpo); un `## N. …` repetido de la misma sección sí es frontera. Con
+ * `currentSectionNumber` = null, cualquier `## ` es frontera. Los headings dentro de bloques ``` se
+ * ignoran.
+ */
+export function findNextCanonicalSectionBoundary(text: string, currentSectionNumber: number | null): number {
+  const lines = (text ?? "").split("\n");
+  let offset = 0;
+  let insideFence = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]!;
+    // i = 0 no cuenta: el heading de la propia sección no está en `text` (mismo criterio que `\n##`).
+    if (i > 0 && !insideFence && isCanonicalSectionBoundaryLine(line, currentSectionNumber)) {
+      return offset - 1;
+    }
+    if ((line.match(/```/g) ?? []).length % 2 === 1) insideFence = !insideFence;
+    offset += line.length + 1;
+  }
+  return -1;
+}
+
+/**
+ * Como {@link findNextCanonicalSectionBoundary} pero sobre `draft` desde `fromIndex`; devuelve el
+ * índice absoluto en `draft` o -1.
+ */
+export function indexOfNextCanonicalSectionBoundary(
+  draft: string,
+  fromIndex: number,
+  currentSectionNumber: number | null,
+): number {
+  const text = draft ?? "";
+  const rel = findNextCanonicalSectionBoundary(text.slice(fromIndex), currentSectionNumber);
+  return rel === -1 ? -1 : fromIndex + rel;
+}
+
+/**
+ * Cuerpo (sin heading) de la sección H2 que casa con `pattern`, hasta la siguiente frontera
+ * canónica (ver {@link findNextCanonicalSectionBoundary}). El número de sección se toma del heading
+ * encontrado (`## 3. …` → 3) y, si no lleva número, de `fallbackSectionNumber`.
+ */
+export function getCanonicalSectionBody(
+  draft: string,
+  pattern: RegExp,
+  fallbackSectionNumber: number | null,
+): string | null {
+  const trimmed = (draft ?? "").trim();
+  const match = findH2HeadingMatch(trimmed, pattern);
+  if (!match || match.index == null) return null;
+  const headingEnd = match.index + match[0].length;
+  const sectionNumber = sectionNumberFromH2Heading(match[0], fallbackSectionNumber);
+  const boundary = indexOfNextCanonicalSectionBoundary(trimmed, headingEnd, sectionNumber);
+  const bodyEnd = boundary !== -1 ? boundary : trimmed.length;
+  const body = trimmed.slice(headingEnd, bodyEnd).replace(/^\s*\n+/, "").trim();
+  return body.length > 0 ? body : null;
+}
 
 /** Bloque anexo § UI/UX (después de §1–§7). */
 export const MDD_UI_UX_DESIGN_INTENT_RE = /\n##\s+UI\/UX\s+Design\s+Intent\b[\s\S]*$/i;
@@ -248,7 +337,7 @@ export function findSection1HeadingSpan(
 export function extractContextSectionBody(draft: string): string | null {
   const span = findSection1HeadingSpan(draft);
   if (!span) return null;
-  const nextH2 = indexOfNextH2OutsideFenced(draft, span.bodyStart);
+  const nextH2 = indexOfNextCanonicalSectionBoundary(draft, span.bodyStart, 1);
   const bodyEnd = nextH2 !== -1 ? nextH2 : draft.length;
   const body = draft.slice(span.bodyStart, bodyEnd).replace(/^\s*\n+/, "").trim();
   return body || null;
@@ -266,7 +355,7 @@ export function mergeSection1IntoDraft(previousDraft: string, newDraft: string):
 export function replaceContextSectionBody(draft: string, newBody: string): string {
   const span = findSection1HeadingSpan(draft);
   if (!span) return draft;
-  const nextH2 = indexOfNextH2OutsideFenced(draft, span.bodyStart);
+  const nextH2 = indexOfNextCanonicalSectionBoundary(draft, span.bodyStart, 1);
   const endOfSection = nextH2 !== -1 ? nextH2 : draft.length;
   const afterSection = endOfSection < draft.length ? draft.slice(endOfSection).trimStart() : "";
   return guardCanonicalH2Loss(
@@ -283,7 +372,7 @@ export function replaceContextSectionBody(draft: string, newBody: string): strin
 export function replaceSection1BodyFromAnyHeading(draft: string, newBody: string): string {
   const span = findSection1HeadingSpan(draft);
   if (!span) return draft;
-  const nextH2 = indexOfNextH2OutsideFenced(draft, span.bodyStart);
+  const nextH2 = indexOfNextCanonicalSectionBoundary(draft, span.bodyStart, 1);
   const endOfSection = nextH2 !== -1 ? nextH2 : draft.length;
   const afterSection = endOfSection < draft.length ? draft.slice(endOfSection).trimStart() : "";
   return guardCanonicalH2Loss(
@@ -441,7 +530,7 @@ export function extractArquitecturaSectionBody(draft: string): string | null {
     if (!match) continue;
     const start = match.index + match[0].length;
     const after = draft.slice(start).replace(/^\s*\n+/, "");
-    const nextH2 = after.search(/\n##\s+/);
+    const nextH2 = findNextCanonicalSectionBoundary(after, 2);
     const body = nextH2 !== -1 ? after.slice(0, nextH2).trim() : after.trim();
     return body || null;
   }
@@ -484,7 +573,7 @@ export function replaceArquitecturaSectionBody(draft: string, newBody: string): 
     if (!match) continue;
     const sectionStart = match.index + match[0].length;
     const rest = draft.slice(sectionStart);
-    const nextH2InRest = rest.search(/\n##\s+/);
+    const nextH2InRest = findNextCanonicalSectionBoundary(rest, 2);
     const endOfSection = nextH2InRest !== -1 ? sectionStart + nextH2InRest : draft.length;
     const afterSection = endOfSection < draft.length ? draft.slice(endOfSection).trimStart() : "";
     return draft.slice(0, sectionStart) + "\n\n" + newBody.trim() + (afterSection ? "\n\n" + afterSection : "");
@@ -575,7 +664,7 @@ export function getMddDraftSummary(draft: string): {
   section2: MddSection3Status;
 } {
   const trimmed = (draft ?? "").trim();
-  const body = getSectionBody(trimmed, /##\s*3\.\s*Modelo\s+(?:de\s+)?datos|##\s*2\.\s*Modelo\s+(?:de\s+)?datos/i);
+  const body = getCanonicalSectionBody(trimmed, /##\s*3\.\s*Modelo\s+(?:de\s+)?datos|##\s*2\.\s*Modelo\s+(?:de\s+)?datos/i, 3);
   let section3: MddSection3Status = "empty";
   if (body && body.length > 10) {
     section3 = /CREATE\s+TABLE/i.test(body) ? "sql" : /pendiente|placeholder/i.test(body) ? "placeholder" : "empty";
@@ -599,7 +688,7 @@ export function getSection6Or7Range(
   const afterHeading = start + heading.length;
   // `search` sobre el resto ya recortado desalineaba el índice (end corto por las \n iniciales)
   // y contaba `##` dentro de fences, así que §6/§7 medían distinto que §5 (job 85).
-  const nextH2 = indexOfNextH2OutsideFenced(trimmed, afterHeading);
+  const nextH2 = indexOfNextCanonicalSectionBoundary(trimmed, afterHeading, section);
   const end = nextH2 >= 0 ? nextH2 : trimmed.length;
   return { start, end, heading };
 }
@@ -728,7 +817,7 @@ function replaceH2SectionBody(
     return sectionNum != null ? insertMddSectionByNumber(draft, sectionNum, newBody) : draft;
   }
   const sectionStart = match.index + match[0].length;
-  const nextH2 = indexOfNextH2OutsideFenced(draft, sectionStart);
+  const nextH2 = indexOfNextCanonicalSectionBoundary(draft, sectionStart, sectionNum ?? null);
   const endOfSection = nextH2 !== -1 ? nextH2 : draft.length;
   const afterSection = endOfSection < draft.length ? draft.slice(endOfSection).trimStart() : "";
   const replaced =
@@ -781,7 +870,7 @@ function insertMddSection5Block(draft: string, newBody: string): string {
   if (s4Match?.index != null) {
     const after4Start = s4Match.index + s4Match[0].length;
     const rest = trimmed.slice(after4Start);
-    const nextH2 = rest.search(/\n##\s+/);
+    const nextH2 = findNextCanonicalSectionBoundary(rest, 4);
     const insertAt = nextH2 >= 0 ? after4Start + nextH2 : trimmed.length;
     return `${trimmed.slice(0, insertAt).trimEnd()}\n\n${sectionMd}\n\n${trimmed.slice(insertAt).trimStart()}`.trim();
   }
@@ -813,7 +902,7 @@ export function insertMddSection4Block(draft: string, newBody: string): string {
   if (s3Match?.index != null) {
     const after3 = s3Match.index + s3Match[0].length;
     const rest = trimmed.slice(after3);
-    const nextH2 = rest.search(/\n##\s+/);
+    const nextH2 = findNextCanonicalSectionBoundary(rest, 3);
     const insertAt = nextH2 >= 0 ? after3 + nextH2 : trimmed.length;
     return `${trimmed.slice(0, insertAt).trimEnd()}\n\n${sectionMd}\n\n${trimmed.slice(insertAt).trimStart()}`.trim();
   }
@@ -957,7 +1046,7 @@ export function preserveUntouchedMddSectionsFromBaseline(
             : n === 4
               ? extractSection4Body(baselineDraft)
               : n === 5
-                ? getSectionBody(baselineDraft.trim(), /##\s*5\.\s*Lógica\s+y\s*Edge\s+Cases/i)
+                ? getCanonicalSectionBody(baselineDraft.trim(), /##\s*5\.\s*Lógica\s+y\s*Edge\s+Cases/i, 5)
                 : n === 6
                   ? extractSection6Body(baselineDraft)
                   : n === 7
@@ -974,11 +1063,11 @@ export function preserveUntouchedMddSectionsFromBaseline(
             : n === 4
               ? extractSection4Body(out)
               : n === 5
-                ? getSectionBody(out.trim(), /##\s*5\.\s*Lógica\s+y\s*Edge\s+Cases/i)
+                ? getCanonicalSectionBody(out.trim(), /##\s*5\.\s*Lógica\s+y\s*Edge\s+Cases/i, 5)
                 : n === 6
-                  ? extractSection6Body(out) ?? getSectionBody(out.trim(), /##\s*6\.\s*Seguridad/i)
+                  ? extractSection6Body(out) ?? getCanonicalSectionBody(out.trim(), /##\s*6\.\s*Seguridad/i, 6)
                   : n === 7
-                    ? extractSection7Body(out) ?? getSectionBody(out.trim(), /##\s*7\.\s*Infraestructura/i)
+                    ? extractSection7Body(out) ?? getCanonicalSectionBody(out.trim(), /##\s*7\.\s*Infraestructura/i, 7)
                     : null;
     const curIsPlaceholder = isMddSectionPlaceholderBody(curBody);
     const curShorter = (curBody?.length ?? 0) < prevBody.length * 0.5;
@@ -1016,7 +1105,7 @@ export function restoreMddSectionsFromBaselineStrict(
             : n === 4
               ? extractSection4Body(baselineDraft)
               : n === 5
-                ? getSectionBody(baselineDraft.trim(), /##\s*5\.\s*Lógica\s+y\s*Edge\s+Cases/i)
+                ? getCanonicalSectionBody(baselineDraft.trim(), /##\s*5\.\s*Lógica\s+y\s*Edge\s+Cases/i, 5)
                 : n === 6
                   ? extractSection6Body(baselineDraft)
                   : n === 7
@@ -1035,7 +1124,7 @@ export function restoreMddSectionsFromBaselineStrict(
 }
 
 export function extractSection3Body(draft: string): string | null {
-  const body = getSectionBody((draft ?? "").trim(), /##\s*3\.\s*Modelo\s+(?:de\s+)?datos/i);
+  const body = getCanonicalSectionBody((draft ?? "").trim(), /##\s*3\.\s*Modelo\s+(?:de\s+)?datos/i, 3);
   return body && body.length > 0 ? body : null;
 }
 
@@ -1063,9 +1152,9 @@ export function extractSection4Body(draft: string): string | null {
 /** Extrae el cuerpo de la sección ## 5. Lógica y Edge Cases (hasta el siguiente ## o fin). */
 export function extractSection5Body(draft: string): string | null {
   const trimmed = ensureDocumentFenceParity((draft ?? "").trim());
-  let body = getSectionBody(trimmed, RE_SECTION5_H2);
+  let body = getCanonicalSectionBody(trimmed, RE_SECTION5_H2, 5);
   if (body && body.length > 0) return body;
-  body = getSectionBody(trimmed, /##\s*5\.\s*L[oó]gica\b/i);
+  body = getCanonicalSectionBody(trimmed, /##\s*5\.\s*L[oó]gica\b/i, 5);
   return body && body.length > 0 ? body : null;
 }
 
@@ -1085,7 +1174,7 @@ export function validateMddStructure(draft: string): ValidateMddStructureResult 
       if (pattern.test(match[1])) {
         const bodyStart = match.index + match[0].length;
         const rest = withNewline.slice(bodyStart).replace(/^\s*\n+/, "");
-        const nextH2 = rest.search(/\n##\s+/);
+        const nextH2 = findNextCanonicalSectionBoundary(rest, i + 1);
         const body = (nextH2 !== -1 ? rest.slice(0, nextH2) : rest).trim();
         if (body.length > 0) foundOrder.push(SECTION_HEADINGS_CANONICAL[i]);
         sectionFound = true;
@@ -1095,7 +1184,7 @@ export function validateMddStructure(draft: string): ValidateMddStructureResult 
     if (!sectionFound) missingSections.push(SECTION_HEADINGS_CANONICAL[i]);
   }
 
-  const section4BodyRaw = getSectionBody(trimmed, /##\s*4\.\s*Contratos\s+de\s+API|##\s*3\.\s*Contratos\s+de\s+API|##\s*Contratos\s+de\s+API/i);
+  const section4BodyRaw = getCanonicalSectionBody(trimmed, /##\s*4\.\s*Contratos\s+de\s+API|##\s*3\.\s*Contratos\s+de\s+API|##\s*Contratos\s+de\s+API/i, 4);
   const section4Body = section4BodyRaw ? stripLeadingContratosPlaceholder(section4BodyRaw) : null;
   const section3HasPayloads =
     !!section4Body &&
@@ -1244,7 +1333,7 @@ function extractSection(draft: string, startIndex: number): { heading: string; b
   const heading = firstNewline !== -1 ? afterStart.slice(0, firstNewline).trim() : afterStart.trim();
   const bodyStartRel = firstNewline !== -1 ? firstNewline + 1 : afterStart.length;
   const rest = afterStart.slice(bodyStartRel);
-  const nextH2 = indexOfNextH2OutsideFenced(draft, startIndex + bodyStartRel);
+  const nextH2 = indexOfNextCanonicalSectionBoundary(draft, startIndex + bodyStartRel, canonicalSectionNumber(heading));
   const bodyEnd = nextH2 !== -1 ? nextH2 - startIndex - bodyStartRel : rest.length;
   const body = rest.slice(0, bodyEnd).replace(/^\s*\n+/, "").trim();
   return { heading, body };

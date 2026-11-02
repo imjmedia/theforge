@@ -96,14 +96,82 @@ export function closeSection3FenceBeforeNextCanonicalH2(draft: string): string {
   return closeUnclosedFencesBeforeCanonicalH2(draft);
 }
 
-/** Extrae cuerpo de sección H2 (sin heading) hasta el siguiente H2 fuera de fences o fin. */
+/** H1 de una línea (`# …`). */
+const RE_H1_LINE = /^#(?!#)(?=\s|$)/;
+/** H2 de una línea (`## …`; un `###` no es H2). */
+const RE_H2_LINE = /^##(?!#)(?=\s|$)/;
+/** H2 con número entero al inicio: `## 3. …`, `## 3.1 …`, `## 3 …`, `## 3) …`. */
+const RE_H2_INTEGER_NUMBER = /^##[ \t]+(\d+)(?!\d)/;
+/** Subencabezado `## N.M …` (sub-sección de la misma sección N). */
+const RE_H2_SUBSECTION = /^##[ \t]+\d+\.\d/;
+
+/**
+ * Número entero de un heading H2 (`## 3. …`, `## 3.1 …` → 3). `null` si no lleva número
+ * (`## Seguridad`).
+ */
+function numberOfH2Heading(heading: string): number | null {
+  const m = /^\s*##[ \t]+(\d+)(?!\d)/.exec(heading ?? "");
+  return m ? parseInt(m[1]!, 10) : null;
+}
+
+/**
+ * ¿La línea abre un heading que cierra la sección `n` (entero)? No considera fences.
+ * Cierra: `# ` (H1), `## Título` sin número, `## K.` con K !== n, y un `## n.` repetido.
+ * No cierra: `## n.M …` (subencabezado de la misma sección).
+ */
+function isSectionBoundaryLine(line: string, n: number): boolean {
+  if (RE_H1_LINE.test(line)) return true;
+  if (!RE_H2_LINE.test(line)) return false;
+  const numbered = RE_H2_INTEGER_NUMBER.exec(line);
+  if (!numbered) return true;
+  if (parseInt(numbered[1]!, 10) !== n) return true;
+  return !RE_H2_SUBSECTION.test(line);
+}
+
+/**
+ * Índice (absoluto en `draft`) del `\n` que precede al siguiente heading que cierra la sección
+ * `n`, o -1 si no hay frontera. Fence-aware: los headings dentro de bloques ``` se ignoran.
+ *
+ * Con `n` = null (heading sin número) se comporta exactamente como
+ * {@link indexOfNextH2OutsideFenced}: cualquier `## ` cierra la sección.
+ */
+export function indexOfNextSectionBoundaryOutsideFenced(
+  draft: string,
+  fromIndex: number,
+  n: number | null,
+): number {
+  if (n == null) return indexOfNextH2OutsideFenced(draft, fromIndex);
+  const text = draft ?? "";
+  let insideFence = (text.slice(0, fromIndex).match(/```/g) ?? []).length % 2 === 1;
+  let offset = fromIndex;
+  const lines = text.slice(fromIndex).split("\n");
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]!;
+    // i = 0 es el resto de la línea del heading propio: nunca es frontera.
+    if (i > 0 && !insideFence && isSectionBoundaryLine(line, n)) return offset - 1;
+    if ((line.match(/```/g) ?? []).length % 2 === 1) insideFence = !insideFence;
+    offset += line.length + 1;
+  }
+  return -1;
+}
+
+/**
+ * Extrae cuerpo de sección H2 (sin heading) hasta la siguiente frontera de sección
+ * ({@link indexOfNextSectionBoundaryOutsideFenced}) o fin. El número de sección se infiere del
+ * heading que casa con `pattern`, así que los subencabezados `## N.M` (p. ej. `## 3.1 Esquema SQL`)
+ * quedan dentro del cuerpo. Si el heading no lleva número, se comporta como antes.
+ */
 export function getSectionBody(draft: string, pattern: RegExp): string | null {
   const trimmed = (draft ?? "").trim();
   const match = findH2HeadingMatch(trimmed, pattern);
   if (!match || match.index == null) return null;
   const headingEnd = match.index + match[0].length;
-  const nextH2 = indexOfNextH2OutsideFenced(trimmed, headingEnd);
-  const bodyEnd = nextH2 !== -1 ? nextH2 : trimmed.length;
+  const nextBoundary = indexOfNextSectionBoundaryOutsideFenced(
+    trimmed,
+    headingEnd,
+    numberOfH2Heading(match[0]),
+  );
+  const bodyEnd = nextBoundary !== -1 ? nextBoundary : trimmed.length;
   const body = trimmed.slice(headingEnd, bodyEnd).replace(/^\s*\n+/, "").trim();
   return body.length > 0 ? body : null;
 }

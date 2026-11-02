@@ -3,10 +3,14 @@
 import {
   closeTrailingUnclosedFences,
   closeUnclosedFencesBeforeCanonicalH2,
-  getSectionBody,
-  indexOfNextH2OutsideFenced,
 } from "./section-fence.util.js";
-import { extractSection5Body } from "./section-merge.js";
+import {
+  extractSection5Body,
+  findNextCanonicalSectionBoundary,
+  getCanonicalSectionBody,
+  indexOfNextCanonicalSectionBoundary,
+  sectionNumberFromH2Heading,
+} from "./section-merge.js";
 
 /** Headings canónicos que nunca deben quedar dentro del cuerpo formateado de §4. */
 const CANONICAL_TAIL_HEADING_RE = /^##\s+[5-7]\.\s/m;
@@ -284,7 +288,7 @@ export function normalizeGluedSection4HeadingInDraft(draft: string): string {
 
 /** Extrae el cuerpo de §4 Contratos de API (sin el heading), fence-aware. */
 export function extractContratosSectionBody(draft: string): string | null {
-  const body = getSectionBody((draft ?? "").trim(), SECTION4_CONTRATOS_HEADING_REGEX);
+  const body = getCanonicalSectionBody((draft ?? "").trim(), SECTION4_CONTRATOS_HEADING_REGEX, 4);
   return body && body.length > 0 ? body : null;
 }
 
@@ -368,8 +372,16 @@ export function ensureContratosSection(draft: string): string {
   if (contratosMatch) {
     const idx = trimmed.indexOf(contratosMatch[0]);
     const afterHeading = trimmed.slice(idx + contratosMatch[0].length).replace(/^\s*\n+/, "");
-    const nextH2 = afterHeading.search(/\n##\s+/);
-    const body = (nextH2 !== -1 ? afterHeading.slice(0, nextH2) : afterHeading).trim();
+    // §4 completa (incluye ## 4.1 …), hasta la frontera canónica.
+    const sectionBoundary = findNextCanonicalSectionBoundary(
+      afterHeading,
+      sectionNumberFromH2Heading(contratosMatch[0], 4),
+    );
+    const sectionBody = (sectionBoundary !== -1 ? afterHeading.slice(0, sectionBoundary) : afterHeading).trim();
+    // El placeholder «Pendiente: definir endpoints» sólo ocupa el texto antes del primer
+    // subencabezado: sólo ese tramo se sustituye, los ## N.M se conservan.
+    const subheadingBoundary = findNextCanonicalSectionBoundary(sectionBody, null);
+    const body = (subheadingBoundary !== -1 ? sectionBody.slice(0, subheadingBoundary) : sectionBody).trim();
     if (body && PENDIENTE_CONTRATOS_REGEX.test(body)) {
       const sectionStart = idx + contratosMatch[0].length;
       const bodyStart = trimmed.indexOf(body, sectionStart);
@@ -822,7 +834,11 @@ export function formatAllContratosSectionsInDraft(draft: string): string {
       const contratosIdx = out.indexOf(heading, searchFrom);
       if (contratosIdx === -1) break;
       const sectionStart = contratosIdx + heading.length;
-      const nextH2Abs = indexOfNextH2OutsideFenced(out, sectionStart);
+      const nextH2Abs = indexOfNextCanonicalSectionBoundary(
+        out,
+        sectionStart,
+        sectionNumberFromH2Heading(heading, 4),
+      );
       const body =
         nextH2Abs !== -1 ? out.slice(sectionStart, nextH2Abs) : out.slice(sectionStart);
       const bodyFenceCount = (body.match(/```/g) ?? []).length;

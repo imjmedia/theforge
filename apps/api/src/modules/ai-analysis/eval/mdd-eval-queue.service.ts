@@ -28,6 +28,7 @@ import type { MddEvalLiveState } from "./mdd-eval-dto.util.js";
 import { loadMddEvalCases } from "./mdd-eval-cases.util.js";
 import { buildMddEvalDeps } from "./mdd-eval-nest-deps.js";
 import { executeMddEvalRun, type MddEvalRunOutcome } from "./mdd-eval-run.executor.js";
+import { MddEvalArtifactStore } from "./mdd-eval-artifact-store.js";
 import { MddEvalRunStore, type MddEvalRunMeta } from "./mdd-eval-run-store.util.js";
 import type { MddEvalRunnerDeps, runEvalSuite } from "./mdd-eval-runner.js";
 import type { MddEvalCase, MddEvalSummary } from "./mdd-eval.types.js";
@@ -76,6 +77,7 @@ export class MddEvalQueueService implements OnModuleInit, OnModuleDestroy {
     @Inject(forwardRef(() => AiAnalysisService))
     private readonly aiAnalysis: AiAnalysisService,
     private readonly tokenUsage: TokenUsageService,
+    private readonly artifacts: MddEvalArtifactStore = new MddEvalArtifactStore(),
   ) {}
 
   /** true si las corridas pasan por BullMQ; false = en proceso (sin Redis). */
@@ -253,6 +255,7 @@ export class MddEvalQueueService implements OnModuleInit, OnModuleDestroy {
       meta,
       cases,
       store: this.store,
+      artifacts: this.artifacts,
       deps,
       signal,
       runSuite: this.runSuiteFn,

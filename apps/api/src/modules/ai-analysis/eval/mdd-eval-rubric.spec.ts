@@ -345,3 +345,110 @@ describe("forbidden tokens and totals", () => {
     assert.equal(sum, 100);
   });
 });
+
+describe("subsection headings (## N.M) and section boundaries", () => {
+  const SUBSECTIONS_FIXTURE = "good-ecommerce-tienda-basica-subsecciones.md";
+
+  it("scores a subsection-style document like the plain one (total >= 95)", () => {
+    const evalCase = loadCase();
+    const plain = scoreMddAgainstCase(readFixture("good-ecommerce-tienda-basica.md"), evalCase);
+    const sub = scoreMddAgainstCase(readFixture(SUBSECTIONS_FIXTURE), evalCase);
+    assert.ok(sub.total >= 95, `total ${sub.total} < 95`);
+    for (const key of ["entities", "capabilities", "structure"] as const) {
+      const expected = plain.dimensions.find((d) => d.key === key)?.score;
+      assert.equal(sub.dimensions.find((d) => d.key === key)?.score, expected, `dimensión ${key}`);
+    }
+    assert.deepEqual(sub.failures, []);
+  });
+
+  it("keeps §3 whole across ## 3.1 and ## 3.2 subsections", () => {
+    const md = "## 3. Modelo\n\nIntro.\n\n## 3.1 Esquema SQL\n\nSQL.\n\n## 3.2 Diagrama ER\n\nER.\n\n## 4. Contratos\n\nRutas.\n";
+    assert.equal(extractMddSectionBody(md, 3), "Intro.\n\n## 3.1 Esquema SQL\n\nSQL.\n\n## 3.2 Diagrama ER\n\nER.");
+    assert.equal(extractMddSectionBody(md, 4), "Rutas.");
+  });
+
+  it("still ends §3 at a level-2 heading numbered 4 in any variant", () => {
+    for (const heading of ["## 4. Contratos", "## 4 Contratos", "## 4) Contratos"]) {
+      const md = `## 3. Modelo\n\nIntro.\n\n${heading}\n\nRutas.\n`;
+      assert.equal(extractMddSectionBody(md, 3), "Intro.", heading);
+    }
+  });
+
+  it("ends §5 at an unnumbered level-2 heading and §1 at a level-1 heading", () => {
+    assert.equal(extractMddSectionBody("## 5. Lógica\n\nTexto cinco.\n\n## Seguridad\n\nTexto seis.\n", 5), "Texto cinco.");
+    assert.equal(extractMddSectionBody("## 1. Contexto\n\nUno.\n\n# Apéndice\n\nDos.\n", 1), "Uno.");
+  });
+
+  it("does not end a section at level-3 subheadings", () => {
+    assert.equal(extractMddSectionBody("## 1. Contexto\n\nUno.\n\n### Detalle\n\nDos.\n", 1), "Uno.\n\n### Detalle\n\nDos.");
+  });
+
+  it("ignores headings inside fences when looking for the section end", () => {
+    const md = "## 3. Modelo\n\n```md\n## 4. Falso\n```\n\nFin.\n\n## 4. Real\n\nX.\n";
+    assert.equal(extractMddSectionBody(md, 3), "```md\n## 4. Falso\n```\n\nFin.");
+  });
+});
+
+describe("entities and capabilities outside their sections", () => {
+  it("falls back to SQL found outside §3, with a detail line and no missing-entity failure", () => {
+    const md = buildMdd({ overrides: { 3: FILLER, 5: `${FILLER}\n\n${sqlBlock("users", "orders", "order_items")}` } });
+    const evalCase = caseWith({ entities: ["users", "orders", "order_items"], entitySynonyms: {} });
+    const score = scoreMddAgainstCase(md, evalCase);
+    const entities = score.dimensions.find((d) => d.key === "entities");
+    assert.equal(entities?.score, 100);
+    assert.ok(
+      entities?.details.includes("entidades: SQL/erDiagram encontrados fuera de §3 (revisar numeración de secciones)"),
+    );
+    assert.deepEqual(score.failures.filter((f) => f.startsWith("entidades")), []);
+  });
+
+  it("still reports entities missing from the whole-document fallback", () => {
+    const md = buildMdd({ overrides: { 3: FILLER, 5: `${FILLER}\n\n${sqlBlock("users")}` } });
+    const evalCase = caseWith({ entities: ["users", "invoices"], entitySynonyms: {} });
+    const score = scoreMddAgainstCase(md, evalCase);
+    assert.equal(dimensionScore(md, evalCase, "entities"), 50);
+    assert.ok(score.failures.includes('entidades: falta "invoices" en §3 (ni CREATE TABLE ni entidad erDiagram)'));
+  });
+
+  it("writes the entities diagnostic line with fence languages and counts", () => {
+    const er = "```mermaid\nerDiagram\n  USERS ||--o{ ORDERS : places\n```";
+    const md = buildMdd({ overrides: { 3: `${sqlBlock("users")}\n\n${er}\n\n${FILLER}` } });
+    const score = scoreMddAgainstCase(md, caseWith({ entities: ["users"], entitySynonyms: {} }));
+    const entities = score.dimensions.find((d) => d.key === "entities");
+    assert.ok(
+      entities?.details.includes(
+        "diagnóstico: fences en §3 = [sql, mermaid], CREATE TABLE en §3 = 1, en documento = 1, entidades erDiagram en documento = 2",
+      ),
+      entities?.details.join(" | "),
+    );
+  });
+
+  it("counts an untagged fence only when it contains CREATE TABLE", () => {
+    const withCreate = "```\nCREATE TABLE users (\n  id UUID PRIMARY KEY\n);\n```";
+    const withoutCreate = "```\nSELECT * FROM users;\n```";
+    const evalCase = caseWith({ entities: ["users"], entitySynonyms: {} });
+    assert.equal(dimensionScore(buildMdd({ overrides: { 3: `${withCreate}\n\n${FILLER}` } }), evalCase, "entities"), 100);
+    assert.equal(dimensionScore(buildMdd({ overrides: { 3: `${withoutCreate}\n\n${FILLER}` } }), evalCase, "entities"), 0);
+  });
+
+  it("accepts SQL-like fence tags in any case", () => {
+    const evalCase = caseWith({ entities: ["users"], entitySynonyms: {} });
+    for (const tag of ["SQL", "PostgreSQL", "pgsql"]) {
+      const block = "```" + tag + "\nCREATE TABLE users (id INT);\n```";
+      const md = buildMdd({ overrides: { 3: `${block}\n\n${FILLER}` } });
+      assert.equal(dimensionScore(md, evalCase, "entities"), 100, tag);
+    }
+  });
+
+  it("scores capabilities from the whole document when §4 has no routes", () => {
+    const evalCase = caseWith({ capabilities: [{ name: "Pagos", endpointHints: ["/checkout"] }] });
+    const md = buildMdd({
+      overrides: { 4: FILLER, 5: `${FILLER}\n\n| Método | Ruta |\n|---|---|\n| POST | /checkout |` },
+    });
+    const score = scoreMddAgainstCase(md, evalCase);
+    const capabilities = score.dimensions.find((d) => d.key === "capabilities");
+    assert.equal(capabilities?.score, 100);
+    assert.ok(capabilities?.details.includes("diagnóstico: rutas en §4 = 0, rutas en documento = 1"));
+    assert.deepEqual(score.failures.filter((f) => f.startsWith("capacidades")), []);
+  });
+});

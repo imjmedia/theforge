@@ -32,10 +32,13 @@ const EN_STOPWORDS = new Set([
 ]);
 
 const SECTION_HEADING_RE = /^##\s+(\d+)(?:[.)])?(?:\s|$)/;
-const TOP_LEVEL_HEADING_RE = /^#{1,2}\s/;
+const LEVEL1_HEADING_RE = /^#\s/;
+const LEVEL2_HEADING_RE = /^##\s/;
+const LEADING_NUMBER_RE = /^##\s+(\d+)/;
 const FENCE_OPEN_RE = /^\s*```(.*)$/;
 const FENCE_CLOSE_RE = /^\s*```\s*$/;
 const CREATE_TABLE_RE = /\bcreate\s+table\s+(?:if\s+not\s+exists\s+)?([^\s(;]+)/gi;
+const CREATE_TABLE_TEST_RE = /\bcreate\s+table\b/i;
 const ER_DIAGRAM_RE = /^\s*erDiagram\b/m;
 const ER_ENTITY_BLOCK_RE = /^\s*"?([A-Za-z_][\w-]*)"?\s*\{/;
 const ER_RELATION_RE = /^\s*"?([A-Za-z_][\w-]*)"?\s+[|o}{.-]+\s+"?([A-Za-z_][\w-]*)"?\s*:/;
@@ -108,8 +111,21 @@ function normalizeText(text: string): string {
 }
 
 /**
- * Cuerpo de la sección `## N. Título` (o variantes `## N Título`, `## N) Título`).
- * Ignora encabezados dentro de bloques de código. Devuelve null si la sección no existe.
+ * Un encabezado cierra la sección N si es de nivel 1 (`# ...`), de nivel 2 sin número
+ * (`## Seguridad`) o de nivel 2 con un número distinto de N (`## 4.`, `## 4 `, `## 4)`).
+ * Los `## N.M ...` son subsecciones de N y no la cierran.
+ */
+function closesSection(line: string, sectionNumber: number): boolean {
+  if (LEVEL1_HEADING_RE.test(line)) return true;
+  if (!LEVEL2_HEADING_RE.test(line)) return false;
+  const leading = LEADING_NUMBER_RE.exec(line);
+  return leading === null || Number(leading[1]) !== sectionNumber;
+}
+
+/**
+ * Cuerpo de la sección `## N. Título` (o variantes `## N Título`, `## N) Título`), incluidas
+ * sus subsecciones `## N.M ...`. Ignora encabezados dentro de bloques de código.
+ * Devuelve null si la sección no existe.
  */
 export function extractMddSectionBody(markdown: string, sectionNumber: number): string | null {
   const lines = splitLines(markdown);
@@ -120,7 +136,7 @@ export function extractMddSectionBody(markdown: string, sectionNumber: number): 
     const line = lines[i] ?? "";
     if (start === -1) {
       if (sectionNumberOf(line) === sectionNumber) start = i + 1;
-    } else if (TOP_LEVEL_HEADING_RE.test(line)) {
+    } else if (closesSection(line, sectionNumber)) {
       return lines.slice(start, i).join("\n").trim();
     }
   }
@@ -239,35 +255,77 @@ function scoreStructure(markdown: string, failures: string[]): MddEvalDimension 
   return dimension("structure", score, details);
 }
 
+/** Fence SQL: etiqueta tipo sql/PostgreSQL/pgsql, o sin etiqueta si su contenido tiene CREATE TABLE. */
+function isSqlFence(block: Fence): boolean {
+  if (block.lang === "") return CREATE_TABLE_TEST_RE.test(block.content);
+  return SQL_LANGS.has(block.lang) || block.lang.includes("sql");
+}
+
+/** Nombres de tabla de los `CREATE TABLE` en fences SQL del texto. */
+function sqlTableNames(text: string): string[] {
+  const names: string[] = [];
+  for (const block of scanFences(splitLines(text)).blocks) {
+    if (!isSqlFence(block)) continue;
+    for (const match of block.content.matchAll(CREATE_TABLE_RE)) names.push(match[1] ?? "");
+  }
+  return names;
+}
+
+/** Nombres de entidad (bloques y extremos de relación) de los bloques mermaid erDiagram del texto. */
+function erEntityNames(text: string): string[] {
+  const names: string[] = [];
+  for (const block of scanFences(splitLines(text)).blocks) {
+    if (block.lang !== "mermaid" || !ER_DIAGRAM_RE.test(block.content)) continue;
+    for (const line of block.content.split("\n")) {
+      const entity = ER_ENTITY_BLOCK_RE.exec(line);
+      if (entity) names.push(entity[1] ?? "");
+      const relation = ER_RELATION_RE.exec(line);
+      if (relation) names.push(relation[1] ?? "", relation[2] ?? "");
+    }
+  }
+  return names;
+}
+
+function namesToVariants(names: string[]): Set<string> {
+  const variants = new Set<string>();
+  for (const name of names) addEntityVariants(variants, name);
+  return variants;
+}
+
+function distinctEntityCount(names: string[]): number {
+  return new Set(names.map(normalizeEntityName).filter((name) => name !== "")).size;
+}
+
 function scoreEntities(
   expect: MddEvalCase["expect"],
   section3: string | null,
+  markdown: string,
   failures: string[],
 ): MddEvalDimension {
-  const sqlVariants = new Set<string>();
-  const erVariants = new Set<string>();
-  if (section3 !== null) {
-    for (const block of scanFences(splitLines(section3)).blocks) {
-      if (SQL_LANGS.has(block.lang)) {
-        for (const match of block.content.matchAll(CREATE_TABLE_RE)) {
-          addEntityVariants(sqlVariants, match[1] ?? "");
-        }
-      } else if (block.lang === "mermaid" && ER_DIAGRAM_RE.test(block.content)) {
-        for (const line of block.content.split("\n")) {
-          const entity = ER_ENTITY_BLOCK_RE.exec(line);
-          if (entity) addEntityVariants(erVariants, entity[1] ?? "");
-          const relation = ER_RELATION_RE.exec(line);
-          if (relation) {
-            addEntityVariants(erVariants, relation[1] ?? "");
-            addEntityVariants(erVariants, relation[2] ?? "");
-          }
-        }
-      }
-    }
+  const section3Text = section3 ?? "";
+  const section3Sql = sqlTableNames(section3Text);
+  const section3Er = erEntityNames(section3Text);
+  const documentSql = sqlTableNames(markdown);
+  const documentEr = erEntityNames(markdown);
+  const details: string[] = [];
+
+  let sqlVariants = namesToVariants(section3Sql);
+  let erVariants = namesToVariants(section3Er);
+  if (section3Sql.length === 0 && section3Er.length === 0 && documentSql.length + documentEr.length > 0) {
+    // §3 no tiene tablas ni entidades (típico de subsecciones mal numeradas): se puntúa el documento entero.
+    sqlVariants = namesToVariants(documentSql);
+    erVariants = namesToVariants(documentEr);
+    details.push("entidades: SQL/erDiagram encontrados fuera de §3 (revisar numeración de secciones)");
   }
 
+  const fenceLangs = section3 === null
+    ? []
+    : scanFences(splitLines(section3)).blocks.map((block) => block.lang || "(sin etiqueta)");
+  details.push(
+    `diagnóstico: fences en §3 = [${fenceLangs.join(", ")}], CREATE TABLE en §3 = ${section3Sql.length}, en documento = ${documentSql.length}, entidades erDiagram en documento = ${distinctEntityCount(documentEr)}`,
+  );
+
   let found = 0;
-  const details: string[] = [];
   for (const entity of expect.entities) {
     const candidates = [entity, ...(expect.entitySynonyms[entity] ?? [])].map(entityVariants);
     const inSql = candidates.some((variants) => setsIntersect(variants, sqlVariants));
@@ -285,12 +343,23 @@ function scoreEntities(
 
 function scoreCapabilities(
   expect: MddEvalCase["expect"],
+  markdown: string,
   section4: string | null,
   failures: string[],
 ): MddEvalDimension {
-  const routeText = (section4 === null ? [] : extractRouteTokensFromSection4(section4)).join("\n");
-  let covered = 0;
+  const section4Routes = section4 === null ? [] : extractRouteTokensFromSection4(section4);
+  const documentRoutes = extractRouteTokensFromSection4(markdown);
   const details: string[] = [];
+  const routes = section4Routes.length > 0 ? section4Routes : documentRoutes;
+  if (section4Routes.length === 0 && documentRoutes.length > 0) {
+    // §4 no tiene rutas (típico de subsecciones mal numeradas): se usan las del documento entero.
+    details.push("capacidades: no hay rutas en §4; usadas las del documento completo (revisar numeración de secciones)");
+  }
+  details.push(
+    `diagnóstico: rutas en §4 = ${section4Routes.length}, rutas en documento = ${documentRoutes.length}`,
+  );
+  const routeText = routes.join("\n");
+  let covered = 0;
   for (const capability of expect.capabilities) {
     const matched = capability.endpointHints.filter((hint) => routeText.includes(hint.toLowerCase()));
     if (matched.length > 0) {
@@ -417,8 +486,8 @@ export function scoreMddAgainstCase(markdown: string, evalCase: MddEvalCase): Md
 
   const dimensions: MddEvalDimension[] = [
     scoreStructure(markdown, failures),
-    scoreEntities(expect, section3, failures),
-    scoreCapabilities(expect, section4, failures),
+    scoreEntities(expect, section3, markdown, failures),
+    scoreCapabilities(expect, markdown, section4, failures),
     scoreTokenSet("security", "seguridad", 6, expect.security, section6, failures),
     scoreTokenSet("infra", "infra", 7, expect.infra, section7, failures),
     scoreContext(expect.mustMentionInContext, section1, failures),

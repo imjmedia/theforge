@@ -150,10 +150,10 @@ describe("MddEvalService.startRun", () => {
     assert.equal(done.aggregates?.cases, 2);
     assert.deepEqual([done.progress.total, done.progress.done, done.progress.running], [2, 2, []]);
 
-    const markdown = asAdmin(() => controller.getCaseMarkdown(first.runId, "caso-a"));
+    const markdown = await asAdmin(() => controller.getCaseMarkdown(first.runId, "caso-a"));
     assert.match(markdown, /^# MDD/);
-    assert.throws(() => service.getCaseMarkdown(first.runId, "nope"), /no encontrado/);
-    assert.throws(() => service.getCaseMarkdown(first.runId, "../summary"), /no encontrado/);
+    await assert.rejects(service.getCaseMarkdown(first.runId, "nope"), /no encontrado/);
+    await assert.rejects(service.getCaseMarkdown(first.runId, "../summary"), /no encontrado/);
 
     // Una corrida anterior solo en disco (como las del CLI: sin run.json).
     await writeEvalResults(

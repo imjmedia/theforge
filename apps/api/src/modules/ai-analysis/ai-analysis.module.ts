@@ -16,6 +16,7 @@ import { MddJobEventsService } from "./mdd/mdd-job-events.service.js";
 import { MddQueueService } from "./mdd/mdd-queue.service.js";
 import { MddUpstreamSyncService } from "./mdd/mdd-upstream-sync.service.js";
 import { MddEvalController } from "./eval/mdd-eval.controller.js";
+import { MddEvalArtifactStore } from "./eval/mdd-eval-artifact-store.js";
 import { MddEvalQueueService } from "./eval/mdd-eval-queue.service.js";
 import { MddEvalService } from "./eval/mdd-eval.service.js";
 import { TraceabilitySuggestService } from "./traceability/traceability-suggest.service.js";
@@ -47,6 +48,7 @@ import { MddCoherenceModule } from "../engine/mdd-coherence/mdd-coherence.module
     MddJobEventsService,
     MddQueueService,
     MddUpstreamSyncService,
+    MddEvalArtifactStore,
     MddEvalQueueService,
     MddEvalService,
     TraceabilitySuggestService,

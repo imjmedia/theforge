@@ -10,6 +10,7 @@ import {
   runEvalCase,
   runEvalSuite,
   type EvalStreamEvent,
+  type EvalTokenUsage,
   type MddEvalRunnerDeps,
 } from "./mdd-eval-runner.js";
 
@@ -96,6 +97,8 @@ const GOOD_DONE: EvalStreamEvent = {
   type: "done",
   markdown: "# MDD\n\n## 1. Contexto\n" + "texto ".repeat(40),
   precision: 90,
+  auditorScore: 90,
+  auditorRan: true,
   status: "green",
   deliveryGate: { ok: true, score: 90, blockers: [], warnings: ["aviso"] },
   auditTrail: ["paso 1"],
@@ -132,11 +135,27 @@ describe("runEvalCase", () => {
   });
 
   it("falla si el Auditor queda por debajo del umbral del caso", async () => {
-    const { deps } = makeDeps({ events: [{ ...GOOD_DONE, precision: 80 } as EvalStreamEvent] });
+    const { deps } = makeDeps({ events: [{ ...GOOD_DONE, auditorScore: 80 } as EvalStreamEvent] });
     const record = await runEvalCase(deps, makeCase("ecommerce-audit"), { timeoutMs: 5_000 });
     assert.equal(record.passed, false);
     assert.equal(record.error, undefined);
     assert.equal(record.rubric.passed, true);
+  });
+
+  it("auditorScore sale de done.auditorScore, nunca del porcentaje del semáforo (precision)", async () => {
+    const done = { ...GOOD_DONE, precision: 99, auditorScore: 70, auditorRan: true } as EvalStreamEvent;
+    const record = await runEvalCase(makeDeps({ events: [done] }).deps, makeCase("ecommerce-auditor-src"), { timeoutMs: 5_000 });
+    assert.equal(record.auditorScore, 70);
+    assert.equal(record.precision, 99);
+    assert.equal(record.passed, false, "70 < 85: el umbral se aplica al score del Auditor");
+  });
+
+  it("sin Auditor (auditorRan=false) no hay auditorScore aunque haya precision, y no se exige umbral", async () => {
+    const done = { ...GOOD_DONE, precision: 40, auditorScore: 40, auditorRan: false } as EvalStreamEvent;
+    const record = await runEvalCase(makeDeps({ events: [done] }).deps, makeCase("ecommerce-no-auditor"), { timeoutMs: 5_000 });
+    assert.equal(record.auditorScore, undefined);
+    assert.equal(record.precision, 40);
+    assert.equal(record.passed, true);
   });
 
   it("no exige auditor cuando el Auditor no corrió (failedStep)", async () => {
@@ -306,5 +325,59 @@ describe("computeEvalAggregates", () => {
     assert.equal(empty.avgAuditor, null);
     assert.equal(empty.totalCostUsd, null);
     assert.equal(empty.totalLlmCalls, null);
+  });
+});
+
+describe("uso de tokens del caso", () => {
+  /** Dependencias con registro del orden de llamadas y de las pausas de reintento. */
+  function withCallLog(scenario: Scenario, usage: (call: number) => EvalTokenUsage) {
+    const { deps, deleted } = makeDeps(scenario);
+    const calls: string[] = [];
+    const sleeps: number[] = [];
+    let usageCalls = 0;
+    const logged: MddEvalRunnerDeps = {
+      ...deps,
+      async getTokenUsage() {
+        usageCalls += 1;
+        calls.push("usage");
+        return usage(usageCalls);
+      },
+      async deleteTempProject(projectId) {
+        calls.push("delete");
+        await deps.deleteTempProject(projectId);
+      },
+      async sleep(ms) {
+        sleeps.push(ms);
+      },
+    };
+    return { deps: logged, calls, sleeps, deleted, usageCalls: () => usageCalls };
+  }
+
+  it("lee el uso antes de borrar el proyecto temporal", async () => {
+    const { deps, calls, deleted } = withCallLog({ events: [GOOD_DONE] }, () => ({ llmCalls: 3 }));
+    await runEvalCase(deps, makeCase("ecommerce-order"), { timeoutMs: 5_000 });
+    assert.deepEqual(calls, ["usage", "delete"]);
+    assert.deepEqual(deleted, ["p-ecommerce-order"]);
+  });
+
+  it("reintenta la lectura si aún no hay generaciones registradas", async () => {
+    const { deps, calls, sleeps } = withCallLog({ events: [GOOD_DONE] }, (call) =>
+      call < 3 ? { llmCalls: 0 } : { llmCalls: 5, promptTokens: 1000, completionTokens: 500, costUsd: 0.1 },
+    );
+    const record = await runEvalCase(deps, makeCase("ecommerce-retry"), { timeoutMs: 5_000 });
+    assert.equal(record.llmCalls, 5);
+    assert.equal(record.costUsd, 0.1);
+    assert.deepEqual(sleeps, [1_000, 1_000]);
+    assert.deepEqual(calls, ["usage", "usage", "usage", "delete"]);
+  });
+
+  it("tras 3 reintentos sin datos lo anota en el registro y no falla el caso por ello", async () => {
+    const { deps, sleeps, usageCalls } = withCallLog({ events: [GOOD_DONE] }, () => ({ llmCalls: 0 }));
+    const record = await runEvalCase(deps, makeCase("ecommerce-nousage"), { timeoutMs: 5_000 });
+    assert.equal(usageCalls(), 4, "1 lectura + 3 reintentos");
+    assert.deepEqual(sleeps, [1_000, 1_000, 1_000]);
+    assert.equal(record.llmCalls, 0);
+    assert.ok(record.auditTrail.some((line) => line.includes("sin generaciones")));
+    assert.equal(record.passed, true);
   });
 });
