@@ -356,16 +356,80 @@ function splitBlockquoteFromGluedTableLine(line: string): string {
   return `${indent}> ${match[1]!.trim()}\n\n${indent}${match[2]!.trim()}`;
 }
 
+/** Un fence de código localizado por `scanFenceRanges`. */
+export interface FenceRange {
+  /** Índice de la línea de apertura. */
+  open: number;
+  /** Índice de la última línea del fence: el cierre, o la última línea del documento si no cierra. */
+  end: number;
+  /** `true` si `end` es una línea de cierre real. */
+  closed: boolean;
+  /** Info string de la apertura (p. ej. `mermaid`, `json`); vacío si no hay. */
+  info: string;
+}
+
+/**
+ * Localiza todos los fences de código (CommonMark: apertura con 3+ acentos graves o tildes, cierre con
+ * el mismo carácter y longitud >=). Un fence sin cierre se extiende hasta el final del documento, igual
+ * que en CommonMark. El contenido de un fence no se interpreta, así que un ```mermaid dentro de un
+ * fence de 4 acentos graves no cuenta.
+ */
+export function scanFenceRanges(lines: readonly string[]): FenceRange[] {
+  const ranges: FenceRange[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec((lines[i] ?? "").replace(/\r$/, ""));
+    // Un info string con acentos graves no abre fence (CommonMark).
+    if (!open || (open[1]![0] === "`" && open[2]!.includes("`"))) {
+      i++;
+      continue;
+    }
+    const marker = open[1]!;
+    const closeRe = new RegExp(`^ {0,3}\\${marker[0]}{${marker.length},}[ \\t]*$`);
+    let end = -1;
+    for (let j = i + 1; j < lines.length; j++) {
+      if (closeRe.test((lines[j] ?? "").replace(/\r$/, ""))) {
+        end = j;
+        break;
+      }
+    }
+    const closed = end !== -1;
+    if (!closed) end = lines.length - 1;
+    ranges.push({ open: i, end, closed, info: open[2]!.trim() });
+    i = end + 1;
+  }
+  return ranges;
+}
+
+/** Marca qué líneas están dentro de un fence de código o son su apertura/cierre. */
+export function fencedLineMask(lines: readonly string[]): boolean[] {
+  const mask: boolean[] = new Array<boolean>(lines.length).fill(false);
+  for (const r of scanFenceRanges(lines)) {
+    for (let k = r.open; k <= r.end; k++) mask[k] = true;
+  }
+  return mask;
+}
+
+/**
+ * Aplica `fn` solo a las líneas fuera de fences de código; las de dentro (incluidas apertura y cierre)
+ * se devuelven byte a byte. Sin esto, las reparaciones de tablas parten `-->|Sí|` (flowchart) o `||--|{`
+ * (erDiagram) dentro de ```mermaid.
+ */
+function mapLinesOutsideFences(document: string, fn: (line: string) => string): string {
+  const lines = document.split("\n");
+  const mask = fencedLineMask(lines);
+  return lines.map((line, i) => (mask[i] ? line : fn(line))).join("\n");
+}
+
 /**
  * Despega prosa, headings o blockquotes del primer `|` de una fila de tabla GFM.
  * Complementa `repairCollapsedPipeTables` cuando la cabecera queda en la misma línea que el texto previo.
  */
 export function repairProseGluedTableLines(document: string): string {
   if (!document?.trim()) return document ?? "";
-  return document
-    .split("\n")
-    .map((line) => splitBlockquoteFromGluedTableLine(splitProsePrefixFromTableLine(line)))
-    .join("\n");
+  return mapLinesOutsideFences(document, (line) =>
+    splitBlockquoteFromGluedTableLine(splitProsePrefixFromTableLine(line)),
+  );
 }
 
 /**
@@ -375,25 +439,22 @@ export function repairProseGluedTableLines(document: string): string {
  */
 export function repairCollapsedPipeTables(document: string): string {
   if (!document?.trim()) return document ?? "";
-  const expanded = document
-    .split("\n")
-    .map((line) => {
-      const pipeCount = (line.match(/\|/g) ?? []).length;
-      if (pipeCount < 8) return line;
-      if (!/\|\s*\|/.test(line)) return line;
+  const expanded = mapLinesOutsideFences(document, (line) => {
+    const pipeCount = (line.match(/\|/g) ?? []).length;
+    if (pipeCount < 8) return line;
+    if (!/\|\s*\|/.test(line)) return line;
 
-      const firstPipe = line.indexOf("|");
-      const prefix = firstPipe > 0 ? line.slice(0, firstPipe) : "";
-      const tablePart = line.slice(firstPipe);
-      const rows = tablePart.split(/(?<=\|)\s*(?=\|)/).map((chunk) => {
-        let s = chunk.trim();
-        if (!s.startsWith("|")) s = `| ${s}`;
-        if (!s.endsWith("|")) s = `${s} |`;
-        return s.replace(/\|\s+\|/g, "| |").replace(/^\|\s+\|/, "|");
-      });
-      if (rows.length < 2) return line;
-      return prefix + rows.join("\n");
-    })
-    .join("\n");
+    const firstPipe = line.indexOf("|");
+    const prefix = firstPipe > 0 ? line.slice(0, firstPipe) : "";
+    const tablePart = line.slice(firstPipe);
+    const rows = tablePart.split(/(?<=\|)\s*(?=\|)/).map((chunk) => {
+      let s = chunk.trim();
+      if (!s.startsWith("|")) s = `| ${s}`;
+      if (!s.endsWith("|")) s = `${s} |`;
+      return s.replace(/\|\s+\|/g, "| |").replace(/^\|\s+\|/, "|");
+    });
+    if (rows.length < 2) return line;
+    return prefix + rows.join("\n");
+  });
   return repairProseGluedTableLines(expanded);
 }

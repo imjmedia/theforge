@@ -627,18 +627,110 @@ export function repairErDiagramPkFkCommas(content: string): string {
     .replace(/\bFK\s+PK\b/gi, "PK");
 }
 
-/** Si el cuerpo parece erDiagram pero falta la declaración inicial, la antepone. */
+/**
+ * Fuente única de las cabeceras de diagrama de Mermaid 11 (`flowchart TD`, `sequenceDiagram`, …).
+ * Las formas con sufijo (`-beta`, `-v2`) y los nombres propios del tipo van siempre; los nombres
+ * genéricos (`block`, `packet`, `sankey`, `architecture`, `radar`, `treemap`) solo si ocupan la línea
+ * entera para no confundir prosa ("block de código…") con una cabecera.
+ */
+const MERMAID_DIAGRAM_HEADER_LINE = new RegExp(
+  "^(?:" +
+    [
+      "flowchart",
+      "graph",
+      "sequenceDiagram",
+      "classDiagram",
+      "stateDiagram(?:-v2)?",
+      "erDiagram",
+      "journey",
+      "gantt",
+      "pie",
+      "quadrantChart",
+      "requirementDiagram",
+      "gitGraph",
+      "C4Context",
+      "C4Container",
+      "C4Component",
+      "C4Dynamic",
+      "C4Deployment",
+      "mindmap",
+      "timeline",
+      "zenuml",
+      "kanban",
+      "sankey-beta",
+      "xychart-beta",
+      "xychart",
+      "block-beta",
+      "blockDiagram",
+      "packet-beta",
+      "architecture-beta",
+      "radar-beta",
+      "treemap-beta",
+    ].join("|") +
+    ")\\b|^(?:sankey|block|packet|architecture|radar|treemap)\\s*$",
+  "i",
+);
+
+/** True si la línea (sin fence) es la cabecera de un diagrama Mermaid 11 de cualquier tipo. */
+export function isMermaidDiagramHeaderLine(line: string): boolean {
+  return MERMAID_DIAGRAM_HEADER_LINE.test((line ?? "").trim());
+}
+
+/** Índice (en `lines`) de la línea de cierre del front-matter `---…---` inicial, o -1 si no hay. */
+function mermaidFrontMatterEndIndex(lines: string[]): number {
+  let i = 0;
+  while (i < lines.length && !lines[i]!.trim()) i++;
+  if (i >= lines.length || lines[i]!.trim() !== "---") return -1;
+  for (let j = i + 1; j < lines.length; j++) {
+    if (lines[j]!.trim() === "---") return j;
+  }
+  return -1;
+}
+
+/**
+ * Separa el preámbulo de un diagrama (front-matter `---…---`, directivas `%%{init…}%%` y
+ * comentarios `%%`) del resto. Es texto que Mermaid lee antes de la cabecera y que ninguna
+ * reparación debe tocar.
+ */
+export function splitMermaidPreamble(text: string): { preamble: string; rest: string } {
+  const lines = (text ?? "").split("\n");
+  let idx = mermaidFrontMatterEndIndex(lines) + 1;
+  while (idx < lines.length) {
+    const t = lines[idx]!.trim();
+    if (t && !t.startsWith("%%")) break;
+    idx++;
+  }
+  if (idx >= lines.length) return { preamble: "", rest: (text ?? "").trim() };
+  return {
+    preamble: lines.slice(0, idx).join("\n").trim(),
+    rest: lines.slice(idx).join("\n").trim(),
+  };
+}
+
+/** True si la primera línea útil (tras front-matter y directivas) es una cabecera de diagrama. */
+export function startsWithMermaidDiagramHeader(text: string): boolean {
+  const first = splitMermaidPreamble(text).rest.split("\n", 1)[0] ?? "";
+  return isMermaidDiagramHeaderLine(first);
+}
+
+/** Relación erDiagram con cardinalidades (`||--o{`, `}o--||`, `||..o{`…). */
+const ER_RELATION_TOKEN_RE = /[|}][|o]\s*(?:--|\.\.)\s*[|o][|{]/;
+
+/**
+ * Si el cuerpo es un erDiagram sin cabecera (hay relaciones ER o bloques `Entidad {` con atributos),
+ * antepone `erDiagram`. Si ya empieza por una cabecera de cualquier tipo, lo devuelve sin cambios:
+ * `B{¿Válido?}` de un flowchart no es una entidad.
+ */
 export function ensureErDiagramHeader(content: string): string {
   const t = (content ?? "").trim();
   if (!t) return t;
-  if (/^erDiagram\b/i.test(t)) return t;
-  if (/^\s*\w[\w]*\s*\{/m.test(t)) return `erDiagram\n\n${t}`;
+  if (startsWithMermaidDiagramHeader(t)) return t;
+  const { preamble, rest } = splitMermaidPreamble(t);
+  if (ER_RELATION_TOKEN_RE.test(rest) || /^\s*\w[\w]*\s*\{\s*$/m.test(rest)) {
+    return `${preamble ? `${preamble}\n` : ""}erDiagram\n\n${rest}`;
+  }
   return t;
 }
-
-/** Regex de cabecera de diagrama en la primera columna de una línea (sin fence). */
-const MERMAID_DIAGRAM_HEADER_LINE =
-  /^(erDiagram|flowchart|graph|sequenceDiagram|stateDiagram(?:-v2)?|classDiagram|gantt|pie|gitGraph|mindmap|timeline|journey|quadrantChart|xychart-beta|xychart|block-beta|blockDiagram|packet-beta|sankey-beta|architecture-beta|requirementDiagram|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment)\b/i;
 
 /**
  * Quita envoltorios ``` / ```mermaid (incl. anidados) del cuerpo antes de normalizar o renderizar.
@@ -805,6 +897,10 @@ export function quoteFlowchartLabelsWithParens(content: string): string {
     // Cylinder nodes: [(DB costos)] or [("PostgreSQL · N tablas")]
     if (/^\([^()]*\)$/.test(t)) return match;
     if (/^\(\s*"/.test(t) && /"\s*\)$/.test(t)) return match;
+    // Cilindro con paréntesis anidados: `[(DB (principal))]` → se cita lo de dentro, conservando la forma.
+    if (/^\(.*\)$/.test(t)) return `[("${t.slice(1, -1).trim()}")]`;
+    // Trapezoides `[/ x (y) /]` y `[\ x (y) \]`: forma propia de Mermaid, no se convierten en rectángulo.
+    if (/^[\/\\]/.test(t) && /[\/\\]$/.test(t)) return match;
     return `["${inner}"]`;
   });
 }
@@ -826,12 +922,17 @@ export function stripFlowchartTrailingTextGarbage(content: string): string {
     .join("\n");
 }
 
-/** flowchart/graph: labels con espacios o acentos sin comillas (`A[Módulo Tenants]`). */
+/**
+ * flowchart/graph: labels con espacios o acentos sin comillas (`A[Módulo Tenants]`).
+ * Solo toca el rectángulo `id[…]`: las formas `[[ ]]`, `[( )]`, `[/ /]` y `[\ \]` se dejan intactas
+ * (el contenido empieza por `[`, `(`, `/` o `\`).
+ */
 export function quoteFlowchartSpacedLabels(content: string): string {
   if (!/^(flowchart|graph)\s/im.test((content ?? "").trim())) return content ?? "";
   return content.replace(
     /(\b[A-Za-z0-9_*][\w]*)\[([^\]"]+)\]/g,
     (match, id: string, label: string) => {
+      if (/^[\[(\/\\]/.test(label)) return match;
       if (!/\s/.test(label) && !/[^\x00-\x7F]/.test(label)) return match;
       const cleaned = label.replace(/"/g, "'").trim();
       return `${id}["${cleaned}"]`;
@@ -889,9 +990,14 @@ function slugFromFlowchartLabel(label: string): string {
   return /^[0-9]/.test(slug) ? `n_${slug}` : slug;
 }
 
+/** Fin de una flecha, de un `&` o de una etiqueta `|x|`: lo que sigue sigue siendo parte de la misma arista. */
+const FLOWCHART_EDGE_CONTINUATION_TAIL_RE = /(?:--+(?:>|x|o)?|==+>?|-\.+-*>?|&|\|[^|\n]*\|)$/;
+
 /**
- * flowchart/graph: el LLM a veces concatena varias aristas en una línea (`A --> B    C --> D`).
- * Mermaid 11 solo admite una arista por línea; partimos antes del nodo origen de la siguiente.
+ * flowchart/graph: el LLM a veces concatena varias aristas en una línea separadas solo por espacios
+ * (`A --> B    C --> D`), lo que Mermaid 11 rechaza. Partimos antes del nodo origen de la siguiente,
+ * SOLO si el espacio viene justo después de un nodo completo. Las cadenas (`A --> B --> C`) y los
+ * grupos (`S5 & SEC --> M`) son válidos y no se tocan.
  */
 export function splitFlowchartMultiEdgeLines(content: string): string {
   if (!/^(flowchart|graph)\s/im.test((content ?? "").trim())) return content ?? "";
@@ -912,7 +1018,17 @@ export function splitFlowchartMultiEdgeLines(content: string): string {
       const arrows = trimmed.match(new RegExp(FLOWCHART_EDGE_ARROW_RE.source, "g")) ?? [];
       if (arrows.length <= 1) return [line];
       const indent = line.match(/^(\s*)/)?.[1] ?? "";
-      const parts = trimmed.split(splitRe).filter(Boolean);
+      const parts: string[] = [];
+      let last = 0;
+      for (const m of trimmed.matchAll(splitRe)) {
+        const at = m.index ?? 0;
+        const before = trimmed.slice(last, at);
+        // Sigue la misma arista: no es un corte (cadena `A --> B --> C`, grupo `A & B --> C`).
+        if (!before.trim() || FLOWCHART_EDGE_CONTINUATION_TAIL_RE.test(trimmed.slice(0, at))) continue;
+        parts.push(before);
+        last = at + m[0].length;
+      }
+      parts.push(trimmed.slice(last));
       if (parts.length <= 1) return [line];
       return parts.map((part) => `${indent}${part.trim()}`);
     })
@@ -947,18 +1063,19 @@ export function validateMermaid(raw: string): string[] {
   const errors: string[] = [];
   if (!raw) return ["Empty mermaid content"];
 
-  const lines = raw.split("\n").filter((l) => l.trim());
+  // El front-matter y las directivas `%%{init}%%` preceden a la cabecera: no son el "primer tipo".
+  const lines = splitMermaidPreamble(raw).rest.split("\n").filter((l) => l.trim());
   if (lines.length === 0) return ["Empty mermaid content"];
 
   const firstLine = lines[0]!.trim();
 
   // Detectar tipo
-  const typeMatch = firstLine.match(/^(graph|flowchart|sequenceDiagram|classDiagram|erDiagram|stateDiagram|stateDiagram-v2|gantt|pie|gitGraph|quadrantChart|mindmap|timeline|xychart-beta|xychart|block-beta|block|packet-beta|sankey-beta|architecture-beta|requirementDiagram|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment)/i);
+  const typeMatch = firstLine.match(MERMAID_DIAGRAM_HEADER_LINE);
   if (!typeMatch) {
     errors.push(`Unknown diagram type. First line: "${firstLine}". Must start with a valid mermaid type.`);
   }
 
-  const mermaidType = typeMatch?.[1];
+  const mermaidType = typeMatch?.[0]?.trim();
 
   // Validaciones específicas por tipo
   if (mermaidType === "sequenceDiagram") {
@@ -1642,7 +1759,12 @@ function mermaidMarkdownLeakLine(trimmed: string): boolean {
   if (!trimmed) return false;
   if (/^```/.test(trimmed)) return true;
   // Prosa markdown (p. ej. nota _Propuesta derivada…_ bajo el fence mal cerrado)
-  if (/^_[^_\n]+(?:_.*)?$/.test(trimmed) && !/^(flowchart|graph|erDiagram|sequenceDiagram)\b/i.test(trimmed)) {
+  if (
+    /^_[^_\n]+(?:_.*)?$/.test(trimmed) &&
+    !/^(flowchart|graph|erDiagram|sequenceDiagram)\b/i.test(trimmed) &&
+    // `_start --> _end`, `_a[Label]`: un id de flowchart que empieza por `_` es sintaxis, no una nota en cursiva.
+    !/^_\w*(?:[\[({]|\s*(?:-->|---|==>|-\.->|--[xo>]|&))/.test(trimmed)
+  ) {
     return true;
   }
   if (/^#{1,6}\s/.test(trimmed)) {
@@ -1675,12 +1797,13 @@ function mermaidMarkdownLeakLine(trimmed: string): boolean {
   return false;
 }
 
-const MERMAID_BODY_START =
-  /^\s*(erDiagram|flowchart|graph|sequenceDiagram|stateDiagram(?:-v2)?|classDiagram|gantt|pie|gitGraph|mindmap|timeline|journey|quadrantChart|xychart|blockDiagram|requirementDiagram)\b/i;
-
 /** True si el cuerpo de un fence ```mermaid empieza con sintaxis de diagrama reconocible. */
 export function looksLikeMermaidDiagramBody(body: string): boolean {
-  return MERMAID_BODY_START.test((body ?? "").trim());
+  return startsWithMermaidDiagramBody(body);
+}
+
+function startsWithMermaidDiagramBody(body: string): boolean {
+  return startsWithMermaidDiagramHeader((body ?? "").trim());
 }
 
 /**
@@ -1699,7 +1822,7 @@ export function splitMermaidFenceBodyAtDocumentLeak(body: string): { diagram: st
   for (const line of lines) {
     const trimmed = line.trim();
     if (!inRemainder) {
-      if (MERMAID_BODY_START.test(trimmed)) {
+      if (isMermaidDiagramHeaderLine(trimmed)) {
         seenDiagramStart = true;
         inErDiagram = /^erDiagram\b/i.test(trimmed);
       }
@@ -1749,7 +1872,7 @@ export function stripMarkdownLeakFromMermaidDiagramBody(raw: string): string {
       break;
     }
 
-    if (MERMAID_DIAGRAM_HEADER_LINE.test(trimmed)) {
+    if (isMermaidDiagramHeaderLine(trimmed)) {
       seenDiagramStart = true;
       inErDiagram = /^erDiagram\b/i.test(trimmed);
       out.push(line);
@@ -1797,7 +1920,7 @@ export function splitMermaidBodyAndTrailingProse(inner: string): {
       continue;
     }
 
-    if (MERMAID_DIAGRAM_HEADER_LINE.test(trimmed)) {
+    if (isMermaidDiagramHeaderLine(trimmed)) {
       seenDiagramStart = true;
       inErDiagram = /^erDiagram\b/i.test(trimmed);
       diagramLines.push(line);
@@ -1852,20 +1975,23 @@ export function normalizeSequenceDiagramSyntax(body: string): string {
     line = line.replace(/^(\s*)participant\s+(?=\w)/i, "$1participant ");
     line = line.replace(/^(\s*)activate\s+/i, "$1activate ");
     line = line.replace(/^(\s*)deactivate\s+/i, "$1deactivate ");
-    line = line.replace(/^(\s*)note\s+/i, "$1note ");
+    // `Note over X` y `note over X` son válidos: no se cambia la capitalización (la reparación de
+    // `**Nota:**` emite `Note over` y reescribirlo en otra pasada rompía la idempotencia).
     line = line.replace(/^(\s*)loop\s+/i, "$1loop ");
-    line = line.replace(/^(\s*)alt\s*/i, "$1alt ");
-    line = line.replace(/^(\s*)else\s*/i, "$1else ");
-    line = line.replace(/^(\s*)opt\s*/i, "$1opt ");
+    // La palabra clave exige separador (`(?=\s|$)`): `AltaService->>Optimizador` es un id, no `alt aService`.
+    line = line.replace(/^(\s*)alt(?=\s|$)\s*/i, "$1alt ");
+    line = line.replace(/^(\s*)else(?=\s|$)\s*/i, "$1else ");
+    line = line.replace(/^(\s*)opt(?=\s|$)\s*/i, "$1opt ");
     if (
       /^(\s*)par\b/i.test(line) &&
       !/^(\s*)participant\b/i.test(line) &&
       !/^(\s*)par\s+ticipant\b/i.test(line)
     ) {
-      line = line.replace(/^(\s*)par\b/i, "$1par ");
+      // `par\s*` (no `par\b`): idempotente, `par A a B` no gana un espacio por pasada.
+      line = line.replace(/^(\s*)par(?=\s|$)\s*/i, "$1par ");
     }
-    line = line.replace(/^(\s*)critical\s*/i, "$1critical ");
-    line = line.replace(/^(\s*)break\s*/i, "$1break ");
+    line = line.replace(/^(\s*)critical(?=\s|$)\s*/i, "$1critical ");
+    line = line.replace(/^(\s*)break(?=\s|$)\s*/i, "$1break ");
     line = line.replace(/^(\s*)end\s*$/, "$1end");
     line = line.replace(/^(\s*)end\s*$/, "$1end");
 
@@ -1875,21 +2001,15 @@ export function normalizeSequenceDiagramSyntax(body: string): string {
       participantIds.add(participantMatch[2]!);
     }
 
-    // Quote participant labels missing quotes: participant Bob -> participant "Bob"
-    // But only if there's no quote yet and the label is not a bare ID
-    if (/^(\s*)participant\s+\w+\s+[A-Z][a-z]/.test(line) && !/"/.test(line)) {
-      line = line.replace(
-        /^(\s*)participant\s+(\w+)\s+(.+)$/,
-        "$1participant $2: \"$3\"",
-      );
-    }
+    // `participant Servicio Facturación` es válido (nombre con espacios): no se reescribe a
+    // `participant Servicio: "Facturación"`, que el parser rechaza.
 
     // Quote note labels missing quotes
-    if (/^(\s*)note\s+(left|right|top|bottom)\s+of\s+\w+\s*:\s*[^"]+$/.test(line)) {
+    if (/^(\s*)note\s+(left|right|top|bottom)\s+of\s+\w+\s*:\s*[^"]+$/i.test(line)) {
       line = line.replace(
-        /^(\s*)note\s+(left|right|top|bottom)\s+of\s+(\w+)\s*:\s*(.+)$/,
+        /^(\s*)note\s+(left|right|top|bottom)\s+of\s+(\w+)\s*:\s*(.+)$/i,
         (_m: string, indent: string, dir: string, id: string, text: string) =>
-          `${indent}note ${dir} of ${id}: "${text.trim()}"`,
+          `${indent}${_m.trim().slice(0, 4)} ${dir} of ${id}: "${text.trim()}"`,
       );
     }
 
@@ -1932,16 +2052,25 @@ function normalizeGraphKeywordToFlowchart(content: string): string {
     .replace(/^(\s*)graph(\s*)$/im, "$1flowchart TD");
 }
 
-/** Antepone `sequenceDiagram` si el LLM omitió la cabecera pero hay participant/actor. */
+/**
+ * Antepone `sequenceDiagram` si el LLM omitió la cabecera pero hay participant/actor.
+ * No actúa si la primera línea útil ya es la cabecera de cualquier tipo de diagrama.
+ */
 function ensureSequenceDiagramHeader(content: string): string {
   const t = (content ?? "").trim();
-  if (!t || /^sequenceDiagram\b/im.test(t)) return content ?? "";
-  if (/^(participant|actor)\s/im.test(t)) return `sequenceDiagram\n${t}`;
+  if (!t || startsWithMermaidDiagramHeader(t)) return content ?? "";
+  const { preamble, rest } = splitMermaidPreamble(t);
+  if (/^(participant|actor)\s/im.test(rest)) {
+    return `${preamble ? `${preamble}\n` : ""}sequenceDiagram\n${rest}`;
+  }
   return content ?? "";
 }
 
 // ─── Comment stripping (sopaco/mermaid-fixer concept) ────────────────────
-/** Strip `%%` comment lines — they confuse the Mermaid parser when LLMs embed explanations. */
+/**
+ * Strip `%%` comment lines — they confuse the Mermaid parser when LLMs embed explanations.
+ * Las directivas `%%{init: …}%%` NO son comentarios (configuran el render) y se conservan.
+ */
 export function stripMermaidComments(body: string): string {
   if (!body?.trim()) return body ?? "";
   return body
@@ -1949,7 +2078,7 @@ export function stripMermaidComments(body: string): string {
     .filter((line) => {
       const t = line.trim();
       // Preserve empty lines for diagram spacing; strip only actual %% comment lines
-      return !t.startsWith("%%");
+      return !t.startsWith("%%") || t.startsWith("%%{");
     })
     .join("\n");
 }
@@ -2059,6 +2188,9 @@ export function normalizeSequenceActivation(body: string): string {
  * IMPORTANT: This function only matches RELATIONSHIP lines (entity1 -- entity2),
  * NOT entity definition lines (which contain `{` or `}` braces for attributes).
  */
+/** Relación erDiagram válida: lado izquierdo `||`/`|o`/`}|`/`}o`, `--`, lado derecho `||`/`o|`/`|{`/`o{`. */
+const VALID_ER_RELATION_RE = /^(?:\|\||\|o|\}\||\}o)--(?:\|\||o\||\|\{|o\{)$/;
+
 export function normalizeErCardinalityNotation(body: string): string {
   if (!/^erDiagram\b/im.test(body.trim())) return body;
   return body.replace(
@@ -2066,6 +2198,9 @@ export function normalizeErCardinalityNotation(body: string): string {
     (_match: string, prefix: string, rel: string, suffix: string) => {
       // Skip lines that are entity definitions (contain { or } braces for attributes)
       if (/[{}]/.test(prefix) || /[{}]/.test(suffix)) return _match;
+      // Notación que el parser ya acepta (`|o--o{`, `}|--|{`, `|o--||`…): no se reescribe.
+      // Cambiarla (p. ej. `|o--o{` → `||--o{`) altera la cardinalidad del modelo.
+      if (VALID_ER_RELATION_RE.test(rel)) return _match;
       // Normalize the relationship notation
       let norm = rel
         .replace(/\s+/g, "")  // strip spaces inside notation
@@ -2272,9 +2407,15 @@ export function stripLeadingMarkdownPrologueFromMermaid(raw: string): string {
   const trimmed = (raw ?? "").trim();
   if (!trimmed) return trimmed;
   const lines = trimmed.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    if (MERMAID_DIAGRAM_HEADER_LINE.test(lines[i]!.trim())) {
-      return lines.slice(i).join("\n").trim();
+  // El front-matter `---…---` inicial pertenece al diagrama: se conserva y la búsqueda de cabecera
+  // empieza después. Las directivas `%%{…}%%` que queden entre la prosa y la cabecera también.
+  const start = mermaidFrontMatterEndIndex(lines) + 1;
+  for (let i = start; i < lines.length; i++) {
+    if (isMermaidDiagramHeaderLine(lines[i]!)) {
+      const skipped = lines.slice(start, i);
+      if (skipped.every((l) => !l.trim() || l.trim().startsWith("%%"))) return trimmed;
+      const directives = skipped.filter((l) => l.trim().startsWith("%%{"));
+      return [...lines.slice(0, start), ...directives, ...lines.slice(i)].join("\n").trim();
     }
   }
   return trimmed;
@@ -2288,6 +2429,9 @@ export function normalizeMermaidDiagramBody(raw: string): string {
   // Strip markdown headings/prose colados por el LLM ANTES del tipo de diagrama.
   // Típico: ```mermaid\n### Flujo: integración de...\nflowchart TD\n```
   stripped = stripLeadingMarkdownPrologueFromMermaid(stripped);
+  // Front-matter y directivas `%%{init}%%` quedan fuera de todas las reparaciones y se reponen al final.
+  const { preamble, rest: diagramRest } = splitMermaidPreamble(stripped);
+  stripped = diagramRest;
   stripped = normalizeGraphKeywordToFlowchart(stripped);
   stripped = ensureSequenceDiagramHeader(stripped);
   if (/^erDiagram\b/im.test(stripped.trim())) {
@@ -2330,7 +2474,7 @@ export function normalizeMermaidDiagramBody(raw: string): string {
 
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i]!;
-    const trimmed = line.trim();
+    let trimmed = line.trim();
 
     if (
       MERMAID_LEAKED_LIST_PREFIX_RE.test(trimmed) &&
@@ -2347,6 +2491,10 @@ export function normalizeMermaidDiagramBody(raw: string): string {
 
     // Also fix `subgraph_` without a following bracket (corrupted label)
     line = line.replace(/^(\s*)subgraph_(\w+)\s*$/i, "$1subgraph $2");
+
+    // `trimmed` se recalcula tras reparar `subgraph_ID`: el contador de profundidad lo necesita
+    // para contar el subgraph y no borrar luego su `end`.
+    trimmed = line.trim();
 
     if (/^(graph|flowchart)\s/i.test(trimmed)) {
       out.push(line);
@@ -2374,8 +2522,9 @@ export function normalizeMermaidDiagramBody(raw: string): string {
 
     // ── classDiagram: fix unclosed `{` blocks ────────────────────────
     if (isClassDiagram) {
-      // Fix common classDiagram issues: lowercase keywords
-      line = line.replace(/^\s*(Class)\s+/i, "  ");
+      // `Class Foo` (mayúscula) lo rechaza el parser: se pasa a minúscula. Nunca se elimina la palabra
+      // `class`: `class Animal {` es sintaxis válida y sin ella el bloque deja de parsear.
+      line = line.replace(/^(\s*)Class(\s+)/, "$1class$2");
       // Ensure `<<stereotypes>>` are on their own line after class name
       const stereotypeMatch = trimmed.match(/^(\w[\w]*)\s+<<(.+)>>\s*$/);
       if (stereotypeMatch) {
@@ -2393,14 +2542,18 @@ export function normalizeMermaidDiagramBody(raw: string): string {
       line = line.replace(/^(\s*)direction\s+(LR|TD|BT|RL)\b/i, (_m, indent: string, dir: string) => `${indent}direction ${dir}`);
     }
 
-    // ── Node IDs with spaces → underscore (flowchart only) ───────────
+    // ── Id de nodo con espacios (`My Node[Etiqueta]`) → `My_Node[Etiqueta]` (flowchart) ──────────
+    // SOLO donde Mermaid espera un id: al inicio de la línea o tras una flecha / `&`. Nunca dentro
+    // de una etiqueta: `X[Gestión de pagos(2)]` no puede acabar en `"Gestión de_pagos(2)"`.
     if (
       isFlowchart &&
       !/^\s*(subgraph|state|class|namespace|direction)\b/i.test(line)
     ) {
-      line = replaceOutsideDoubleQuotes(line, /(\w+)\s+(\w+)(\[|\()/g, (_match, p1, p2, p3) => {
-        return `${cleanId(p1)}_${cleanId(p2)}${p3}`;
-      });
+      line = replaceOutsideDoubleQuotes(
+        line,
+        /(^\s*|(?:--+>|==+>|-\.-+>|---|&)\s*(?:\|[^|\n]*\|\s*)?)(\w+)\s+(\w+)(\[|\()/g,
+        (_match, anchor, p1, p2, p3) => `${anchor}${cleanId(p1)}_${cleanId(p2)}${p3}`,
+      );
     }
 
     // Replace literal `\n` with space (Mermaid uses `<br/>` for line breaks)
@@ -2410,14 +2563,21 @@ export function normalizeMermaidDiagramBody(raw: string): string {
 
     if (isFlowchart || (!isErDiagram && !isSequence && !isClassDiagram && !isStateDiagram)) {
       // Quote node labels with special chars / <br/>: `A[x<br/>y: z]` → `A["x<br/>y: z"]`
+      // Las formas `[[ ]]`, `[( )]`, `(( ))`, `([ ])`, `{{ }}`, `[/ /]`, `[\ \]` no se tocan.
       line = line.replace(
-        /(\[|\()(?!["(])([^"\]\)]*(?:[{}:?<]|<br\s*\/?>)[^"\]\)]*)(\]|\))/g,
-        (_m, open: string, label: string, close: string) => `${open}"${label.trim()}"${close}`,
+        /(\[|\()(?!["(\[\/\\])([^"\]\)]*(?:[{}:?<]|<br\s*\/?>)[^"\]\)]*)(\]|\))/g,
+        (_m, open: string, label: string, close: string, offset: number, whole: string) => {
+          if (/[\[(]/.test(whole[offset - 1] ?? "")) return _m;
+          return `${open}"${label.trim()}"${close}`;
+        },
       );
       // Diamond decisions: `E{Token?<br/>x < y}` → `E{"Token?<br/>x < y"}`
       line = line.replace(
         /(\{)(?!")([^{}"]*(?:[?:<]|<br\s*\/?>)[^{}"]*)(\})/g,
-        (_m, open: string, label: string, close: string) => `${open}"${label.trim()}"${close}`,
+        (_m, open: string, label: string, close: string, offset: number, whole: string) => {
+          if (whole[offset - 1] === "{") return _m; // hexágono `{{ }}`
+          return `${open}"${label.trim()}"${close}`;
+        },
       );
       // Quote edge labels with braces / specials: `|/{id}|` → `|"/{id}"|`
       line = line.replace(
@@ -2426,9 +2586,10 @@ export function normalizeMermaidDiagramBody(raw: string): string {
       );
     }
 
-    // Clean markdown `**` inside quoted labels; compact whitespace
+    // Clean markdown `**` inside quoted labels; compact whitespace. Sin recorte de longitud:
+    // truncar una etiqueta válida pierde contenido (el resto de usos de MAX_MERMAID_LABEL_CHARS es de F3).
     line = line.replace(/"([^"]*)"/g, (_m, label: string) => {
-      const cleaned = label.replace(/\*\*/g, "").replace(/\s+/g, " ").trim().slice(0, MAX_MERMAID_LABEL_CHARS);
+      const cleaned = label.replace(/\*\*/g, "").replace(/\s+/g, " ").trim();
       return `"${cleaned}"`;
     });
 
@@ -2453,17 +2614,14 @@ export function normalizeMermaidDiagramBody(raw: string): string {
     result = stripFlowchartTrailingTextGarbage(result);
     result = splitFlowchartMultiEdgeLines(result);
     result = repairFlowchartMissingTargetNodeIds(result);
-    result = sanitizeFlowchartNodeIds(result);
     result = quoteFlowchartLabelsWithParens(result);
     result = quoteFlowchartSpacedLabels(result);
     result = quoteFlowchartEdgeLabels(result);
     result = quoteFlowchartChineseLabels(result);
-    result = guardFlowchartSelfEdges(result);
   }
-  if (isClassDiagram) {
-    result = normalizeClassDiagramVisibility(result);
-  }
-  return result;
+  // classDiagram: ya no se añade `+` a miembros sin visibilidad (`class Repo` pasaba a `+Repo`);
+  // `normalizeClassDiagramVisibility` sigue exportada pero el pipeline no la invoca.
+  return preamble ? `${preamble}\n${result}` : result;
 }
 
 /** Diagrama lineal s0→s1→s2 al volcar JSON del webhook (no es un flujo legible). */
@@ -2552,12 +2710,9 @@ export function normalizeMermaidInDocument(document: string): string {
     const body =
       repairFlattenedWebhookFlowchart(rawDiagram) ?? normalizeMermaidDiagramBody(rawDiagram);
     if (!body) return trailing ? `${trailing}\n` : "```mermaid\n```";
-    // Si tras normalizar el body no contiene ningún tipo de diagrama Mermaid válido,
-    // el LLM metió prosa/headings dentro del fence. Lo convertimos a markdown regular.
-    if (!looksLikeMermaidDiagramBody(body)) {
-      const asProse = body.replace(/^```mermaid\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
-      return trailing ? `${asProse}\n\n${trailing}` : asProse;
-    }
+    // Nunca se degrada un fence a prosa: aunque la cabecera no se reconozca (tipo nuevo de Mermaid,
+    // cuerpo dudoso), el fence se conserva y decide el parser real. Quitar el fence perdía diagramas
+    // válidos (C4, sankey, block, architecture, packet).
     const fence = `\`\`\`mermaid\n${body}\n\`\`\``;
     return trailing ? `${fence}\n\n${trailing}` : fence;
   });
@@ -2786,7 +2941,9 @@ export function repairSequenceArrowParties(content: string): string {
   if (!/^sequenceDiagram\b/im.test(content.trim())) return content;
 
   const participants = new Set<string>();
-  for (const m of content.matchAll(/^\s*(?:participant|actor)\s+(\S+)/gim)) {
+  // `create participant B` también declara a B: contarlo evita volver a declararlo arriba
+  // ("same id" en el parser).
+  for (const m of content.matchAll(/^\s*(?:create\s+)?(?:participant|actor)\s+(\S+)/gim)) {
     participants.add(m[1]!.replace(/:$/, ""));
   }
 

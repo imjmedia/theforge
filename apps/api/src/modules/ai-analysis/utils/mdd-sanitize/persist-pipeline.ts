@@ -8,6 +8,7 @@ import {
   repairMddFormatIssues,
   repairOrphanFenceBeforeContractLabels,
   repairUnclosedJsonBeforeApiEndpoint,
+  scanFenceRanges,
 } from "@theforge/shared-types";
 import {
   ensureMddGovernanceSection,
@@ -106,6 +107,48 @@ import {
 } from "../mdd-section-preserve.util.js";
 import { logMddPersistFenceDiag } from "../mdd-persist-fence-diag.util.js";
 import { extractSection4Body } from "./section-merge.js";
+
+/** Reparaciones de comas sueltas de JSON: `[,` → `[`, `],]`, `{,`, `,}` y `},]`. */
+function fixJsonLooseCommas(text: string): string {
+  return text
+    .replace(/\[,\s*\n/g, "[\n")
+    .replace(/\],\s*\]/g, "]")
+    .replace(/\{\s*,/g, "{")
+    .replace(/,\s*\}/g, "}")
+    .replace(/\},\s*\]/g, "}]");
+}
+
+/**
+ * Reparaciones de texto sueltas, acotadas por fence (CommonMark, vía `scanFenceRanges`):
+ * - nodos mermaid con `text` extraviado tras el corchete (`A[Nodo]text` → `A[Nodo]`): solo dentro de
+ *   fences ```mermaid;
+ * - comas sueltas de JSON: en prosa y en fences ```json (o sin lenguaje), nunca en mermaid, sql u otros
+ *   lenguajes, donde `{,`, `,}` o `],]` son contenido legítimo o parte de `||--|{`.
+ */
+export function repairLooseMermaidTextAndJsonCommas(draft: string): string {
+  if (!draft) return draft ?? "";
+  const lines = draft.split("\n");
+  const out: string[] = [];
+  let pos = 0;
+  const pushText = (from: number, to: number): void => {
+    if (to > from) out.push(fixJsonLooseCommas(lines.slice(from, to).join("\n")));
+  };
+  for (const range of scanFenceRanges(lines)) {
+    pushText(pos, range.open);
+    const bodyEnd = range.closed ? range.end : range.end + 1;
+    const body = lines.slice(range.open + 1, bodyEnd).join("\n");
+    const lang = range.info.split(/\s+/)[0]!.toLowerCase();
+    let fixed = body;
+    if (lang === "mermaid") fixed = body.replace(/\[([^\]]+)\]text(?!\w)/gi, "[$1]");
+    else if (lang === "" || lang === "json" || lang === "jsonc") fixed = fixJsonLooseCommas(body);
+    out.push(lines[range.open]!);
+    if (bodyEnd > range.open + 1) out.push(fixed);
+    if (range.closed) out.push(lines[range.end]!);
+    pos = range.end + 1;
+  }
+  pushText(pos, lines.length);
+  return out.join("\n");
+}
 
 function warnSection5LenChange(step: string, before: number, after: number): void {
   if (before !== after) {
@@ -568,16 +611,10 @@ export function normalizeMddFormat(draft: string, options?: NormalizeMddFormatOp
   // Eliminar sección errónea "## 4. Arquitectura Frontend" (estructura canónica: la 4 es Contratos de API)
   out = stripStandaloneArquitecturaFrontendSection(out);
 
-  // Reparar bloques mermaid: quitar nodos con "text" extraviado al final del nombre
-  out = out.replace(/\[([^\]]+)]text/gi, "[" + "$1" + "]");
+  // Reparar nodos mermaid con "text" extraviado y JSON con comas sueltas, cada uno solo donde aplica
+  // (nunca dentro de fences de otro lenguaje: partiría `||--|{`, `-->|Sí|`, SQL, etc.)
+  out = repairLooseMermaidTextAndJsonCommas(out);
   out = out.replace(/```mermaid\n```\s*\n/g, "");
-  // Reparar JSON con comas sueltas "[," → "["
-  out = out.replace(/\[,\s*\n/g, "[\n");
-  out = out.replace(/\],\s*\]/g, "]");
-  out = out.replace(/\{\s*,/g, "{");
-  out = out.replace(/,\s*\}/g, "}");
-  // Reparar JSON con comma trailing en último elemento de array
-  out = out.replace(/\},\s*\]/g, "}]");
 
   out = fixDeterministicMddCoherence(out);
   out = repairGluedClosingFenceToHeading(out);

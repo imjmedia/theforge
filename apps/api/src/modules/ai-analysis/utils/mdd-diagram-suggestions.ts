@@ -12,6 +12,7 @@ import {
   repairErDiagramPkFkCommas,
   stripErDiagramSqlDefaultArtifacts,
 } from "@theforge/shared-types/mermaid";
+import { findTopLevelFences } from "@theforge/shared-types/mermaid-oracle";
 import {
   findH2HeadingMatch,
   getSectionBody,
@@ -501,18 +502,86 @@ export function suggestMddDiagrams(draft: string): DiagramSuggestion[] {
   return suggestions;
 }
 
-/** Reemplaza el primer bloque ```mermaid ... erDiagram ... ``` en sectionBody por newBlock. Quita ### anterior si existe. */
+/**
+ * Primera línea útil del cuerpo de un diagrama: salta líneas vacías, comentarios `%%` (incluidas
+ * directivas `%%{init}%%`) y el front-matter YAML `--- ... ---`.
+ */
+function firstMeaningfulMermaidLine(bodyLines: string[]): string {
+  let i = 0;
+  while (i < bodyLines.length) {
+    const t = (bodyLines[i] ?? "").trim();
+    if (t === "" || t.startsWith("%%")) {
+      i++;
+      continue;
+    }
+    if (t === "---") {
+      const close = bodyLines.findIndex((l, j) => j > i && l.trim() === "---");
+      if (close === -1) return "";
+      i = close + 1;
+      continue;
+    }
+    return t;
+  }
+  return "";
+}
+
+/**
+ * Localiza en la sección el fence ```mermaid cuyo cuerpo empieza por `erDiagram` (el primero si hay
+ * varios). Devuelve offsets de carácter [start, end) que cubren desde la línea de apertura hasta la
+ * línea de cierre incluida (con su salto de línea). Un fence ER sin cierre se extiende hasta el final.
+ */
+function findErDiagramFence(sectionBody: string): { start: number; end: number } | null {
+  const lines = sectionBody.split("\n");
+  const offsets: number[] = [];
+  let acc = 0;
+  for (const l of lines) {
+    offsets.push(acc);
+    acc += l.length + 1;
+  }
+  const lineEnd = (idx: number): number => Math.min(sectionBody.length, (offsets[idx] ?? 0) + (lines[idx] ?? "").length + 1);
+  const isEr = (bodyLines: string[]): boolean => /^erDiagram(?:-v\d+)?(?:\s|$)/i.test(firstMeaningfulMermaidLine(bodyLines));
+
+  const fences = findTopLevelFences(lines);
+  for (const f of fences) {
+    if (!/^mermaid(?:\s|$)/i.test(f.info)) continue;
+    if (isEr(lines.slice(f.open + 1, f.close))) return { start: offsets[f.open]!, end: lineEnd(f.close) };
+  }
+
+  // Fence ```mermaid sin cierre (salida truncada del LLM): se trata como si cerrara al final de la sección.
+  const inClosed = (idx: number): boolean => fences.some((f) => idx >= f.open && idx <= f.close);
+  for (let i = 0; i < lines.length; i++) {
+    if (inClosed(i)) continue;
+    if (!/^ {0,3}(`{3,}|~{3,})\s*mermaid(?:\s|$)/i.test((lines[i] ?? "").replace(/\r$/, ""))) continue;
+    if (isEr(lines.slice(i + 1))) return { start: offsets[i]!, end: sectionBody.length };
+  }
+  return null;
+}
+
+/** Indica si la sección ya tiene un fence ```mermaid de tipo erDiagram. */
+function hasErDiagramFence(sectionBody: string): boolean {
+  return findErDiagramFence(sectionBody) !== null;
+}
+
+/**
+ * Reemplaza el primer fence ```mermaid de tipo erDiagram de la sección por newBlock (quita el
+ * `### ...diagrama` que lo precede). Solo toca ese fence: los demás diagramas quedan intactos. Si la
+ * sección no tiene ER, la devuelve sin cambios (el llamador decide dónde insertar).
+ */
 function replaceErDiagramBlock(sectionBody: string, newBlock: string): string {
-  const open = sectionBody.search(/```mermaid\s*/i);
-  if (open === -1) return sectionBody;
-  const afterOpen = sectionBody.slice(open);
-  const closeMatch = afterOpen.match(/\n```\s*\n?/);
-  const close = closeMatch ? open + closeMatch.index! + closeMatch[0].length : afterOpen.length + open;
-  let before = sectionBody.slice(0, open).replace(/\n+$/, "");
+  const found = findErDiagramFence(sectionBody);
+  if (!found) return sectionBody;
+  let before = sectionBody.slice(0, found.start).replace(/\n+$/, "");
   before = before.replace(/\n*###\s*[^\n]*[Dd]iagrama[^\n]*\n*$/, "").replace(/\n+$/, "");
-  const after = sectionBody.slice(close).replace(/^\n+/, "");
-  const sep = before && after ? "\n\n" : before || after ? "\n" : "";
+  const after = sectionBody.slice(found.end).replace(/^\n+/, "");
+  // Línea en blanco entre el texto previo y el ER (igual que al insertarlo), para que reaplicar sea estable.
+  const sep = before ? "\n\n" : "";
   return before + sep + newBlock.trim() + (after ? "\n\n" + after : "");
+}
+
+/** Reemplaza el ER de la sección o, si no hay ninguno, lo añade al final sin tocar los demás fences. */
+function upsertErDiagramBlock(sectionBody: string, newBlock: string): string {
+  if (hasErDiagramFence(sectionBody)) return replaceErDiagramBlock(sectionBody, newBlock);
+  return sectionBody.trimEnd() + "\n\n" + newBlock.trim();
 }
 
 /**
@@ -523,12 +592,7 @@ export function injectErDiagramBlockIntoDraft(draft: string, mermaidBlock: strin
   const trimmed = (draft || "").trim();
   const sectionModelo = locateSection(trimmed, /##\s*3\.\s*Modelo\s+(?:de\s+)?datos/i);
   if (!sectionModelo) return draft;
-  let newBody: string;
-  if (/```mermaid\s*[\s\S]*?erDiagram/i.test(sectionModelo.body)) {
-    newBody = replaceErDiagramBlock(sectionModelo.body, mermaidBlock.trim());
-  } else {
-    newBody = sectionModelo.body.trimEnd() + "\n\n" + mermaidBlock.trim();
-  }
+  const newBody = upsertErDiagramBlock(sectionModelo.body, mermaidBlock);
   return trimmed.slice(0, sectionModelo.start) + newBody + trimmed.slice(sectionModelo.end);
 }
 
@@ -542,12 +606,7 @@ export function regenerateErDiagramFromSql(draft: string): string | null {
   if (!sectionModelo) return null;
   const suggestion = suggestErDiagram(sectionModelo.body, sectionModelo.matchedHeading);
   if (!suggestion) return null;
-  let newBody: string;
-  if (/```mermaid\s*[\s\S]*?erDiagram/i.test(sectionModelo.body)) {
-    newBody = replaceErDiagramBlock(sectionModelo.body, suggestion.mermaidBlock);
-  } else {
-    newBody = sectionModelo.body.trimEnd() + "\n\n" + suggestion.mermaidBlock.trim();
-  }
+  const newBody = upsertErDiagramBlock(sectionModelo.body, suggestion.mermaidBlock);
   return trimmed.slice(0, sectionModelo.start) + newBody + trimmed.slice(sectionModelo.end);
 }
 
@@ -568,13 +627,14 @@ export function injectMddDiagrams(draft: string, suggestions: DiagramSuggestion[
     const sectionEnd = Math.max(sectionStart, boundary !== -1 ? boundary : out.length);
     const sectionBody = out.slice(sectionStart, sectionEnd);
 
-    if (s.type === "erDiagram" && /```mermaid\s*[\s\S]*?erDiagram/i.test(sectionBody)) {
+    if (s.type === "erDiagram" && hasErDiagramFence(sectionBody)) {
       const newSectionBody = replaceErDiagramBlock(sectionBody, s.mermaidBlock);
       out = out.slice(0, sectionStart) + newSectionBody + out.slice(sectionEnd);
       continue;
     }
 
-    if (sectionBody.includes("```mermaid") && sectionBody.includes(s.type)) continue;
+    // Sin ER propio, un erDiagram se inserta aunque la sección ya tenga otros diagramas.
+    if (s.type !== "erDiagram" && sectionBody.includes("```mermaid") && sectionBody.includes(s.type)) continue;
     const insertPoint = s.insertAt === "start" ? sectionStart : sectionEnd;
     out = out.slice(0, insertPoint) + s.mermaidBlock + out.slice(insertPoint);
   }

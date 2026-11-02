@@ -55,10 +55,18 @@ export function detectMermaidDiagramType(content: string): MermaidDiagramType {
   return "unsupported";
 }
 
+/** True when a flowchart body declares at least one `subgraph` block. */
+export function flowchartHasSubgraphs(content: string): boolean {
+  return /^\s*subgraph\b/im.test(content);
+}
+
 /**
- * Returns true if the diagram type can be converted to Excalidraw elements.
- * - flowchart: native elements (editable)
- * - erDiagram, sequenceDiagram, classDiagram: image fallback (read-only in Excalidraw)
+ * Devuelve true si el tipo ofrece el toggle de Excalidraw. Es el mismo conjunto que se admitía antes de la
+ * Fase 1 (Jorge solo aprobó "SVG por defecto", no reducir el alcance del toggle):
+ * - flowchart: elementos nativos editables.
+ * - erDiagram, sequenceDiagram, classDiagram: la librería los convierte (nativos o imagen raster).
+ * Decisión pendiente en el gate: restringirlo a lo que la librería convierte a elementos nativos
+ * (flowchart sin subgraph y sequence), porque ER/class suelen salir como imagen no editable.
  */
 export function isExcalidrawSupported(type: MermaidDiagramType): boolean {
   return ["flowchart", "erDiagram", "sequenceDiagram", "classDiagram"].includes(type);
@@ -66,25 +74,16 @@ export function isExcalidrawSupported(type: MermaidDiagramType): boolean {
 
 /**
  * Returns true if the diagram type converts to native Excalidraw elements (fully editable).
- * Currently only flowcharts produce native elements.
+ * Flowchart y sequence producen elementos nativos.
  */
 export function isNativeExcalidraw(type: MermaidDiagramType): boolean {
-  return type === "flowchart";
-}
-
-/** True when a flowchart body declares at least one `subgraph` block. */
-export function flowchartHasSubgraphs(content: string): boolean {
-  return /^\s*subgraph\b/im.test(content);
+  return type === "flowchart" || type === "sequenceDiagram";
 }
 
 /**
- * Default preview mode.
- * Excalidraw only for simple flowcharts (native editable elements).
- * ER / sequence / class and flowcharts with subgraphs use Mermaid SVG — the
- * Excalidraw converter logs parse errors and falls back to a raster image anyway.
+ * Vista por defecto: siempre SVG de Mermaid (render fiel y con la config web). Excalidraw es un toggle
+ * opcional, solo para los tipos que `isExcalidrawSupported` admite.
  */
-export function defaultMermaidViewMode(content: string): "svg" | "excalidraw" {
-  const type = detectMermaidDiagramType(content);
-  if (type === "flowchart" && !flowchartHasSubgraphs(content)) return "excalidraw";
+export function defaultMermaidViewMode(): "svg" | "excalidraw" {
   return "svg";
 }

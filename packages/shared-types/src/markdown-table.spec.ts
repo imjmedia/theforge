@@ -41,3 +41,51 @@ describe("repairProseGluedTableLines", () => {
     assert.equal(out, "Texto introductorio.\n| Col A | Col B |");
   });
 });
+
+describe("reparaciones de tabla respetan fences de código", () => {
+  const ER_FENCE = "```mermaid\nerDiagram\n    ORDERS ||--|{ ORDER_ITEMS : contains\n    USERS ||--o{ ORDERS : places\n```";
+  const FLOW_FENCE = "```mermaid\nflowchart TD\n    A --> B{¿Ok?}\n    B -->|Sí| D\n    C -->|No| E\n```";
+  const SQL_FENCE = "```sql\n-- | id | | nombre | | email | | rol | | fecha |\nSELECT 1;\n```";
+  const COLLAPSED = "| H1 | H2 | | :--- | :--- | | a | b |";
+
+  it("repairProseGluedTableLines deja intactos fences mermaid (ER y flowchart) y sql", () => {
+    for (const fence of [ER_FENCE, FLOW_FENCE, SQL_FENCE]) {
+      assert.equal(repairProseGluedTableLines(`Intro\n\n${fence}\n\nFin`), `Intro\n\n${fence}\n\nFin`);
+    }
+  });
+
+  it("repairCollapsedPipeTables deja intactos los fences pero repara la tabla colapsada de fuera", () => {
+    const doc = `${ER_FENCE}\n\n${FLOW_FENCE}\n\n${SQL_FENCE}\n\n${COLLAPSED}`;
+    const out = repairCollapsedPipeTables(doc);
+    const head = `${ER_FENCE}\n\n${FLOW_FENCE}\n\n${SQL_FENCE}\n\n`;
+    assert.ok(out.startsWith(head), out);
+    const tail = out.slice(head.length).split("\n");
+    assert.deepEqual(tail, ["| H1 | H2 |", "| :--- | :--- |", "| a | b |"]);
+  });
+
+  it("repara una tabla pegada a prosa fuera del fence y no toca la de dentro", () => {
+    const out = repairProseGluedTableLines(`Texto previo. | Col A | Col B |\n\n${FLOW_FENCE}`);
+    assert.equal(out, `Texto previo.\n| Col A | Col B |\n\n${FLOW_FENCE}`);
+  });
+
+  it("un fence de 4 acentos graves o tildes también protege su contenido", () => {
+    const outer = "````markdown\nC -->|No| E\nORDERS ||--|{ ITEMS : has\n```\nC -->|No| E\n````";
+    assert.equal(repairProseGluedTableLines(outer), outer);
+    const tilde = "~~~\nORDERS ||--|{ ITEMS : has\n~~~";
+    assert.equal(repairProseGluedTableLines(tilde), tilde);
+  });
+
+  it("un fence sin cierre protege hasta el final; el contenido previo sí se repara", () => {
+    const doc = "Texto. | A | B |\n```mermaid\nC -->|No| E";
+    assert.equal(repairProseGluedTableLines(doc), "Texto.\n| A | B |\n```mermaid\nC -->|No| E");
+  });
+
+  it("formatDocumentMarkdown es idempotente con flowchart y ER en fences", () => {
+    const doc = `# Doc\n\n${FLOW_FENCE}\n\n${ER_FENCE}\n`;
+    const once = formatDocumentMarkdown(doc);
+    assert.match(once, /B -->\|"?Sí"?\| D/);
+    assert.ok(once.includes("C -->|No| E"), once);
+    assert.ok(once.includes("ORDERS ||--|{ ORDER_ITEMS : contains"), once);
+    assert.equal(formatDocumentMarkdown(once), once);
+  });
+});

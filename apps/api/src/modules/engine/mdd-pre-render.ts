@@ -5,19 +5,22 @@
  */
 
 import {
-  ensureErDiagramHeader,
   erDiagramHasPkFkComma,
-  looksLikeMermaidDiagramBody,
   normalizeMermaid,
   repairErDiagramPkFkCommas,
   splitMermaidFenceBodyAtDocumentLeak,
+  splitMermaidPreamble,
+  startsWithMermaidDiagramHeader,
   validateMermaid,
 } from "@theforge/shared-types/mermaid";
 
 export const ERR_MERMAID_SYNTAX = "ERR_MERMAID_SYNTAX";
 export const ERR_TABLE_SYNTAX = "ERR_TABLE_SYNTAX";
 
-/** Normalize unicode spaces + PK/FK comma repair + expert normalizeMermaid. */
+/**
+ * Normalize unicode spaces + PK/FK comma repair + expert normalizeMermaid.
+ * No antepone cabeceras: `normalizeMermaid` y la regla de oro de shared-types son quienes deciden.
+ */
 export function sanitizeMermaidBlock(content: string): string {
   if (!content || typeof content !== "string") return "";
 
@@ -30,7 +33,6 @@ export function sanitizeMermaidBlock(content: string): string {
     .trim();
 
   cleaned = repairErDiagramPkFkCommas(cleaned);
-  cleaned = ensureErDiagramHeader(cleaned);
 
   try {
     const fenced = "```mermaid\n" + cleaned + "\n```";
@@ -196,12 +198,58 @@ export function preRenderMddSanity(draft: string): PreRenderResult {
   return { ok: true };
 }
 
-/** True si el cuerpo Mermaid tiene al menos una arista o es erDiagram con entidad. */
+/**
+ * True si el cuerpo es un diagrama Mermaid reconocido: su primera línea útil (tras front-matter
+ * y directivas) es una cabecera de la lista única de shared-types. La heurística antigua exigía
+ * flechas (`-->`, `---`…) y descartaba sequence (`->>`), class, pie, gantt, mindmap, C4, etc.
+ * Solo flowchart/graph conservan la exigencia de una arista (un esqueleto de `subgraph` vacío
+ * no cuenta como diagrama de componentes) y erDiagram la de una entidad o relación.
+ */
 export function mermaidBlockHasUsableStructure(body: string): boolean {
   const t = (body ?? "").trim();
-  if (!t) return false;
-  if (/^erDiagram\b/i.test(t)) return /\b\w+\s*\{/.test(t) || /\|\|--/.test(t);
-  return /-->|---|==>|-.->/.test(t);
+  if (!t || !startsWithMermaidDiagramHeader(t)) return false;
+  const { rest } = splitMermaidPreamble(t);
+  const header = rest.split("\n", 1)[0]!.trim();
+  if (/^erDiagram\b/i.test(header)) return /\b\w+\s*\{/.test(rest) || /\|\|--/.test(rest);
+  if (/^(?:flowchart|graph)\b/i.test(header)) return /-->|---|==>|-\.->/.test(rest);
+  return true;
+}
+
+/**
+ * Lee el cuerpo de un fence ```mermaid que abre en `lines[openIdx]`. El cuerpo termina en:
+ * - un cierre ``` (línea sola; se consume),
+ * - la apertura de otro fence con lenguaje (```sql, ```json, ```mermaid…): cierre implícito, la
+ *   línea NO se consume (así un fence sin cerrar no se traga el SQL vecino ni deja su apertura huérfana),
+ * - el fin del documento.
+ */
+function readMermaidFenceBody(
+  lines: string[],
+  openIdx: number,
+): { bodyLines: string[]; next: number } {
+  const bodyLines: string[] = [];
+  let i = openIdx + 1;
+  while (i < lines.length) {
+    const t = lines[i]!.trim();
+    if (/^```\s*$/.test(t)) return { bodyLines, next: i + 1 };
+    if (/^```\S/.test(t)) return { bodyLines, next: i };
+    bodyLines.push(lines[i]!);
+    i++;
+  }
+  return { bodyLines, next: i };
+}
+
+/**
+ * Líneas que se emiten dentro del fence tras sanear un cuerpo reensamblado. Si la normalización hizo
+ * perder la cabecera del diagrama, se conserva el cuerpo original MÁS los huérfanos ya consumidos del
+ * documento (descartarlos los borraba del borrador sin dejar rastro).
+ */
+export function resolveReassembledFenceLines(
+  sanitized: string,
+  bodyLines: string[],
+  orphanLines: string[],
+): string[] {
+  if (startsWithMermaidDiagramHeader(sanitized)) return sanitized.split("\n");
+  return [...bodyLines, ...orphanLines];
 }
 
 /**
@@ -227,24 +275,37 @@ export function repairPrematureMermaidFenceClose(draft: string): string {
   const demoteHeadingNode = (line: string): string =>
     line.replace(/^(\s*)#{1,6}\s+([A-Za-z_][\w]*\s*[\[(].*)$/, "$1$2");
 
+  // Dentro de un fence con otro lenguaje (```sql…) no se buscan fences mermaid.
+  let inOtherFence = false;
+
   while (i < lines.length) {
     const line = lines[i]!;
     const trimmed = line.trim();
+    if (inOtherFence) {
+      if (/^```\s*$/.test(trimmed)) inOtherFence = false;
+      out.push(line);
+      i++;
+      continue;
+    }
     if (!/^```mermaid\b/i.test(trimmed)) {
+      if (/^```\S/.test(trimmed)) inOtherFence = true;
       out.push(line);
       i++;
       continue;
     }
 
     out.push(line);
-    i++;
-    const bodyLines: string[] = [];
-    while (i < lines.length && !/^```\s*$/.test(lines[i]!.trim())) {
-      bodyLines.push(lines[i]!);
-      i++;
-    }
-    if (i < lines.length && /^```\s*$/.test(lines[i]!.trim())) {
-      i++;
+    const read = readMermaidFenceBody(lines, i);
+    const bodyLines = read.bodyLines;
+    i = read.next;
+
+    // Cuerpo sin cabecera de diagrama (prosa, vacío…): se conserva tal cual dentro de un fence
+    // SIEMPRE cerrado. No se reensamblan huérfanos ni se reescribe nada; decidir si es prosa
+    // le toca a `stripInvalidMermaidFences` y, si no, la web muestra el error real.
+    if (!startsWithMermaidDiagramHeader(bodyLines.join("\n").trim())) {
+      out.push(...bodyLines);
+      out.push("```");
+      continue;
     }
 
     // Peek past blank lines: only swallow them if real orphan mermaid follows.
@@ -282,25 +343,11 @@ export function repairPrematureMermaidFenceClose(draft: string): string {
     const merged = [...bodyLines, ...orphanLines.map((l) => demoteHeadingNode(l))].join("\n");
     const { diagram, remainder } = splitMermaidFenceBodyAtDocumentLeak(merged);
     const sanitized = sanitizeMermaidBlock(diagram);
-    if (looksLikeMermaidDiagramBody(sanitized) && mermaidBlockHasUsableStructure(sanitized)) {
-      out.push(...sanitized.split("\n"));
-      out.push("```");
-      if (remainder.trim()) {
-        out.push("");
-        out.push(...remainder.split("\n"));
-      }
-      continue;
-    }
-
-    // Diagrama vacío/inválido: no reemitir fence; deja resto como prosa.
-    if (sanitized.trim()) {
-      out.push(...sanitized.split("\n"));
-    }
+    out.push(...resolveReassembledFenceLines(sanitized, bodyLines, orphanLines));
+    out.push("```");
     if (remainder.trim()) {
       out.push("");
       out.push(...remainder.split("\n"));
-    } else if (orphanLines.length > 0) {
-      out.push(...orphanLines);
     }
   }
 
@@ -308,29 +355,57 @@ export function repairPrematureMermaidFenceClose(draft: string): string {
 }
 
 /**
- * Auto-repair: strips ```mermaid fences from blocks that don't contain a
- * valid mermaid diagram type, converting them to regular markdown prose.
- * Called by `sanitizeMermaidInDraft` before validation so the pipeline
- * doesn't fail on LLM artifacts (e.g. `### Flujo: …` inside a mermaid fence).
+ * Procesa cada fence ```mermaid del borrador. Si la primera línea útil es una cabecera de
+ * diagrama (cualquier tipo de Mermaid 11) el fence se conserva SIEMPRE, cerrado, con el cuerpo
+ * normalizado; el markdown del MDD colado dentro del fence pasa a ir después. Solo un cuerpo
+ * sin cabecera (vacío o prosa que el LLM envolvió en ```mermaid por error, p. ej. `### Flujo: …`)
+ * se degrada a markdown normal o se elimina si está vacío, sin dejar fences sueltos.
  */
 export function stripInvalidMermaidFences(draft: string): string {
   if (!draft || typeof draft !== "string") return draft;
-  return draft.replace(/```mermaid\s*\n([\s\S]*?)```/gi, (_full, inner: string) => {
-    const { diagram, remainder } = splitMermaidFenceBodyAtDocumentLeak(inner ?? "");
-    const sanitized = sanitizeMermaidBlock(diagram);
-    if (looksLikeMermaidDiagramBody(sanitized) && mermaidBlockHasUsableStructure(sanitized)) {
-      const fence = "```mermaid\n" + sanitized + "\n```";
-      return remainder.trim() ? `${fence}\n\n${remainder}` : fence;
+  const lines = draft.replace(/\r\n/g, "\n").split("\n");
+  const out: string[] = [];
+  let i = 0;
+  // Dentro de un fence con otro lenguaje (```sql…) no se buscan fences mermaid.
+  let inOtherFence = false;
+
+  while (i < lines.length) {
+    const line = lines[i]!;
+    const trimmed = line.trim();
+    if (inOtherFence) {
+      if (/^```\s*$/.test(trimmed)) inOtherFence = false;
+      out.push(line);
+      i++;
+      continue;
     }
-    // Vacío / solo subgraph sin aristas / prosa → sin fence (el injector puede proponer uno).
+    if (!/^```mermaid\b/i.test(trimmed)) {
+      if (/^```\S/.test(trimmed)) inOtherFence = true;
+      out.push(line);
+      i++;
+      continue;
+    }
+
+    const read = readMermaidFenceBody(lines, i);
+    i = read.next;
+    const { diagram, remainder } = splitMermaidFenceBodyAtDocumentLeak(read.bodyLines.join("\n"));
+    const sanitized = sanitizeMermaidBlock(diagram);
+    if (startsWithMermaidDiagramHeader(sanitized)) {
+      out.push("```mermaid", ...sanitized.split("\n"), "```");
+      if (remainder.trim()) out.push("", ...remainder.split("\n"));
+      continue;
+    }
+    // Vacío / prosa → sin fence (el injector puede proponer uno).
     const prose = [sanitized, remainder].filter((s) => (s ?? "").trim()).join("\n\n");
-    return prose || "";
-  });
+    if (prose) out.push(...prose.split("\n"));
+  }
+
+  return out.join("\n");
 }
 
 /**
  * Applies sanitizeMermaidBlock to every ```mermaid block in the draft and returns the modified draft.
- * Invalid mermaid blocks (prose without diagram type) are converted to regular markdown.
+ * Invalid mermaid blocks (prose without diagram header) are converted to regular markdown;
+ * un bloque con cabecera de diagrama conserva siempre su fence, cerrado.
  * Also reensambla fences cerrados prematuramente con nodos `### ID[...]` fuera.
  */
 export function sanitizeMermaidInDraft(draft: string): string {

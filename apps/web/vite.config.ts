@@ -32,6 +32,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, "../../packages/shared-types/src/markdown-table.ts"),
       },
       {
+        find: "@theforge/shared-types/mermaid-oracle",
+        replacement: path.resolve(__dirname, "../../packages/shared-types/src/mermaid-oracle.ts"),
+      },
+      {
         find: "@theforge/shared-types/mermaid",
         replacement: path.resolve(__dirname, "../../packages/shared-types/src/mermaid.ts"),
       },

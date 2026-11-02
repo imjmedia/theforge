@@ -48,22 +48,41 @@ describe("detectMermaidDiagramType", () => {
 });
 
 describe("isExcalidrawSupported", () => {
-  it("supports flowchart and ER/sequence/class", () => {
-    assert.equal(isExcalidrawSupported("flowchart"), true);
-    assert.equal(isExcalidrawSupported("erDiagram"), true);
-    assert.equal(isExcalidrawSupported("sequenceDiagram"), true);
-    assert.equal(isExcalidrawSupported("classDiagram"), true);
+  it("ofrece el toggle para flowchart (con o sin subgraph, graph incluido)", () => {
+    for (const src of [
+      "flowchart TD\n  A --> B",
+      "graph LR\n  A --> B",
+      "flowchart TD\n  subgraph G\n    A --> B\n  end",
+    ]) {
+      assert.equal(isExcalidrawSupported(detectMermaidDiagramType(src)), true, src);
+    }
   });
 
-  it("does not support state or unsupported", () => {
-    assert.equal(isExcalidrawSupported("stateDiagram"), false);
-    assert.equal(isExcalidrawSupported("unsupported"), false);
+  it("ofrece el toggle para sequence, ER y class (alcance previo a la Fase 1)", () => {
+    for (const src of [
+      "sequenceDiagram\n  A->>B: hi",
+      "erDiagram\n  USER ||--o{ ORDER : places",
+      "classDiagram\n  class Foo",
+    ]) {
+      assert.equal(isExcalidrawSupported(detectMermaidDiagramType(src)), true, src);
+    }
+  });
+
+  it("no ofrece el toggle para state, gantt ni mindmap", () => {
+    for (const src of [
+      "stateDiagram-v2\n  [*] --> Idle",
+      "gantt\n  title Plan",
+      "mindmap\n  root((x))",
+    ]) {
+      assert.equal(isExcalidrawSupported(detectMermaidDiagramType(src)), false, src);
+    }
   });
 });
 
 describe("isNativeExcalidraw", () => {
-  it("is true only for flowchart", () => {
+  it("es true para flowchart y sequence", () => {
     assert.equal(isNativeExcalidraw("flowchart"), true);
+    assert.equal(isNativeExcalidraw("sequenceDiagram"), true);
     assert.equal(isNativeExcalidraw("erDiagram"), false);
   });
 });
@@ -104,26 +123,7 @@ describe("flowchartHasSubgraphs", () => {
 });
 
 describe("defaultMermaidViewMode", () => {
-  it("prefers excalidraw only for simple flowcharts", () => {
-    assert.equal(defaultMermaidViewMode("flowchart\n  A --> B"), "excalidraw");
-    assert.equal(defaultMermaidViewMode("flowchart TD\n  A --> B"), "excalidraw");
-  });
-
-  it("uses svg for ER, sequence, class and subgraph flowcharts", () => {
-    assert.equal(defaultMermaidViewMode("sequenceDiagram\n  A->>B: hi"), "svg");
-    assert.equal(
-      defaultMermaidViewMode("erDiagram\n  USER ||--o{ ORDER : places"),
-      "svg",
-    );
-    assert.equal(defaultMermaidViewMode("classDiagram\n  class Foo"), "svg");
-    assert.equal(
-      defaultMermaidViewMode("flowchart TD\n  subgraph G\n    A --> B\n  end"),
-      "svg",
-    );
-  });
-
-  it("uses svg for unsupported types", () => {
-    assert.equal(defaultMermaidViewMode("stateDiagram-v2\n  [*] --> X"), "svg");
-    assert.equal(defaultMermaidViewMode("gantt\n  title T"), "svg");
+  it("es siempre svg (Excalidraw es solo un toggle)", () => {
+    assert.equal(defaultMermaidViewMode(), "svg");
   });
 });

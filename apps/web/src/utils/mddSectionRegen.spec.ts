@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
 import {
   buildRegenerateSectionChatMessage,
   buildMddSectionRegenNotice,
@@ -12,97 +13,102 @@ import {
   mddSectionRegenDisabledTitle,
   resolveEffectiveMddContent,
   resolveMddReadinessHintActions,
-} from "./mddSectionRegen";
+} from "./mddSectionRegen.js";
 
 describe("mddSectionRegen", () => {
   it("detectNaturalRegenerateSection acepta texto después del número", () => {
-    expect(detectNaturalRegenerateSection("regenera la sección 6 por favor")).toBe(6);
-    expect(detectNaturalRegenerateSection("rehacer paso 3 del mdd")).toBe(3);
+    assert.equal(detectNaturalRegenerateSection("regenera la sección 6 por favor"), 6);
+    assert.equal(detectNaturalRegenerateSection("rehacer paso 3 del mdd"), 3);
   });
 
   it("getRegenerateSectionFromSlashCommand resuelve /seguridad", () => {
-    expect(getRegenerateSectionFromSlashCommand("/seguridad")).toBe(6);
+    assert.equal(getRegenerateSectionFromSlashCommand("/seguridad"), 6);
   });
 
   it("mddHasSection5Heading detecta ## 5. Lógica y Edge Cases", () => {
-    expect(mddHasSection5Heading("## 4. Contratos\n\nx\n## 5. Lógica y Edge Cases\n\nBDD")).toBe(true);
-    expect(mddHasSection5Heading("## 4. Contratos\n\n## 6. Seguridad")).toBe(false);
+    assert.equal(mddHasSection5Heading("## 4. Contratos\n\nx\n## 5. Lógica y Edge Cases\n\nBDD"), true);
+    assert.equal(mddHasSection5Heading("## 4. Contratos\n\n## 6. Seguridad"), false);
   });
 
   it("getRegenerateSectionFromSlashCommand resuelve /5 y /logica", () => {
-    expect(getRegenerateSectionFromSlashCommand("/5")).toBe(5);
-    expect(getRegenerateSectionFromSlashCommand("/logica")).toBe(5);
+    assert.equal(getRegenerateSectionFromSlashCommand("/5"), 5);
+    assert.equal(getRegenerateSectionFromSlashCommand("/logica"), 5);
   });
 
   it("mddHasSection6Heading detecta ## 6. Seguridad", () => {
-    expect(mddHasSection6Heading("## 5. Lógica\n\nx\n## 6. Seguridad\n\nJWT")).toBe(true);
-    expect(mddHasSection6Heading("## 5. Lógica\n\n## 7. Infraestructura")).toBe(false);
+    assert.equal(mddHasSection6Heading("## 5. Lógica\n\nx\n## 6. Seguridad\n\nJWT"), true);
+    assert.equal(mddHasSection6Heading("## 5. Lógica\n\n## 7. Infraestructura"), false);
   });
 
   it("buildRegenerateSectionChatMessage usa slash del catálogo", () => {
-    expect(buildRegenerateSectionChatMessage(6)).toBe("/seguridad");
-    expect(buildRegenerateSectionChatMessage(3)).toBe("/modelo-datos");
+    assert.equal(buildRegenerateSectionChatMessage(6), "/seguridad");
+    assert.equal(buildRegenerateSectionChatMessage(3), "/modelo-datos");
   });
 
   it("buildMddSectionRegenNotice incluye sección y etiqueta", () => {
-    expect(buildMddSectionRegenNotice(6)).toBe("Regenerando §6 (Seguridad)…");
-    expect(mddSectionRegenShortLabel(6)).toBe("Seguridad");
+    assert.equal(buildMddSectionRegenNotice(6), "Regenerando §6 (Seguridad)…");
+    assert.equal(mddSectionRegenShortLabel(6), "Seguridad");
   });
 
   it("buildMddSection5PipelineRegenNotice describe paridad pipeline", () => {
-    expect(buildMddSection5PipelineRegenNotice()).toMatch(/pipeline/i);
-    expect(buildMddSection5PipelineRegenNotice()).toMatch(/§5/);
+    assert.match(buildMddSection5PipelineRegenNotice(), /pipeline/i);
+    assert.match(buildMddSection5PipelineRegenNotice(), /§5/);
   });
 
   it("resolveMddReadinessHintActions sugiere §5 para lógica/BDD", () => {
     const actions = resolveMddReadinessHintActions("Refuerza §5 Lógica y edge cases con reglas BDD/AAA.");
-    expect(actions).toEqual([{ kind: "regenerate", section: 5, label: "Regenerar §5" }]);
+    assert.deepEqual(actions, [{ kind: "regenerate", section: 5, label: "Regenerar §5" }]);
   });
 
   it("resolveMddReadinessHintActions sugiere formato y §7 para trazabilidad", () => {
     const actions = resolveMddReadinessHintActions(
       "Refuerza trazabilidad §2↔§7 y paridad Mermaid/SQL para subir efectividad.",
     );
-    expect(actions.map((a) => a.label)).toEqual(["Re-aplicar formato", "Regenerar §7"]);
+    assert.deepEqual(actions.map((a) => a.label), ["Re-aplicar formato", "Regenerar §7"]);
   });
 
   it("resolveEffectiveMddContent prioriza store, luego etapa, luego proyecto", () => {
-    expect(
+    assert.equal(
       resolveEffectiveMddContent({
         mddContent: "  store  ",
         stageMddContent: "stage",
         projectMddContent: "project",
       }),
-    ).toBe("store");
-    expect(
+      "store",
+    );
+    assert.equal(
       resolveEffectiveMddContent({
         mddContent: "",
         stageMddContent: " stage ",
         projectMddContent: "project",
       }),
-    ).toBe("stage");
-    expect(
+      "stage",
+    );
+    assert.equal(
       resolveEffectiveMddContent({
         mddContent: null,
         stageMddContent: null,
         projectMddContent: "project",
       }),
-    ).toBe("project");
+      "project",
+    );
   });
 
   it("canRegenerateMddSectionFromWorkshop no exige sesión de chat", () => {
-    expect(
+    assert.equal(
       canRegenerateMddSectionFromWorkshop("proj-1", "## 1. Contexto\n\nx", {}),
-    ).toBe(true);
-    expect(canRegenerateMddSectionFromWorkshop("", "## MDD", {})).toBe(false);
-    expect(canRegenerateMddSectionFromWorkshop("proj-1", "", {})).toBe(false);
-    expect(
+      true,
+    );
+    assert.equal(canRegenerateMddSectionFromWorkshop("", "## MDD", {}), false);
+    assert.equal(canRegenerateMddSectionFromWorkshop("proj-1", "", {}), false);
+    assert.equal(
       canRegenerateMddSectionFromWorkshop("proj-1", "## MDD", { loading: true }),
-    ).toBe(false);
+      false,
+    );
   });
 
   it("mddSectionRegenDisabledTitle no menciona sesión de chat", () => {
-    expect(mddSectionRegenDisabledTitle(null, "mdd")).toMatch(/proyecto/i);
-    expect(mddSectionRegenDisabledTitle("p1", "")).toMatch(/MDD guardado/i);
+    assert.match(mddSectionRegenDisabledTitle(null, "mdd"), /proyecto/i);
+    assert.match(mddSectionRegenDisabledTitle("p1", ""), /MDD guardado/i);
   });
 });

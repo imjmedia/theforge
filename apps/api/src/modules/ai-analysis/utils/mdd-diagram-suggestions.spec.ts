@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  injectErDiagramBlockIntoDraft,
   injectMddDiagrams,
   regenerateErDiagramFromSql,
   sqlToErDiagramContent,
@@ -168,5 +169,155 @@ describe("§3 con subsecciones N.M (no cortar en ## 3.2)", () => {
     const injected = injectMddDiagrams(SPLIT_DRAFT, suggestions);
     assert.match(injected, /## 4\. Contratos de API/);
     assert.match(injected, /### GET \/api\/v1\/tenants/);
+  });
+});
+
+/** MDD con otros diagramas en §3 además (o en lugar) del erDiagram. */
+const FLOWCHART_FENCE = `\`\`\`mermaid
+flowchart LR
+  A[Cliente] --> B[API]
+  B --> C[(Base de datos)]
+\`\`\``;
+
+const OLD_ER_FENCE = `\`\`\`mermaid
+erDiagram
+  tenants {
+    uuid id PK
+  }
+\`\`\``;
+
+function draftWithSection3(section3Diagrams: string): string {
+  return `# MDD de prueba
+
+## 1. Contexto y alcance
+
+Plataforma de facturación multi-tenant para despachos con proyectos, usuarios y facturas emitidas.
+
+## 2. Arquitectura y Stack
+
+Backend NestJS con módulos por dominio, frontend React 18 y PostgreSQL 16 como base principal.
+
+## 3. Modelo de Datos
+
+\`\`\`sql
+${sampleSql}
+\`\`\`
+
+${section3Diagrams}
+
+## 4. Contratos de API
+
+Listado de endpoints REST con autenticación JWT y paginación por cursor en todos los listados.
+`;
+}
+
+function countFences(doc: string, re: RegExp): number {
+  return (doc.match(re) ?? []).length;
+}
+
+describe("replaceErDiagramBlock localiza el ER (vía regenerateErDiagramFromSql / injectErDiagramBlockIntoDraft)", () => {
+  it("(a) flowchart antes del ER: conserva el flowchart byte a byte y actualiza solo el ER", () => {
+    const draft = draftWithSection3(`${FLOWCHART_FENCE}\n\n${OLD_ER_FENCE}`);
+    const out = regenerateErDiagramFromSql(draft);
+    assert.ok(out);
+    assert.ok(out!.includes(FLOWCHART_FENCE), "el flowchart debe quedar intacto");
+    assert.equal(countFences(out!, /^```mermaid$/gm), 2, "un flowchart y un ER, sin duplicados");
+    assert.equal(countFences(out!, /^erDiagram$/gm), 1);
+    assert.match(out!, /tenants \|\|--o\{ tenant_users/);
+    assert.doesNotMatch(out!, /uuid id PK\n  \}\n```\n\n## 4/);
+    assert.ok(out!.indexOf(FLOWCHART_FENCE) < out!.indexOf("erDiagram"), "el orden se conserva");
+    assert.ok(out!.includes("## 4. Contratos de API"));
+  });
+
+  it("(a2) mismo caso por injectErDiagramBlockIntoDraft (rama del nodo injector)", () => {
+    const draft = draftWithSection3(`${FLOWCHART_FENCE}\n\n${OLD_ER_FENCE}`);
+    const block = wrapErDiagramAsMermaidFence(sqlToErDiagramContent(sampleSql)!);
+    const out = injectErDiagramBlockIntoDraft(draft, block);
+    assert.ok(out.includes(FLOWCHART_FENCE));
+    assert.equal(countFences(out, /^erDiagram$/gm), 1);
+    assert.equal(countFences(out, /^```mermaid$/gm), 2);
+    assert.ok(out.includes(block));
+  });
+
+  it("(a3) ER con comentario %% y front-matter antes de erDiagram sigue siendo el ER", () => {
+    const er = `\`\`\`mermaid\n---\ntitle: Modelo\n---\n%% comentario\nerDiagram\n  x {\n    int id PK\n  }\n\`\`\``;
+    const draft = draftWithSection3(`${FLOWCHART_FENCE}\n\n${er}`);
+    const out = regenerateErDiagramFromSql(draft);
+    assert.ok(out);
+    assert.ok(out!.includes(FLOWCHART_FENCE));
+    assert.doesNotMatch(out!, /title: Modelo/);
+    assert.equal(countFences(out!, /^erDiagram$/gm), 1);
+  });
+
+  it("(a4) con varios ER reemplaza solo el primero", () => {
+    const secondEr = `\`\`\`mermaid\nerDiagram\n  otra {\n    int id PK\n  }\n\`\`\``;
+    const draft = draftWithSection3(`${OLD_ER_FENCE}\n\n${FLOWCHART_FENCE}\n\n${secondEr}`);
+    const out = regenerateErDiagramFromSql(draft);
+    assert.ok(out);
+    assert.ok(out!.includes(FLOWCHART_FENCE));
+    assert.ok(out!.includes(secondEr), "el segundo ER no se toca");
+    assert.match(out!, /tenants \|\|--o\{ tenant_users/);
+  });
+
+  it("(a5) la palabra erDiagram en un flowchart no lo convierte en ER", () => {
+    const flow = `\`\`\`mermaid\nflowchart LR\n  A[erDiagram] --> B\n\`\`\``;
+    const draft = draftWithSection3(flow);
+    const out = regenerateErDiagramFromSql(draft);
+    assert.ok(out);
+    assert.ok(out!.includes(flow));
+    assert.equal(countFences(out!, /^```mermaid$/gm), 2);
+    assert.match(out!, /^erDiagram$/m);
+  });
+
+  it("(b) §3 sin ER pero con flowchart: inserta el ER y conserva el flowchart", () => {
+    const draft = draftWithSection3(FLOWCHART_FENCE);
+    const out = regenerateErDiagramFromSql(draft);
+    assert.ok(out);
+    assert.ok(out!.includes(FLOWCHART_FENCE));
+    assert.equal(countFences(out!, /^```mermaid$/gm), 2);
+    assert.equal(countFences(out!, /^erDiagram$/gm), 1);
+    assert.ok(out!.indexOf(FLOWCHART_FENCE) < out!.indexOf("erDiagram"));
+    assert.ok(out!.indexOf("erDiagram") < out!.indexOf("## 4. Contratos de API"));
+
+    const block = wrapErDiagramAsMermaidFence(sqlToErDiagramContent(sampleSql)!);
+    const viaInject = injectErDiagramBlockIntoDraft(draft, block);
+    assert.ok(viaInject.includes(FLOWCHART_FENCE));
+    assert.equal(countFences(viaInject, /^erDiagram$/gm), 1);
+  });
+
+  it("(b2) injectMddDiagrams inserta el ER aunque §3 ya tenga un flowchart (y mencione erDiagram en prosa)", () => {
+    const draft = draftWithSection3(`${FLOWCHART_FENCE}\n\nEl diagrama erDiagram se genera desde el SQL.`);
+    const out = injectMddDiagrams(draft, suggestMddDiagrams(draft));
+    assert.ok(out.includes(FLOWCHART_FENCE));
+    assert.equal(countFences(out, /^erDiagram$/gm), 1);
+  });
+
+  it("(c) regresión: §3 con ER único se reemplaza como antes", () => {
+    const draft = draftWithSection3(`### Diagrama entidad-relación\n\n${OLD_ER_FENCE}`);
+    const out = regenerateErDiagramFromSql(draft);
+    assert.ok(out);
+    assert.equal(countFences(out!, /^```mermaid$/gm), 1);
+    assert.equal(countFences(out!, /^erDiagram$/gm), 1);
+    assert.match(out!, /tenants \|\|--o\{ tenant_users/);
+    assert.ok(out!.includes("## 4. Contratos de API"));
+    const injected = injectMddDiagrams(draft, suggestMddDiagrams(draft));
+    assert.equal(countFences(injected, /^erDiagram$/gm), 1);
+    assert.match(injected, /tenants \|\|--o\{ tenant_users/);
+  });
+
+  it("(d) idempotente: aplicar dos veces el mismo ER no cambia el resultado", () => {
+    const draft = draftWithSection3(`${FLOWCHART_FENCE}\n\n${OLD_ER_FENCE}`);
+    const block = wrapErDiagramAsMermaidFence(sqlToErDiagramContent(sampleSql)!);
+    const once = injectErDiagramBlockIntoDraft(draft, block);
+    const twice = injectErDiagramBlockIntoDraft(once, block);
+    assert.equal(twice, once);
+
+    const r1 = regenerateErDiagramFromSql(draft)!;
+    const r2 = regenerateErDiagramFromSql(r1)!;
+    assert.equal(r2, r1);
+
+    const noEr = draftWithSection3(FLOWCHART_FENCE);
+    const i1 = injectErDiagramBlockIntoDraft(noEr, block);
+    assert.equal(injectErDiagramBlockIntoDraft(i1, block), i1);
   });
 });
