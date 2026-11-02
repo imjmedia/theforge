@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { resolveLangGraphRecursionLimit } from "./langgraph-recursion.util.js";
 
 describe("resolveLangGraphRecursionLimit", () => {
-  it("devuelve 100 por defecto", () => {
-    assert.equal(resolveLangGraphRecursionLimit({}), 100);
-    assert.equal(resolveLangGraphRecursionLimit({ LANGGRAPH_RECURSION_LIMIT: "" }), 100);
+  it("devuelve el default del catálogo (50) por defecto", () => {
+    assert.equal(resolveLangGraphRecursionLimit({}), 50);
+    assert.equal(resolveLangGraphRecursionLimit({ LANGGRAPH_RECURSION_LIMIT: "" }), 50);
   });
 
   it("parsea LANGGRAPH_RECURSION_LIMIT entre 10 y 500", () => {
@@ -26,15 +26,15 @@ describe("resolveLangGraphRecursionLimit", () => {
   it("ignora valores fuera de rango o no numéricos", () => {
     assert.equal(
       resolveLangGraphRecursionLimit({ LANGGRAPH_RECURSION_LIMIT: "9" }),
-      100,
+      50,
     );
     assert.equal(
       resolveLangGraphRecursionLimit({ LANGGRAPH_RECURSION_LIMIT: "501" }),
-      100,
+      50,
     );
     assert.equal(
       resolveLangGraphRecursionLimit({ LANGGRAPH_RECURSION_LIMIT: "abc" }),
-      100,
+      50,
     );
   });
 });

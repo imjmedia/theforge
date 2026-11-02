@@ -152,7 +152,8 @@ describe("domain-inventory + cascade-accuracy", () => {
     const inv = buildDomainInventory({ brdMarkdown: brd });
     assert.ok(inv.suggestedEntities.includes("order_lines"));
     assert.ok(inv.suggestedEntities.includes("payment_schedules"));
-    assert.ok(inv.suggestedEntities.includes("llm_configs"));
+    // llm_configs es ruido de plataforma: solo se sugiere con alcance chat/LLM (domain-inventory).
+    assert.ok(!inv.suggestedEntities.includes("llm_configs"));
   });
 
   it("ignores BRD template headings and parses ?3 Capacidades only", () => {

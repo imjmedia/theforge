@@ -236,7 +236,13 @@ K8s.
 describe("getSectionsToPreserveFromExecutorPlan", () => {
   it("preserva §6 cuando el plan solo incluye architect e integration", () => {
     const agents = expandSectionsToRun(["software_architect", "integration"], { tail: "minimal" });
-    assert.deepStrictEqual(agents, ["software_architect", "integration"]);
+    // software_architect arrastra architect_critic y format_after_architect (manager-plan).
+    assert.deepStrictEqual(agents, [
+      "software_architect",
+      "format_after_architect",
+      "architect_critic",
+      "integration",
+    ]);
     const preserve = getSectionsToPreserveFromExecutorPlan(agents);
     assert.ok(preserve.includes(6));
     assert.ok(!preserve.includes(2));

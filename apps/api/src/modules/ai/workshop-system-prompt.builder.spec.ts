@@ -6,22 +6,24 @@ import { describe, it } from "node:test";
 import { buildWorkshopSystemPrompt } from "./workshop-system-prompt.builder.js";
 
 describe("buildWorkshopSystemPrompt", () => {
-  it("sync: pestaña architecture usa workshopFinDelimiterCovenant", () => {
+  it("sync: pestaña architecture (congelada, SSOT) no pide delimitador FIN_ARCH", () => {
     const prompt = buildWorkshopSystemPrompt(
       { activeTab: "architecture", intent: "direct_edit" },
       { variant: "sync", history: [], userPrompt: "actualiza stack", phase0TechDocs: null },
     );
-    assert.match(prompt, /---FIN_ARCH---/);
+    assert.doesNotMatch(prompt, /---FIN_ARCH---/);
+    assert.match(prompt, /documento congelado/);
     assert.match(prompt, /Contexto de documento activo/);
   });
 
-  it("stream: pestaña architecture incluye instrucción OBLIGATORIO explícita", () => {
+  it("stream: pestaña architecture (congelada) no incluye instrucción OBLIGATORIO de Arquitectura", () => {
     const prompt = buildWorkshopSystemPrompt(
       { activeTab: "architecture", intent: "direct_edit" },
       { variant: "stream", history: [], userPrompt: "actualiza stack", phase0TechDocs: null },
     );
-    assert.match(prompt, /OBLIGATORIO — Arquitectura/);
-    assert.match(prompt, /---FIN_ARCH---/);
+    assert.doesNotMatch(prompt, /OBLIGATORIO — Arquitectura/);
+    assert.doesNotMatch(prompt, /---FIN_ARCH---/);
+    assert.match(prompt, /documento congelado/);
   });
 
   it("welcomeBrief usa system corto y omite delimitadores FIN_*", () => {

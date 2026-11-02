@@ -373,7 +373,15 @@ export function repairStackedCodeFences(text: string): string {
     if (openLang != null && openLang !== "" && openLang !== "sql") return match;
     return `\n\n\`\`\`${lang}`;
   });
-  out = out.replace(/(\n```json\n[\s\S]*?\n```)\s*\n```json\n/gi, "$1\n");
+  // `(^|\n)`: la primera fence puede abrir al inicio del texto (sin \n previo).
+  // Si el primer bloque JSON quedó incompleto (llaves/corchetes abiertos), el cierre se quita y el
+  // contenido continúa en el bloque siguiente; si está completo, solo se quita el reabrir (original).
+  out = out.replace(/(^|\n)(```json\n[\s\S]*?)\n```\s*\n```json\n/gi, (_m, pre: string, body: string) => {
+    const opens = (body.match(/[{[]/g) ?? []).length;
+    const closes = (body.match(/[}\]]/g) ?? []).length;
+    if (opens > closes) return `${pre}${body}\n`;
+    return `${pre}${body}\n\`\`\`\n`;
+  });
   out = out.replace(/(\n```env\n[\s\S]*?\n```)\s*\n```env\n/gi, "$1\n");
   out = out.replace(/\n```\s*\n\n```json/g, "\n\n```json");
   out = out.replace(/\n```\s*\n\n```env/g, "\n\n```env");

@@ -4,6 +4,19 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 
 ## [Unreleased]
 
+> **Specs preexistentes en verde** — La suite de la API tenía 14 fallos en master, casi todos por specs desalineados con código vigente o con imports que no existían. Se corrigen los specs y dos defectos reales de código.
+
+### Fixed
+
+- **Coma tras abridor de array en JSON pegado** (`packages/shared-types/src/repair-mdd-format.ts`): `"applications": [` seguido de `{` recibía una coma (`[,`); ahora un abridor de array no es un elemento sin coma.
+- **Une fences JSON partidas** (`packages/shared-types/src/repair-pasted-markdown.ts`): un bloque `json` incompleto se une con el siguiente sin dejar el cierre en medio; un bloque completo conserva el comportamiento anterior.
+- **Tareas sin timestamp no se reemplazan** (`packages/shared-types/src/merge-tasks-json-idempotent.util.ts`): sin `generatedAt` válido en el existente se hace merge y se conservan las tareas `done`; solo reemplaza un incoming con fecha más reciente.
+- **Extractor de edge cases en el último bloque** (`apps/api/src/modules/ai/utils/legacy-as-is-spec.util.ts`): el regex usaba `\z` (la letra "z" en JavaScript) en lugar de `$`, así que §5 sin sección posterior no devolvía casos.
+
+### Changed
+
+- **Specs alineados al comportamiento vigente**: `mdd-section5`, `mdd-high-pipeline-phases` y `project-integration` pasan a `node:test` con `assert` (no dependían de `vitest`); la reparación de Node §2↔§7 se prueba como ya alineado; la pestaña Arquitectura (congelada por SSOT) no pide `---FIN_ARCH---`; `llm_configs` se filtra como ruido de plataforma fuera de alcance chat/LLM; `software_architect` arrastra `architect_critic` y `format_after_architect`; el default de `langgraph_recursion_limit` es 50; la alineación SDD se prueba como punto fijo; el límite de W4 es explícito en el test.
+
 > **Eval MDD: segunda corrida — una sola semántica de fences, §4 que ya no se pierde en chunks y coste medible** — La segunda corrida (1/12 aprobados) mostró en `clinica-citas-historial` estructura 44 con §4–§7 "ausentes" aunque §5–§7 existían. No era el semáforo del eval: el pipeline contaba ocurrencias de ``` (paridad), el gate buscaba encabezados sin mirar fences y la rúbrica aplicaba CommonMark por líneas, igual que los renderers. Con un ```sql sin cerrar seguido de ```mermaid y ```TechnicalMetadata pegados, la "reparación" por paridad insertaba un ``` antes de `## 5.` que en CommonMark abría un bloque y se tragaba §5–§7. Además la ruta HIGH descartaba en silencio los chunks de §4 cuyos endpoints no venían como `### METODO /ruta`, y el coste seguía en $0.00 sin que el harness pudiera decir por qué.
 
 ### Fixed

@@ -34,7 +34,7 @@ export function resolveLegacyBaselineStageFlag(
 
 export function extractEdgeCaseTitles(section5: string): string[] {
   const block = section5.match(
-    /###\s*Reglas y edge cases\s*\n([\s\S]*?)(?=\n###\s|\n##\s*\d+\.|\n_Edge cases|\z)/i,
+    /###\s*Reglas y edge cases\s*\n([\s\S]*?)(?=\n###\s|\n##\s*\d+\.|\n_Edge cases|$)/i,
   );
   if (!block?.[1]) return [];
   const titles: string[] = [];
