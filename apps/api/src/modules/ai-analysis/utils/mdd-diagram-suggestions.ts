@@ -12,6 +12,11 @@ import {
   repairErDiagramPkFkCommas,
   stripErDiagramSqlDefaultArtifacts,
 } from "@theforge/shared-types/mermaid";
+import {
+  findH2HeadingMatch,
+  getSectionBody,
+  indexOfNextSectionBoundaryOutsideFenced,
+} from "./mdd-sanitize/section-fence.util.js";
 
 export interface DiagramSuggestion {
   /** Sección donde insertar (ej. "2. Modelo de datos") */
@@ -28,20 +33,37 @@ export interface DiagramSuggestion {
   insertAt: "start" | "end";
 }
 
-function getSectionBody(
+/** Número entero de un heading H2 (`## 3. …`, `## 3.2 …` → 3); null si no lleva número. */
+function sectionNumberOf(heading: string): number | null {
+  const m = /^\s*##[ \t]+(\d+)(?!\d)/.exec(heading);
+  return m ? parseInt(m[1]!, 10) : null;
+}
+
+/**
+ * Localiza una sección H2 para reescribirla in situ: cuerpo (vía getSectionBody, fence-aware y
+ * sin cortar en `## N.M`) y rango [start, end) del cuerpo dentro de `draft` (ya trimmed).
+ * start apunta al primer carácter no blanco del cuerpo y end descarta el blanco final, así que
+ * el heading y el separador previo al siguiente `##` se conservan al reemplazar.
+ */
+function locateSection(
   draft: string,
-  headingPattern: RegExp,
-): { body: string; startIndex: number; endIndex: number; matchedHeading: string } | null {
-  const match = draft.match(headingPattern);
+  pattern: RegExp,
+): { body: string; matchedHeading: string; start: number; end: number } | null {
+  const match = findH2HeadingMatch(draft, pattern);
   if (!match) return null;
-  const heading = match[0].trim();
-  const idx = draft.indexOf(match[0]);
-  const sectionStart = idx + match[0].length;
-  const rest = draft.slice(sectionStart).replace(/^\s*\n+/, "");
-  const nextH2 = rest.search(/\n##\s+/);
-  const body = nextH2 !== -1 ? rest.slice(0, nextH2).trim() : rest.trim();
-  const endIndex = nextH2 !== -1 ? sectionStart + nextH2 : draft.length;
-  return { body, startIndex: sectionStart, endIndex, matchedHeading: heading };
+  const headingEnd = match.index + match[0].length;
+  const boundary = indexOfNextSectionBoundaryOutsideFenced(draft, headingEnd, sectionNumberOf(match[0]));
+  const bodyEnd = boundary !== -1 ? boundary : draft.length;
+  const rest = draft.slice(headingEnd, bodyEnd);
+  const start = headingEnd + (rest.length - rest.trimStart().length);
+  let end = bodyEnd;
+  while (end > start && /\s/.test(draft.charAt(end - 1))) end -= 1;
+  return {
+    body: getSectionBody(draft, pattern) ?? "",
+    matchedHeading: match[0].trim(),
+    start,
+    end,
+  };
 }
 
 /** Mapea tipo SQL a tipo Mermaid erDiagram; usa datetime (como en ejemplos del skill) para máxima compatibilidad. */
@@ -458,7 +480,7 @@ export function suggestMddDiagrams(draft: string): DiagramSuggestion[] {
 
   const suggestions: DiagramSuggestion[] = [];
 
-  const sectionModelo = getSectionBody(trimmed, /##\s*(2|3)\.\s*Modelo\s+(?:de\s+)?datos/i);
+  const sectionModelo = locateSection(trimmed, /##\s*(2|3)\.\s*Modelo\s+(?:de\s+)?datos/i);
   if (sectionModelo) {
     const er = suggestErDiagram(sectionModelo.body, sectionModelo.matchedHeading);
     if (er) suggestions.push(er);
@@ -466,13 +488,13 @@ export function suggestMddDiagrams(draft: string): DiagramSuggestion[] {
 
   const section3 = getSectionBody(trimmed, /##\s*3\.\s*Contratos\s+de\s+API/i);
   if (section3) {
-    const state = suggestAuthStateDiagram(section3.body);
+    const state = suggestAuthStateDiagram(section3);
     if (state) suggestions.push(state);
   }
 
   const section4 = getSectionBody(trimmed, /##\s*4\.\s*Arquitectura\s+Frontend/i);
   if (section4) {
-    const flow = suggestFrontendFlowchart(section4.body, trimmed);
+    const flow = suggestFrontendFlowchart(section4, trimmed);
     if (flow) suggestions.push(flow);
   }
 
@@ -499,7 +521,7 @@ function replaceErDiagramBlock(sectionBody: string, newBlock: string): string {
  */
 export function injectErDiagramBlockIntoDraft(draft: string, mermaidBlock: string): string {
   const trimmed = (draft || "").trim();
-  const sectionModelo = getSectionBody(trimmed, /##\s*3\.\s*Modelo\s+(?:de\s+)?datos/i);
+  const sectionModelo = locateSection(trimmed, /##\s*3\.\s*Modelo\s+(?:de\s+)?datos/i);
   if (!sectionModelo) return draft;
   let newBody: string;
   if (/```mermaid\s*[\s\S]*?erDiagram/i.test(sectionModelo.body)) {
@@ -507,7 +529,7 @@ export function injectErDiagramBlockIntoDraft(draft: string, mermaidBlock: strin
   } else {
     newBody = sectionModelo.body.trimEnd() + "\n\n" + mermaidBlock.trim();
   }
-  return trimmed.slice(0, sectionModelo.startIndex) + newBody + trimmed.slice(sectionModelo.endIndex);
+  return trimmed.slice(0, sectionModelo.start) + newBody + trimmed.slice(sectionModelo.end);
 }
 
 /**
@@ -516,7 +538,7 @@ export function injectErDiagramBlockIntoDraft(draft: string, mermaidBlock: strin
  */
 export function regenerateErDiagramFromSql(draft: string): string | null {
   const trimmed = (draft || "").trim();
-  const sectionModelo = getSectionBody(trimmed, /##\s*(2|3)\.\s*Modelo\s+(?:de\s+)?datos/i);
+  const sectionModelo = locateSection(trimmed, /##\s*(2|3)\.\s*Modelo\s+(?:de\s+)?datos/i);
   if (!sectionModelo) return null;
   const suggestion = suggestErDiagram(sectionModelo.body, sectionModelo.matchedHeading);
   if (!suggestion) return null;
@@ -526,7 +548,7 @@ export function regenerateErDiagramFromSql(draft: string): string | null {
   } else {
     newBody = sectionModelo.body.trimEnd() + "\n\n" + suggestion.mermaidBlock.trim();
   }
-  return trimmed.slice(0, sectionModelo.startIndex) + newBody + trimmed.slice(sectionModelo.endIndex);
+  return trimmed.slice(0, sectionModelo.start) + newBody + trimmed.slice(sectionModelo.end);
 }
 
 /**
@@ -541,20 +563,19 @@ export function injectMddDiagrams(draft: string, suggestions: DiagramSuggestion[
     if (idx === -1) continue;
     const endOfHeadingLine = out.indexOf("\n", idx);
     const sectionStart = endOfHeadingLine === -1 ? idx + marker.length : endOfHeadingLine + 1;
-    const afterMarker = out.slice(sectionStart);
-    const nextH2 = afterMarker.search(/\n##\s+/);
-    const sectionBody = nextH2 !== -1 ? afterMarker.slice(0, nextH2) : afterMarker;
+    // Frontera de la sección (fence-aware, sin cortar en `## N.M`); se busca desde el fin del heading.
+    const boundary = indexOfNextSectionBoundaryOutsideFenced(out, idx + marker.length, sectionNumberOf(marker));
+    const sectionEnd = Math.max(sectionStart, boundary !== -1 ? boundary : out.length);
+    const sectionBody = out.slice(sectionStart, sectionEnd);
 
     if (s.type === "erDiagram" && /```mermaid\s*[\s\S]*?erDiagram/i.test(sectionBody)) {
       const newSectionBody = replaceErDiagramBlock(sectionBody, s.mermaidBlock);
-      const sectionEnd = nextH2 !== -1 ? sectionStart + nextH2 : out.length;
       out = out.slice(0, sectionStart) + newSectionBody + out.slice(sectionEnd);
       continue;
     }
 
     if (sectionBody.includes("```mermaid") && sectionBody.includes(s.type)) continue;
-    const insertPoint =
-      s.insertAt === "start" ? sectionStart : nextH2 !== -1 ? sectionStart + nextH2 : out.length;
+    const insertPoint = s.insertAt === "start" ? sectionStart : sectionEnd;
     out = out.slice(0, insertPoint) + s.mermaidBlock + out.slice(insertPoint);
   }
   return out;

@@ -29,8 +29,11 @@ export type EvalStreamEvent =
   | {
       type: "done";
       markdown: string;
-      /** Porcentaje del juez (Auditor). Es la métrica `auditorScore` del registro cuando el Auditor corrió. */
+      /** Porcentaje del semáforo en vivo (regex/semáforo). NO es el score del Auditor LLM. */
       precision?: number;
+      /** Score del Auditor LLM. Solo es válido si `auditorRan` no es false. */
+      auditorScore?: number;
+      auditorRan?: boolean;
       status?: "red" | "yellow" | "green";
       deliveryGate?: EvalDeliveryGate;
       auditorFeedback?: string;
@@ -58,6 +61,8 @@ export interface MddEvalRunnerDeps {
   getTokenUsage(projectId: string): Promise<EvalTokenUsage>;
   score(markdown: string, evalCase: MddEvalCase): MddEvalScore;
   now(): number;
+  /** Espera entre reintentos de la lectura de uso (por defecto, setTimeout). Inyectable en tests. */
+  sleep?(ms: number): Promise<void>;
 }
 
 export interface MddEvalRunOptions {
@@ -86,6 +91,9 @@ export const DEFAULT_EVAL_TIMEOUT_MS = 1_800_000;
 export const MAX_EVAL_CONCURRENCY = 3;
 /** Umbral del Auditor cuando el caso no lo define (coincide con el default del schema). */
 const DEFAULT_MIN_AUDITOR = 85;
+/** La atribución de tokens se escribe de forma asíncrona: si la primera lectura no ve generaciones, se reintenta. */
+const TOKEN_USAGE_RETRIES = 3;
+const TOKEN_USAGE_RETRY_DELAY_MS = 1_000;
 
 /** DBGA que recibe el pipeline: el benchmark del caso o, si falta, el brief como idea del usuario. */
 export function buildEvalDbgaContent(evalCase: MddEvalCase): string {
@@ -123,17 +131,33 @@ function clampConcurrency(value: number): number {
   return Math.min(MAX_EVAL_CONCURRENCY, Math.max(1, Math.floor(value)));
 }
 
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Lee el uso de tokens del proyecto temporal. Debe llamarse ANTES de borrarlo (el borrado en cascada
+ * elimina las filas de `TokenUsage`). Si no hay generaciones aún, reintenta con pausa.
+ */
 async function readTokenUsage(
   deps: MddEvalRunnerDeps,
   projectId: string,
   auditTrail: string[],
 ): Promise<EvalTokenUsage> {
-  try {
-    return await deps.getTokenUsage(projectId);
-  } catch (error) {
-    auditTrail.push(`harness: sin uso de tokens: ${errorMessage(error)}`);
-    return {};
+  const sleep = deps.sleep ?? defaultSleep;
+  let usage: EvalTokenUsage = {};
+  for (let attempt = 0; attempt <= TOKEN_USAGE_RETRIES; attempt += 1) {
+    try {
+      usage = await deps.getTokenUsage(projectId);
+    } catch (error) {
+      auditTrail.push(`harness: sin uso de tokens: ${errorMessage(error)}`);
+      return {};
+    }
+    if ((usage.llmCalls ?? 0) > 0) return usage;
+    if (attempt < TOKEN_USAGE_RETRIES) await sleep(TOKEN_USAGE_RETRY_DELAY_MS);
   }
+  auditTrail.push(`harness: uso de tokens sin generaciones tras ${TOKEN_USAGE_RETRIES} reintentos`);
+  return usage;
 }
 
 /**
@@ -238,9 +262,12 @@ export async function runEvalCaseWithMarkdown(
   }
 
   const failedStep = done?.failedStep;
-  // Si el último nodo escritor falló, el Auditor no corrió: no hay score que comparar.
+  // Score del Auditor LLM (nunca `precision`, que es el semáforo en vivo). Sin Auditor (nodo escritor
+  // fallido o auditorRan=false): undefined, y no se exige umbral.
   const auditorScore =
-    done && !failedStep && typeof done.precision === "number" ? done.precision : undefined;
+    done && !failedStep && done.auditorRan !== false && typeof done.auditorScore === "number"
+      ? done.auditorScore
+      : undefined;
   const minAuditor = evalCase.thresholds?.minAuditor ?? DEFAULT_MIN_AUDITOR;
   const gateOk = done?.deliveryGate?.ok;
   const passed =

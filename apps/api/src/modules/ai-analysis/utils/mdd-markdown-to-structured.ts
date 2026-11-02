@@ -9,22 +9,26 @@ import {
   mddSeguridadItemSchema,
   mddStructuredSchema,
 } from "../state/mdd-structured.schema.js";
+import { getSectionBody } from "./mdd-sanitize/section-fence.util.js";
+
+/** Tags de fence que se consideran SQL. Un fence sin tag cuenta solo si contiene CREATE TABLE. */
+const SQL_FENCE_LANGS = new Set(["sql", "postgresql", "pgsql"]);
 
 /**
- * Extrae el cuerpo de una sección ## heading hasta el siguiente ## o fin.
+ * SQL de la sección (p. ej. §3 completa, incluidos `## 3.1 Esquema SQL` y `## 3.2 Diagrama ER`).
+ * Concatena todos los fences SQL en orden de aparición.
  */
-function getSectionBody(draft: string, headingPattern: RegExp): string | null {
-  const match = draft.match(headingPattern);
-  if (!match) return null;
-  const start = draft.indexOf(match[0]) + match[0].length;
-  const rest = draft.slice(start).replace(/^\s*\n+/, "");
-  const nextH2 = rest.search(/\n##\s+/);
-  return nextH2 !== -1 ? rest.slice(0, nextH2).trim() : rest.trim();
-}
-
 function extractSql(body: string): string {
-  const m = body.match(/```sql\s*([\s\S]*?)```/i);
-  return m?.[1]?.trim() ?? "";
+  const parts: string[] = [];
+  for (const m of body.matchAll(/```([A-Za-z]*)[ \t]*\n?([\s\S]*?)```/g)) {
+    const lang = (m[1] ?? "").toLowerCase();
+    const code = (m[2] ?? "").trim();
+    if (!code) continue;
+    if (SQL_FENCE_LANGS.has(lang) || (lang === "" && /\bCREATE\s+TABLE\b/i.test(code))) {
+      parts.push(code);
+    }
+  }
+  return parts.join("\n\n");
 }
 
 function extractMermaid(body: string): string {

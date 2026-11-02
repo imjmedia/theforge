@@ -8,6 +8,7 @@ import { requestUserStore } from "../../../common/request-user.store.js";
 import type { PrismaService } from "../../../prisma/prisma.service.js";
 import type { AiAnalysisService } from "../ai-analysis.service.js";
 import type { TokenUsageService } from "../token-usage/token-usage.service.js";
+import { runWithTokenUsageContext, type TokenUsageContextPayload } from "../token-usage/token-usage.context.js";
 import { scoreMddAgainstCase } from "./mdd-eval-rubric.js";
 import type { EvalStreamEvent, MddEvalRunnerDeps } from "./mdd-eval-runner.js";
 
@@ -54,12 +55,24 @@ export function buildMddEvalDeps(input: BuildMddEvalDepsInput): MddEvalRunnerDep
       await prisma.project.delete({ where: { id: projectId } });
     },
     generate(dbgaContent, projectId, stageId, signal): AsyncIterable<EvalStreamEvent> {
+      // Mismo contexto de telemetría que el job MDD de la cola: sin él los adapters LLM no registran uso.
+      const tokenCtx: TokenUsageContextPayload = {
+        projectId,
+        stageId,
+        documentField: "mddContent",
+        context: "initial",
+        jobId: `eval-${projectId}`,
+      };
       return (async function* () {
         // El pipeline resuelve el LLM (BYOK) con el usuario del contexto de petición: se fija por paso.
         const inner = aiService.streamMddAnalysis(dbgaContent, projectId, stageId, undefined, { signal });
         try {
           while (true) {
-            const step = await requestUserStore.run({ userId, role: "admin" }, () => inner.next());
+            // El cuerpo de un generador se reanuda en cada `next()`: el contexto de tokens debe fijarse en
+            // cada paso (envolver solo su creación no llegaría a las llamadas LLM).
+            const step = await runWithTokenUsageContext(tokenCtx, () =>
+              requestUserStore.run({ userId, role: "admin" }, () => inner.next()),
+            );
             if (step.done) return;
             yield step.value as EvalStreamEvent;
           }

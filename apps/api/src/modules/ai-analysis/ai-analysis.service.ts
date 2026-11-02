@@ -167,6 +167,10 @@ export type StreamProgressEvent =
     /** Tras DBGA stream con projectId: propuesta HITL (persistida en `complexityPending`, no aplica `complexity` hasta confirmación en chat). */
     complexityProposal?: { level: ComplexityLevel; planSummary: string; reason?: string };
     precision?: number;
+    /** Score del Auditor LLM (no el porcentaje del semáforo). Solo válido si `auditorRan` es true. */
+    auditorScore?: number;
+    /** true cuando el nodo Auditor LLM corrió en este turno/pasada. */
+    auditorRan?: boolean;
     status?: "red" | "yellow" | "green";
     deliveryGate?: MddDeliveryGateResult;
     auditorFeedback?: string;
@@ -1141,6 +1145,8 @@ export class AiAnalysisService {
         auditTrail,
         mddAgentEditLog: editLogTracker.log.length > 0 ? editLogTracker.log : undefined,
         ...(lastState?.lastStepFailed ? { failedStep: lastState.lastStepFailed } : {}),
+        auditorScore: typeof lastState.auditorScore === "number" && lastState.auditorRan ? lastState.auditorScore : undefined,
+        auditorRan: lastState.auditorRan === true,
       };
     } catch (err) {
       if (projectId?.trim() && !isMddUserCancellationError(err)) {
@@ -1522,6 +1528,8 @@ export class AiAnalysisService {
         auditTrail,
         mddAgentEditLog: editLogTracker.log.length > 0 ? editLogTracker.log : undefined,
         ...(lastState?.lastStepFailed ? { failedStep: lastState.lastStepFailed } : {}),
+        auditorScore: typeof lastState.auditorScore === "number" && lastState.auditorRan ? lastState.auditorScore : undefined,
+        auditorRan: lastState.auditorRan === true,
       };
     } catch (err) {
       if (isGraphInterrupt(err) && err.interrupts?.length > 0) {
@@ -1994,6 +2002,8 @@ export class AiAnalysisService {
           auditTrail,
           mddAgentEditLog: editLogTracker.log.length > 0 ? editLogTracker.log : undefined,
           ...(lastState?.lastStepFailed ? { failedStep: lastState.lastStepFailed } : {}),
+          auditorScore: typeof lastState?.auditorScore === "number" && lastState?.auditorRan ? lastState?.auditorScore : undefined,
+          auditorRan: lastState?.auditorRan === true,
         };
       }
     } catch (err) {

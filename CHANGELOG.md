@@ -4,6 +4,15 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 
 ## [Unreleased]
 
+> **Eval MDD: primera corrida real y correcciones del medidor** — La primera ejecución de los 12 casos (0/12 aprobados) mostró tres ceros falsos del medidor, no del generador: entidades en 0 porque la rúbrica cortaba §3 en los subencabezados `## 3.1`, "Auditor" tomado del porcentaje integral del panel, y tokens en 0 por generar fuera del contexto de registro. El mismo corte en `## N.M` existía en validadores del pipeline. Además, en despliegues con API y worker separados el markdown generado no era visible para la API.
+
+### Fixed
+
+- **Rúbrica del eval** (`eval/mdd-eval-rubric.ts`): una sección termina solo en `# `, en `## Título` sin número o en `## K.` con K distinto; `## N.M` es subsección. Entidades y capacidades con fallback a todo el documento y línea de diagnóstico (fences en §3, CREATE TABLE en §3 y en el documento, rutas en §4 y en el documento); fences SQL en cualquier capitalización o sin etiqueta con CREATE TABLE. Nuevo fixture con subsecciones.
+- **Runner del eval** (`eval/mdd-eval-runner.ts`, `mdd-eval-nest-deps.ts`, `ai-analysis.service.ts`): el evento `done` de los streams MDD incluye `auditorScore` y `auditorRan`; el runner ya no usa `precision` como score del Auditor; la generación corre dentro de `runWithTokenUsageContext` (antes solo lo hacía la ruta de jobs) y el uso de tokens se lee antes de borrar el proyecto, con reintento mientras no haya filas.
+- **Markdown del eval sin volumen compartido** (`eval/mdd-eval-artifact-store.ts`, nuevo): cada `<caseId>.md` se guarda también en Redis (`theforge:mdd-eval:md:<runId>:<caseKey>`, 7 días, `MDD_EVAL_ARTIFACT_TTL_SECONDS`); la API sirve disco primero y Redis después, y «Ver MDD» deja de salir deshabilitado cuando `theforge-api` y `theforge-worker` corren en contenedores distintos.
+- **Validadores del pipeline no cortan en `## N.M`** (`utils/mdd-sanitize/section-fence.util.ts`, `section-merge.ts`, `contratos-format.ts`, `mdd-markdown-to-structured.ts`, `mdd-diagram-suggestions.ts`, `mdd-component-diagram.util.ts`): `getSectionBody` infiere el número de sección y termina solo en el siguiente encabezado canónico (fence-aware); `validateMddStructure`, `extractSection3Body`, `extractContratosBody`, `ensureContratosSection`, la hidratación de `mddStructured`, la regeneración del diagrama ER y el diagrama de componentes ven las subsecciones `## 3.1 Esquema SQL` / `## 4.1 Endpoints`. Antes un MDD con subsecciones podía dar falsos "§4 sin endpoints" o perder el SQL al hidratar.
+
 > **Cirugía del harness III — theforge como sistema principal** — Auditoría forense propia de theforge (grafo, gate, Manager, nodos escritores, cola y semáforo) y corrección de los 16 puntos reportados, ejecutada en seis frentes con archivos disjuntos. Objetivo: que un documento válido no sea rechazado por reglas regex, que el bucle de auto-reparación progrese o se detenga, que el chat no pierda trabajo ni gaste tokens tras una desconexión, y que el porcentaje del panel sea el del Auditor.
 
 ### Fixed

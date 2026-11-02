@@ -64,7 +64,7 @@ export class MddEvalController {
 
   @Get("runs/:runId/cases/:caseId/markdown")
   @Header("Content-Type", "text/markdown; charset=utf-8")
-  getCaseMarkdown(@Param("runId") runId: string, @Param("caseId") caseId: string): string {
+  async getCaseMarkdown(@Param("runId") runId: string, @Param("caseId") caseId: string): Promise<string> {
     requireAdmin();
     return this.evalService.getCaseMarkdown(runId, caseId);
   }
