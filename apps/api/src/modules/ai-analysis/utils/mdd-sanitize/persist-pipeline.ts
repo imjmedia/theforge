@@ -229,9 +229,11 @@ function collapseDuplicateManifestHeadings(draft: string): string {
 
 export function applyPreDeliveryGateFixes(draft: string): string {
   let out = repairMisplacedCanonicalSectionsAfterUiUx(normalizeCanonicalMddSectionHeadings(draft ?? ""));
+  // repairNestedJsonFencesInDraft cuenta profundidad de ```json anidados: debe correr ANTES del
+  // normalizador de fences, que cerraría el bloque exterior en el primer ``` (CommonMark).
+  out = repairNestedJsonFencesInDraft(out);
   out = closeUnclosedFencesBeforeCanonicalH2(out);
   out = alignInfraNodeVersionWithSection2(out);
-  out = repairNestedJsonFencesInDraft(out);
   out = repairDisplacedJsonBracesInContratosSection(out);
   out = closeUnclosedCodeFencesInDraft(out);
   out = repairManifestJsonClosing(out);
@@ -340,6 +342,9 @@ export function sanitizeMddAtPersist(mddMarkdown: string): string {
   out = repairGluedClosingFenceToHeading(out);
   out = repairSplitMarkdownBullets(out);
   out = stripOrphanFenceWrappingProse(out);
+  // Antes de stripEmptyBareCodeFences: la desanidación de ```json cuenta profundidad sobre el texto
+  // crudo; un ``` suelto tras ella se quitaría como opener y dejaría el JSON sin cerrar.
+  out = repairNestedJsonFencesInDraft(out);
   out = stripEmptyBareCodeFences(out);
   out = closeUnclosedCodeFencesInDraft(out);
   out = demoteProseHeadingsInSections(out);

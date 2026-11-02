@@ -138,6 +138,7 @@ function defaultSleep(ms: number): Promise<void> {
 /**
  * Lee el uso de tokens del proyecto temporal. Debe llamarse ANTES de borrarlo (el borrado en cascada
  * elimina las filas de `TokenUsage`). Si no hay generaciones aún, reintenta con pausa.
+ * Sin filas tras los reintentos devuelve `{}`: el coste y los tokens quedan NO medidos (undefined, no 0).
  */
 async function readTokenUsage(
   deps: MddEvalRunnerDeps,
@@ -156,8 +157,11 @@ async function readTokenUsage(
     if ((usage.llmCalls ?? 0) > 0) return usage;
     if (attempt < TOKEN_USAGE_RETRIES) await sleep(TOKEN_USAGE_RETRY_DELAY_MS);
   }
-  auditTrail.push(`harness: uso de tokens sin generaciones tras ${TOKEN_USAGE_RETRIES} reintentos`);
-  return usage;
+  // Sin filas no hay dato: no se devuelve 0 (la UI pintaría "$0.00" como si fuera una medición real).
+  auditTrail.push(
+    "harness: TokenUsage sin filas para el proyecto temporal → coste y tokens no medidos (verifica que theforge-worker corre el commit con el contexto de tokens del eval; gitSha del resumen)",
+  );
+  return {};
 }
 
 /**
@@ -340,11 +344,10 @@ export function computeEvalAggregates(records: readonly MddEvalRunRecord[]): Mdd
   const auditors = records
     .map((record) => record.auditorScore)
     .filter((value): value is number => typeof value === "number");
-  const costs = records
+  // Solo los casos con uso medido (llmCalls > 0) aportan coste y llamadas. Sin ninguno: null (no medido).
+  const conUso = records.filter((record) => (record.llmCalls ?? 0) > 0);
+  const costs = conUso
     .map((record) => record.costUsd)
-    .filter((value): value is number => typeof value === "number");
-  const llmCalls = records
-    .map((record) => record.llmCalls)
     .filter((value): value is number => typeof value === "number");
   return {
     cases,
@@ -354,7 +357,8 @@ export function computeEvalAggregates(records: readonly MddEvalRunRecord[]): Mdd
     avgAuditor: auditors.length === 0 ? null : roundTo(mean(auditors), 1),
     avgDurationMs: Math.round(mean(records.map((record) => record.durationMs))),
     totalCostUsd: costs.length === 0 ? null : roundTo(costs.reduce((a, b) => a + b, 0), 6),
-    totalLlmCalls: llmCalls.length === 0 ? null : llmCalls.reduce((a, b) => a + b, 0),
+    totalLlmCalls:
+      conUso.length === 0 ? null : conUso.reduce((total, record) => total + (record.llmCalls ?? 0), 0),
   };
 }
 

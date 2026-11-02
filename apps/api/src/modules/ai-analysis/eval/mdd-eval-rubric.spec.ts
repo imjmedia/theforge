@@ -273,6 +273,26 @@ describe("structure", () => {
     assert.equal(score.dimensions.find((d) => d.key === "structure")?.score, 80);
     assert.ok(score.failures.includes("estructura: bloque de código sin cerrar (```)"));
   });
+
+  it("explica que un encabezado §N queda dentro de un bloque sin cerrar (no solo 'ausente')", () => {
+    const md = [
+      "## 1. Contexto", FILLER, "",
+      "## 2. Arquitectura y Stack", FILLER, "",
+      "## 3. Modelo de Datos", FILLER, "",
+      "```sql", "CREATE TABLE x (id INT);", "",
+      "## 5. Lógica y Edge Cases", FILLER, "",
+    ].join("\n");
+    const openedAt = md.split("\n").indexOf("```sql") + 1;
+    const score = scoreMddAgainstCase(md, caseWith({}));
+    const details = score.dimensions.find((d) => d.key === "structure")?.details ?? [];
+    assert.ok(details.includes("§5 Lógica y Edge Cases: ausente"));
+    assert.ok(
+      details.includes(
+        `§5: encabezado dentro de un bloque de código abierto (lang sql, abierto en línea ${openedAt})`,
+      ),
+      `detalle ausente; details=${JSON.stringify(details)}`,
+    );
+  });
 });
 
 describe("language, context and diagrams", () => {

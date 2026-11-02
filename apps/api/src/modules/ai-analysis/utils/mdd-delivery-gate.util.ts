@@ -14,6 +14,7 @@ import {
   validateMddStructure,
 } from "./mdd-sanitize.js";
 import { isMddSectionPipelinePlaceholderBody } from "./mdd-sanitize/section-merge.js";
+import { scanMarkdownFences } from "./mdd-sanitize/fence-scan.util.js";
 import {
   isContratosSubstantial,
   countContratosEndpointRows,
@@ -165,8 +166,11 @@ function extractSectionBody(draft: string, num: number): string | null {
   if (!entry) return null;
 
   const lines = trimmed.split("\n");
+  // Semántica única de fences (fence-scan): un heading dentro de un bloque no es un heading.
+  const { inFence } = scanMarkdownFences(lines);
   let headingLineIdx = -1;
   for (let i = 0; i < lines.length; i += 1) {
+    if (inFence[i]) continue;
     if (entry.pattern.test(lines[i]!)) {
       headingLineIdx = i;
       break;
@@ -186,27 +190,55 @@ function extractSectionBody(draft: string, num: number): string | null {
     : null;
 
   // Cuerpo: líneas después del heading, hasta el próximo ## N+1 (o ## <Title-bare>).
-  let inFence = false;
   const bodyLines: string[] = [];
   if (inlineBodyPrefix) bodyLines.push(inlineBodyPrefix);
   for (let i = headingLineIdx + 1; i < lines.length; i += 1) {
     const line = lines[i]!;
-    if (/^[ \t]*```/.test(line)) {
-      inFence = !inFence;
+    if (inFence[i]) {
       bodyLines.push(line);
       continue;
     }
-    if (!inFence) {
-      const nextNumMatch = line.match(/^##\s+(\d+)\./);
-      if (nextNumMatch && parseInt(nextNumMatch[1]!, 10) > num) break;
-      if (num >= 6) {
-        if (/^##\s+Seguridad\b/.test(line) && num !== 6) break;
-        if (/^##\s+Infraestructura\b|^##\s+Integraci[oó]n\b/.test(line) && num !== 7) break;
-      }
+    const nextNumMatch = line.match(/^##\s+(\d+)\./);
+    if (nextNumMatch && parseInt(nextNumMatch[1]!, 10) > num) break;
+    if (num >= 6) {
+      if (/^##\s+Seguridad\b/.test(line) && num !== 6) break;
+      if (/^##\s+Infraestructura\b|^##\s+Integraci[oó]n\b/.test(line) && num !== 7) break;
     }
     bodyLines.push(line);
   }
   return bodyLines.join("\n").replace(/^\s*\n+/, "").trim();
+}
+
+/**
+ * Bloque ``` sin cerrar al EOF: blocker si dentro quedan encabezados canónicos §1–§7 (se los traga)
+ * o si, sin headings, el documento termina con el fence abierto. Un bloque cerrado que contiene
+ * un heading es contenido literal y no bloquea.
+ */
+export function detectOpenFenceSwallowingCanonicalSections(draft: string): string[] {
+  const text = draft ?? "";
+  if (!text.trim()) return [];
+  const lines = text.split("\n");
+  const open = scanMarkdownFences(lines).blocks.find((block) => !block.closed);
+  if (!open) return [];
+  const label = open.lang || "sin etiqueta";
+  const swallowed = new Set<number>();
+  // startLine es 1-based: el índice 0-based `startLine` es la primera línea dentro del bloque.
+  for (let i = open.startLine; i < lines.length; i += 1) {
+    const line = lines[i]!;
+    if (!/^##\s/.test(line)) continue;
+    for (const entry of CANONICAL_SECTION_TITLES) {
+      if (entry.pattern.test(line)) swallowed.add(entry.num);
+    }
+  }
+  if (swallowed.size > 0) {
+    const list = [...swallowed].sort((a, b) => a - b).map((n) => `§${n}`).join(", ");
+    return [
+      `Bloque \`\`\` abierto (lang ${label}, línea ${open.startLine}) se traga los encabezados ${list}; cerrar el fence antes de persistir`,
+    ];
+  }
+  return [
+    `Documento termina con bloque \`\`\` sin cerrar (lang ${label}, línea ${open.startLine}); cerrar el fence antes de persistir`,
+  ];
 }
 
 /** Heurística alineada con reconcileUiUxDesignIntent: columnas id,name,status repetidas. */
@@ -338,6 +370,9 @@ export function validateMddForDelivery(
     } else {
       blockers.push(unclosedSql);
     }
+  }
+  for (const fenceIssue of detectOpenFenceSwallowingCanonicalSections(trimmed)) {
+    blockers.push(fenceIssue);
   }
 
   for (const issue of detectCrossConsistencyIssues(trimmed)) {

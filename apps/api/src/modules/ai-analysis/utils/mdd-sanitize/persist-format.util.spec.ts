@@ -1,8 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import {
+  closeUnclosedCodeFencesInDraft,
   repairGluedClosingFenceToHeading,
   repairSplitMarkdownBullets,
+  stripEmptyBareCodeFences,
   stripHashDashSeparatorLines,
   stripLoneBacktickPairLines,
 } from "./persist-format.util.js";
@@ -160,5 +162,29 @@ CREATE TABLE tenants (id UUID PRIMARY KEY);
     assert.doesNotMatch(out, /```## 4\. Contratos/);
     assert.match(out, /## 4\. Contratos de API/);
     assert.ok((out.match(/```TechnicalMetadata/g) ?? []).length <= 1);
+  });
+});
+
+describe("stripEmptyBareCodeFences y closeUnclosedCodeFencesInDraft (fence-scan)", () => {
+  it("elimina un par de ``` vacío", () => {
+    const out = stripEmptyBareCodeFences("Texto.\n```\n```\nMás texto.");
+    assert.equal(out, "Texto.\nMás texto.");
+  });
+
+  it("no confunde el cierre de un bloque real con un opener: conserva el bloque mermaid", () => {
+    const raw = "```mermaid\nerDiagram\n  A ||--o{ B : x\n```\n## 4. Contratos de API";
+    assert.equal(stripEmptyBareCodeFences(raw), raw);
+  });
+
+  it("quita un opener ``` suelto que se traga §4 antes de un encabezado", () => {
+    const raw = "## 3. Modelo\n```\n## 4. Contratos de API\n| GET | /health |";
+    const out = stripEmptyBareCodeFences(raw);
+    assert.equal(out, "## 3. Modelo\n## 4. Contratos de API\n| GET | /health |");
+  });
+
+  it("closeUnclosedCodeFencesInDraft cierra un json sin cerrar antes del siguiente H2 canónico", () => {
+    const raw = "## 4. Contratos\n```json\n{\"a\":1}\n## 5. Lógica y Edge Cases\nRegla.";
+    const out = closeUnclosedCodeFencesInDraft(raw);
+    assert.equal(out, "## 4. Contratos\n```json\n{\"a\":1}\n```\n\n## 5. Lógica y Edge Cases\nRegla.");
   });
 });
