@@ -4,6 +4,12 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 
 ## [Unreleased]
 
+> **Eval MDD: el pipeline recibe el brief aunque el caso tenga DBGA** — Las expectativas de cada caso (entidades, capacidades) salen del brief, pero con DBGA el pipeline solo recibía el benchmark. En tres casos el DBGA cubría entre 12% y 24% del brief, así que las entidades y rutas pedidas nunca llegaban al modelo.
+
+### Fixed
+
+- **Entrada del eval con brief y DBGA** (`apps/api/src/modules/ai-analysis/eval/mdd-eval-runner.ts`): `buildEvalDbgaContent` antepone el DBGA al brief completo; sin DBGA la entrada sigue siendo la idea del usuario. Cubierto en `mdd-eval-runner.spec.ts` y documentado en `apps/api/eval/mdd/README.md`.
+
 > **Specs preexistentes en verde** — La suite de la API tenía 14 fallos en master, casi todos por specs desalineados con código vigente o con imports que no existían. Se corrigen los specs y dos defectos reales de código.
 
 ### Fixed

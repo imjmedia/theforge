@@ -105,9 +105,15 @@ const GOOD_DONE: EvalStreamEvent = {
 };
 
 describe("buildEvalDbgaContent", () => {
-  it("usa el dbga del caso si existe y el brief como idea si no", () => {
-    assert.equal(buildEvalDbgaContent(makeCase("a-case", { dbga: "DBGA" })), "DBGA");
+  it("sin dbga usa el brief como idea del usuario", () => {
     assert.match(buildEvalDbgaContent(makeCase("a-case")), /^Idea del usuario:\n/);
+  });
+
+  it("con dbga antepone el benchmark y conserva el brief completo", () => {
+    const c = makeCase("a-case", { dbga: "DBGA de referencia" });
+    const out = buildEvalDbgaContent(c);
+    assert.ok(out.startsWith("DBGA de referencia\n\n"));
+    assert.ok(out.includes(`Idea del usuario:\n${c.brief}`));
   });
 });
 
