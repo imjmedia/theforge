@@ -95,9 +95,14 @@ const DEFAULT_MIN_AUDITOR = 85;
 const TOKEN_USAGE_RETRIES = 3;
 const TOKEN_USAGE_RETRY_DELAY_MS = 1_000;
 
-/** DBGA que recibe el pipeline: el benchmark del caso o, si falta, el brief como idea del usuario. */
+/**
+ * Entrada que recibe el pipeline. El brief siempre va: las expectativas del caso (entidades,
+ * capacidades) salen de él, así que un DBGA parcial no puede ocultarlo. Con DBGA se antepone
+ * el benchmark; sin DBGA el brief es la idea del usuario.
+ */
 export function buildEvalDbgaContent(evalCase: MddEvalCase): string {
-  return evalCase.dbga ?? `Idea del usuario:\n${evalCase.brief}`;
+  const idea = `Idea del usuario:\n${evalCase.brief}`;
+  return evalCase.dbga ? `${evalCase.dbga}\n\n${idea}` : idea;
 }
 
 /** Puntuación de relleno para casos sin markdown o con fallo de rúbrica. */

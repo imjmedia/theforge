@@ -24,7 +24,7 @@ runner `mdd-eval-runner.ts`, informes `mdd-eval-report.util.ts`) y el CLI `scrip
 2. Campos (ver `mddEvalCaseSchema` en `mdd-eval.types.ts`):
    - `title`, `domain`, `complexity` (`LOW` | `MEDIUM` | `HIGH`).
    - `brief`: lo que escribiría un usuario en el chat, en español, 200-4000 caracteres, sin jerga del harness.
-   - `dbga` (opcional): benchmark DBGA. Si falta, el pipeline recibe `Idea del usuario:` + `brief`.
+   - `dbga` (opcional): benchmark DBGA. El pipeline recibe el DBGA seguido de `Idea del usuario:` + `brief`; sin DBGA recibe solo el `brief`. El brief siempre llega, porque las expectativas salen de él.
    - `brd` (opcional): requisitos de negocio para los jueces de trazabilidad.
    - `expect`:
      - `entities`: tablas esperadas en §3 (snake_case; singular o plural se aceptan).
