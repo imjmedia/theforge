@@ -5,7 +5,7 @@
 
 import { extractSection } from "./conformance.service.js";
 import { extractSectionByNumber } from "./mdd-markdown-parser.js";
-import { detectTruncatedMddTail } from "@theforge/shared-types";
+import { detectTruncatedMddTail, fencedLineMask } from "@theforge/shared-types";
 
 const PLACEHOLDER_NOISE_RE = /(?:^|\n)#+\s*[^\n]*(?:---\s*){3,}/m;
 
@@ -119,7 +119,11 @@ export function detectUnbalancedJsonFences(draft: string): string | null {
 export function detectBareMermaidBlocks(draft: string): string[] {
   const issues: string[] = [];
   const lines = (draft ?? "").split(/\r?\n/);
+  // Las líneas dentro de un fence (apertura, cuerpo y cierre) no son "sueltas": con `%%{init}%%`,
+  // front-matter o comentarios `%%` conservados, la línea previa a `flowchart` ya no es el ```mermaid.
+  const fenced = fencedLineMask(lines);
   for (let i = 0; i < lines.length; i++) {
+    if (fenced[i]) continue;
     const line = lines[i]!.trim();
     if (/^mermaid\s*$/i.test(line)) {
       const next = lines[i + 1]?.trim() ?? "";

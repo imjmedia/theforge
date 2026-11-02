@@ -3,9 +3,10 @@ import {
   Component,
   isValidElement,
   memo,
+  useMemo,
   type ReactNode,
 } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { formatDocumentMarkdown, peelDocumentBodyForPersist } from "@theforge/shared-types";
 import { extractWorkshopDocumentTimestamps } from "@/utils/workshop-document-content.util";
@@ -32,8 +33,12 @@ import {
 import { WorkshopDocumentStampBar } from "./WorkshopDocumentStampBar";
 import type { WorkshopDocumentTimestamps } from "@/utils/workshop-document-content.util";
 
-/** Quita bloques ```mermaid vacíos para no intentar renderizarlos (evita SVG de error). */
-function stripBrokenMermaidBlocks(content: string): string {
+/**
+ * Quita SOLO fences ```mermaid vacíos (sin nada dentro): no hay diagrama que mostrar ni error útil que
+ * dar. Los bloques con contenido nunca se descartan por heurística: el bloque muestra el error real del
+ * parser junto al código original.
+ */
+function removeEmptyMermaidFences(content: string): string {
   return content.replace(/^```mermaid\s*\r?\n\s*```\s*$/gm, "");
 }
 
@@ -76,111 +81,113 @@ const TREE_PRE_CLASS =
 
 const FENCED_PRE_CLASS = TREE_PRE_CLASS;
 
+/**
+ * Constante de módulo: referencia estable entre renders (una identidad nueva de `components` haría que
+ * ReactMarkdown re-monte los bloques Mermaid). No necesita closures: todo lo que usa es de módulo.
+ */
+const MARKDOWN_COMPONENTS: Components = {
+  p({ children, ...props }) {
+    const text = flattenMarkdownChildren(children);
+    if (paragraphLooksLikeDirectoryTree(text)) {
+      const collapsed = text.replace(/\s+/g, " ").trim();
+      const lines = isCollapsedDirectoryTreeLine(collapsed)
+        ? splitCollapsedDirectoryTree(collapsed).join("\n")
+        : text;
+      return <pre className={TREE_PRE_CLASS}>{lines}</pre>;
+    }
+    return <p {...props}>{children}</p>;
+  },
+  pre({ children }) {
+    if (preWrapsMermaidBlock(children)) {
+      return <>{children}</>;
+    }
+    return (
+      <pre className={FENCED_PRE_CLASS}>
+        {children}
+      </pre>
+    );
+  },
+  code({ node, className, children, ...props }) {
+    // mdast: node.value; hast: node.children[].value; React children (v10 puede pasar nodos)
+    const fromNode =
+      node && typeof node === "object" && "value" in node && typeof (node as { value?: string }).value === "string"
+        ? (node as { value: string }).value
+        : "";
+    const fromHast =
+      node &&
+      typeof node === "object" &&
+      "children" in node &&
+      Array.isArray((node as { children?: unknown[] }).children)
+        ? (node as { children: Array<{ type?: string; value?: string }> }).children
+            .filter((c) => c?.type === "text" && typeof c.value === "string")
+            .map((c) => c.value)
+            .join("")
+        : "";
+    const fromChildren =
+      Array.isArray(children) && children.every((c) => typeof c === "string")
+        ? (children as string[]).join("")
+        : typeof children === "string"
+          ? children
+          : String(children ?? "");
+    const source = (fromNode || fromHast || fromChildren).replace(/\n$/, "").trim();
+    const isTextLang = /\blanguage-text\b/i.test(className ?? "");
+    if (isTextLang) {
+      return (
+        <code className={`${className ?? ""} font-mono text-xs whitespace-pre`} {...props}>
+          {normalizeCodeBlockToAsciiSpaces(source)}
+        </code>
+      );
+    }
+    const isInlineCode =
+      !/\blanguage-[\w-]+\b/i.test(className ?? "") && !source.includes("\n");
+    if (isInlineCode) {
+      return (
+        <code className={className} {...props}>
+          {children}
+        </code>
+      );
+    }
+    const looksLikeMetadataOnly = /^\[\w+\](\s+\[\w+\])*$/.test(source.trim());
+    if (looksLikeMetadataOnly) {
+      return (
+        <span className="text-xs text-[var(--muted-foreground)]" aria-label="Metadata técnica">
+          {source}
+        </span>
+      );
+    }
+    if (isMermaidCodeBlock(source, className)) {
+      // Fuente crudo: solo envoltorios de fence y espacios Unicode. La reparación la decide el bloque
+      // con el parser real (original primero), así que aquí no hay heurísticas de sintaxis.
+      const prepared = prepareMermaidForRender(source);
+      if (!prepared.trim()) {
+        return (
+          <code className={className} {...props}>
+            {normalizeCodeBlockToAsciiSpaces(source)}
+          </code>
+        );
+      }
+      const key = mermaidKey(prepared);
+      return (
+        <MermaidBlockErrorBoundary key={key} content={prepared} blockKey={key}>
+          <MermaidDiagramBlock blockKey={key} content={prepared} />
+        </MermaidBlockErrorBoundary>
+      );
+    }
+    return (
+      <code className={`${className ?? ""} font-mono text-xs whitespace-pre`} {...props}>
+        {normalizeCodeBlockToAsciiSpaces(source)}
+      </code>
+    );
+  },
+};
+
 const MdSection = memo(function MdSection({ content }: { content: string }) {
   return (
     <div className={MARKDOWN_CLASS}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, ...markdownMathRemarkPlugins]}
         rehypePlugins={[...markdownMathRehypePlugins]}
-        components={{
-          p({ children, ...props }) {
-            const text = flattenMarkdownChildren(children);
-            if (paragraphLooksLikeDirectoryTree(text)) {
-              const collapsed = text.replace(/\s+/g, " ").trim();
-              const lines = isCollapsedDirectoryTreeLine(collapsed)
-                ? splitCollapsedDirectoryTree(collapsed).join("\n")
-                : text;
-              return <pre className={TREE_PRE_CLASS}>{lines}</pre>;
-            }
-            return <p {...props}>{children}</p>;
-          },
-          pre({ children }) {
-            if (preWrapsMermaidBlock(children)) {
-              return <>{children}</>;
-            }
-            return (
-              <pre className={FENCED_PRE_CLASS}>
-                {children}
-              </pre>
-            );
-          },
-          code({ node, className, children, ...props }) {
-            // mdast: node.value; hast: node.children[].value; React children (v10 puede pasar nodos)
-            const fromNode =
-              node && typeof node === "object" && "value" in node && typeof (node as { value?: string }).value === "string"
-                ? (node as { value: string }).value
-                : "";
-            const fromHast =
-              node &&
-              typeof node === "object" &&
-              "children" in node &&
-              Array.isArray((node as { children?: unknown[] }).children)
-                ? (node as { children: Array<{ type?: string; value?: string }> }).children
-                    .filter((c) => c?.type === "text" && typeof c.value === "string")
-                    .map((c) => c.value)
-                    .join("")
-                : "";
-            const fromChildren =
-              Array.isArray(children) && children.every((c) => typeof c === "string")
-                ? (children as string[]).join("")
-                : typeof children === "string"
-                  ? children
-                  : String(children ?? "");
-            const source = (fromNode || fromHast || fromChildren).replace(/\n$/, "").trim();
-            const isTextLang = /\blanguage-text\b/i.test(className ?? "");
-            if (isTextLang) {
-              return (
-                <code className={`${className ?? ""} font-mono text-xs whitespace-pre`} {...props}>
-                  {normalizeCodeBlockToAsciiSpaces(source)}
-                </code>
-              );
-            }
-            const isInlineCode =
-              !/\blanguage-[\w-]+\b/i.test(className ?? "") && !source.includes("\n");
-            if (isInlineCode) {
-              return (
-                <code className={className} {...props}>
-                  {children}
-                </code>
-              );
-            }
-            const looksLikeMetadataOnly = /^\[\w+\](\s+\[\w+\])*$/.test(source.trim());
-            if (looksLikeMetadataOnly) {
-              return (
-                <span className="text-xs text-[var(--muted-foreground)]" aria-label="Metadata técnica">
-                  {source}
-                </span>
-              );
-            }
-            if (isMermaidCodeBlock(source, className)) {
-              const trimmed = source.trim();
-              const normalized = prepareMermaidForRender(trimmed);
-              if (!normalized.trim()) {
-                return (
-                  <code className={className} {...props}>
-                    {normalizeCodeBlockToAsciiSpaces(source)}
-                  </code>
-                );
-              }
-              const key = mermaidKey(normalized);
-              return (
-                <MermaidBlockErrorBoundary content={normalized} blockKey={key}>
-                  <MermaidDiagramBlock
-                    key={key}
-                    blockKey={key}
-                    content={normalized}
-                    prepareContent={prepareMermaidForRender}
-                  />
-                </MermaidBlockErrorBoundary>
-              );
-            }
-            return (
-              <code className={`${className ?? ""} font-mono text-xs whitespace-pre`} {...props}>
-                {normalizeCodeBlockToAsciiSpaces(source)}
-              </code>
-            );
-          },
-        }}
+        components={MARKDOWN_COMPONENTS}
       >
         {content}
       </ReactMarkdown>
@@ -240,8 +247,12 @@ function MddViewerInner({ content, className = "", documentTimestamps }: MddView
   const timestamps =
     documentTimestamps ?? extractWorkshopDocumentTimestamps(content);
   const body = peelDocumentBodyForPersist(content);
-  const cleaned = stripBrokenMermaidBlocks(formatDocumentMarkdown(body));
-  const sections = parseMarkdownSections(cleaned);
+  // `preserve`: los fences ```mermaid llegan al bloque tal cual; el visor no los reescribe.
+  const cleaned = useMemo(
+    () => removeEmptyMermaidFences(formatDocumentMarkdown(body, { mermaid: "preserve" })),
+    [body],
+  );
+  const sections = useMemo(() => parseMarkdownSections(cleaned), [cleaned]);
 
   return (
     <div className={`space-y-4 markdown-preview min-w-0 pb-[80px] ${className}`}>

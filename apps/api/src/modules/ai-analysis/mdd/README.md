@@ -31,6 +31,7 @@ Un solo job MDD activo o en cola por proyecto (`assertCanEnqueue` → 409 si bus
 - **Borradores:** `prepareMddForOutput` con `formatForPersist: false` (sin `formatDocumentMarkdown`); guardado directo en stage **sin** delivery gate.
 - **Nodo `prepare_output` (streaming):** mismo modo gate — valida SSOT/gate sin reformatear el borrador del grafo.
 - **Final (`done`):** `formatForPersist: true` + pipeline completo (`MddUpdatePipelineService`) con gate de entrega, semáforo y estimación.
+- **Mermaid:** `prepareMddForOutput` y `prepareMddMarkdownForPersist` ya no degradan bloques ` ```mermaid ` a prosa ni pierden fences. La validación contra el parser real llega con el oráculo en runtime (Fase 2); hoy la garantía la da `mermaid-corpus.spec.ts` en CI.
 
 El Workshop ya no depende de `persistMddContent` tras encolar.
 

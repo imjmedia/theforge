@@ -70,6 +70,20 @@ jobs:
       - name: Build workspace packages for specs
         run: pnpm --filter @theforge/shared-types build
 
+      - name: Mermaid specs (shared-types)
+        working-directory: packages/shared-types
+        run: node scripts/run-tests.mjs --test-path-pattern='mermaid|markdown-table|format-document|repair-pasted'
+
+      - name: Mermaid oracle and pre-render API specs
+        working-directory: apps/api
+        env:
+          MERMAID_CORPUS_STRICT: "1"
+        run: node scripts/run-tests.mjs --test-path-pattern='mermaid-oracle|mdd-pre-render|mdd-diagram-suggestions|persist-pipeline'
+
+      - name: Web specs
+        working-directory: apps/web
+        run: node scripts/run-tests.mjs
+
       - name: Agent governance API specs
         working-directory: apps/api
         run: |
@@ -82,7 +96,3 @@ jobs:
         run: |
           node --import tsx --test \
             src/plugins/plugin-project-context.util.spec.ts
-
-      - name: queueAndPoll web spec
-        working-directory: apps/web
-        run: node --import tsx --test src/utils/queueAndPoll.spec.ts

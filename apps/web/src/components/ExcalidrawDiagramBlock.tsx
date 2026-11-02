@@ -1,7 +1,10 @@
 /**
  * Renders Mermaid diagrams as Excalidraw canvas with lazy loading.
- * Supports conversion of flowcharts, ER, sequence, and class diagrams.
+ * Tipos ofrecidos: ver `isExcalidrawSupported`. La vista por defecto es SVG; esto es un toggle.
  * Falls back to SVG view for unsupported types or conversion failures.
+ *
+ * La conversión corre en la cola exclusiva del runtime de Mermaid y restaura al final la config web
+ * (la librería pisa `mermaid.initialize` con tema `default` y `securityLevel: strict`).
  *
  * Gestures: fullscreen uses native Excalidraw (zoom at cursor + pan). Inline
  * preview uses center-based wheel zoom and drag-to-pan so the diagram cannot
@@ -33,6 +36,15 @@ import type {
 import { stripMermaidFenceWrappers } from "@theforge/shared-types/mermaid";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import {
+  initializeMermaidFor,
+  reinitializeMermaid,
+  runExclusive,
+} from "@/lib/mermaid-runtime";
+import {
+  buildExcalidrawLibraryMermaidConfig,
+  convertMermaidToExcalidrawExclusive,
+} from "@/lib/mermaid-excalidraw-convert";
 import { isExcalidrawSupported, type MermaidDiagramType } from "./mermaid-diagram-type.util";
 
 import "@excalidraw/excalidraw/index.css";
@@ -88,8 +100,12 @@ type ConvertedScene = {
   files: BinaryFiles | null;
 };
 
-/** Suppress expected parse noise — the library falls back to SVG-as-image internally. */
-function withQuietMermaidConversion<T>(run: () => Promise<T>): Promise<T> {
+/**
+ * Suppress expected parse noise — the library falls back to SVG-as-image internally.
+ * Restaura `console.error` en `finally` aunque la conversión lance; debe llamarse solo desde dentro de
+ * `runExclusive` para que dos conversiones nunca se solapen ni dejen el parche pegado.
+ */
+async function withQuietMermaidConversion<T>(run: () => Promise<T>): Promise<T> {
   const prevError = console.error;
   console.error = (...args: unknown[]) => {
     const first = args[0];
@@ -98,21 +114,31 @@ function withQuietMermaidConversion<T>(run: () => Promise<T>): Promise<T> {
     }
     prevError.apply(console, args);
   };
-  return run().finally(() => {
+  try {
+    return await run();
+  } finally {
     console.error = prevError;
-  });
+  }
 }
 
 async function convertMermaidToExcalidraw(content: string): Promise<ConvertedScene> {
   const prepared = stripMermaidFenceWrappers(content).trim();
-  const [mermaidMod, excalidrawMod] = await Promise.all([
+  const [mermaidMod, excalidrawMod, libConstants] = await Promise.all([
     import("@excalidraw/mermaid-to-excalidraw"),
     import("@excalidraw/excalidraw"),
+    import("@excalidraw/mermaid-to-excalidraw/dist/constants.js"),
   ]);
-  // ER / sequence / class arrive as image skeletons — `files` holds the dataURLs.
-  const { elements: skeletons, files } = await withQuietMermaidConversion(() =>
-    mermaidMod.parseMermaidToExcalidraw(prepared),
-  );
+  // La librería llama a `mermaid.initialize` con su propia config y solo cuando cambia su hash interno:
+  // se aplica su config ANTES de cada conversión (dentro de la cola exclusiva) y se restaura la web
+  // después, falle o no. Flowchart es nativo (elementos editables); sequence también en 2.2.2. `files`
+  // solo trae dataURLs si la librería cae a imagen.
+  const { elements: skeletons, files } = await convertMermaidToExcalidrawExclusive({
+    runExclusive,
+    initializeFor: initializeMermaidFor,
+    restoreWebConfig: reinitializeMermaid,
+    libraryConfig: buildExcalidrawLibraryMermaidConfig(libConstants.MERMAID_CONFIG),
+    convert: () => withQuietMermaidConversion(() => mermaidMod.parseMermaidToExcalidraw(prepared)),
+  });
   const elements = excalidrawMod.convertToExcalidrawElements(skeletons, {
     regenerateIds: false,
   });

@@ -10,12 +10,12 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node --import tsx --test 'src/**/*.spec.ts'",
+    "test": "node scripts/run-tests.mjs",
     "test:types": "tsc -b --noEmit"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.1",
-    "@excalidraw/mermaid-to-excalidraw": "^2.2.2",
+    "@excalidraw/mermaid-to-excalidraw": "2.2.2",
     "@lobehub/icons": "^5.8.0",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-dialog": "^1.1.15",
@@ -28,7 +28,7 @@
     "jszip": "^3.10.1",
     "katex": "^0.17.0",
     "lucide-react": "^0.563.0",
-    "mermaid": "^11.12.2",
+    "mermaid": "11.15.0",
     "motion": "^12.40.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

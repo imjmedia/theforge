@@ -1,6 +1,11 @@
 /**
- * Renders ```mermaid fenced blocks from ReactMarkdown as Excalidraw canvas (default)
- * or SVG (fallback). Supports fullscreen expand for dense diagrams.
+ * Renders ```mermaid fenced blocks from ReactMarkdown as SVG (default) with an optional Excalidraw
+ * toggle (flowchart, erDiagram, sequenceDiagram y classDiagram). Supports fullscreen expand for dense diagrams.
+ *
+ * El render SVG lo orquesta `useMermaidRender` (./mermaid-render): original primero, reparación solo si
+ * el parser real la acepta, error real si no. El SVG vive en estado y se pinta en un contenedor
+ * siempre montado. El hook inline queda siempre habilitado: Excalidraw recibe su texto final (original
+ * o reparado por el oráculo) y nunca convierte texto que el parser no aceptó.
  */
 import {
   Children,
@@ -8,7 +13,7 @@ import {
   isValidElement,
   useCallback,
   useEffect,
-  useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -17,15 +22,15 @@ import {
 } from "react";
 import { Maximize2, Loader2, RotateCcw, Sparkles, Wrench, ZoomIn, ZoomOut, PenLine, Code } from "lucide-react";
 import {
-  stripMermaidFenceWrappers,
-} from "@theforge/shared-types/mermaid";
-import {
   prepareMermaidForRender,
 } from "./mermaid-render-prep.util";
 import {
-  assessMermaidFixStrategy,
-  repairMermaidBlockForRender,
-} from "./mermaid-fix.util";
+  MERMAID_NO_AUTO_REPAIR_MESSAGE,
+  mermaidKey,
+  truncateMermaidError,
+  useMermaidRender,
+  type MermaidErrorState,
+} from "./mermaid-render";
 import { regenerateMermaidDiagram } from "@/lib/mermaid-api";
 import {
   Button,
@@ -37,6 +42,11 @@ import {
 import { cn } from "@/lib/utils";
 import { ExcalidrawDiagramBlock } from "./ExcalidrawDiagramBlock";
 import {
+  clampPanZoomScale,
+  computeMermaidFitTransform,
+  type PanZoomState,
+} from "./mermaid-fit.util";
+import {
   defaultMermaidViewMode,
   detectMermaidDiagramType,
   isExcalidrawSupported,
@@ -45,45 +55,8 @@ import {
 
 export const MERMAID_BLOCK_MARKER = "data-theforge-mermaid";
 
-type MermaidApi = typeof import("mermaid").default;
-
-let mermaidModule: MermaidApi | null = null;
-let mermaidLoadPromise: Promise<MermaidApi> | null = null;
-let mermaidInitialized = false;
-
-function loadMermaidModule(): Promise<MermaidApi> {
-  if (mermaidModule) return Promise.resolve(mermaidModule);
-  if (!mermaidLoadPromise) {
-    mermaidLoadPromise = import("mermaid").then((mod) => {
-      mermaidModule = mod.default;
-      return mermaidModule;
-    });
-  }
-  return mermaidLoadPromise;
-}
-
-async function initMermaid(): Promise<MermaidApi> {
-  const mermaid = await loadMermaidModule();
-  if (!mermaidInitialized) {
-    mermaidInitialized = true;
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: "dark",
-      securityLevel: "loose",
-    });
-  }
-  return mermaid;
-}
-
-export function mermaidKey(content: string): string {
-  let h = 0;
-  for (let i = 0; i < Math.min(content.length, 256); i++) h = (h << 5) - h + content.charCodeAt(i);
-  return `mermaid-${h >>> 0}`;
-}
-
-export function defaultPrepareMermaidForRender(content: string): string {
-  return prepareMermaidForRender(content);
-}
+/** Re-export: la clave vive en `mermaid-render` para poder probarse sin DOM. */
+export { mermaidKey };
 
 function flattenMarkdownChildren(children: ReactNode): string {
   return Children.toArray(children)
@@ -118,55 +91,6 @@ function extractCodeBlockSource(
   return raw;
 }
 
-function useMermaidSvg(
-  content: string,
-  renderId: string,
-  prepareContent: (raw: string) => string,
-  onErrorChange?: (failed: boolean) => void,
-) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || !content.trim()) return;
-
-    setError(null);
-    setReady(false);
-    onErrorChange?.(false);
-    let cancelled = false;
-    const toRender = stripMermaidFenceWrappers(prepareContent(content)).trim();
-    if (!toRender || /^```/m.test(toRender)) return;
-
-    const doRender = async () => {
-      try {
-        const mermaid = await initMermaid();
-        const { svg, bindFunctions } = await mermaid.render(renderId, toRender);
-        if (cancelled || !el) return;
-        el.innerHTML = svg;
-        bindFunctions?.(el);
-        setReady(true);
-        onErrorChange?.(false);
-      } catch (e) {
-        if (!cancelled) {
-          console.error("Mermaid render error:", e);
-          setError("render_failed");
-          onErrorChange?.(true);
-        }
-      }
-    };
-
-    void doRender();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [content, renderId, prepareContent, onErrorChange]);
-
-  return { ref, error, ready };
-}
-
 export class MermaidBlockErrorBoundary extends Component<
   { content: string; blockKey: string; children: React.ReactNode },
   { hasError: boolean }
@@ -199,62 +123,139 @@ export class MermaidBlockErrorBoundary extends Component<
 type MermaidDiagramBlockProps = {
   content: string;
   blockKey: string;
-  prepareContent?: (raw: string) => string;
   enableFullscreen?: boolean;
   enableRepair?: boolean;
   svgClassName?: string;
 };
 
-function MermaidSvgCanvas({
-  content,
-  renderId,
-  prepareContent,
+/**
+ * Contenedor SIEMPRE montado del SVG. El error o la carga no lo reemplazan: así no hay `ref` nulo que
+ * deje un error pegado. `normalizeSizing` solo se usa en pantalla completa (el inline se ajusta por CSS).
+ */
+function MermaidSvgSurface({
+  svg,
+  bindFunctions,
   className,
-  onReadyChange,
-  onErrorChange,
+  normalizeSizing = false,
+  pending = false,
 }: {
-  content: string;
-  renderId: string;
-  prepareContent: (raw: string) => string;
+  svg: string;
+  bindFunctions?: (el: Element) => void;
   className?: string;
-  onReadyChange?: (ready: boolean) => void;
-  onErrorChange?: (failed: boolean) => void;
+  normalizeSizing?: boolean;
+  pending?: boolean;
 }) {
-  const { ref, error, ready } = useMermaidSvg(content, renderId, prepareContent, onErrorChange);
+  const ref = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    onReadyChange?.(ready);
-  }, [ready, onReadyChange]);
-
-  if (error) {
-    return (
-      <pre className="overflow-x-auto rounded-md border border-[var(--border)] bg-[color-mix(in_oklch,var(--muted)_78%,var(--card))] p-3 text-sm text-[var(--foreground)]">
-        <code>{content}</code>
-        <p className="mt-2 text-xs text-[var(--muted-foreground)]" aria-live="polite">
-          No se pudo mostrar el diagrama (código fuente arriba).
-        </p>
-      </pre>
-    );
-  }
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !svg) return;
+    if (normalizeSizing) normalizeMermaidSvgSizing(el);
+    bindFunctions?.(el);
+  }, [svg, bindFunctions, normalizeSizing]);
 
   return (
     <div
       ref={ref}
-      className={cn("flex min-h-[120px] justify-center [&_svg]:h-auto [&_svg]:max-w-full [&_svg]:min-w-0", className)}
+      aria-busy={pending}
+      className={cn(
+        "flex justify-center [&_svg]:h-auto [&_svg]:max-w-full [&_svg]:min-w-0",
+        pending && "min-h-[120px]",
+        className,
+      )}
+      dangerouslySetInnerHTML={{ __html: svg }}
     />
   );
 }
 
-/** Keep SVG fullscreen zoom range in line with ExcalidrawDiagramBlock (native max 30×). */
-const PAN_ZOOM_MIN = 0.1;
-const PAN_ZOOM_MAX = 30;
-const PAN_ZOOM_FIT_PADDING = 40;
-
-function clampPanZoomScale(scale: number): number {
-  return Math.min(PAN_ZOOM_MAX, Math.max(PAN_ZOOM_MIN, scale));
+/** Error real del parser (recortado) y el código ORIGINAL que falló. */
+function MermaidErrorPanel({ state, className }: { state: MermaidErrorState; className?: string }) {
+  return (
+    <div className={cn("space-y-2", className)}>
+      <p
+        role="status"
+        className="whitespace-pre-wrap break-words text-xs text-[var(--destructive)]"
+      >
+        No se pudo mostrar el diagrama: {truncateMermaidError(state.message)}
+      </p>
+      {state.extendedTried ? (
+        <p role="status" className="text-xs text-[var(--muted-foreground)]">
+          {MERMAID_NO_AUTO_REPAIR_MESSAGE}
+        </p>
+      ) : null}
+      <pre className="overflow-x-auto rounded-md border border-[var(--border)] bg-[color-mix(in_oklch,var(--muted)_78%,var(--card))] p-3 text-sm text-[var(--foreground)]">
+        <code>{state.text}</code>
+      </pre>
+    </div>
+  );
 }
 
-type PanZoomState = { scale: number; x: number; y: number };
+/**
+ * Acciones ante un diagrama que no se pudo mostrar:
+ * - Reparar: reintento ampliado (render + oráculo con candidatos extra, siempre validados por el parser).
+ *   Si ya se probó sin éxito sobre este texto se deshabilita hasta que cambie el contenido.
+ * - Regenerar con IA: envía el contenido original y el error del parser a la API.
+ */
+function MermaidRepairActions({
+  variant,
+  failure,
+  isFixing,
+  onRetry,
+  onRegenerate,
+}: {
+  variant: "inline" | "fullscreen";
+  failure: MermaidErrorState;
+  isFixing: boolean;
+  onRetry: () => void;
+  onRegenerate: (failure: MermaidErrorState) => void;
+}) {
+  const buttonClass =
+    variant === "inline"
+      ? "h-8 gap-1.5 border border-[var(--border)] bg-[var(--card)] px-2.5 text-xs text-[var(--foreground)] shadow-md"
+      : "h-8 shrink-0 gap-1.5 text-xs";
+  const buttonVariant = variant === "inline" ? "secondary" : "outline";
+  return (
+    <>
+      <Button
+        type="button"
+        variant={buttonVariant}
+        size="sm"
+        disabled={isFixing || failure.extendedTried === true}
+        className={buttonClass}
+        onClick={onRetry}
+        aria-label="Reparar diagrama Mermaid"
+        title={
+          failure.extendedTried
+            ? MERMAID_NO_AUTO_REPAIR_MESSAGE
+            : "Prueba reparaciones ampliadas y las valida con el parser de Mermaid"
+        }
+      >
+        <Wrench className="h-3.5 w-3.5" aria-hidden />
+        Reparar
+      </Button>
+      <Button
+        type="button"
+        variant={buttonVariant}
+        size="sm"
+        disabled={isFixing}
+        className={buttonClass}
+        onClick={() => onRegenerate(failure)}
+        aria-label="Regenerar diagrama Mermaid con IA"
+        title="Pide a la IA un diagrama nuevo a partir del error del validador"
+      >
+        {isFixing ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+        ) : (
+          <Sparkles className="h-3.5 w-3.5" aria-hidden />
+        )}
+        {isFixing ? "…" : "Regenerar con IA"}
+      </Button>
+    </>
+  );
+}
+
+const STATUS_BADGE_CLASS =
+  "inline-flex h-8 items-center rounded-md border border-[var(--border)] bg-[var(--card)] px-2.5 text-xs text-[var(--muted-foreground)]";
 
 /** Mermaid suele emitir width="100%"; dentro de un inline-block colapsa — usar viewBox/intrínseco. */
 export function normalizeMermaidSvgSizing(container: HTMLElement): { width: number; height: number } | null {
@@ -283,26 +284,6 @@ export function normalizeMermaidSvgSizing(container: HTMLElement): { width: numb
   const width = svg.getBoundingClientRect().width || svg.clientWidth || 0;
   const height = svg.getBoundingClientRect().height || svg.clientHeight || 0;
   return width > 0 && height > 0 ? { width, height } : null;
-}
-
-export function computeMermaidFitTransform(
-  viewportW: number,
-  viewportH: number,
-  contentW: number,
-  contentH: number,
-  padding = PAN_ZOOM_FIT_PADDING,
-): PanZoomState {
-  if (viewportW <= 0 || viewportH <= 0 || contentW <= 0 || contentH <= 0) {
-    return { scale: 1, x: 0, y: 0 };
-  }
-  const availW = Math.max(1, viewportW - padding * 2);
-  const availH = Math.max(1, viewportH - padding * 2);
-  const scale = clampPanZoomScale(Math.min(availW / contentW, availH / contentH));
-  return {
-    scale,
-    x: (viewportW - contentW * scale) / 2,
-    y: (viewportH - contentH * scale) / 2,
-  };
 }
 
 /** Vista fullscreen: arrastrar para desplazar, rueda para zoom hacia el cursor. */
@@ -524,150 +505,114 @@ function MermaidPanZoomViewport({
   );
 }
 
-/** Inline Mermaid block with optional fullscreen overlay. */
+/**
+ * Inline Mermaid block with optional fullscreen overlay.
+ *
+ * Contrato de remontaje: quien lo monta pone `key={mermaidKey(contenido completo)}` en el
+ * `MermaidBlockErrorBoundary`; editar el contenido remonta el bloque (vista, error y regeneración se
+ * reinician) y el boundary no se queda atascado en error.
+ */
 export function MermaidDiagramBlock({
   content,
   blockKey,
-  prepareContent = defaultPrepareMermaidForRender,
   enableFullscreen = true,
   enableRepair = true,
   svgClassName,
 }: MermaidDiagramBlockProps) {
-  const instanceId = useId();
-  const [displayContent, setDisplayContent] = useState(content);
-  const [repairGeneration, setRepairGeneration] = useState(0);
+  // Regeneración efímera (F1): solo se muestra, no se guarda. Se descarta si cambia `content`.
+  const [regenerated, setRegenerated] = useState<{ base: string; text: string } | null>(null);
+  const regeneratedActive = regenerated !== null && regenerated.base === content;
+  const displayContent = regeneratedActive ? regenerated.text : content;
+
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
   const [fullscreenExcalidrawFallback, setFullscreenExcalidrawFallback] = useState(false);
-  const [inlineReady, setInlineReady] = useState(false);
-  const [inlineFailed, setInlineFailed] = useState(false);
-  const [fullscreenReady, setFullscreenReady] = useState(false);
   const [isFixing, setIsFixing] = useState(false);
   const [fixError, setFixError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"svg" | "excalidraw">(() =>
-    defaultMermaidViewMode(content),
-  );
+  const [viewMode, setViewMode] = useState<"svg" | "excalidraw">(defaultMermaidViewMode);
 
   const diagramType = useMemo(() => detectMermaidDiagramType(displayContent), [displayContent]);
   const excalidrawSupported = isExcalidrawSupported(diagramType);
+  const isExcalidrawView = viewMode === "excalidraw" && excalidrawSupported;
 
-  /** Same prep as SVG render — Excalidraw conversion must see repaired body, not fences. */
-  const preparedExcalidrawContent = useMemo(
-    () => stripMermaidFenceWrappers(prepareContent(displayContent)).trim(),
-    [displayContent, prepareContent],
+  // Render SVG inline y de pantalla completa: dos instancias con ids distintos, para que los
+  // `url(#marker)` del SVG no colisionen cuando ambos conviven en el DOM. El inline no se desactiva en
+  // vista Excalidraw: su texto final (original o reparado) es lo que se convierte.
+  const inline = useMermaidRender(displayContent);
+  const inlineState = inline.state;
+
+  /** Texto que Excalidraw convierte; `null` mientras el hook carga o falló (no se convierte texto inválido). */
+  const excalidrawText = isExcalidrawView && inlineState.status === "ready" ? inlineState.text : null;
+  const excalidrawType = useMemo(
+    () => (excalidrawText === null ? diagramType : detectMermaidDiagramType(excalidrawText)),
+    [excalidrawText, diagramType],
   );
+  const showInlineExcalidraw = excalidrawText !== null;
+  const showFullscreenExcalidraw = showInlineExcalidraw && !fullscreenExcalidrawFallback;
 
-  // Rebuild when source edits / repairs change conversion input
+  const fullscreen = useMermaidRender(displayContent, {
+    enabled: fullscreenOpen && !showFullscreenExcalidraw,
+  });
+  const fullscreenState = fullscreen.state;
+
   const rebuildKey = useMemo(
-    () => `${blockKey}-r${repairGeneration}-${mermaidKey(preparedExcalidrawContent)}`,
-    [blockKey, repairGeneration, preparedExcalidrawContent],
+    () => `${blockKey}-${mermaidKey(excalidrawText ?? "")}`,
+    [blockKey, excalidrawText],
   );
+  const fullscreenExcalidrawRebuildKey = `${rebuildKey}-fs`;
 
-  const fullscreenExcalidrawRebuildKey = useMemo(
-    () => `${rebuildKey}-fs`,
-    [rebuildKey],
+  const handleRetryInline = useCallback(() => {
+    setFixError(null);
+    inline.retry({ extended: true });
+  }, [inline.retry]);
+
+  const handleRetryFullscreen = useCallback(() => {
+    setFixError(null);
+    fullscreen.retry({ extended: true });
+  }, [fullscreen.retry]);
+
+  const handleRegenerate = useCallback(
+    async (failure: MermaidErrorState) => {
+      setFixError(null);
+      setIsFixing(true);
+      try {
+        const text = await regenerateMermaidDiagram({
+          content: failure.text,
+          error: failure.message,
+        });
+        setRegenerated({ base: content, text });
+        setViewMode(defaultMermaidViewMode());
+      } catch (err) {
+        setFixError(err instanceof Error ? err.message : "No se pudo regenerar el diagrama");
+      } finally {
+        setIsFixing(false);
+      }
+    },
+    [content],
   );
-
-  const fixAssessment = assessMermaidFixStrategy(displayContent);
-  const fixLabel = fixAssessment.strategy === "regenerate" ? "Regenerar" : "Reparar";
-  const FixIcon = fixAssessment.strategy === "regenerate" ? Sparkles : Wrench;
-
-  useEffect(() => {
-    setDisplayContent(content);
-    setRepairGeneration(0);
-    setInlineFailed(false);
-    setFixError(null);
-    setViewMode(defaultMermaidViewMode(content));
-  }, [content]);
-
-  const inlineRenderIdRef = useRef("");
-  if (!inlineRenderIdRef.current) {
-    inlineRenderIdRef.current =
-      "m" +
-      instanceId.replace(/[^a-zA-Z0-9]/g, "") +
-      blockKey.replace(/[^a-zA-Z0-9]/g, "") +
-      "-" +
-      Math.random().toString(36).slice(2, 9);
-  }
-
-  const inlineRenderId = `${inlineRenderIdRef.current}-r${repairGeneration}`;
-
-  const fullscreenRenderIdRef = useRef("");
-  if (!fullscreenRenderIdRef.current) {
-    fullscreenRenderIdRef.current = `${inlineRenderIdRef.current}-fs`;
-  }
-
-  const fullscreenRenderId = `${fullscreenRenderIdRef.current}-r${repairGeneration}`;
-
-  const handleInlineReady = useCallback((ready: boolean) => {
-    setInlineReady(ready);
-  }, []);
-
-  const handleInlineError = useCallback((failed: boolean) => {
-    setInlineFailed(failed);
-    if (failed) setInlineReady(false);
-  }, []);
-
-  const handleFix = useCallback(async () => {
-    const assessment = assessMermaidFixStrategy(displayContent);
-    setFixError(null);
-    setInlineReady(false);
-    setInlineFailed(false);
-
-    if (assessment.strategy === "repair") {
-      const repaired =
-        assessment.repairedPreview.trim() || repairMermaidBlockForRender(displayContent);
-      setDisplayContent(repaired);
-      setRepairGeneration((g) => g + 1);
-      setViewMode(defaultMermaidViewMode(repaired));
-      return;
-    }
-
-    setIsFixing(true);
-    try {
-      const regenerated = await regenerateMermaidDiagram(displayContent);
-      setDisplayContent(regenerated);
-      setRepairGeneration((g) => g + 1);
-      setViewMode(defaultMermaidViewMode(regenerated));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "No se pudo regenerar el diagrama";
-      setFixError(msg);
-      setInlineFailed(true);
-    } finally {
-      setIsFixing(false);
-    }
-  }, [displayContent]);
 
   const handleOpenFullscreen = useCallback(() => {
-    setFullscreenReady(false);
     setFullscreenExcalidrawFallback(false);
     setFullscreenOpen(true);
   }, []);
 
   const handleFullscreenOpenChange = useCallback((open: boolean) => {
     setFullscreenOpen(open);
-    if (!open) {
-      setFullscreenExcalidrawFallback(false);
-      setFullscreenReady(false);
-    }
+    if (!open) setFullscreenExcalidrawFallback(false);
   }, []);
 
   const handleFullscreenExcalidrawFallback = useCallback(() => {
     setFullscreenExcalidrawFallback(true);
-    setFullscreenReady(false);
-  }, []);
-
-  const handleFullscreenReady = useCallback((ready: boolean) => {
-    setFullscreenReady(ready);
   }, []);
 
   const handleFallbackToSvg = useCallback(() => {
     setViewMode("svg");
   }, []);
 
-  const isExcalidrawView = viewMode === "excalidraw" && excalidrawSupported;
-  const showToolbar = inlineReady || inlineFailed || excalidrawSupported || isExcalidrawView;
-  const showFullscreenExcalidraw =
-    isExcalidrawView && !fullscreenExcalidrawFallback;
+  const showToolbar =
+    inlineState.status === "ready" ||
+    inlineState.status === "error" ||
+    excalidrawSupported ||
+    isExcalidrawView;
 
   return (
     <>
@@ -680,28 +625,30 @@ export function MermaidDiagramBlock({
         {showToolbar ? (
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              {enableRepair ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  disabled={isFixing}
-                  className="h-8 gap-1.5 border border-[var(--border)] bg-[var(--card)] px-2.5 text-xs text-[var(--foreground)] shadow-md"
-                  onClick={() => void handleFix()}
-                  aria-label={`${fixLabel} diagrama Mermaid`}
-                  title={
-                    fixAssessment.reasons.length
-                      ? fixAssessment.reasons.slice(0, 3).join(" · ")
-                      : undefined
-                  }
+              {enableRepair && inlineState.status === "error" ? (
+                <MermaidRepairActions
+                  variant="inline"
+                  failure={inlineState}
+                  isFixing={isFixing}
+                  onRetry={handleRetryInline}
+                  onRegenerate={handleRegenerate}
+                />
+              ) : null}
+              {inlineState.status === "ready" && inlineState.repair === "repaired" ? (
+                <span
+                  className={STATUS_BADGE_CLASS}
+                  title="El diagrama original no pasaba el validador de Mermaid; se muestra una versión corregida automáticamente. El documento no se modificó."
                 >
-                  {isFixing ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                  ) : (
-                    <FixIcon className="h-3.5 w-3.5" aria-hidden />
-                  )}
-                  {isFixing ? "…" : fixLabel}
-                </Button>
+                  Reparado automáticamente
+                </span>
+              ) : null}
+              {regeneratedActive ? (
+                <span
+                  className={STATUS_BADGE_CLASS}
+                  title="El diagrama regenerado solo se muestra aquí; no se guardó en el documento."
+                >
+                  No guardado
+                </span>
               ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -753,22 +700,23 @@ export function MermaidDiagramBlock({
             {fixError}
           </p>
         ) : null}
-        {isExcalidrawView ? (
+        {showInlineExcalidraw ? (
           <ExcalidrawDiagramBlock
-            mermaidContent={preparedExcalidrawContent}
-            diagramType={diagramType}
+            mermaidContent={excalidrawText}
+            diagramType={excalidrawType}
             rebuildKey={rebuildKey}
             onFallbackToSvg={handleFallbackToSvg}
           />
         ) : (
-          <MermaidSvgCanvas
-            content={displayContent}
-            renderId={inlineRenderId}
-            prepareContent={prepareContent}
-            className={svgClassName}
-            onReadyChange={handleInlineReady}
-            onErrorChange={handleInlineError}
-          />
+          <>
+            <MermaidSvgSurface
+              svg={inlineState.status === "ready" ? inlineState.svg : ""}
+              bindFunctions={inlineState.status === "ready" ? inlineState.bindFunctions : undefined}
+              pending={inlineState.status === "idle" || inlineState.status === "loading"}
+              className={svgClassName}
+            />
+            {inlineState.status === "error" ? <MermaidErrorPanel state={inlineState} /> : null}
+          </>
         )}
       </div>
 
@@ -785,23 +733,14 @@ export function MermaidDiagramBlock({
           </DialogDescription>
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--border)] bg-[color-mix(in_oklch,var(--muted)_22%,var(--card))] px-4 py-3">
             <div className="flex min-w-0 flex-1 items-center gap-2">
-              {enableRepair ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={isFixing}
-                  className="h-8 shrink-0 gap-1.5 text-xs"
-                  onClick={() => void handleFix()}
-                  aria-label={`${fixLabel} diagrama Mermaid`}
-                >
-                  {isFixing ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                  ) : (
-                    <FixIcon className="h-3.5 w-3.5" aria-hidden />
-                  )}
-                  {isFixing ? "…" : fixLabel}
-                </Button>
+              {enableRepair && !showFullscreenExcalidraw && fullscreenState.status === "error" ? (
+                <MermaidRepairActions
+                  variant="fullscreen"
+                  failure={fullscreenState}
+                  isFixing={isFixing}
+                  onRetry={handleRetryFullscreen}
+                  onRegenerate={handleRegenerate}
+                />
               ) : null}
               {excalidrawSupported ? (
                 <Button
@@ -833,7 +772,7 @@ export function MermaidDiagramBlock({
               <div className="min-w-0">
                 <p className="text-sm font-medium text-[var(--foreground)]">Diagrama Mermaid</p>
                 <p className="text-xs text-[var(--muted-foreground)]">
-                  {isExcalidrawView
+                  {showFullscreenExcalidraw
                     ? "Pinch o Ctrl+rueda = zoom (cursor) · Rueda = pan · −/+ centro · Esc cierra"
                     : "Arrastrar para desplazar · Rueda para zoom · Doble clic restablece"}
                 </p>
@@ -845,20 +784,29 @@ export function MermaidDiagramBlock({
             {fullscreenOpen ? (
               showFullscreenExcalidraw ? (
                 <ExcalidrawDiagramBlock
-                  mermaidContent={preparedExcalidrawContent}
-                  diagramType={diagramType}
+                  mermaidContent={excalidrawText}
+                  diagramType={excalidrawType}
                   rebuildKey={fullscreenExcalidrawRebuildKey}
                   layout="fullscreen"
                   onFallbackToSvg={handleFullscreenExcalidrawFallback}
                 />
+              ) : fullscreenState.status === "error" ? (
+                <div className="min-h-0 flex-1 overflow-auto p-4">
+                  <MermaidErrorPanel state={fullscreenState} />
+                </div>
               ) : (
-                <MermaidPanZoomViewport resetKey={`${blockKey}-${repairGeneration}`} contentReady={fullscreenReady}>
-                  <MermaidSvgCanvas
-                    content={displayContent}
-                    renderId={fullscreenRenderId}
-                    prepareContent={prepareContent}
+                <MermaidPanZoomViewport
+                  resetKey={`${blockKey}-${mermaidKey(displayContent)}`}
+                  contentReady={fullscreenState.status === "ready"}
+                >
+                  <MermaidSvgSurface
+                    svg={fullscreenState.status === "ready" ? fullscreenState.svg : ""}
+                    bindFunctions={
+                      fullscreenState.status === "ready" ? fullscreenState.bindFunctions : undefined
+                    }
+                    pending={fullscreenState.status !== "ready"}
+                    normalizeSizing
                     className="block [&_svg]:block [&_svg]:h-auto [&_svg]:max-w-none [&_svg]:w-auto"
-                    onReadyChange={handleFullscreenReady}
                   />
                 </MermaidPanZoomViewport>
               )
@@ -888,13 +836,14 @@ export function tryRenderMarkdownMermaid(props: MarkdownCodeProps): ReactNode | 
   const source = extractCodeBlockSource(className, children, node);
   if (!isMermaidCodeBlock(source, className) || !source.trim()) return null;
 
-  const normalized = defaultPrepareMermaidForRender(source.trim());
-  if (!normalized.trim()) return null;
+  // Fuente crudo (solo envoltorios de fence y espacios Unicode): la reparación la decide el bloque.
+  const prepared = prepareMermaidForRender(source);
+  if (!prepared.trim()) return null;
 
-  const key = mermaidKey(normalized);
+  const key = mermaidKey(prepared);
   return (
-    <MermaidBlockErrorBoundary content={normalized} blockKey={key}>
-      <MermaidDiagramBlock key={key} blockKey={key} content={normalized} />
+    <MermaidBlockErrorBoundary key={key} content={prepared} blockKey={key}>
+      <MermaidDiagramBlock blockKey={key} content={prepared} />
     </MermaidBlockErrorBoundary>
   );
 }

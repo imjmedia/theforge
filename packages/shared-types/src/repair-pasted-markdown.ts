@@ -4,6 +4,7 @@
 
 import { repairCollapsedSqlParagraphs, repairCollapsedSqlInsideFences, repairFragmentedSqlFences, openFenceLangBeforeCloseLine } from "./repair-collapsed-sql.js";
 import { repairDirectoryTreeBlocks } from "./repair-directory-tree.js";
+import { fencedLineMask } from "./markdown-table.js";
 import { repairFlowSectionsToMermaid } from "./repair-flow-sections.js";
 import { repairInfraMarkdown } from "./repair-infra-markdown.js";
 
@@ -482,8 +483,15 @@ export function repairPromoteBareSectionHeadings(text: string): string {
     return false;
   };
 
+  // Un título «suelto» dentro de un fence (p. ej. `Ingresos,Gastos,50` en ```mermaid sankey-beta) es
+  // contenido del bloque, no un encabezado: no se promueve.
+  const fenced = fencedLineMask(lines);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
+    if (fenced[i]) {
+      out.push(line);
+      continue;
+    }
     const t = line.trim();
     const prev = i > 0 ? (lines[i - 1] ?? "").trim() : "";
     const next = i + 1 < lines.length ? (lines[i + 1] ?? "").trim() : "";
@@ -819,6 +827,26 @@ function repairLooseAsciiParagraphBlocks(text: string): string {
   return out.join("\n\n");
 }
 
+/**
+ * Aplica `fn` solo a los tramos de texto fuera de fences de código; los fences (apertura, contenido y
+ * cierre) pasan byte a byte. `repairLooseAsciiParagraphBlocks` parte por líneas en blanco y, sin esto,
+ * envolvía en ```text el cuerpo de un ```mermaid con línea vacía (sankey-beta, gantt…).
+ */
+function mapTextOutsideFences(text: string, fn: (chunk: string) => string): string {
+  const lines = text.split("\n");
+  const fenced = fencedLineMask(lines);
+  const out: string[] = [];
+  let start = 0;
+  while (start < lines.length) {
+    let end = start;
+    while (end < lines.length && fenced[end] === fenced[start]) end++;
+    const chunk = lines.slice(start, end);
+    out.push(fenced[start] ? chunk.join("\n") : fn(chunk.join("\n")));
+    start = end;
+  }
+  return out.join("\n");
+}
+
 /** Diagramas ASCII (relaciones en una línea o bloques de arquitectura) → bloque ```text```. */
 export function repairAsciiDiagramBlocks(text: string): string {
   let out = text.replace(
@@ -831,7 +859,7 @@ export function repairAsciiDiagramBlocks(text: string): string {
     if (t.startsWith("```")) return line;
     return `\`\`\`text\n${t}\n\`\`\``;
   });
-  out = repairLooseAsciiParagraphBlocks(out);
+  out = mapTextOutsideFences(out, repairLooseAsciiParagraphBlocks);
   return repairMultilineAsciiDiagramBlocks(out);
 }
 

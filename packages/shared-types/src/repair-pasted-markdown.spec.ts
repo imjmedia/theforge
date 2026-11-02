@@ -15,6 +15,7 @@ import {
   repairUnclosedCodeFences,
   repairIndentedProseBlocks,
   repairMddInfraManifestJsonBlock,
+  repairPromoteBareSectionHeadings,
 } from "./repair-pasted-markdown.js";
 import { formatDocumentMarkdown } from "./format-document-markdown.js";
 import { readFileSync } from "node:fs";
@@ -435,5 +436,18 @@ Recibe el mensaje del webhook de WhatsApp y orquesta la respuesta.
     assert.match(out, /\{ "id": "1" \}\n```[\s\S]*?\*\*Response 200:/);
     assert.match(out, /\{ "ok": true \}\n```[\s\S]*?### DELETE/);
     assert.match(out, /\*\*Response 204:\*\*\n+_No Content_/);
+  });
+});
+
+describe("repairPromoteBareSectionHeadings respeta fences", () => {
+  it("no promueve a ### una línea dentro de ```mermaid sankey-beta (caso hw-sankey)", () => {
+    const doc = "```mermaid\nsankey-beta\n\nIngresos,Gastos,50\nIngresos,Ahorro,20\n```";
+    assert.equal(repairPromoteBareSectionHeadings(doc), doc);
+    assert.equal(formatDocumentMarkdown(doc), doc);
+  });
+
+  it("sigue promoviendo un título suelto fuera del fence", () => {
+    const out = repairPromoteBareSectionHeadings("Texto\n\nResumen ejecutivo\n\n- punto");
+    assert.match(out, /^### Resumen ejecutivo$/m);
   });
 });

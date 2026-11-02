@@ -56,6 +56,51 @@ describe("mdd-quality-audit.util", () => {
     assert.ok(issues.length >= 1);
   });
 
+  it("detectBareMermaidBlocks no reporta diagramas dentro de fence con init, front-matter o comentario %%", () => {
+    const fenced = [
+      "## 5. Flujos",
+      "",
+      "```mermaid",
+      '%%{init: {"theme": "neutral"}}%%',
+      "flowchart TD",
+      "  A --> B",
+      "```",
+      "",
+      "```mermaid",
+      "---",
+      "title: Secuencia",
+      "---",
+      "sequenceDiagram",
+      "  A->>B: hola",
+      "```",
+      "",
+      "```mermaid",
+      "%% comentario previo",
+      "flowchart LR",
+      "  X --> Y",
+      "```",
+      "",
+      "````markdown",
+      "```mermaid",
+      "flowchart TD",
+      "  Z --> W",
+      "```",
+      "````",
+      "",
+    ].join("\n");
+    assert.deepEqual(detectBareMermaidBlocks(fenced), []);
+    assert.ok(
+      !collectMddQualityIssues(fenced).some((i) => /suelto|sin fence/i.test(i)),
+      "collectMddQualityIssues no debe marcar diagramas fenced como sueltos",
+    );
+  });
+
+  it("detectBareMermaidBlocks sigue marcando un flowchart suelto fuera de fence", () => {
+    const issues = detectBareMermaidBlocks("## 5\n\n%%{init: {}}%%\nflowchart TD\n  A --> B\n");
+    assert.equal(issues.length, 1);
+    assert.match(issues[0]!, /flowchart suelto/);
+  });
+
   it("fixBareMermaidFences wraps bare flowchart", () => {
     const fixed = fixBareMermaidFences("## 5\nmermaid\nflowchart TD\n  A --> B\n");
     assert.match(fixed, /```mermaid/);
