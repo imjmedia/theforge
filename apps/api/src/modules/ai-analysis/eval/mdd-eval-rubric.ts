@@ -11,6 +11,11 @@ import type {
   MddEvalDimensionKey,
   MddEvalScore,
 } from "./mdd-eval.types.js";
+import {
+  scanMarkdownFences,
+  type MarkdownFenceBlock,
+  type MarkdownFenceScan,
+} from "../utils/mdd-sanitize/fence-scan.util.js";
 
 const CANONICAL_SECTIONS: ReadonlyArray<{ number: number; title: string }> = [
   { number: 1, title: "Contexto" },
@@ -35,8 +40,6 @@ const SECTION_HEADING_RE = /^##\s+(\d+)(?:[.)])?(?:\s|$)/;
 const LEVEL1_HEADING_RE = /^#\s/;
 const LEVEL2_HEADING_RE = /^##\s/;
 const LEADING_NUMBER_RE = /^##\s+(\d+)/;
-const FENCE_OPEN_RE = /^\s*```(.*)$/;
-const FENCE_CLOSE_RE = /^\s*```\s*$/;
 const CREATE_TABLE_RE = /\bcreate\s+table\s+(?:if\s+not\s+exists\s+)?([^\s(;]+)/gi;
 const CREATE_TABLE_TEST_RE = /\bcreate\s+table\b/i;
 const ER_DIAGRAM_RE = /^\s*erDiagram\b/m;
@@ -45,9 +48,6 @@ const ER_RELATION_RE = /^\s*"?([A-Za-z_][\w-]*)"?\s+[|o}{.-]+\s+"?([A-Za-z_][\w-
 const HTTP_METHOD_RE = /^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/i;
 const INLINE_ROUTE_RE = /\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+`?(\/[^\s`'"<>),;|*]*)/g;
 const ROUTE_TOKEN_RE = /\/[\w\-.:{}~%\/]*/g;
-
-type Fence = { lang: string; content: string; closed: boolean };
-type FenceScan = { blocks: Fence[]; inFence: boolean[]; unclosed: boolean };
 
 function clamp(value: number, low = 0, high = 100): number {
   return Math.min(high, Math.max(low, value));
@@ -68,36 +68,6 @@ function dimension(key: MddEvalDimensionKey, rawScore: number, details: string[]
 
 function splitLines(text: string): string[] {
   return text.replace(/\r\n?/g, "\n").split("\n");
-}
-
-/** Recorre las líneas marcando las que están dentro de un bloque ``` y extrae los bloques. */
-function scanFences(lines: string[]): FenceScan {
-  const blocks: Fence[] = [];
-  const inFence: boolean[] = lines.map(() => false);
-  let open: { lang: string; body: string[] } | null = null;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    if (open === null) {
-      const opener = FENCE_OPEN_RE.exec(line);
-      if (opener) {
-        inFence[i] = true;
-        const info = (opener[1] ?? "").trim().split(/\s+/)[0] ?? "";
-        open = { lang: info.toLowerCase(), body: [] };
-      }
-      continue;
-    }
-    inFence[i] = true;
-    if (FENCE_CLOSE_RE.test(line)) {
-      blocks.push({ lang: open.lang, content: open.body.join("\n"), closed: true });
-      open = null;
-    } else {
-      open.body.push(line);
-    }
-  }
-  if (open !== null) {
-    blocks.push({ lang: open.lang, content: open.body.join("\n"), closed: false });
-  }
-  return { blocks, inFence, unclosed: open !== null };
 }
 
 function sectionNumberOf(line: string): number | null {
@@ -129,7 +99,7 @@ function closesSection(line: string, sectionNumber: number): boolean {
  */
 export function extractMddSectionBody(markdown: string, sectionNumber: number): string | null {
   const lines = splitLines(markdown);
-  const { inFence } = scanFences(lines);
+  const { inFence } = scanMarkdownFences(lines);
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
     if (inFence[i]) continue;
@@ -204,9 +174,32 @@ function addEntityVariants(target: Set<string>, raw: string): void {
   for (const variant of entityVariants(raw)) target.add(variant);
 }
 
+/**
+ * Si el encabezado `## N.` existe pero dentro de un bloque de código, devuelve el detalle que
+ * explica por qué la sección se reporta ausente (p. ej. un ```sql sin cerrar que se traga §5).
+ */
+function fenceDetailForHeading(
+  lines: string[],
+  scan: MarkdownFenceScan,
+  sectionNumber: number,
+): string | null {
+  const hit = lines.findIndex(
+    (line, i) => scan.inFence[i] === true && sectionNumberOf(line) === sectionNumber,
+  );
+  if (hit === -1) return null;
+  const lineNumber = hit + 1;
+  const block = scan.blocks.find(
+    (b) => b.startLine <= lineNumber && (b.endLine === null || lineNumber < b.endLine),
+  );
+  const lang = block?.lang || "sin etiqueta";
+  const openedAt = block?.startLine ?? lineNumber;
+  const state = block && !block.closed ? "bloque de código abierto" : "bloque de código";
+  return `§${sectionNumber}: encabezado dentro de un ${state} (lang ${lang}, abierto en línea ${openedAt})`;
+}
+
 function scoreStructure(markdown: string, failures: string[]): MddEvalDimension {
   const lines = splitLines(markdown);
-  const scan = scanFences(lines);
+  const scan = scanMarkdownFences(lines);
   const headingCounts = new Map<number, number>();
   lines.forEach((line, i) => {
     if (scan.inFence[i]) return;
@@ -224,6 +217,8 @@ function scoreStructure(markdown: string, failures: string[]): MddEvalDimension 
     if (body === null) {
       score -= 14;
       details.push(`${label}: ausente`);
+      const insideFence = fenceDetailForHeading(lines, scan, section.number);
+      if (insideFence) details.push(insideFence);
       failures.push(`estructura: falta la sección §${section.number} (${section.title})`);
     } else if (body.length < MIN_SECTION_CHARS) {
       score -= 7;
@@ -256,7 +251,7 @@ function scoreStructure(markdown: string, failures: string[]): MddEvalDimension 
 }
 
 /** Fence SQL: etiqueta tipo sql/PostgreSQL/pgsql, o sin etiqueta si su contenido tiene CREATE TABLE. */
-function isSqlFence(block: Fence): boolean {
+function isSqlFence(block: MarkdownFenceBlock): boolean {
   if (block.lang === "") return CREATE_TABLE_TEST_RE.test(block.content);
   return SQL_LANGS.has(block.lang) || block.lang.includes("sql");
 }
@@ -264,7 +259,7 @@ function isSqlFence(block: Fence): boolean {
 /** Nombres de tabla de los `CREATE TABLE` en fences SQL del texto. */
 function sqlTableNames(text: string): string[] {
   const names: string[] = [];
-  for (const block of scanFences(splitLines(text)).blocks) {
+  for (const block of scanMarkdownFences(splitLines(text)).blocks) {
     if (!isSqlFence(block)) continue;
     for (const match of block.content.matchAll(CREATE_TABLE_RE)) names.push(match[1] ?? "");
   }
@@ -274,7 +269,7 @@ function sqlTableNames(text: string): string[] {
 /** Nombres de entidad (bloques y extremos de relación) de los bloques mermaid erDiagram del texto. */
 function erEntityNames(text: string): string[] {
   const names: string[] = [];
-  for (const block of scanFences(splitLines(text)).blocks) {
+  for (const block of scanMarkdownFences(splitLines(text)).blocks) {
     if (block.lang !== "mermaid" || !ER_DIAGRAM_RE.test(block.content)) continue;
     for (const line of block.content.split("\n")) {
       const entity = ER_ENTITY_BLOCK_RE.exec(line);
@@ -320,7 +315,7 @@ function scoreEntities(
 
   const fenceLangs = section3 === null
     ? []
-    : scanFences(splitLines(section3)).blocks.map((block) => block.lang || "(sin etiqueta)");
+    : scanMarkdownFences(splitLines(section3)).blocks.map((block) => block.lang || "(sin etiqueta)");
   details.push(
     `diagnóstico: fences en §3 = [${fenceLangs.join(", ")}], CREATE TABLE en §3 = ${section3Sql.length}, en documento = ${documentSql.length}, entidades erDiagram en documento = ${distinctEntityCount(documentEr)}`,
   );
@@ -433,7 +428,7 @@ function scoreContext(
 function proseOf(section: string | null): string {
   if (section === null) return "";
   const lines = splitLines(section);
-  const { inFence } = scanFences(lines);
+  const { inFence } = scanMarkdownFences(lines);
   return lines.filter((line, i) => !inFence[i] && !line.trim().startsWith("|")).join("\n");
 }
 
@@ -458,7 +453,7 @@ function scoreLanguage(section1: string | null, section5: string | null, failure
 }
 
 function scoreDiagrams(markdown: string, failures: string[]): MddEvalDimension {
-  const mermaid = scanFences(splitLines(markdown)).blocks.filter((block) => block.lang === "mermaid");
+  const mermaid = scanMarkdownFences(splitLines(markdown)).blocks.filter((block) => block.lang === "mermaid");
   if (mermaid.some((block) => ER_DIAGRAM_RE.test(block.content))) {
     return dimension("diagrams", 100, ["bloque mermaid erDiagram presente"]);
   }

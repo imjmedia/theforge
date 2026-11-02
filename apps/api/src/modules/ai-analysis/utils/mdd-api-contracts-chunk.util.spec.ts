@@ -4,6 +4,7 @@ import {
   computeApiContractsChunkCount,
   extractSqlTableNames,
   mergeApiContractsChunkBodies,
+  normalizeEndpointHeadingsForChunkMerge,
   splitTablesIntoApiContractsChunks,
   stripChunkMetaCommentary,
   stripCommonRoutesFromChunkBody,
@@ -98,5 +99,73 @@ describe("mdd-api-contracts-chunk.util", () => {
       assert.ok(!merged.includes("siguientes chunks"));
       assert.ok(merged.includes("### GET /v1/certificates"));
     });
+  });
+});
+
+describe("normalizeEndpointHeadingsForChunkMerge", () => {
+  it("convierte #### y ##### a ### MÉTODO /ruta", () => {
+    const out = normalizeEndpointHeadingsForChunkMerge("#### GET /api/v1/citas\n\n##### POST /api/v1/citas");
+    assert.strictEqual(out, "### GET /api/v1/citas\n\n### POST /api/v1/citas");
+  });
+
+  it("convierte negrita **GET /ruta** y **GET** `/ruta`, y el ítem de lista - **GET** /ruta", () => {
+    const out = normalizeEndpointHeadingsForChunkMerge(
+      "**GET /api/v1/a**\n\n**DELETE** `/api/v1/b`\n\n- **PUT** /api/v1/c",
+    );
+    assert.strictEqual(
+      out,
+      "### GET /api/v1/a\n\n### DELETE /api/v1/b\n\n### PUT /api/v1/c",
+    );
+  });
+
+  it("convierte la línea suelta `GET /ruta` y GET `/ruta`, pero no prosa que empiece igual", () => {
+    const out = normalizeEndpointHeadingsForChunkMerge(
+      "`GET /api/v1/x`\n\nGET `/api/v1/y`\n\nGET /api/v1/z devuelve la lista de citas del paciente.",
+    );
+    assert.match(out, /^### GET \/api\/v1\/x\n\n### GET \/api\/v1\/y\n\nGET \/api\/v1\/z devuelve/);
+  });
+
+  it("genera un bloque por fila de tabla GFM con método y ruta y descarta cabecera y separador", () => {
+    const body = [
+      "| Método | Ruta | Descripción | Auth |",
+      "|--------|------|-------------|------|",
+      "| GET | /api/v1/citas | Listar citas | JWT |",
+      "| **POST** | `/api/v1/citas` | Crear cita | JWT |",
+    ].join("\n");
+    const out = normalizeEndpointHeadingsForChunkMerge(body);
+    assert.strictEqual(
+      out,
+      "### GET /api/v1/citas\nListar citas · JWT\n\n### POST /api/v1/citas\nCrear cita · JWT",
+    );
+  });
+
+  it("no toca tabla sin filas de endpoint", () => {
+    const body = "| Campo | Tipo |\n|-------|------|\n| id | UUID |";
+    assert.strictEqual(normalizeEndpointHeadingsForChunkMerge(body), body);
+  });
+
+  it("no toca contenido dentro de bloques ```json", () => {
+    const body = [
+      "### GET /api/v1/a",
+      "```json",
+      "{ \"nota\": \"#### GET /x\", \"txt\": \"**GET /y**\" }",
+      "| GET | /z | fila |",
+      "```",
+    ].join("\n");
+    assert.strictEqual(normalizeEndpointHeadingsForChunkMerge(body), body);
+  });
+
+  it("es idempotente", () => {
+    const body = [
+      "#### GET /api/v1/a — Listar",
+      "**POST** `/api/v1/b`",
+      "| DELETE | /api/v1/c | Borrar |",
+      "```json",
+      "{}",
+      "```",
+    ].join("\n");
+    const once = normalizeEndpointHeadingsForChunkMerge(body);
+    assert.strictEqual(normalizeEndpointHeadingsForChunkMerge(once), once);
+    assert.match(once, /^### GET \/api\/v1\/a\nListar/m);
   });
 });

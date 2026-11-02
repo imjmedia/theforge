@@ -141,6 +141,117 @@ export function stripCommonRoutesFromChunkBody(body: string, chunkIndex: number)
   return kept.join("\n\n").trim();
 }
 
+const ENDPOINT_METHODS = new Set(["GET", "POST", "PUT", "DELETE", "PATCH"]);
+
+/** `#### GET /ruta` … `###### GET /ruta` (heading más profundo que el canónico). */
+const DEEP_HEADING_ENDPOINT_LINE_RE = /^#{4,6}\s+(GET|POST|PUT|DELETE|PATCH)\s+`?(\/[^\s`]*)`?(.*)$/;
+/** `**GET /ruta**` o `**`GET /ruta`**`, con descripción opcional tras el cierre. */
+const BOLD_WHOLE_ENDPOINT_LINE_RE = /^\*\*`?(GET|POST|PUT|DELETE|PATCH)\s+`?(\/[^\s`*]*)`?\*\*(.*)$/;
+/** `**GET** /ruta` o `**GET** \`/ruta\``; también como ítem de lista (`- **GET** /ruta`). */
+const BOLD_METHOD_ENDPOINT_LINE_RE = /^\*\*(GET|POST|PUT|DELETE|PATCH)\*\*\s+`?(\/[^\s`*]*)`?(.*)$/;
+/** `` `GET /ruta` `` como línea suelta; solo si lo que sigue es vacío o un separador (—, –, :, -). */
+const CODE_ENDPOINT_LINE_RE = /^`(GET|POST|PUT|DELETE|PATCH)\s+(\/[^\s`]*)`(\s*(?:[—–:-].*)?)$/;
+/** `GET \`/ruta\`` como línea suelta; mismo criterio de cola que la variante anterior. */
+const PLAIN_METHOD_CODE_LINE_RE = /^(GET|POST|PUT|DELETE|PATCH)\s+`(\/[^\s`]*)`(\s*(?:[—–:-].*)?)$/;
+const TABLE_ROW_RE = /^\s*\|.*\|\s*$/;
+const TABLE_SEPARATOR_CELL_RE = /^:?-{2,}:?$/;
+
+/** Convierte una línea de endpoint no canónica en `### MÉTODO /ruta` (+ descripción en línea propia). */
+function endpointFromLine(line: string): string[] | null {
+  const trimmed = line.trim().replace(/^[-*+]\s+/, "");
+  const m =
+    trimmed.match(DEEP_HEADING_ENDPOINT_LINE_RE) ??
+    trimmed.match(BOLD_WHOLE_ENDPOINT_LINE_RE) ??
+    trimmed.match(BOLD_METHOD_ENDPOINT_LINE_RE) ??
+    trimmed.match(CODE_ENDPOINT_LINE_RE) ??
+    trimmed.match(PLAIN_METHOD_CODE_LINE_RE);
+  if (!m) return null;
+  const method = m[1] ?? "";
+  const route = m[2] ?? "";
+  const desc = (m[3] ?? "").replace(/^\s*[—–:-]+\s*/, "").trim();
+  return desc ? [`### ${method} ${route}`, desc] : [`### ${method} ${route}`];
+}
+
+function splitTableRow(line: string): string[] {
+  return line.trim().slice(1, -1).split("|").map((c) => c.trim());
+}
+
+/** Fila GFM con método en la primera celda y ruta `/…` en la segunda. */
+function endpointFromTableCells(
+  cells: string[],
+): { method: string; route: string; desc: string } | null {
+  const method = (cells[0] ?? "").replace(/[*`]/g, "").trim();
+  const route = (cells[1] ?? "").replace(/[*`]/g, "").trim();
+  if (!ENDPOINT_METHODS.has(method) || !route.startsWith("/")) return null;
+  const desc = cells
+    .slice(2)
+    .filter((c) => c && !TABLE_SEPARATOR_CELL_RE.test(c))
+    .join(" · ");
+  return { method, route, desc };
+}
+
+/**
+ * Bloque de tabla GFM: si contiene filas de endpoint, cada fila pasa a `### MÉTODO /ruta`
+ * y se descartan separador y cabecera; si no, el bloque queda intacto.
+ */
+function convertTableBlock(rows: string[]): string[] {
+  const parsed = rows.map((raw) => ({ raw, cells: splitTableRow(raw) }));
+  if (!parsed.some((row) => endpointFromTableCells(row.cells))) return rows;
+
+  const out: string[] = [];
+  let seenEndpoint = false;
+  for (const row of parsed) {
+    const ep = endpointFromTableCells(row.cells);
+    if (ep) {
+      seenEndpoint = true;
+      if (out.length && out[out.length - 1] !== "") out.push("");
+      out.push(`### ${ep.method} ${ep.route}`);
+      if (ep.desc) out.push(ep.desc);
+      continue;
+    }
+    if (row.cells.every((c) => TABLE_SEPARATOR_CELL_RE.test(c))) continue;
+    if (!seenEndpoint) continue;
+    out.push(row.raw);
+  }
+  return out;
+}
+
+/**
+ * Normaliza headings de endpoint de chunks a la forma canónica `### MÉTODO /ruta`.
+ * Cubre `#### GET /ruta`, `**GET /ruta**`, `**GET** \`/ruta\``, `- **GET** /ruta`,
+ * `` `GET /ruta` `` suelta y filas GFM `| GET | /ruta | … |`. No toca contenido dentro de
+ * bloques ``` (p. ej. ```json). Idempotente: la salida canónica no vuelve a cambiar.
+ */
+export function normalizeEndpointHeadingsForChunkMerge(body: string): string {
+  const lines = (body ?? "").split("\n");
+  const out: string[] = [];
+  let inFence = false;
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i] ?? "";
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence;
+      out.push(line);
+      i++;
+      continue;
+    }
+    if (inFence) {
+      out.push(line);
+      i++;
+      continue;
+    }
+    if (TABLE_ROW_RE.test(line)) {
+      const start = i;
+      while (i < lines.length && TABLE_ROW_RE.test(lines[i] ?? "")) i++;
+      out.push(...convertTableBlock(lines.slice(start, i)));
+      continue;
+    }
+    out.push(...(endpointFromLine(line) ?? [line]));
+    i++;
+  }
+  return out.join("\n");
+}
+
 /**
  * Fusiona cuerpos §4 de chunks: dedupe rutas, tabla resumen determinista al inicio.
  */

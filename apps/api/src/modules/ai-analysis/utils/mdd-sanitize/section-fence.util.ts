@@ -1,7 +1,22 @@
 /**
  * Extracción fence-aware de cuerpos H2 (§1–§7).
  * Evita cortar secciones en `##` dentro de bloques ``` o en subheadings `###`.
+ *
+ * Toda la detección de bloques de código sale de `fence-scan.util.ts` (semántica CommonMark por
+ * líneas, compartida con el gate y la rúbrica del eval). No se cuentan ocurrencias de ``` en
+ * ningún punto de este módulo.
  */
+
+import { normalizeMarkdownFences, scanMarkdownFences } from "./fence-scan.util.js";
+
+/** Número de saltos de línea antes de `offset`: índice 0-based de la línea que contiene `offset`. */
+function lineIndexAt(text: string, offset: number): number {
+  let count = 0;
+  for (let i = 0; i < offset && i < text.length; i += 1) {
+    if (text.charCodeAt(i) === 10) count += 1;
+  }
+  return count;
+}
 
 /**
  * Primer match de `pattern` que es un heading H2 real: a principio de línea, no parte de un
@@ -10,6 +25,7 @@
 export function findH2HeadingMatch(text: string, pattern: RegExp): RegExpExecArray | null {
   const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
   const re = new RegExp(pattern.source, flags);
+  const { inFence } = scanMarkdownFences(text.split("\n"));
   let m: RegExpExecArray | null = null;
   while ((m = re.exec(text)) !== null) {
     const i = m.index;
@@ -17,33 +33,32 @@ export function findH2HeadingMatch(text: string, pattern: RegExp): RegExpExecArr
       if (re.lastIndex === m.index) re.lastIndex++;
       continue;
     }
-    if ((text.slice(0, i).match(/```/g) ?? []).length % 2 === 0) return m;
+    if (!inFence[lineIndexAt(text, i)]) return m;
     if (re.lastIndex === m.index) re.lastIndex++;
   }
   return null;
 }
 
-/** Índice del siguiente ## que NO está dentro de un bloque con fences (```...```). */
+/** Índice del `\n` previo al siguiente ## que NO está dentro de un bloque con fences, desde `fromIndex`. */
 export function indexOfNextH2OutsideFenced(text: string, fromIndex: number): number {
-  const rest = text.slice(fromIndex);
-  const re = /\n##\s+/g;
-  let match: RegExpExecArray | null = null;
-  while ((match = re.exec(rest)) !== null) {
-    const pos = fromIndex + match.index;
-    const before = text.slice(0, pos);
-    const fences = (before.match(/```/g) || []).length;
-    if (fences % 2 === 0) return pos;
+  const lines = text.split("\n");
+  const { inFence } = scanMarkdownFences(lines);
+  let start = 0;
+  for (let k = 0; k < lines.length; k += 1) {
+    const lineStart = start;
+    start += (lines[k] ?? "").length + 1;
+    if (k === 0) continue;
+    if (lineStart - 1 < fromIndex) continue;
+    if (/^##\s+/.test(lines[k]!) && !inFence[k]) return lineStart - 1;
   }
   return -1;
 }
-
-const CANONICAL_H2_RE = /^##\s+(?:[1-7]\.|UI\/UX)/i;
 
 /** Heading H2 canónico §5 (acepta Logica/Lógica y variantes de casing). */
 export const RE_SECTION5_H2 = /##\s*5\.\s*L[oó]gica\s+y\s*Edge\s*Cases/i;
 
 /**
- * Cierra todo fence abierto que se tragaría un H2 canónico (§1–§7, UI/UX).
+ * Cierra todo fence abierto que se tragaría un H2 canónico (§1–§7, UI/UX), y cierra al EOF.
  *
  * Dos regresiones con la misma causa:
  * - job 84: fence ```sql de §3 sin cerrar ⇒ `getSectionBody(§3)` no encuentra H2 de cierre y
@@ -51,28 +66,16 @@ export const RE_SECTION5_H2 = /##\s*5\.\s*L[oó]gica\s+y\s*Edge\s*Cases/i;
  * - job 85: fence ```json de §4 sin cerrar ⇒ §5 (extractor fence-aware) mide 0 mientras §6/§7
  *   siguen visibles, y `PersistCheck` tumba el job con «§5 pre=999 post=0».
  *
- * Más agresivo que `closeUnclosedCodeFencesInDraft`: no depende del lenguaje declarado en el
- * fence ni de un lookahead concreto. Idempotente.
+ * Delega en {@link normalizeMarkdownFences} (reglas a–e: cierres/openers pegados, opener anidado,
+ * heading canónico dentro de bloque, EOF). Idempotente.
  */
 export function closeUnclosedFencesBeforeCanonicalH2(draft: string): string {
-  const text = draft ?? "";
-  if (!text.trim()) return text;
-
-  const out: string[] = [];
-  let parity = 0;
-  for (const line of text.split("\n")) {
-    if (parity === 1 && CANONICAL_H2_RE.test(line)) {
-      out.push("```", "");
-      parity = 0;
-    }
-    out.push(line);
-    parity = (parity + (line.match(/```/g) ?? []).length) % 2;
-  }
-  return out.join("\n");
+  return normalizeMarkdownFences(draft ?? "");
 }
 
 /**
- * Cierra un fence ``` abierto al final del documento (paridad impar global).
+ * Cierra un fence abierto al final del documento (el bloque sin cerrar al EOF, con su propio
+ * marcador). Si no hay bloque abierto devuelve el texto tal cual.
  *
  * Complementa {@link closeUnclosedFencesBeforeCanonicalH2}: cuando el bloque abierto está en
  * la cola (§4/§7 manifest) y no hay H2 canónico detrás, el gate detecta
@@ -81,14 +84,15 @@ export function closeUnclosedFencesBeforeCanonicalH2(draft: string): string {
 export function closeTrailingUnclosedFences(draft: string): string {
   const text = draft ?? "";
   if (!text.trim()) return text;
-  const fenceCount = (text.match(/```/g) ?? []).length;
-  if (fenceCount % 2 === 0) return text;
-  return `${text.trimEnd()}\n\`\`\`\n`;
+  const { blocks } = scanMarkdownFences(text.split("\n"));
+  const open = blocks.find((block) => !block.closed);
+  if (!open) return text;
+  return `${text.trimEnd()}\n${open.fence}\n`;
 }
 
 /** Cierra fences antes de H2 canónico y al EOF. Idempotente. */
 export function ensureDocumentFenceParity(draft: string): string {
-  return closeTrailingUnclosedFences(closeUnclosedFencesBeforeCanonicalH2(draft ?? ""));
+  return normalizeMarkdownFences(draft ?? "");
 }
 
 /** @deprecated usa {@link closeUnclosedFencesBeforeCanonicalH2} (cubre §1–§7, no solo §3). */
@@ -142,15 +146,16 @@ export function indexOfNextSectionBoundaryOutsideFenced(
 ): number {
   if (n == null) return indexOfNextH2OutsideFenced(draft, fromIndex);
   const text = draft ?? "";
-  let insideFence = (text.slice(0, fromIndex).match(/```/g) ?? []).length % 2 === 1;
-  let offset = fromIndex;
-  const lines = text.slice(fromIndex).split("\n");
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i]!;
-    // i = 0 es el resto de la línea del heading propio: nunca es frontera.
-    if (i > 0 && !insideFence && isSectionBoundaryLine(line, n)) return offset - 1;
-    if ((line.match(/```/g) ?? []).length % 2 === 1) insideFence = !insideFence;
-    offset += line.length + 1;
+  const lines = text.split("\n");
+  const { inFence } = scanMarkdownFences(lines);
+  // Línea que contiene `fromIndex` (el resto de esa línea es el propio heading: nunca frontera).
+  const headingLine = lineIndexAt(text, fromIndex);
+  let start = 0;
+  for (let k = 0; k < lines.length; k += 1) {
+    const lineStart = start;
+    start += (lines[k] ?? "").length + 1;
+    if (k <= headingLine) continue;
+    if (!inFence[k] && isSectionBoundaryLine(lines[k]!, n)) return lineStart - 1;
   }
   return -1;
 }

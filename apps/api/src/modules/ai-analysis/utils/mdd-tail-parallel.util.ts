@@ -454,6 +454,13 @@ export function mergePostCriticParallelResults(
   finalDraft = normalizeGluedSection4HeadingInDraft(finalDraft);
   if (!draftHasPersistableSection4(finalDraft)) {
     finalDraft = recoverMisplacedContratosFromSection3(finalDraft);
+    if (!draftHasPersistableSection4(finalDraft)) {
+      console.warn(
+        "[MDD:PostCriticMerge] §4 ausente tras api_contracts (apiDraftLen=%s, stateDraftLen=%s)",
+        (apiResult.mddDraft ?? "").length,
+        (state.mddDraft ?? "").length,
+      );
+    }
   }
   finalDraft = ensureSection5TailParallelPlaceholder(finalDraft);
 

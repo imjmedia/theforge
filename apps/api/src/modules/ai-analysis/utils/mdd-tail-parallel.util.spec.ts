@@ -1,4 +1,4 @@
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import assert from "node:assert";
 import {
   buildSection5LlmContext,
@@ -331,5 +331,26 @@ describe("cross-consistency tras merge paralelo", () => {
     const fixed = applyDeterministicCrossConsistencyFixes(merged.mddDraft ?? "");
     assert.ok(fixed.includes("5 intentos"));
     assert.ok(fixed.length > (merged.mddDraft ?? "").length - 500);
+  });
+});
+
+describe("mergePostCriticParallelResults §4 ausente", () => {
+  it("emite warn cuando tras el merge no queda §4 persistible", () => {
+    const draftSinS4 = BASE_DRAFT.replace(/## 4\. Contratos de API[\s\S]*?(?=## 5\.)/, "");
+    const warn = mock.method(console, "warn", () => {});
+    try {
+      mergePostCriticParallelResults(
+        { mddDraft: draftSinS4 } as never,
+        { mddDraft: draftSinS4 },
+        {},
+        {},
+      );
+    } finally {
+      warn.mock.restore();
+    }
+    const emitido = warn.mock.calls.some((c) =>
+      String(c.arguments[0]).includes("[MDD:PostCriticMerge] §4 ausente tras api_contracts"),
+    );
+    assert.strictEqual(emitido, true);
   });
 });

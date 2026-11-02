@@ -326,6 +326,33 @@ describe("computeEvalAggregates", () => {
     assert.equal(empty.totalCostUsd, null);
     assert.equal(empty.totalLlmCalls, null);
   });
+
+  it("sin ningún caso con uso medido los totales de coste y llamadas son null, no 0", () => {
+    const base = {
+      caseId: "a", complexity: "LOW" as const, startedAt: "", markdownLen: 1, gateBlockers: [], gateWarnings: [],
+      auditTrail: [], rubric: rubric(80, true), durationMs: 1000, passed: true,
+    };
+    const agg = computeEvalAggregates([
+      { ...base, caseId: "a" },
+      { ...base, caseId: "b", llmCalls: 0, costUsd: 0, promptTokens: 0, completionTokens: 0 },
+    ]);
+    assert.equal(agg.totalCostUsd, null, "sin uso no hay coste medido");
+    assert.equal(agg.totalLlmCalls, null, "llmCalls 0 (registros antiguos) cuenta como sin uso");
+  });
+
+  it("con uso mixto suma solo los casos con uso y el resto no aporta", () => {
+    const base = {
+      caseId: "a", complexity: "LOW" as const, startedAt: "", markdownLen: 1, gateBlockers: [], gateWarnings: [],
+      auditTrail: [], rubric: rubric(80, true), durationMs: 1000, passed: true,
+    };
+    const agg = computeEvalAggregates([
+      { ...base, caseId: "con-uso-1", llmCalls: 2, costUsd: 0.5 },
+      { ...base, caseId: "sin-uso" },
+      { ...base, caseId: "con-uso-2", llmCalls: 3, costUsd: 0.25 },
+    ]);
+    assert.equal(agg.totalLlmCalls, 5);
+    assert.equal(agg.totalCostUsd, 0.75);
+  });
 });
 
 describe("uso de tokens del caso", () => {
@@ -371,13 +398,61 @@ describe("uso de tokens del caso", () => {
     assert.deepEqual(calls, ["usage", "usage", "usage", "delete"]);
   });
 
-  it("tras 3 reintentos sin datos lo anota en el registro y no falla el caso por ello", async () => {
+  it("tras 3 reintentos sin filas: coste y tokens quedan no medidos (undefined, no 0) y el caso no falla", async () => {
     const { deps, sleeps, usageCalls } = withCallLog({ events: [GOOD_DONE] }, () => ({ llmCalls: 0 }));
     const record = await runEvalCase(deps, makeCase("ecommerce-nousage"), { timeoutMs: 5_000 });
     assert.equal(usageCalls(), 4, "1 lectura + 3 reintentos");
     assert.deepEqual(sleeps, [1_000, 1_000, 1_000]);
-    assert.equal(record.llmCalls, 0);
-    assert.ok(record.auditTrail.some((line) => line.includes("sin generaciones")));
+    assert.equal(record.llmCalls, undefined);
+    assert.equal(record.promptTokens, undefined);
+    assert.equal(record.completionTokens, undefined);
+    assert.equal(record.costUsd, undefined);
+    assert.ok(
+      record.auditTrail.some((line) =>
+        line.includes(
+          "harness: TokenUsage sin filas para el proyecto temporal → coste y tokens no medidos (verifica que theforge-worker corre el commit con el contexto de tokens del eval; gitSha del resumen)",
+        ),
+      ),
+    );
     assert.equal(record.passed, true);
+  });
+
+  it("un fallo al leer el uso deja los campos no medidos y lo anota", async () => {
+    const { deps } = makeDeps({ events: [GOOD_DONE] });
+    const record = await runEvalCase(
+      {
+        ...deps,
+        async getTokenUsage() {
+          throw new Error("tabla caída");
+        },
+        async sleep() {},
+      },
+      makeCase("ecommerce-usage-error"),
+      { timeoutMs: 5_000 },
+    );
+    assert.equal(record.llmCalls, undefined);
+    assert.equal(record.costUsd, undefined);
+    assert.ok(record.auditTrail.some((line) => line.includes("harness: sin uso de tokens: tabla caída")));
+    assert.equal(record.passed, true);
+  });
+
+  it("en el resumen, un suite sin uso medido da totales null en los agregados", async () => {
+    const { deps } = makeDeps({ events: [GOOD_DONE] });
+    const sinUso = {
+      ...deps,
+      async getTokenUsage() {
+        return { llmCalls: 0 };
+      },
+      async sleep() {},
+    };
+    const summary = await runEvalSuite(sinUso, [makeCase("h-case"), makeCase("i-case")], {
+      concurrency: 2,
+      timeoutMs: 5_000,
+      runId: "r-sin-uso",
+      gitSha: "x",
+    });
+    assert.equal(summary.aggregates.totalCostUsd, null);
+    assert.equal(summary.aggregates.totalLlmCalls, null);
+    assert.equal(summary.aggregates.passed, 2);
   });
 });

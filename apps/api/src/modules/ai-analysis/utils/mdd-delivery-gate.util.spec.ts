@@ -6,6 +6,7 @@ import {
   mddDeliveryGateHasBlockers,
   applyDeliveryGateToSemaphoreStatus,
   mddStreamDeliveryGateFields,
+  detectOpenFenceSwallowingCanonicalSections,
 } from "./mdd-delivery-gate.util.js";
 
 const VALID_MDD = `# Master Design Document
@@ -720,5 +721,49 @@ describe("validateMddForDelivery — un solo gate, un solo set de umbrales", () 
     const result = validateMddForDelivery(d, { mddComplexity: "HIGH", skipDeterministicRepair: true });
     assert.ok(!result.blockers.some((b) => /truncado o incompleto/.test(b)), result.blockers.join("; "));
     assert.ok(result.warnings.some((w) => /truncado o incompleto/.test(w)));
+  });
+});
+
+describe("detectOpenFenceSwallowingCanonicalSections (fence-scan)", () => {
+  const body = (label: string) => `${label}. ${"Detalle del apartado con contexto suficiente. ".repeat(6)}`;
+
+  it("bloquea un ```sql sin cerrar que se traga §5, §6 y §7", () => {
+    const md = [
+      "## 3. Modelo de Datos",
+      body("Tablas"),
+      "```sql",
+      "CREATE TABLE a (id int);",
+      "## 5. Lógica y Edge Cases",
+      body("Reglas"),
+      "## 6. Seguridad",
+      body("Seguridad"),
+      "## 7. Infraestructura",
+      body("Infra"),
+    ].join("\n");
+    assert.deepEqual(detectOpenFenceSwallowingCanonicalSections(md), [
+      "Bloque ``` abierto (lang sql, línea 3) se traga los encabezados §5, §6, §7; cerrar el fence antes de persistir",
+    ]);
+  });
+
+  it("documento que termina con fence sin cerrar (sin headings tragados) también bloquea", () => {
+    const md = "## 4. Contratos de API\n" + body("Endpoints") + "\n```json\n{\"a\":1}\n";
+    assert.deepEqual(detectOpenFenceSwallowingCanonicalSections(md), [
+      "Documento termina con bloque ``` sin cerrar (lang json, línea 3); cerrar el fence antes de persistir",
+    ]);
+  });
+
+  it("un bloque cerrado que contiene un heading canónico es contenido literal: no bloquea", () => {
+    const md = "## 3. Modelo\n```md\n## 5. Ejemplo\n```\n## 5. Lógica y Edge Cases\n" + body("Reglas");
+    assert.deepEqual(detectOpenFenceSwallowingCanonicalSections(md), []);
+  });
+
+  it("validateMddForDelivery no reporta fence roto tras la reparación determinista", () => {
+    const broken = VALID_MDD.replace("## 5. Lógica y Edge Cases", "```sql\nCREATE TABLE z (id int);\n## 5. Lógica y Edge Cases");
+    const result = validateMddForDelivery(broken);
+    assert.equal(
+      result.blockers.some((b) => /Bloque ``` abierto|Documento termina con bloque/.test(b)),
+      false,
+      `blockers=${JSON.stringify(result.blockers)}`,
+    );
   });
 });

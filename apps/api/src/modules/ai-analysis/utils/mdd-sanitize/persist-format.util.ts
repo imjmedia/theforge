@@ -1,4 +1,5 @@
 import { repairGluedMarkdownHeadings } from "@theforge/shared-types";
+import { scanMarkdownFences } from "./fence-scan.util.js";
 
 function isValidContratosOrInfraSubheading(line: string): boolean {
   const t = line.replace(/^###\s+/, "").trim();
@@ -80,6 +81,12 @@ export function collapseInlineHorizontalRules(draft: string): string {
   return collapseConsecutiveHorizontalRules(out);
 }
 
+/**
+ * Cierra fences ```lang sin cerrar antes del siguiente H2 canónico o `---` + H2. Comprueba cierres
+ * por línea (no por paridad), así que un bloque ya cerrado no se toca. Se mantiene la lista de
+ * lenguajes original: el anidado `json` dentro de `json` lo repara `repairNestedJsonFencesInDraft`
+ * con conteo de profundidad, y un cierre CommonMark previo lo rompería.
+ */
 export function closeUnclosedCodeFencesInDraft(draft: string): string {
   if (!draft?.trim()) return draft ?? "";
   const closeBeforeH2 = "(?=\\n---[\\s\\S]*?\\n##\\s|\\n##\\s+(?:UI\\/UX|\\d+\\.))";
@@ -93,15 +100,59 @@ export function closeUnclosedCodeFencesInDraft(draft: string): string {
   );
 }
 
+/** Línea que, tras un opener vacío, indica que ese opener es un fence suelto antes de un encabezado. */
+const BOUNDARY_AFTER_EMPTY_OPENER_RE =
+  /^\s*(?:---\s*$|##\s+|###\s+(?:GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+)/;
+/** Heading H2 dentro del contenido de un bloque: el bloque se traga una sección. */
+const H2_INSIDE_BLOCK_RE = /^##\s/;
+
+/**
+ * Quita fences sin lenguaje que no aportan nada:
+ * - bloque vacío (```` ``` ```` seguido de ```` ``` ````, sin contenido): se elimina entero;
+ * - opener ```` ``` ```` suelto que va seguido de `---` o de un encabezado H2/endpoint y cuyo
+ *   bloque se traga secciones (queda sin cerrar, o contiene un `##`): se elimina el opener.
+ * Usa el scan compartido, así que un cierre ```` ``` ```` real dentro de un bloque abierto no se
+ * confunde con un opener.
+ */
 export function stripEmptyBareCodeFences(draft: string): string {
-  let result = stripLoneBacktickPairLines(draft).replace(/\n```[ \t]*\n\s*```[ \t]*\n/g, "\n");
-  result = result.replace(/\n```[ \t]*\n(?=\s*---\s*\n|\s*##\s+|\s*###\s+(?:GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+)/g, (match, offset) => {
-    const before = result.slice(0, offset);
-    const fenceCount = (before.match(/```/g) ?? []).length;
-    if (fenceCount % 2 === 1) return match;
-    return "\n";
-  });
-  return result;
+  const text = stripLoneBacktickPairLines(draft ?? "");
+  if (!text.trim()) return text;
+  let lines = text.split("\n");
+  for (;;) {
+    const { blocks } = scanMarkdownFences(lines);
+    const emptyPair = blocks.find(
+      (block) => block.closed && block.lang === "" && block.content.trim() === "",
+    );
+    if (emptyPair) {
+      lines = [
+        ...lines.slice(0, emptyPair.startLine - 1),
+        ...lines.slice(emptyPair.endLine!),
+      ];
+      continue;
+    }
+    const strayOpener = blocks.find((block) => {
+      if (block.lang !== "" || block.fence !== "```") return false;
+      const swallowsSection =
+        !block.closed || block.content.split("\n").some((line) => H2_INSIDE_BLOCK_RE.test(line));
+      if (!swallowsSection) return false;
+      const next = nextNonBlankLine(lines, block.startLine);
+      return next !== undefined && BOUNDARY_AFTER_EMPTY_OPENER_RE.test(next);
+    });
+    if (strayOpener) {
+      lines = [...lines.slice(0, strayOpener.startLine - 1), ...lines.slice(strayOpener.startLine)];
+      continue;
+    }
+    break;
+  }
+  return lines.join("\n");
+}
+
+/** Primera línea no vacía a partir del índice 0-based `from`. */
+function nextNonBlankLine(lines: string[], from: number): string | undefined {
+  for (let j = from; j < lines.length; j += 1) {
+    if ((lines[j] ?? "").trim() !== "") return lines[j];
+  }
+  return undefined;
 }
 
 export function stripOrphanFenceWrappingProse(draft: string): string {

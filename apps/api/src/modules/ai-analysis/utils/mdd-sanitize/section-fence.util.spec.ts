@@ -7,6 +7,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  closeTrailingUnclosedFences,
+  closeUnclosedFencesBeforeCanonicalH2,
+  ensureDocumentFenceParity,
+  findH2HeadingMatch,
   getSectionBody,
   indexOfNextH2OutsideFenced,
   indexOfNextSectionBoundaryOutsideFenced,
@@ -136,5 +140,34 @@ describe("indexOfNextH2OutsideFenced (sin cambios)", () => {
   it("sigue cortando en cualquier ## fuera de fences, incluido ## 3.1", () => {
     const text = "## 3. A\nx\n## 3.1 B\ny";
     assert.equal(indexOfNextH2OutsideFenced(text, 0), text.indexOf("\n## 3.1"));
+  });
+});
+
+describe("fences con semántica compartida (fence-scan)", () => {
+  it("findH2HeadingMatch ignora un heading que cae dentro de un ```sql sin cerrar", () => {
+    const doc = "```sql\nSELECT 1;\n## 5. Lógica y Edge Cases\n```\n## 5. Lógica y Edge Cases\nreal";
+    const m = findH2HeadingMatch(doc, RE_SECTION5);
+    assert.ok(m);
+    assert.equal(doc.slice(0, m.index).split("\n").length, 5);
+  });
+
+  it("closeUnclosedFencesBeforeCanonicalH2 cierra el sql antes de §5 y no deja §5 dentro del bloque", () => {
+    const doc = "## 3. Modelo\n```sql\nCREATE TABLE a (id int);\n## 5. Lógica y Edge Cases\nRegla.";
+    const out = closeUnclosedFencesBeforeCanonicalH2(doc);
+    assert.equal(out, "## 3. Modelo\n```sql\nCREATE TABLE a (id int);\n```\n\n## 5. Lógica y Edge Cases\nRegla.");
+    assert.ok(getSectionBody(out, RE_SECTION5)?.includes("Regla."));
+  });
+
+  it("ensureDocumentFenceParity es idempotente y deja el documento cerrado al EOF", () => {
+    const doc = "## 4. Contratos\n```json\n{\"a\":1}";
+    const once = ensureDocumentFenceParity(doc);
+    assert.equal(ensureDocumentFenceParity(once), once);
+    assert.equal(closeTrailingUnclosedFences(once), once);
+    assert.equal(once.split("\n").filter((l) => l.startsWith("```")).length, 2);
+  });
+
+  it("closeTrailingUnclosedFences no toca un documento sin fences rotos", () => {
+    const doc = "## 3. X\n```sql\nSELECT 1;\n```\nfin";
+    assert.equal(closeTrailingUnclosedFences(doc), doc);
   });
 });
