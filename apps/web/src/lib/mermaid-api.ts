@@ -1,4 +1,4 @@
-import { api } from "./api.js";
+import { API_BASE, apiFetch } from "@/utils/apiClient";
 
 export interface RegenerateMermaidInput {
   /** Diagrama que falló (el original, no una reparación). */
@@ -9,7 +9,11 @@ export interface RegenerateMermaidInput {
 
 export async function regenerateMermaidDiagram(input: RegenerateMermaidInput): Promise<string> {
   const { content, error } = input;
-  const res = await api.post("/ai/mermaid/regenerate", error ? { content, error } : { content });
+  const res = await apiFetch(`${API_BASE}/ai/mermaid/regenerate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(error ? { content, error } : { content }),
+  });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(text || `Error al regenerar diagrama (${res.status})`);

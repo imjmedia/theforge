@@ -17,6 +17,7 @@ import {
 import { WORKSHOP_EXIT_BLOCKED_TITLE } from "@/utils/workshopAgentsBusy";
 import { isWorkshopSemaphoreGreen } from "@/utils/workshopSemaphoreStatus";
 import { apiFetch, API_BASE, getOfflineQueue } from "../utils/apiClient";
+import { readSseStream } from "../utils/http-stream";
 import { isWorkshopConnectionError, isSsotPatternsNotice } from "../utils/workshopSyncStatus";
 import { activeGenerationLabel, generationJobAllowed, primaryMddJob } from "../utils/projectGenerationGate";
 import { isDeliverablesCascadeUiActive } from "../utils/deliverablesCascadeUi";
@@ -1037,43 +1038,25 @@ export default function WorkshopView({
       });
       if (!r.ok) throw new Error(`Error: ${r.status}`);
 
-      const reader = r.body?.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+      if (!r.body) throw new Error("No reader");
       let result = "";
       let streamError: string | null = null;
       let doneUxUiGuideContent: string | null = null;
-      if (!reader) throw new Error("No reader");
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() ?? "";
-        for (const block of parts) {
-          const lines = block.split("\n");
-          let eventType = "";
-          let dataStr = "";
-          for (const line of lines) {
-            if (line.startsWith("event:")) eventType = line.slice(6).trim();
-            if (line.startsWith("data:")) dataStr = line.slice(5).trim();
-          }
-          if (!dataStr) continue;
-          try {
-            const data = JSON.parse(dataStr) as Record<string, unknown>;
-            if (eventType === "error" && data.error) {
-              streamError = String(data.error);
-            } else if (eventType === "done") {
-              // The "done" event carries the actual document content
-              const uxVal = (data as Record<string, unknown>).uxUiGuideContent;
-              if (typeof uxVal === "string" && uxVal.trim().length > 0) {
-                doneUxUiGuideContent = uxVal;
-              }
-            } else if (data.content) {
-              result += data.content;
+      for await (const { event: eventType, dataStr } of readSseStream(r.body)) {
+        if (!dataStr) continue;
+        try {
+          const data = JSON.parse(dataStr) as Record<string, unknown>;
+          if (eventType === "error" && data.error) {
+            streamError = String(data.error);
+          } else if (eventType === "done") {
+            const uxVal = (data as Record<string, unknown>).uxUiGuideContent;
+            if (typeof uxVal === "string" && uxVal.trim().length > 0) {
+              doneUxUiGuideContent = uxVal;
             }
-          } catch { /* ignore */ }
-        }
+          } else if (data.content) {
+            result += data.content;
+          }
+        } catch { /* ignore */ }
       }
 
       if (streamError) {

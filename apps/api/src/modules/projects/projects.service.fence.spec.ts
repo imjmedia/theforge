@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { BadRequestException } from "@nestjs/common";
 import { ProjectsService } from "./projects.service.js";
 
 type Stage = { id: string; ordinal: number; workflowStatus: string };
@@ -58,15 +59,21 @@ describe("ProjectsService.claimMddWriteFence (ADR 0004)", () => {
     assert.deepEqual(claims, [{ stageId: "stage-2", fence: 7 }]);
   });
 
-  it("proyecto sin etapas: no-op, la persistencia no se llama", async () => {
+  it("proyecto sin etapas: lanza BadRequestException", async () => {
     const { service, claims } = makeService({ stages: [] });
-    await service.claimMddWriteFence("proj-1", null, 42);
+    await assert.rejects(
+      () => service.claimMddWriteFence("proj-1", null, 42),
+      BadRequestException,
+    );
     assert.equal(claims.length, 0);
   });
 
-  it("proyecto inexistente: no-op, la persistencia no se llama", async () => {
+  it("proyecto inexistente: lanza BadRequestException", async () => {
     const { service, claims } = makeService(null);
-    await service.claimMddWriteFence("proj-missing", null, 42);
+    await assert.rejects(
+      () => service.claimMddWriteFence("proj-missing", null, 42),
+      BadRequestException,
+    );
     assert.equal(claims.length, 0);
   });
 });

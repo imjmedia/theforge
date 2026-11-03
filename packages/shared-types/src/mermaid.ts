@@ -629,7 +629,8 @@ const ER_ATTRIBUTE_KEYS_WITHOUT_COMMA_RE =
 
 /**
  * erDiagram: Mermaid acepta las claves de un atributo separadas por coma (`uuid user_id PK, FK`) y
- * rechaza dos claves separadas solo por espacio (`uuid id PK FK`). Solo se transforma esa forma
+ * rechaza dos claves separadas solo por espacio (`uuid id PK FK`). Normaliza comas tipográficas U+FF0C
+ * a ASCII antes de evaluar. Solo se transforma la forma rechazada: dos o más claves PK|FK|UK
  * rechazada: dos o más claves PK|FK|UK consecutivas al final de una línea de atributo pasan a
  * `PK, FK` conservando el orden. Una línea con coma, o con una sola clave, no se toca, y el resto del
  * contenido tampoco; si no hay bloque `erDiagram`, se devuelve tal cual.
@@ -640,8 +641,10 @@ export function repairErDiagramPkFkCommas(content: string): string {
   return content
     .split("\n")
     .map((line) => {
-      const match = line.match(ER_ATTRIBUTE_KEYS_WITHOUT_COMMA_RE);
-      if (!match) return line;
+      let lineNorm = line.replace(/\uFF0C/g, ",");
+      lineNorm = lineNorm.replace(/\b(PK|FK|UK),(PK|FK|UK)\b/gi, "$1, $2");
+      const match = lineNorm.match(ER_ATTRIBUTE_KEYS_WITHOUT_COMMA_RE);
+      if (!match) return lineNorm;
       const [, head = "", keys = "", tail = ""] = match;
       return `${head}${keys.toUpperCase().split(/\s+/).join(", ")}${tail}`;
     })

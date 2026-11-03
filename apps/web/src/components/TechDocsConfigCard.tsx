@@ -11,7 +11,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { Button, Input } from "./ui";
-import { api } from "@/lib/api";
+import { api } from "@/utils/apiClient";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_CONTEXT7_MCP_URL = "https://mcp.context7.com/mcp";

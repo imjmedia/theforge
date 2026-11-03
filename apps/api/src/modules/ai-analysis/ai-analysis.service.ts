@@ -17,6 +17,10 @@ import {
 } from "./utils/brd-tobe-gate.util.js";
 import { CheckpointerService } from "./checkpoint/checkpointer.service.js";
 import {
+  buildMddGraphConfigurable,
+  discardStaleMddCheckpointIfNeeded,
+} from "./checkpoint/fenced-checkpointer.js";
+import {
   mddThreadLockKey,
   ThreadRunLockService,
   THREAD_BUSY_CODE,
@@ -30,7 +34,7 @@ import {
   type ThreadRunLease,
 } from "./checkpoint/thread-run-lock.service.js";
 import { runWithLlmAbortSignal } from "./utils/mdd-llm-stream-invoke.util.js";
-import { runWithMddLeaseContext, type MddLeaseContext } from "../../common/mdd-lease-context.js";
+import { getActiveMddLeaseFence, runWithMddLeaseContext, type MddLeaseContext } from "../../common/mdd-lease-context.js";
 import {
   getActiveTokenUsageContext,
   runWithTokenUsageContext,
@@ -688,6 +692,24 @@ export class AiAnalysisService {
       if (err instanceof MddWriteFencedError) throw new ThreadLeaseLostError(lease.key);
       throw err;
     }
+  }
+
+  /** RunnableConfig LangGraph para hilos MDD con Manager (fence + etapa en configurable, ADR 0004 D-6). */
+  private mddLangGraphConfig(threadId: string, stageId: string | null | undefined) {
+    return {
+      configurable: buildMddGraphConfigurable(threadId, {
+        stageId,
+        fence: getActiveMddLeaseFence(),
+      }),
+      recursionLimit: LANGGRAPH_RECURSION_LIMIT,
+    };
+  }
+
+  private async discardStaleMddLangGraphCheckpoint(
+    checkpointer: { deleteThread: (threadId: string) => Promise<void> },
+    config: { configurable: Record<string, string> },
+  ): Promise<void> {
+    await discardStaleMddCheckpointIfNeeded(checkpointer, this.prisma, config, this.logger);
   }
 
   /**
@@ -1601,10 +1623,7 @@ export class AiAnalysisService {
       projectId: projectId?.trim(),
       ...agentCtx,
     };
-    const config = {
-      configurable: { thread_id: threadId } as Record<string, string>,
-      recursionLimit: LANGGRAPH_RECURSION_LIMIT,
-    };
+    const config = this.mddLangGraphConfig(threadId, mddStageKey);
 
     // El checkpoint ya no se borra al terminar un turno: un hilo con memoria (auditorScore, auditorFeedback,
     // userInputAccumulated, borrador) continúa con una ACTUALIZACIÓN PARCIAL (solo lo que cambia en este turno)
@@ -1612,6 +1631,7 @@ export class AiAnalysisService {
     // clarifiedScope="") pisarían esa memoria. Se pasa como input plano (no `Command({ update })`): sobre un
     // hilo terminado un Command sin `goto` no dispara el nodo START, así que el grafo no correría.
     // Los flags transitorios de gate los resetea el Manager al inicio del turno.
+    await this.discardStaleMddLangGraphCheckpoint(checkpointer, config);
     const checkpointMemory = await this.readThreadCheckpointMemory(graph, config);
     const continuationInput: Partial<MDDState> | null = checkpointMemory
       ? {
@@ -2012,10 +2032,7 @@ export class AiAnalysisService {
     if (agentCtx.mddComplexity != null) {
       this.estimationService.cacheProjectComplexity(projectId.trim(), estimationStage ?? null, agentCtx.mddComplexity);
     }
-    const config = {
-      configurable: { thread_id: threadId } as Record<string, string>,
-      recursionLimit: LANGGRAPH_RECURSION_LIMIT,
-    };
+    const config = this.mddLangGraphConfig(threadId, cp.mddStageId);
     const auditTrail: string[] = [];
     const streamPrepareCache = { draftKey: "", markdown: "" };
     let lastState: MDDState | null = null;
@@ -2036,6 +2053,7 @@ export class AiAnalysisService {
     let resumeInitialDirectives: MDDState["internalDirectives"];
     let threadHasPendingWork = true;
     try {
+      await this.discardStaleMddLangGraphCheckpoint(checkpointer, config);
       const cpSnapshot = await graph.getState(config);
       const cpValues = cpSnapshot?.values as MDDState | undefined;
       if (cpValues?.mddDraft?.trim()) resumeInitialDraft = cpValues.mddDraft.trim();

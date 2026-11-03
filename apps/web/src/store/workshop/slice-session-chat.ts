@@ -20,7 +20,7 @@ import {
   normalizeWorkshopDocumentForEditor,
 } from "../../utils/workshop-document-content.util";
 import { parseApiErrorPayloadFromResponse } from "../../utils/httpError";
-import { parseNdjsonLine } from "../../utils/ndjson";
+import { readNdjsonStream, readSseStream } from "../../utils/http-stream";
 import {
   mddHasSection5Heading,
   mddHasSection6Heading,
@@ -988,21 +988,9 @@ export const createSessionChatSlice: StateCreator<WorkshopState, [], [], Session
             if (!r.ok) {
               await throwStreamHttpError(r, "Error en el flujo MDD");
             }
-            const reader = r.body?.getReader();
-            const decoder = new TextDecoder();
-            let buffer = "";
-            if (reader) {
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split("\n");
-                buffer = lines.pop() ?? "";
-                for (const line of lines) {
-                  for (const raw of parseNdjsonLine(line)) {
-                    if ((await handleMddChatEvent(raw)) === "terminal") return;
-                  }
-                }
+            if (r.body) {
+              for await (const raw of readNdjsonStream(r.body)) {
+                if ((await handleMddChatEvent(raw)) === "terminal") return;
               }
             }
           }
@@ -1125,207 +1113,93 @@ export const createSessionChatSlice: StateCreator<WorkshopState, [], [], Session
           const err = await r.json().catch(() => ({}));
           throw new Error(err.message ?? "Error en la entrevista");
         }
-        const reader = r.body?.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        if (!reader) throw new Error("No se pudo leer el stream");
+        if (!r.body) throw new Error("No se pudo leer el stream");
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n\n");
-          buffer = lines.pop() ?? "";
-          for (const block of lines) {
-            let event = "";
-            let dataStr = "";
-            for (const line of block.split("\n")) {
-              if (line.startsWith("event:")) event = line.slice(6).trim();
-              else if (line.startsWith("data:")) dataStr = line.slice(5).trim();
-            }
-            if (!event || !dataStr) continue;
-            try {
-              const data = JSON.parse(dataStr) as Record<string, unknown>;
-              if (event === "chunk" && typeof data.content === "string") {
-                set((s) => {
-                  if ((s.projectId ?? s.project?.id ?? "").trim() !== requestProjectId) return s;
-                  return { streamingContent: (s.streamingContent ?? "") + data.content };
-                });
-              } else if (event === "done") {
-                if (!shouldApplyWorkshopUpdate(get, requestProjectId)) continue;
-                const sess = data.session as Session | undefined;
-                if (sess && sess.projectId !== requestProjectId) continue;
-                const proj = data.project as Project | undefined;
-                if (proj && proj.id !== requestProjectId) continue;
-                const docUnchangedError = resolveOrchestratorDocUnchangedError({
-                  tab,
-                  snapshotBefore: orchestratorDocSnapshotBefore,
-                  data,
-                  snapshotSource: get(),
-                  userMessage: msg,
-                  session: sess,
-                });
-                const uxFromApi = (data.uxUiGuideContent ?? proj?.uxUiGuideContent) as string | null | undefined;
-                const packed = projectWithUxAfterStream(proj, uxFromApi, get().activeStageId);
-                const nextStages = packed?.project?.stages ?? proj?.stages;
-                const freshUx = cleanDoc(uxFromApi ?? get().uxUiGuideContent ?? null);
-                const nextMdd = packed?.mddContent ?? get().mddContent;
-                set({
-                  session: sess ?? get().session,
-                  project: packed?.project ?? get().project,
-                  activeStageId: packed?.activeStageId ?? get().activeStageId,
-                  mddContent: nextMdd,
-                  ...(packed?.mddContent != null ? { mddPersistedBaseline: packed.mddContent } : {}),
-                  workshopStages: nextStages && nextStages.length > 0 ? nextStages : get().workshopStages,
-                  uxUiGuideContent: freshUx,
-                  dbgaContent:
-                    packed?.project?.dbgaContent ??
-                    normalizeWorkshopDocumentForEditor(
-                      (data.dbgaContent as string | null | undefined) ??
-                        proj?.dbgaContent ??
-                        null,
-                    ) ??
-                    get().dbgaContent,
-                  phase0SummaryContent:
-                    cleanDoc(
-                      (data.phase0SummaryContent as string | null | undefined) ??
-                        proj?.phase0SummaryContent ??
-                        null,
-                    ) ?? get().phase0SummaryContent,
-                  specContent: cleanDoc(proj?.specContent ?? null) ?? get().specContent,
-                  architectureContent: cleanDoc(proj?.architectureContent ?? null) ?? get().architectureContent,
-                  useCasesContent: cleanDoc(proj?.useCasesContent ?? null) ?? get().useCasesContent,
-                  userStoriesContent: cleanDoc(proj?.userStoriesContent ?? null) ?? get().userStoriesContent,
-                  blueprintContent: cleanDoc(proj?.blueprintContent ?? null) ?? get().blueprintContent,
-                  apiContractsContent: cleanDoc(proj?.apiContractsContent ?? null) ?? get().apiContractsContent,
-                  logicFlowsContent: cleanDoc(proj?.logicFlowsContent ?? null) ?? get().logicFlowsContent,
-                  tasksContent: cleanDoc(proj?.tasksContent ?? null) ?? get().tasksContent,
-                  infraContent: cleanDoc(proj?.infraContent ?? null) ?? get().infraContent,
-                  streamingUserMessage: null,
-                  streamingUserImages: null,
-                  streamingContent: null,
-                  streamingTab: null,
-                  synced: true,
-                  error: docUnchangedError,
-                  evaluatorCritique: pickEvaluatorCritique(data),
-                });
-                // Auto-persist UX/UI guide when the orchestrator returns content on its tab
-                if (tab === "ux-ui-guide" && freshUx && !docUnchangedError) {
-                  get().persistUxUiGuideContent(freshUx).catch(() => {});
-                }
-                if (typeof data.upstreamPropagateJobId === "string" && data.upstreamPropagateJobId.trim()) {
-                  void get().fetchGenerationStatus(requestProjectId, get().activeStageId ?? undefined);
-                }
-              } else if (event === "error" && data.error) {
-                set({
-                  error: String(data.error),
-                  streamingUserMessage: null,
-                  streamingUserImages: null,
-                  streamingContent: null,
-                  streamingTab: null,
-                  synced: true,
-                });
+        for await (const { event, dataStr } of readSseStream(r.body)) {
+          try {
+            const data = JSON.parse(dataStr) as Record<string, unknown>;
+            if (event === "chunk" && typeof data.content === "string") {
+              set((s) => {
+                if ((s.projectId ?? s.project?.id ?? "").trim() !== requestProjectId) return s;
+                return { streamingContent: (s.streamingContent ?? "") + data.content };
+              });
+            } else if (event === "done") {
+              if (!shouldApplyWorkshopUpdate(get, requestProjectId)) continue;
+              const sess = data.session as Session | undefined;
+              if (sess && sess.projectId !== requestProjectId) continue;
+              const proj = data.project as Project | undefined;
+              if (proj && proj.id !== requestProjectId) continue;
+              const docUnchangedError = resolveOrchestratorDocUnchangedError({
+                tab,
+                snapshotBefore: orchestratorDocSnapshotBefore,
+                data,
+                snapshotSource: get(),
+                userMessage: msg,
+                session: sess,
+              });
+              const uxFromApi = (data.uxUiGuideContent ?? proj?.uxUiGuideContent) as string | null | undefined;
+              const packed = projectWithUxAfterStream(proj, uxFromApi, get().activeStageId);
+              const nextStages = packed?.project?.stages ?? proj?.stages;
+              const freshUx = cleanDoc(uxFromApi ?? get().uxUiGuideContent ?? null);
+              const nextMdd = packed?.mddContent ?? get().mddContent;
+              set({
+                session: sess ?? get().session,
+                project: packed?.project ?? get().project,
+                activeStageId: packed?.activeStageId ?? get().activeStageId,
+                mddContent: nextMdd,
+                ...(packed?.mddContent != null ? { mddPersistedBaseline: packed.mddContent } : {}),
+                workshopStages: nextStages && nextStages.length > 0 ? nextStages : get().workshopStages,
+                uxUiGuideContent: freshUx,
+                dbgaContent:
+                  packed?.project?.dbgaContent ??
+                  normalizeWorkshopDocumentForEditor(
+                    (data.dbgaContent as string | null | undefined) ??
+                      proj?.dbgaContent ??
+                      null,
+                  ) ??
+                  get().dbgaContent,
+                phase0SummaryContent:
+                  cleanDoc(
+                    (data.phase0SummaryContent as string | null | undefined) ??
+                      proj?.phase0SummaryContent ??
+                      null,
+                  ) ?? get().phase0SummaryContent,
+                specContent: cleanDoc(proj?.specContent ?? null) ?? get().specContent,
+                architectureContent: cleanDoc(proj?.architectureContent ?? null) ?? get().architectureContent,
+                useCasesContent: cleanDoc(proj?.useCasesContent ?? null) ?? get().useCasesContent,
+                userStoriesContent: cleanDoc(proj?.userStoriesContent ?? null) ?? get().userStoriesContent,
+                blueprintContent: cleanDoc(proj?.blueprintContent ?? null) ?? get().blueprintContent,
+                apiContractsContent: cleanDoc(proj?.apiContractsContent ?? null) ?? get().apiContractsContent,
+                logicFlowsContent: cleanDoc(proj?.logicFlowsContent ?? null) ?? get().logicFlowsContent,
+                tasksContent: cleanDoc(proj?.tasksContent ?? null) ?? get().tasksContent,
+                infraContent: cleanDoc(proj?.infraContent ?? null) ?? get().infraContent,
+                streamingUserMessage: null,
+                streamingUserImages: null,
+                streamingContent: null,
+                streamingTab: null,
+                synced: true,
+                error: docUnchangedError,
+                evaluatorCritique: pickEvaluatorCritique(data),
+              });
+              // Auto-persist UX/UI guide when the orchestrator returns content on its tab
+              if (tab === "ux-ui-guide" && freshUx && !docUnchangedError) {
+                get().persistUxUiGuideContent(freshUx).catch(() => {});
               }
-            } catch (_) {
-              // ignore parse errors for partial chunks
-            }
-          }
-        }
-        if (buffer.trim()) {
-          let event = "";
-          let dataStr = "";
-          for (const line of buffer.split("\n")) {
-            if (line.startsWith("event:")) event = line.slice(6).trim();
-            else if (line.startsWith("data:")) dataStr = line.slice(5).trim();
-          }
-          if (event && dataStr) {
-            try {
-              const data = JSON.parse(dataStr) as Record<string, unknown>;
-              if (event === "chunk" && typeof data.content === "string") {
-                set((s) => {
-                  if ((s.projectId ?? s.project?.id ?? "").trim() !== requestProjectId) return s;
-                  return { streamingContent: (s.streamingContent ?? "") + data.content };
-                });
-              } else if (event === "done") {
-                const sessTail = data.session as Session | undefined;
-                const projTail = data.project as Project | undefined;
-                const scopeOk =
-                  shouldApplyWorkshopUpdate(get, requestProjectId) &&
-                  (!sessTail?.projectId || sessTail.projectId === requestProjectId) &&
-                  (!projTail?.id || projTail.id === requestProjectId);
-                if (scopeOk) {
-                  const docUnchangedError = resolveOrchestratorDocUnchangedError({
-                    tab,
-                    snapshotBefore: orchestratorDocSnapshotBefore,
-                    data,
-                    snapshotSource: get(),
-                    userMessage: msg,
-                    session: sessTail,
-                  });
-                  const uxFromApi = (data.uxUiGuideContent ?? projTail?.uxUiGuideContent) as
-                    | string
-                    | null
-                    | undefined;
-                  const packed = projectWithUxAfterStream(projTail, uxFromApi, get().activeStageId);
-                  const nextStagesB = packed?.project?.stages ?? projTail?.stages;
-                  const freshUx = cleanDoc(uxFromApi ?? get().uxUiGuideContent ?? null);
-                  const nextMddTail = packed?.mddContent ?? get().mddContent;
-                  set({
-                    session: sessTail ?? get().session,
-                    project: packed?.project ?? get().project,
-                    activeStageId: packed?.activeStageId ?? get().activeStageId,
-                    mddContent: nextMddTail,
-                    ...(packed?.mddContent != null ? { mddPersistedBaseline: packed.mddContent } : {}),
-                    workshopStages: nextStagesB && nextStagesB.length > 0 ? nextStagesB : get().workshopStages,
-                    uxUiGuideContent: freshUx,
-                    dbgaContent:
-                      packed?.project?.dbgaContent ??
-                      normalizeWorkshopDocumentForEditor(
-                        (data.dbgaContent as string | null | undefined) ??
-                          projTail?.dbgaContent ??
-                          null,
-                      ) ??
-                      get().dbgaContent,
-                    phase0SummaryContent:
-                      cleanDoc(
-                        (data.phase0SummaryContent as string | null | undefined) ??
-                          projTail?.phase0SummaryContent ??
-                          null,
-                      ) ?? get().phase0SummaryContent,
-                    specContent: cleanDoc(projTail?.specContent ?? null) ?? get().specContent,
-                    blueprintContent: cleanDoc(projTail?.blueprintContent ?? null) ?? get().blueprintContent,
-                    apiContractsContent: cleanDoc(projTail?.apiContractsContent ?? null) ?? get().apiContractsContent,
-                    logicFlowsContent: cleanDoc(projTail?.logicFlowsContent ?? null) ?? get().logicFlowsContent,
-                    tasksContent: cleanDoc(projTail?.tasksContent ?? null) ?? get().tasksContent,
-                    architectureContent: cleanDoc(projTail?.architectureContent ?? null) ?? get().architectureContent,
-                    useCasesContent: cleanDoc(projTail?.useCasesContent ?? null) ?? get().useCasesContent,
-                    userStoriesContent: cleanDoc(projTail?.userStoriesContent ?? null) ?? get().userStoriesContent,
-                    infraContent: cleanDoc(projTail?.infraContent ?? null) ?? get().infraContent,
-                    streamingUserMessage: null,
-                    streamingUserImages: null,
-                    streamingContent: null,
-                    streamingTab: null,
-                    synced: true,
-                    error: docUnchangedError,
-                    evaluatorCritique: pickEvaluatorCritique(data),
-                  });
-                  if (tab === "ux-ui-guide" && freshUx && !docUnchangedError) {
-                    get().persistUxUiGuideContent(freshUx).catch(() => {});
-                  }
-                }
-              } else if (event === "error" && data.error) {
-                set({
-                  error: String(data.error),
-                  streamingUserMessage: null,
-                  streamingUserImages: null,
-                  streamingContent: null,
-                  streamingTab: null,
-                  synced: true,
-                });
+              if (typeof data.upstreamPropagateJobId === "string" && data.upstreamPropagateJobId.trim()) {
+                void get().fetchGenerationStatus(requestProjectId, get().activeStageId ?? undefined);
               }
-            } catch (_) {
-              // ignore
+            } else if (event === "error" && data.error) {
+              set({
+                error: String(data.error),
+                streamingUserMessage: null,
+                streamingUserImages: null,
+                streamingContent: null,
+                streamingTab: null,
+                synced: true,
+              });
             }
+          } catch (_) {
+            // ignore parse errors for partial chunks
           }
         }
       } catch (e) {

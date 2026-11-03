@@ -7,6 +7,7 @@ import {
   getActiveLlmAbortSignal,
   llmResponseHasUsableToolCalls,
   runWithLlmAbortSignal,
+  LlmOutputTruncatedError,
 } from "./mdd-llm-retry.util.js";
 
 class FakeLlm {
@@ -422,5 +423,43 @@ describe("invokeLlmWithRetry — política por tipo de error", () => {
     assert.equal(r, null);
     assert.equal(streamCalls, 1);
     assert.equal(invokeCalls, 0);
+  });
+});
+
+describe("invokeLlmWithRetry — truncado por límite de tokens", () => {
+  it("reintenta una vez con continuación y devuelve la segunda respuesta", async () => {
+    let calls = 0;
+    const llm = {
+      invoke: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return { content: "parte A", response_metadata: { finish_reason: "length" } };
+        }
+        return { content: "parte B", response_metadata: { finish_reason: "stop" } };
+      },
+    };
+    const r = await invokeLlmWithRetry(llm as never, [], {
+      tag: "test",
+      disableStreaming: true,
+      backoffMs: [0],
+      maxAttempts: 2,
+    });
+    assert.equal(calls, 2);
+    assert.equal(extractLlmText(r), "parte B");
+  });
+
+  it("lanza LlmOutputTruncatedError si la continuación sigue truncada", async () => {
+    const llm = {
+      invoke: async () => ({ content: "x", response_metadata: { finish_reason: "length" } }),
+    };
+    await assert.rejects(
+      invokeLlmWithRetry(llm as never, [], {
+        tag: "test",
+        disableStreaming: true,
+        backoffMs: [0],
+        maxAttempts: 3,
+      }),
+      (err: unknown) => err instanceof LlmOutputTruncatedError,
+    );
   });
 });

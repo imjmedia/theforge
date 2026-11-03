@@ -376,16 +376,25 @@ export function touchPrevalidatedMddBeforePersist(
   return out;
 }
 
-export function prepareMddMarkdownForPersist(mddMarkdown: string): string {
+export type PrepareMddMarkdownForPersistOptions = {
+  /** Preserva bytes de fences ```mermaid en `formatDocumentMarkdown` (oráculo runtime). */
+  preserveMermaid?: boolean;
+};
+
+export function prepareMddMarkdownForPersist(
+  mddMarkdown: string,
+  options?: PrepareMddMarkdownForPersistOptions,
+): string {
   if (!mddMarkdown?.trim()) return mddMarkdown;
+  const formatOpts = options?.preserveMermaid ? { mermaid: "preserve" as const } : undefined;
   logMddPersistFenceDiag("[MDD:PersistPipeline] entry", mddMarkdown);
   const preservedGov = extractGovernanceSection(mddMarkdown);
   const lockedPatternIds = selectedPatternIdsFromMdd(mddMarkdown);
   let body = normalizeCanonicalMddSectionHeadings(mddMarkdown);
   body = peelDocumentBodyForPersist(body);
-  let formatted = formatDocumentMarkdown(body);
+  let formatted = formatDocumentMarkdown(body, formatOpts);
   let sanitized = sanitizeMddAtPersist(formatted);
-  formatted = formatDocumentMarkdown(sanitized);
+  formatted = formatDocumentMarkdown(sanitized, formatOpts);
   if (lockedPatternIds.size > 0) {
     formatted = updateMddGovernancePatterns(formatted, lockedPatternIds);
   } else if (preservedGov && !hasGovernanceSection(formatted)) {

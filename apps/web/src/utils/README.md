@@ -4,6 +4,8 @@ Utilidades del Workshop y plugins.
 
 | Archivo | Rol |
 |---------|-----|
+| `apiClient.ts` | JWT/sesión (`setAccessToken`, `clearAccessToken`), `apiFetch` + `fetchWithRetry`, cliente `api` (get/post/patch/…), cola offline (`queueKey`, `stageId`, `contentHash`, `flushOfflineQueue`). |
+| `http-stream.ts` | Lectores compartidos de streams HTTP: `readNdjsonStream`, `readSseStream`, `withSyntheticSseTerminal`. |
 | `workshop-document-content.util.ts` | Normaliza markdown del editor Workshop: quita stamp API, limpia residuos (`cleanDocForWorkshop`) y aplica **`formatDocumentMarkdown`** (misma SSOT que `MddViewer` y persist API). `workshopDocumentBodiesEqual` compara cuerpos ya formateados. |
 | `workshop-mdd-sync.util.ts` | **`resolveMddFetchMerge`**: decide servidor vs local en `fetchProject` (refresh, cambio de proyecto, fetch obsoleto post-grabar, cambios sin guardar). Con **`preferServerMdd`** (job MDD en background) aplica el markdown del servidor aunque local === baseline. Tests en `workshop-mdd-sync.util.spec.ts`. |
 | `workshopAgentsBusy.ts` | **`isWorkshopAgentsBusy`**: bloquea salir del Workshop solo con trabajo en primer plano (chat streaming, benchmark). Jobs encolados en servidor (`isServerSideQueuedWork`, `generationStatus.busy`) no bloquean navegación. |

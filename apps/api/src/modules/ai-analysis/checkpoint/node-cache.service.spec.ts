@@ -11,7 +11,7 @@ import { crossConsistencyInput, securityInput, softwareArchitectInput } from "./
 import { scopeNodeCacheToModels, wrapCache } from "../graph/mdd-graph.js";
 import { describeLlmModelChain } from "../llm/create-dbga-llm.js";
 import { buildNodeCacheKey } from "./node-cache-key.js";
-import { MDD_PROMPT_VERSION } from "../prompts/prompt-version.js";
+import { MDD_PROMPT_VERSION, computeMddPromptVersion } from "../prompts/prompt-version.js";
 
 function makeCache(): NodeCacheService {
   const cache = new NodeCacheService();
@@ -151,8 +151,9 @@ describe("NodeCacheService: clave con modelos y promptVersion", () => {
     assert.notStrictEqual(a.key("n", "p", { x: 1 }), c.key("n", "p", { x: 1 }));
   });
 
-  it("MDD_PROMPT_VERSION es un string de fecha y forma parte de la clave", () => {
-    assert.match(MDD_PROMPT_VERSION, /^\d{4}-\d{2}-\d{2}/);
+  it("MDD_PROMPT_VERSION es un hash SHA-256 del contenido de prompts y forma parte de la clave", () => {
+    assert.match(MDD_PROMPT_VERSION, /^[a-f0-9]{64}$/);
+    assert.equal(MDD_PROMPT_VERSION, computeMddPromptVersion());
     const c = makeCache();
     const expected = buildNodeCacheKey({
       node: "n",
@@ -163,7 +164,7 @@ describe("NodeCacheService: clave con modelos y promptVersion", () => {
     assert.strictEqual(c.key("n", "p", { x: 1 }), expected);
     assert.notStrictEqual(
       c.key("n", "p", { x: 1 }),
-      buildNodeCacheKey({ node: "n", input: { projectId: "p", x: 1 }, models: "", promptVersion: "1999-01-01" }),
+      buildNodeCacheKey({ node: "n", input: { projectId: "p", x: 1 }, models: "", promptVersion: "1999010100000000000000000000000000000000000000000000000000000000" }),
     );
   });
 

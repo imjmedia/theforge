@@ -87,6 +87,14 @@ export const envSchema = z
     LANGGRAPH_MDD_MANAGER_TURN_BUDGET_MS: mddNodeBudgetMs,
     LANGGRAPH_MDD_CRITIC_BUDGET_MS: mddNodeBudgetMs,
     LANGGRAPH_MDD_CROSS_CONSISTENCY_BUDGET_MS: mddNodeBudgetMs,
+    MERMAID_PARSE_TIMEOUT_MS: z.preprocess(
+      emptyToUndefined,
+      z.coerce
+        .number({ invalid_type_error: "debe ser un entero mayor que 0 (ms)" })
+        .int("debe ser un entero mayor que 0 (ms)")
+        .min(1, "debe ser un entero mayor que 0 (ms)")
+        .optional(),
+    ),
   })
   .passthrough()
   .superRefine((env, ctx) => {

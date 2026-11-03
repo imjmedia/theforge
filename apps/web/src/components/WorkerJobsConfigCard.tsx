@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import type { AdminWorkerJobRow, AdminWorkerJobsSnapshot } from "@theforge/shared-types";
 import { ADMIN_WORKER_JOB_QUEUE_LABELS } from "@theforge/shared-types";
-import { api } from "@/lib/api";
+import { api } from "@/utils/apiClient";
 import { ListRowIconButton } from "@/components/ListRowIconButton";
 import {
   AlertDialog,

@@ -15,8 +15,6 @@ import { canAccessProject } from "../../common/access/project-access.policy.js";
 import { getRequestUserId, getRequestUserRole } from "../../common/request-user.store.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
 import { ProjectGroupsService } from "../project-groups/project-groups.service.js";
-import { flattenStageDeliverables, type StageWithEstimation } from "./stage-helpers.js";
-import type { ProjectDeliverableSource } from "@theforge/shared-types";
 import {
   buildNotionExportEntries,
   notionExportZipFilename,
@@ -30,25 +28,7 @@ import {
   resolveImportedUiScreensContent,
   type ParsedNotionImportBundle,
 } from "./project-notion-import.util.js";
-
-type StageWithEst = StageWithEstimation;
-
-function toApiProject<
-  P extends { id: string; stages: StageWithEst[]; groupId: string; group?: { name: string } } & Record<
-    string,
-    unknown
-  >,
->(project: P): Omit<P, "group"> & ProjectDeliverableSource & { groupId: string; groupName?: string } {
-  const flat = flattenStageDeliverables(project.stages, project as ProjectDeliverableSource);
-  const group = project.group;
-  const { group: _g, ...rest } = project;
-  return {
-    ...rest,
-    ...flat,
-    groupId: project.groupId,
-    groupName: group?.name,
-  };
-}
+import { toApiProject } from "./project-api.util.js";
 
 function jsonValue(value: unknown): Prisma.InputJsonValue | typeof Prisma.JsonNull | undefined {
   if (value === null || value === undefined) return undefined;

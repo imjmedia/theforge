@@ -47,6 +47,33 @@ function hasStageBudget(budget: AgentToolsBudget | undefined): boolean {
   return budgetLeftMs(budget) >= MIN_AGENT_TOOLS_STAGE_BUDGET_MS;
 }
 
+/** Tope por invocación de herramienta: min(restante del turno, 120 s). */
+const TOOL_INVOKE_TIMEOUT_CAP_MS = 120_000;
+
+function toolInvokeTimeoutMs(budget: AgentToolsBudget | undefined): number {
+  return Math.min(budgetLeftMs(budget), TOOL_INVOKE_TIMEOUT_CAP_MS);
+}
+
+async function invokeToolWithBudgetCap(
+  tool: StructuredToolInterface,
+  args: Record<string, unknown>,
+  budget: AgentToolsBudget | undefined,
+): Promise<unknown> {
+  const timeoutMs = toolInvokeTimeoutMs(budget);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      tool.invoke(args),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Tool ${tool.name} excedió ${timeoutMs}ms`)), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /**
  * Una llamada del LLM de la ronda: sin streaming, un solo intento, tope = min(restante del turno, timeout LLM).
  * Devuelve `null` si la llamada falla o se agota el tiempo. Una cancelación externa se propaga como `AbortError`.
@@ -132,7 +159,9 @@ export async function runAgentToolsRound(
       const tool = tools.find((t) => t.name === name);
       let out: string;
       try {
-        out = tool ? await tool.invoke(args) : `Tool desconocida: ${name}`;
+        out = tool
+          ? String(await invokeToolWithBudgetCap(tool, args, budget))
+          : `Tool desconocida: ${name}`;
       } catch (e) {
         out = `Error en tool ${name}: ${e instanceof Error ? e.message : String(e)}`;
       }

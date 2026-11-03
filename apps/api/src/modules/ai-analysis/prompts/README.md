@@ -24,3 +24,5 @@ Prompts de los agentes organizados por **dominio de problema**:
   - `auditor-prompt.md` – Evalúa documento completo; rúbrica; auditorFeedback y critical_gaps si score < 85 (protocolo de auditoría 5 pasos)
 
 `load-prompts.ts` carga cada archivo desde su subcarpeta; si falla la lectura, usa el fallback inline.
+
+**Versión de caché:** `MDD_PROMPT_VERSION` en `prompt-version.ts` es el SHA-256 hex del contenido de todos los `mdd/*.md` y `benchmark/*.md` (ordenados), calculado en `compute-mdd-prompt-version.ts` al cargar el módulo. Forma parte de la clave de la caché de nodos (`checkpoint/node-cache-key.ts`); editar un prompt invalida salidas cacheadas sin bump manual.

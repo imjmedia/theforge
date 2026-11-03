@@ -2,6 +2,8 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/commo
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import pg from "pg";
 import { shouldStartBullmqWorkers } from "../../../common/bullmq-runtime.config.js";
+import { PrismaService } from "../../../prisma/prisma.service.js";
+import { FencedCheckpointSaver } from "./fenced-checkpointer.js";
 import {
   ensureLangGraphCheckpointSchema,
   LANGGRAPH_CHECKPOINT_SCHEMA,
@@ -23,7 +25,9 @@ const PURGE_ADVISORY_LOCK_KEY = 7_482_910_35;
 export class CheckpointerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(CheckpointerService.name);
 
-  private checkpointer: PostgresSaver | null = null;
+  constructor(private readonly prisma: PrismaService) {}
+
+  private checkpointer: FencedCheckpointSaver | null = null;
   private setupPromise: Promise<void> | null = null;
   private purgeTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -92,7 +96,7 @@ export class CheckpointerService implements OnModuleInit, OnModuleDestroy {
   /**
    * Devuelve el checkpointer; si no existe, lo crea desde DATABASE_URL y asegura el schema.
    */
-  async getCheckpointer(): Promise<PostgresSaver | null> {
+  async getCheckpointer(): Promise<FencedCheckpointSaver | null> {
     const url = process.env.DATABASE_URL;
     if (!url?.trim()) {
       this.logger.log("[CheckpointerService] getCheckpointer: no DATABASE_URL, skipping.");
@@ -125,9 +129,10 @@ export class CheckpointerService implements OnModuleInit, OnModuleDestroy {
       );
       throw err;
     }
-    this.checkpointer = PostgresSaver.fromConnString(trimmed, {
+    const postgresSaver = PostgresSaver.fromConnString(trimmed, {
       schema: "langgraph",
     });
+    this.checkpointer = new FencedCheckpointSaver(postgresSaver, this.prisma);
     this.logger.log("[CheckpointerService] initCheckpointer end");
   }
 }

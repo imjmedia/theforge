@@ -27,13 +27,14 @@ export class AiController {
   /** Regenera un diagrama Mermaid roto o truncado vía LLM (Workshop). */
   @Post("mermaid/regenerate")
   async regenerateMermaid(
-    @Body() body: { content?: string },
+    @Body() body: { content?: string; error?: string },
   ): Promise<{ content: string }> {
     const content = typeof body?.content === "string" ? body.content.trim() : "";
     if (!content) {
       throw new BadRequestException("content es obligatorio");
     }
-    const diagram = await this.ai.regenerateMermaidDiagram(content);
+    const parserError = typeof body?.error === "string" ? body.error : undefined;
+    const diagram = await this.ai.regenerateMermaidDiagram(content, parserError);
     return { content: diagram };
   }
 }

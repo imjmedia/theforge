@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { Button, Input } from "./ui";
 import { ListRowIconButton } from "@/components/ListRowIconButton";
-import { api, setAccessToken } from "@/lib/api";
+import { api, setAccessToken } from "@/utils/apiClient";
 import { cn } from "@/lib/utils";
 
 const ACCOUNT_FEATURES = [
