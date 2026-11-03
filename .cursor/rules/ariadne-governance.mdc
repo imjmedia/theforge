@@ -1,0 +1,25 @@
+---
+description: Ariadne Codebase Intelligence governance & 2-gate workflow
+globs: *
+alwaysApply: true
+---
+
+# Ariadne Codebase Intelligence Governance
+
+You are paired with **Ariadne MCP** (backed by FalkorDB). You MUST consult the codebase knowledge graph before creating, modifying, or refactoring code.
+
+## Mandatory 2-Gate Workflow
+
+1. **Verify Freshness**:
+   - Call `get_sync_status(projectId)` before planning any multi-file change. If stale, resync.
+2. **Gate 1 (Modification Plan)**:
+   - Call `get_modification_plan(userDescription)`.
+   - Never guess files; only modify `filesToModify` returned by the graph.
+   - Address the business/technical questions returned in `questionsToRefine`.
+3. **Gate 2 (ChangePlan Audit)**:
+   - Formulate the structured `ChangePlan` JSON using `changePlanTemplate`.
+   - Call `validate_change_plan(changePlan)`. If the verdict is `BLOCKED`, STOP immediately.
+4. **Before Editing Any Symbol**:
+   - ALWAYS call `validate_before_edit(nodeName)` to verify the prop contract and dependents.
+5. **Pre-Commit Blast Radius**:
+   - Call `detect_changes()` before committing to ensure no unintended dependents are broken.
