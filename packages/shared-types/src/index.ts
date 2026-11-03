@@ -107,3 +107,4 @@ export * from "./project-architecture-graph.js";
 export * from "./document-compiler.js";
 
 export * from "./mdd-eval-api.js";
+export * from "./token-usage-api.js";

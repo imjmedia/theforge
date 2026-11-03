@@ -46,6 +46,64 @@ export type MddChatStreamEvent = {
   cursor?: number;
 };
 
+/**
+ * Códigos con los que el servidor descarta el resultado del turno y conserva el documento guardado:
+ * `blocked` `MDD_PERSIST_FLOOR` / `MDD_PERSIST_TOO_SHORT` (anti-wipe) y `error` `LEASE_LOST` /
+ * `LOCK_UNAVAILABLE` (el turno no pudo mantener el lock de escritura). En todos, los `draft` previos del stream
+ * NO se guardaron. `blocked` y `LOCK_UNAVAILABLE` restauran el estado previo al turno; `LEASE_LOST` recarga lo
+ * guardado en el servidor solo si no hubo edición del usuario (ni antes ni durante el turno).
+ */
+const MDD_BLOCKED_PERSIST_CODES = new Set(["MDD_PERSIST_FLOOR", "MDD_PERSIST_TOO_SHORT"]);
+const MDD_ERROR_DISCARD_CODES = new Set(["LEASE_LOST", "LOCK_UNAVAILABLE"]);
+
+/** true si el evento indica que el servidor descartó el resultado del turno (ver códigos arriba). */
+export function isMddStreamResultDiscarded(event: { type?: string; code?: string }): boolean {
+  if (typeof event.code !== "string") return false;
+  if (event.type === "blocked") return MDD_BLOCKED_PERSIST_CODES.has(event.code);
+  if (event.type === "error") return MDD_ERROR_DISCARD_CODES.has(event.code);
+  return false;
+}
+
+const MDD_DISCARDED_FALLBACK_MESSAGE = "El servidor no pudo guardar el resultado de este turno.";
+const MDD_DISCARDED_SUFFIX =
+  "Se conservó el documento guardado; la vista previa de este turno no se guardó.";
+
+/** Aviso (no error de red) para un resultado descartado: mensaje del servidor + qué se conservó. */
+export function mddStreamDiscardedNotice(message: string | undefined): string {
+  const base = (message ?? "").trim() || MDD_DISCARDED_FALLBACK_MESSAGE;
+  return `${base} ${MDD_DISCARDED_SUFFIX}`;
+}
+
+/** Aviso cuando el usuario editó durante el stream y el servidor descartó el resultado del turno. */
+export function mddStreamDiscardedUserEditNotice(message: string | undefined): string {
+  const detail = (message ?? "").trim() || "sin detalle del servidor";
+  return `Tu edición se conservó, pero no está guardada: el servidor descartó el resultado de este turno (${detail})`;
+}
+
+/** Aviso tras perder el lock de escritura sin edición del usuario: el documento se recargó desde el servidor. */
+export const MDD_LEASE_RELOADED_NOTICE =
+  "Otro turno actualizó el documento; se recargó la versión guardada.";
+
+/** Aviso cuando el usuario editó y el turno perdió el lock: su edición queda sin guardar frente a una versión más nueva. */
+export function mddLeaseLostUserEditNotice(message: string | undefined): string {
+  const detail = (message ?? "").trim() || "sin detalle del servidor";
+  return `Tu edición se conservó, pero no está guardada: hay una versión más nueva guardada en el servidor (${detail})`;
+}
+
+/** Aviso cuando el turno no pudo tomar el lock de escritura (Redis no disponible). No se recarga nada. */
+export const MDD_LOCK_UNAVAILABLE_NOTICE =
+  "No se pudo tomar el bloqueo del hilo (Redis no disponible). Reintenta en unos segundos.";
+
+/** Aviso de bloqueo cuando el usuario tiene una edición sin guardar que se conserva en el editor. */
+export const MDD_LOCK_UNAVAILABLE_USER_EDIT_NOTICE = `Tu edición se conservó, pero no está guardada. ${MDD_LOCK_UNAVAILABLE_NOTICE}`;
+
+const MDD_STREAM_LOADING_REASONS = new Set<string>(["mdd", "mdd-section", "legacy-mdd"]);
+
+/** true mientras el chat MDD escribe el editor (`draft`): el documento aún no es un resultado final. */
+export function isMddStreamingLoading(s: { loading: boolean; loadingReason?: string | null }): boolean {
+  return s.loading && MDD_STREAM_LOADING_REASONS.has(s.loadingReason ?? "");
+}
+
 export type MddChatEventContext = {
   set: WorkshopSet;
   get: WorkshopGet;
@@ -67,6 +125,119 @@ export function createMddChatEventHandler(
   ctx: MddChatEventContext,
 ): (raw: Record<string, unknown> | MddChatStreamEvent) => Promise<MddChatEventOutcome> {
   const { set, get, requestProjectId, sessionId, mddSnapshotBeforeStream } = ctx;
+  // Semáforo de entrega previo al turno: los `draft` lo sobrescriben y también deben revertirse.
+  const deliveryGateBeforeStream = get().deliveryGate;
+  // Último borrador que este handler puso en `mddContent`. Si el editor ya no coincide, el usuario editó.
+  let lastAppliedDraft: string | null = null;
+  // El usuario ya tenía cambios sin guardar al enviar el mensaje: el snapshot no es el documento guardado.
+  // Se calcula al crear el handler (antes de cualquier evento) para no verse afectado por cambios del turno.
+  const userEditBeforeTurn =
+    mddContentForEditor(mddSnapshotBeforeStream) !== mddContentForEditor(get().mddPersistedBaseline);
+
+  /** El editor sigue con lo que puso el stream (último `draft` aplicado, o el snapshot si no hubo ninguno). */
+  const editorHoldsStreamOutput = (): boolean => {
+    const currentMdd = get().mddContent ?? "";
+    return lastAppliedDraft !== null
+      ? currentMdd === lastAppliedDraft
+      : currentMdd === mddContentForEditor(mddSnapshotBeforeStream);
+  };
+
+  /**
+   * `blocked` MDD_PERSIST_*: resultado descartado por el servidor, que conserva el documento guardado. Si el
+   * editor sigue con lo que puso el stream, restaura el estado previo al turno: los `draft` ya habían metido el
+   * borrador rechazado y un PATCH posterior (con `force`) lo guardaría. Si el usuario editó durante el stream,
+   * NO toca `mddContent`: conserva su edición, la marca como no guardada y avisa. Siempre restaura
+   * `deliveryGate` y limpia `error`. No toca el baseline persistido: los `draft` nunca lo cambian.
+   */
+  const discardedResultPatch = (event: MddChatStreamEvent): Partial<WorkshopState> => {
+    if (!shouldApplyWorkshopUpdate(get, requestProjectId)) return {};
+    if (!editorHoldsStreamOutput()) {
+      return {
+        synced: false,
+        deliveryGate: deliveryGateBeforeStream,
+        error: null,
+        notice: mddStreamDiscardedUserEditNotice(event.message),
+      };
+    }
+    return {
+      mddContent: mddContentForEditor(mddSnapshotBeforeStream),
+      deliveryGate: deliveryGateBeforeStream,
+      error: null,
+      notice: mddStreamDiscardedNotice(event.message),
+    };
+  };
+
+  /**
+   * `error` LEASE_LOST / LOCK_UNAVAILABLE: el turno no pudo mantener el lock de escritura y su resultado no se
+   * guardó. Casos (el editor se compara con el snapshot previo al turno y con el baseline persistido):
+   * - El usuario editó durante el stream: conserva su texto, `synced: false`, aviso de edición sin guardar, NO recarga.
+   * - Había edición previa al turno (snapshot ≠ baseline): restaura el snapshot, que contiene esa edición,
+   *   `synced: false`, aviso de edición sin guardar, NO recarga. Recargar la pisaría.
+   * - Sin edición del usuario (snapshot == baseline) y el editor solo tenía la salida del stream:
+   *   - LEASE_LOST: vuelve al baseline y `reloadSaved` pide recargar, porque otro turno pudo guardar un documento
+   *     más nuevo (con `preferServerMdd` la recarga toma el servidor).
+   *   - LOCK_UNAVAILABLE: restaura el snapshot y avisa del bloqueo. No recarga: no hubo otro turno que guardara.
+   */
+  const discardedErrorPatch = (
+    event: MddChatStreamEvent,
+  ): { patch: Partial<WorkshopState>; reloadSaved: boolean } => {
+    if (!shouldApplyWorkshopUpdate(get, requestProjectId)) return { patch: {}, reloadSaved: false };
+    const lockUnavailable = event.code === "LOCK_UNAVAILABLE";
+    if (!editorHoldsStreamOutput()) {
+      return {
+        patch: {
+          synced: false,
+          deliveryGate: deliveryGateBeforeStream,
+          error: null,
+          notice: lockUnavailable
+            ? MDD_LOCK_UNAVAILABLE_USER_EDIT_NOTICE
+            : mddLeaseLostUserEditNotice(event.message),
+        },
+        reloadSaved: false,
+      };
+    }
+    if (userEditBeforeTurn) {
+      return {
+        patch: {
+          mddContent: mddContentForEditor(mddSnapshotBeforeStream),
+          synced: false,
+          deliveryGate: deliveryGateBeforeStream,
+          error: null,
+          notice: lockUnavailable
+            ? MDD_LOCK_UNAVAILABLE_USER_EDIT_NOTICE
+            : mddLeaseLostUserEditNotice(event.message),
+        },
+        reloadSaved: false,
+      };
+    }
+    if (lockUnavailable) {
+      return {
+        patch: {
+          mddContent: mddContentForEditor(mddSnapshotBeforeStream),
+          deliveryGate: deliveryGateBeforeStream,
+          error: null,
+          notice: MDD_LOCK_UNAVAILABLE_NOTICE,
+        },
+        reloadSaved: false,
+      };
+    }
+    return {
+      patch: {
+        mddContent: mddContentForEditor(get().mddPersistedBaseline),
+        deliveryGate: deliveryGateBeforeStream,
+        error: null,
+      },
+      reloadSaved: true,
+    };
+  };
+
+  /** Recarga el proyecto desde el servidor; avisa solo si la recarga devolvió el proyecto del mismo ámbito. */
+  const reloadSavedMdd = async (): Promise<void> => {
+    const data = await get().fetchProject(requestProjectId, { preferServerMdd: true }).catch(() => null);
+    if (data && shouldApplyWorkshopUpdate(get, requestProjectId)) {
+      set({ notice: MDD_LEASE_RELOADED_NOTICE });
+    }
+  };
   return async function handleMddChatEvent(raw): Promise<MddChatEventOutcome> {
     try {
       const event = raw as MddChatStreamEvent;
@@ -85,10 +256,12 @@ export function createMddChatEventHandler(
         const draftGate = deliveryGateFromStreamEvent(event as { deliveryGate?: MddDeliveryGateResult });
         const currentMdd = get().mddContent ?? "";
         if (streamMarkdownPreservesGovernancePatterns(currentMdd, event.markdown)) {
+          const appliedDraft = mddContentForEditor(event.markdown);
           set({
-            mddContent: mddContentForEditor(event.markdown),
+            mddContent: appliedDraft,
             ...(draftGate ? { deliveryGate: draftGate } : {}),
           });
+          lastAppliedDraft = appliedDraft;
         }
       } else if (event.type === "interrupt") {
         set({
@@ -260,11 +433,16 @@ export function createMddChatEventHandler(
           evaluatorCritique: null,
         });
         return "terminal";
-      } else if (event.type === "blocked" && event.message) {
+      } else if (
+        event.type === "blocked" &&
+        (event.message || isMddStreamResultDiscarded(event))
+      ) {
         set({
           managerThreadId: null,
           pendingPlanApproval: null,
-          error: String(event.message),
+          ...(isMddStreamResultDiscarded(event)
+            ? discardedResultPatch(event)
+            : { error: String(event.message) }),
           loading: false,
           loadingReason: null,
           agentProgress: [],
@@ -274,11 +452,15 @@ export function createMddChatEventHandler(
           evaluatorCritique: null,
         });
         return "terminal";
-      } else if (event.type === "error" && event.message) {
+      } else if (
+        event.type === "error" &&
+        (event.message || isMddStreamResultDiscarded(event))
+      ) {
+        const discarded = isMddStreamResultDiscarded(event) ? discardedErrorPatch(event) : null;
         set({
           managerThreadId: null,
           pendingPlanApproval: null,
-          ...streamErrorPatch(event as { message: string; code?: string }),
+          ...(discarded ? discarded.patch : streamErrorPatch(event as { message: string; code?: string })),
           loading: false,
           loadingReason: null,
           agentProgress: [],
@@ -287,6 +469,7 @@ export function createMddChatEventHandler(
           streamingContent: null,
           evaluatorCritique: null,
         });
+        if (discarded?.reloadSaved) await reloadSavedMdd();
         return "terminal";
       }
     } catch (_) {

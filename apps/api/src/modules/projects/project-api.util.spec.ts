@@ -59,3 +59,23 @@ describe("toApiProject: convergeWebhookSecret solo para el dueño", () => {
     assert.equal(api.convergeWebhookSecret, "s3cr3t-de-prueba");
   });
 });
+
+describe("toApiProject: mddLeaseFence no sale en la API (ADR 0004)", () => {
+  it("omite mddLeaseFence de cada etapa y el DTO serializa sin lanzar", () => {
+    const stage = {
+      id: "s-1",
+      ordinal: 1,
+      mddContent: null,
+      mddLeaseFence: BigInt(1730000000000),
+      estimation: null,
+    } as unknown as Parameters<typeof toApiProject>[0]["stages"][number];
+    const project = { id: "p-1", userId: "owner", groupId: "g-1", name: "P", stages: [stage] };
+
+    const api = toApiProject(project) as unknown as { stages: Array<Record<string, unknown>> };
+    const [apiStage] = api.stages;
+    assert.ok(apiStage);
+    assert.equal("mddLeaseFence" in apiStage, false);
+    assert.equal(apiStage.id, "s-1");
+    assert.doesNotThrow(() => JSON.stringify(api));
+  });
+});

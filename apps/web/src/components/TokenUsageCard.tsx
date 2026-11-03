@@ -5,46 +5,18 @@
  *
  * Patrón visual: `<details>` nativo con marker oculto (mismo estilo que el resto
  * de métricas en `WorkshopMetricsColumnInner.tsx`).
+ *
+ * El contrato de respuesta vive en `@theforge/shared-types` (`token-usage-api.ts`).
  */
 import { useCallback, useEffect, useState } from "react";
 import { ChevronDown, Coins, Info, Loader2 } from "lucide-react";
+import type {
+  TokenUsageDocumentSummary,
+  TokenUsageModelSummary,
+  TokenUsageSummary,
+} from "@theforge/shared-types";
 import { cn } from "@/lib/utils";
 import { apiFetch, API_BASE } from "@/utils/apiClient";
-
-interface TokenUsageByModel {
-  providerId: string;
-  modelId: string;
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  costUsd: number;
-  costMxn: number;
-  calls: number;
-}
-
-interface TokenUsageDocumentAggregate {
-  documentField: string;
-  totalPromptTokens: number;
-  totalCompletionTokens: number;
-  totalTokens: number;
-  totalCostUsd: number;
-  totalCostMxn: number;
-  generations: number;
-  byModel: TokenUsageByModel[];
-  firstAt: string;
-  lastAt: string;
-}
-
-interface TokenUsageSummary {
-  projectId: string;
-  totalPromptTokens: number;
-  totalCompletionTokens: number;
-  totalTokens: number;
-  totalCostUsd: number;
-  totalCostMxn: number;
-  documents: TokenUsageDocumentAggregate[];
-  mxnPerUsd: number;
-}
 
 const DOCUMENT_LABELS: Record<string, string> = {
   mddContent: "MDD",
@@ -69,6 +41,21 @@ const DOCUMENT_LABELS: Record<string, string> = {
 const CARD_BASE =
   "rounded-xl border border-[var(--border)] bg-[color-mix(in_oklch,var(--card)_78%,var(--background))]";
 
+const FAILED_CALLS_TITLE =
+  "Llamadas que fallaron por error, timeout o cancelación; no se facturan";
+const ESTIMATED_COST_TITLE =
+  "Parte de las llamadas no trajo uso real del proveedor: tokens estimados (caracteres/4).";
+const UNKNOWN_COST_TITLE =
+  "Hay llamadas con tokens sin tarifa en el catálogo: el coste mostrado no es completo.";
+
+const FAILED_TONE = "text-[color-mix(in_oklch,var(--destructive)_86%,var(--foreground))]";
+const BADGE_BASE =
+  "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none whitespace-nowrap";
+const BADGE_INFO =
+  "bg-[color-mix(in_oklch,var(--primary)_14%,transparent)] text-[color-mix(in_oklch,var(--primary)_88%,var(--foreground))]";
+const BADGE_WARN =
+  "bg-[color-mix(in_oklch,var(--destructive)_12%,transparent)] text-[color-mix(in_oklch,var(--destructive)_86%,var(--foreground))]";
+
 function formatNumber(n: number): string {
   return n.toLocaleString("en-US");
 }
@@ -79,6 +66,18 @@ function formatUsd(n: number): string {
 
 function formatMxn(n: number): string {
   return `$${n.toFixed(2)} MXN`;
+}
+
+/** Sin tarifa y sin importe, el "$0" sería engañoso: se muestra el rótulo en su lugar. */
+function usdText(amount: number, costUnknown: boolean): string {
+  if (costUnknown && amount === 0) return "coste desconocido";
+  return `${formatUsd(amount)} USD`;
+}
+
+/** En columnas MXN sin importe conocido se muestra un guion en vez de $0. */
+function mxnCellText(amount: number, costUnknown: boolean): string {
+  if (costUnknown && amount === 0) return "—";
+  return formatMxn(amount);
 }
 
 function formatModelLabel(providerId: string, modelId: string): string {
@@ -107,6 +106,46 @@ function formatDate(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+/** "(+N fallidas)" con tooltip explicativo; no renderiza nada si no hay fallidas. */
+function FailedCallsNote({ count, className }: { count: number; className?: string }) {
+  if (count <= 0) return null;
+  return (
+    <span className={cn(FAILED_TONE, className)} title={FAILED_CALLS_TITLE}>
+      (+{formatNumber(count)} fallidas)
+    </span>
+  );
+}
+
+interface CostCellProps {
+  amount: number;
+  format: (n: number) => string;
+  costUnknown: boolean;
+  estimated: boolean;
+}
+
+/**
+ * Importe con rótulos: "coste desconocido" sustituye al $0 cuando no hay tarifa (y acompaña a un
+ * importe parcial), y "coste estimado" marca importes calculados con tokens estimados.
+ */
+function CostCell({ amount, format, costUnknown, estimated }: CostCellProps) {
+  const showAmount = !(costUnknown && amount === 0);
+  return (
+    <span className="inline-flex flex-wrap items-center justify-end gap-x-1 gap-y-0.5">
+      {showAmount ? <span>{format(amount)}</span> : null}
+      {costUnknown ? (
+        <span className={cn(BADGE_BASE, BADGE_WARN)} title={UNKNOWN_COST_TITLE}>
+          coste desconocido
+        </span>
+      ) : null}
+      {estimated ? (
+        <span className={cn(BADGE_BASE, BADGE_INFO)} title={ESTIMATED_COST_TITLE}>
+          coste estimado
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 export interface TokenUsageCardProps {
@@ -234,6 +273,16 @@ function TokenUsageBody({ summary }: { summary: TokenUsageSummary }) {
     );
   }
 
+  const totals = documents.reduce(
+    (acc, doc) => ({
+      calls: acc.calls + doc.generations,
+      failed: acc.failed + (doc.failedCalls ?? 0),
+      estimated: acc.estimated + (doc.estimatedCalls ?? 0),
+      costUnknown: acc.costUnknown || doc.costUnknown === true,
+    }),
+    { calls: 0, failed: 0, estimated: 0, costUnknown: false },
+  );
+
   return (
     <div>
       <div className="border-b border-[var(--border)]/60 bg-[color-mix(in_oklch,var(--muted)_18%,transparent)] px-3 py-2.5">
@@ -242,11 +291,19 @@ function TokenUsageBody({ summary }: { summary: TokenUsageSummary }) {
             Total acumulado
           </span>
           <span className="text-sm font-semibold tabular-nums text-[var(--foreground)]">
-            {formatMxn(summary.totalCostMxn)}
+            <CostCell
+              amount={summary.totalCostMxn}
+              format={formatMxn}
+              costUnknown={totals.costUnknown}
+              estimated={totals.estimated > 0}
+            />
           </span>
         </div>
         <p className="mt-0.5 text-[10px] text-[color-mix(in_oklch,var(--muted-foreground)_94%,var(--foreground))]">
-          {formatUsd(summary.totalCostUsd)} USD · {formatNumber(summary.totalTokens)} tokens (
+          {formatNumber(totals.calls)} llamadas
+          <FailedCallsNote count={totals.failed} className="ml-1" />
+          {" · "}
+          {usdText(summary.totalCostUsd, totals.costUnknown)} · {formatNumber(summary.totalTokens)} tokens (
           {formatNumber(summary.totalPromptTokens)} in · {formatNumber(summary.totalCompletionTokens)} out) · TC {summary.mxnPerUsd} MXN/USD (estimado)
         </p>
         <p
@@ -288,7 +345,9 @@ function TokenUsageBody({ summary }: { summary: TokenUsageSummary }) {
   );
 }
 
-function DocumentRow({ doc }: { doc: TokenUsageDocumentAggregate }) {
+function DocumentRow({ doc }: { doc: TokenUsageDocumentSummary }) {
+  const costUnknown = doc.costUnknown === true;
+  const estimated = (doc.estimatedCalls ?? 0) > 0;
   return (
     <>
       <tr className="border-t border-[var(--border)]/40 align-top">
@@ -302,35 +361,55 @@ function DocumentRow({ doc }: { doc: TokenUsageDocumentAggregate }) {
         </td>
         <td className="px-2 py-1.5 text-right tabular-nums text-[var(--foreground)]">
           {doc.generations}
+          <FailedCallsNote count={doc.failedCalls ?? 0} className="block text-[10px]" />
         </td>
         <td className="px-2 py-1.5 text-right tabular-nums text-[color-mix(in_oklch,var(--foreground)_92%,var(--muted-foreground))]">
           {formatNumber(doc.totalTokens)}
         </td>
         <td className="px-2 py-1.5 text-right tabular-nums text-[color-mix(in_oklch,var(--foreground)_92%,var(--muted-foreground))]">
-          {formatUsd(doc.totalCostUsd)}
+          <CostCell
+            amount={doc.totalCostUsd}
+            format={formatUsd}
+            costUnknown={costUnknown}
+            estimated={estimated}
+          />
         </td>
         <td className="px-2 py-1.5 text-right tabular-nums font-medium text-[var(--foreground)]">
-          {formatMxn(doc.totalCostMxn)}
+          {mxnCellText(doc.totalCostMxn, costUnknown)}
         </td>
       </tr>
       {doc.byModel.map((m) => (
-        <tr key={`${doc.documentField}-${m.providerId}-${m.modelId}`} className="bg-[color-mix(in_oklch,var(--muted)_6%,transparent)]">
-          <td className="pl-6 pr-2 py-1 text-[10px] text-[color-mix(in_oklch,var(--muted-foreground)_88%,var(--foreground))]" colSpan={1}>
-            {formatModelLabel(m.providerId, m.modelId)}
-            <span className="ml-1 text-[var(--muted-foreground)]">({m.calls} call{m.calls === 1 ? "" : "s"})</span>
-          </td>
-          <td className="px-2 py-1 text-right text-[10px] text-[var(--muted-foreground)]">
-            {formatNumber(m.totalTokens)}
-          </td>
-          <td className="px-2 py-1 text-right text-[10px] text-[var(--muted-foreground)]">
-            {formatUsd(m.costUsd)}
-          </td>
-          <td className="px-2 py-1 text-right text-[10px] text-[var(--muted-foreground)]">
-            {formatMxn(m.costMxn)}
-          </td>
-          <td />
-        </tr>
+        <ModelRow key={`${doc.documentField}-${m.providerId}-${m.modelId}`} model={m} />
       ))}
     </>
+  );
+}
+
+function ModelRow({ model: m }: { model: TokenUsageModelSummary }) {
+  const costUnknown = m.costUnknown === true;
+  const estimated = (m.estimatedCalls ?? 0) > 0;
+  return (
+    <tr className="bg-[color-mix(in_oklch,var(--muted)_6%,transparent)]">
+      <td className="pl-6 pr-2 py-1 text-[10px] text-[color-mix(in_oklch,var(--muted-foreground)_88%,var(--foreground))]" colSpan={1}>
+        {formatModelLabel(m.providerId, m.modelId)}
+        <span className="ml-1 text-[var(--muted-foreground)]">({m.calls} call{m.calls === 1 ? "" : "s"})</span>
+        <FailedCallsNote count={m.failedCalls ?? 0} className="ml-1" />
+      </td>
+      <td className="px-2 py-1 text-right text-[10px] text-[var(--muted-foreground)]">
+        {formatNumber(m.totalTokens)}
+      </td>
+      <td className="px-2 py-1 text-right text-[10px] text-[var(--muted-foreground)]">
+        <CostCell
+          amount={m.costUsd}
+          format={formatUsd}
+          costUnknown={costUnknown}
+          estimated={estimated}
+        />
+      </td>
+      <td className="px-2 py-1 text-right text-[10px] text-[var(--muted-foreground)]">
+        {mxnCellText(m.costMxn, costUnknown)}
+      </td>
+      <td />
+    </tr>
   );
 }

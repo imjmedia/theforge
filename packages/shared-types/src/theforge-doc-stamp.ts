@@ -61,10 +61,14 @@ export function repairInlineHorizontalRuleSectionBreaks(text: string): string {
   return out;
 }
 
-/** Título suelto (`Master Design Document`) antes de `---` + H2 → H1. */
+/**
+ * Título suelto (`Master Design Document`) antes de `---` + H2 → H1.
+ * Solo la primera línea del documento (sin flag `m`): un párrafo intermedio seguido de `---` + H2 es prosa,
+ * no el título (antes se volvía `# párrafo` y corrompía la jerarquía).
+ */
 function promoteBareDocumentTitleBeforeH2(body: string): string {
   return body.replace(
-    /^([^\n#][^\n]{2,160}?)\n\n---\n\n(##\s)/m,
+    /^([^\n#][^\n]{2,160}?)\n\n---\n\n(##\s)/,
     (full, title: string, h2: string) => {
       const t = title.trim();
       if (/^[-*+]\s/.test(t) || /^\d+\.\s/.test(t)) return full;

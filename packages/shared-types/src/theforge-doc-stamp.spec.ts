@@ -247,4 +247,15 @@ Texto.
     assert.doesNotMatch(out, /^## 3\./);
     assert.match(out, /📅|Última modificación:/);
   });
+
+  it("peelDocumentBodyForPersist: un título suelto en la primera línea se promueve a H1, un párrafo intermedio no", () => {
+    const titulo = peelDocumentBodyForPersist("Master Design Document\n\n---\n\n## 1. Contexto\n\nTexto.");
+    assert.match(titulo, /^# Master Design Document\n\n---\n\n## 1\. Contexto/);
+
+    const parrafo = peelDocumentBodyForPersist(
+      "# Doc\n\n## 1. Contexto\n\nSistema de reservas de salas.\n\n---\n\n## 2. Arquitectura y Stack\n\nTexto.",
+    );
+    assert.match(parrafo, /^Sistema de reservas de salas\.$/m);
+    assert.doesNotMatch(parrafo, /^# Sistema/m);
+  });
 });

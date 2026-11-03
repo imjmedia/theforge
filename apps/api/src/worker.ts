@@ -11,6 +11,9 @@ import {
   resolveTheForgeRuntimeRole,
   shouldStartBullmqWorkers,
 } from "./common/bullmq-runtime.config.js";
+import { installBigIntJsonSupport } from "./common/json-bigint.js";
+
+installBigIntJsonSupport();
 
 config({ path: resolve(process.cwd(), "../../.env") });
 config();

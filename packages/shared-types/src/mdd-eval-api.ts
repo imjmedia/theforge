@@ -14,6 +14,13 @@ export const MDD_EVAL_API_PREFIX = "ai-analysis/eval/mdd";
 export const mddEvalRunStatusSchema = z.enum(["queued", "running", "completed", "failed", "cancelled"]);
 export type MddEvalRunStatus = z.infer<typeof mddEvalRunStatusSchema>;
 
+/**
+ * Resultado del Auditor del MDD. `unavailable` = el Auditor no entregó nota (se muestra "sin nota",
+ * nunca 0). Fuente única del contrato: lo comparten el stream del API, el eval y la auditoría manual.
+ */
+export const auditorOutcomeSchema = z.enum(["scored", "unavailable"]);
+export type AuditorOutcome = z.infer<typeof auditorOutcomeSchema>;
+
 export const mddEvalComplexityDtoSchema = z.enum(["LOW", "MEDIUM", "HIGH"]);
 export type MddEvalComplexityDto = z.infer<typeof mddEvalComplexityDtoSchema>;
 
@@ -85,7 +92,10 @@ export interface MddEvalRunRecordDto {
   hasMarkdown: boolean;
   /** Proyecto temporal conservado (solo con keepProjects). */
   projectId?: string;
+  /** Nota del Auditor; ausente cuando `auditorOutcome === "unavailable"` (sin nota, nunca 0). */
   auditorScore?: number;
+  /** Resultado del Auditor en el caso. Ausente = no corrió o corrida anterior al campo. */
+  auditorOutcome?: AuditorOutcome;
   precision?: number;
   status?: "red" | "yellow" | "green";
   gateOk?: boolean;
@@ -94,6 +104,8 @@ export interface MddEvalRunRecordDto {
   failedStep?: { node: string; error: string };
   auditTrail: string[];
   llmCalls?: number;
+  /** Llamadas LLM fallidas (error/timeout/abort): no son medidas y no tienen coste. Ausente si no hubo ninguna. */
+  failedLlmCalls?: number;
   promptTokens?: number;
   completionTokens?: number;
   costUsd?: number;
@@ -112,6 +124,14 @@ export interface MddEvalAggregatesDto {
   avgDurationMs: number;
   totalCostUsd: number | null;
   totalLlmCalls: number | null;
+  /** Suma de llamadas LLM fallidas de todos los casos (sin coste). Ausente en corridas anteriores al campo. */
+  totalFailedLlmCalls?: number;
+  /** Casos donde el Auditor no estuvo disponible (excluidos de `avgAuditor`). */
+  auditorUnavailableCount?: number;
+  /** Casos en que el Auditor devolvió una salida inválida (calidad del modelo, no infraestructura). */
+  auditorInvalidCount?: number;
+  /** true si el Auditor cayó en más del 20 % de los casos: la corrida mide infraestructura degradada. */
+  infraDegraded?: boolean;
 }
 
 export interface MddEvalRunProgressDto {

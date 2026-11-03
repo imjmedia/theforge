@@ -21,6 +21,10 @@ import {
   resolveTheForgeRuntimeRole,
   shouldStartHttpServer,
 } from "./common/bullmq-runtime.config.js";
+import { installBigIntJsonSupport } from "./common/json-bigint.js";
+
+// BigInt (p. ej. Stage.mddLeaseFence) debe serializarse a JSON antes de cualquier respuesta HTTP.
+installBigIntJsonSupport();
 
 // SMTP (p. ej. Gmail): priorizar IPv4 evita timeouts cuando IPv6 no llega al servidor de correo.
 if (typeof dns.setDefaultResultOrder === "function") {

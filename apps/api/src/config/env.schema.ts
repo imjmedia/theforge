@@ -48,6 +48,29 @@ const trustProxy = z.preprocess(
     .default(DEFAULT_TRUST_PROXY),
 );
 
+/** `THREAD_RUN_LOCK_TTL_MS`: TTL del lease por hilo del harness MDD (entero ≥ 1000; default 1 200 000 = 20 min). */
+const threadRunLockTtlMs = z.preprocess(
+  emptyToUndefined,
+  z.coerce
+    .number({ invalid_type_error: "debe ser un entero mayor o igual a 1000 (ms)" })
+    .int("debe ser un entero mayor o igual a 1000 (ms)")
+    .min(1000, "debe ser un entero mayor o igual a 1000 (ms)")
+    .optional(),
+);
+
+/** Mínimo de cada presupuesto wall-clock del pipeline MDD (ms): por debajo no cabe ni un intento. */
+export const MDD_NODE_BUDGET_MIN_MS = 15_000;
+
+/** `LANGGRAPH_MDD_*_BUDGET_MS`: entero ≥ 15 000 ms (opcional; el default vive en `ai-analysis/utils/mdd-llm-timeout.util.ts`). */
+const mddNodeBudgetMs = z.preprocess(
+  emptyToUndefined,
+  z.coerce
+    .number({ invalid_type_error: `debe ser un entero ≥ ${MDD_NODE_BUDGET_MIN_MS} ms` })
+    .int(`debe ser un entero ≥ ${MDD_NODE_BUDGET_MIN_MS} ms`)
+    .min(MDD_NODE_BUDGET_MIN_MS, `debe ser un entero ≥ ${MDD_NODE_BUDGET_MIN_MS} ms`)
+    .optional(),
+);
+
 export const envSchema = z
   .object({
     NODE_ENV: z.preprocess(emptyToUndefined, z.enum(["development", "test", "production"]).default("development")),
@@ -59,6 +82,11 @@ export const envSchema = z
     TOKEN_MASTER_KEYS: optionalString,
     CORS_ORIGINS: optionalString,
     TRUST_PROXY: trustProxy,
+    THREAD_RUN_LOCK_TTL_MS: threadRunLockTtlMs,
+    LANGGRAPH_MDD_AUDITOR_NODE_BUDGET_MS: mddNodeBudgetMs,
+    LANGGRAPH_MDD_MANAGER_TURN_BUDGET_MS: mddNodeBudgetMs,
+    LANGGRAPH_MDD_CRITIC_BUDGET_MS: mddNodeBudgetMs,
+    LANGGRAPH_MDD_CROSS_CONSISTENCY_BUDGET_MS: mddNodeBudgetMs,
   })
   .passthrough()
   .superRefine((env, ctx) => {

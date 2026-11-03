@@ -94,10 +94,13 @@ function formatCost(value: number | null | undefined): string {
 export function formatAggregatesLine(summary: MddEvalSummary): string {
   const a = summary.aggregates;
   const pct = Math.round(a.passRate * 100);
+  const unavailable = a.auditorUnavailableCount ?? 0;
   return [
     `${a.passed}/${a.cases} aprobados (${pct}%)`,
     `rúbrica media ${formatNumber(a.avgRubric)}`,
     `auditor media ${formatNumber(a.avgAuditor)}`,
+    ...(unavailable > 0 ? [`auditor no disponible en ${unavailable}/${a.cases} casos`] : []),
+    ...(a.infraDegraded ? ["INFRA DEGRADADA (Auditor caído en más del 20 % de los casos)"] : []),
     `duración media ${formatDuration(a.avgDurationMs)}`,
     `coste ${formatCost(a.totalCostUsd)}`,
     `llamadas LLM ${a.totalLlmCalls ?? "—"}`,

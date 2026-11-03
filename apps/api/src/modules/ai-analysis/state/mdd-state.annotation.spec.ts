@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { reduceMddDraft, reducePreferDefined } from "./mdd-state.annotation.js";
+import { looksLikeFullMdd, reduceMddDraft, reducePreferDefined } from "./mdd-state.annotation.js";
+
+/** Captura los `console.warn` emitidos durante `fn`. */
+function captureWarns(fn: () => void): string[] {
+  const warns: string[] = [];
+  const orig = console.warn;
+  console.warn = (...a: unknown[]) => void warns.push(a.join(" "));
+  try {
+    fn();
+  } finally {
+    console.warn = orig;
+  }
+  return warns;
+}
 
 describe("reduceMddDraft", () => {
   it("prefiere el borrador más largo cuando el nuevo es una ampliación", () => {
@@ -30,6 +43,43 @@ describe("reduceMddDraft", () => {
   it("acepta el nuevo valor si no había borrador previo", () => {
     const next = "# Master Design Document\n\nNuevo.";
     assert.equal(reduceMddDraft("", next), next);
+  });
+});
+
+describe("reduceMddDraft — aviso de pérdida", () => {
+  const head = "# Master Design Document\n\n## 1. Contexto\n\n";
+  it("looksLikeFullMdd distingue MDD completo de un parche de sección", () => {
+    assert.equal(looksLikeFullMdd(`${head}Algo.`), true);
+    assert.equal(looksLikeFullMdd("## 3. Modelo de datos\n\nSQL"), false);
+  });
+
+  it("dos MDD completos distintos sin contención: avisa con los primeros 60 chars de cada uno", () => {
+    const a = `${head}Versión A del documento.`;
+    const b = `${head}Versión B del documento, distinta.`;
+    const warns = captureWarns(() => {
+      assert.equal(reduceMddDraft(a, b), b);
+    });
+    assert.equal(warns.length, 1);
+    assert.match(warns[0]!, /dos MDD completos distintos/);
+    assert.ok(warns[0]!.includes(a.slice(0, 60).replace(/\s+/g, " ")));
+    assert.ok(warns[0]!.includes(b.slice(0, 60).replace(/\s+/g, " ")));
+  });
+
+  it("edición normal del formatter (un valor contiene al otro) no avisa", () => {
+    const a = `${head}Base.`;
+    const b = `${a}\n\n## 2. Arquitectura\n\nParche.`;
+    assert.deepEqual(captureWarns(() => void reduceMddDraft(a, b)), []);
+  });
+
+  it("parche de sección frente a un MDD completo no avisa", () => {
+    const a = `${head}Base completa.`;
+    const patch = "## 3. Modelo de datos\n\nTabla nueva.";
+    assert.deepEqual(captureWarns(() => void reduceMddDraft(a, patch)), []);
+  });
+
+  it("valores idénticos no avisan", () => {
+    const a = `${head}Igual.`;
+    assert.deepEqual(captureWarns(() => void reduceMddDraft(a, a)), []);
   });
 });
 

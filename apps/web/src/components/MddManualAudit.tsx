@@ -13,6 +13,7 @@ import {
   isModelsUnavailableStreamError,
   resolvePhase0ErrorMessage,
 } from "../utils/llm-stream-error";
+import type { AuditorOutcome } from "@theforge/shared-types";
 import { useWorkshopStore } from "../store/workshopStore";
 import { WorkshopPanelButton, WorkshopButtonIcon } from "./WorkshopButtons";
 
@@ -25,6 +26,8 @@ type MddAuditPayload = {
   threadId?: string;
   mddContent?: string;
   auditorScore?: number;
+  /** `unavailable` = el Auditor no entregó nota (se muestra "sin nota", nunca 0). */
+  auditorOutcome?: AuditorOutcome;
   gaps?: unknown;
   question?: string;
   n?: number;
@@ -38,6 +41,8 @@ interface Props {
   mddContent?: string | null;
   onUpdated?: () => void | Promise<void>;
   variant?: "inline" | "panel";
+  /** true mientras el chat MDD escribe el documento: auditar escribiría el editor y se perdería el stream. */
+  disabled?: boolean;
 }
 
 export function MddManualAudit({
@@ -46,6 +51,7 @@ export function MddManualAudit({
   mddContent,
   onUpdated,
   variant = "panel",
+  disabled = false,
 }: Props) {
   const [status, setStatus] = useState<AuditUiStatus>("idle");
   const [threadId, setThreadId] = useState<string | null>(null);
@@ -55,6 +61,7 @@ export function MddManualAudit({
   const [totalPreguntas, setTotalPreguntas] = useState(0);
   const [completeMessage, setCompleteMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [noScore, setNoScore] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -65,7 +72,7 @@ export function MddManualAudit({
   }, []);
 
   const startAudit = useCallback(async () => {
-    if (!projectId?.trim()) return;
+    if (disabled || !projectId?.trim()) return;
     setStatus("loading");
     setError(null);
     setCompleteMessage(null);
@@ -99,6 +106,8 @@ export function MddManualAudit({
         throw new Error(resolvePhase0ErrorMessage(data));
       }
 
+      setNoScore(data.auditorOutcome === "unavailable");
+
       if (data.type === "audit_complete") {
         setCompleteMessage(
           data.message ?? "No quedan gaps críticos en el MDD.",
@@ -126,10 +135,10 @@ export function MddManualAudit({
       setError(formatUserFacingThrownError(e, "No se pudo ejecutar la auditoría del MDD"));
       setStatus("error");
     }
-  }, [projectId, stageId, mddContent, onUpdated, applyMddContent]);
+  }, [projectId, stageId, mddContent, onUpdated, applyMddContent, disabled]);
 
   const handleAnswer = useCallback(async () => {
-    if (!answer.trim() || !threadId || isSubmitting) return;
+    if (disabled || !answer.trim() || !threadId || isSubmitting) return;
     const currentAnswer = answer.trim();
     setAnswer("");
     setIsSubmitting(true);
@@ -167,6 +176,7 @@ export function MddManualAudit({
       }
 
       if (data.type === "done") {
+        if (data.auditorOutcome) setNoScore(data.auditorOutcome === "unavailable");
         setCompleteMessage(data.message ?? "Auditoría del MDD completada.");
         applyMddContent(data.mddContent);
         setStatus("complete");
@@ -191,7 +201,7 @@ export function MddManualAudit({
     } finally {
       setIsSubmitting(false);
     }
-  }, [answer, threadId, isSubmitting, projectId, stageId, onUpdated, applyMddContent]);
+  }, [answer, threadId, isSubmitting, projectId, stageId, onUpdated, applyMddContent, disabled]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey && status === "interviewing") {
@@ -207,6 +217,7 @@ export function MddManualAudit({
     setAnswer("");
     setError(null);
     setCompleteMessage(null);
+    setNoScore(false);
   };
 
   const wrapperClass =
@@ -223,7 +234,12 @@ export function MddManualAudit({
             y, si falta algo, te hará preguntas puntuales.
           </p>
           <div>
-            <WorkshopPanelButton tone="secondary" onClick={() => void startAudit()}>
+            <WorkshopPanelButton
+              tone="secondary"
+              onClick={() => void startAudit()}
+              disabled={disabled}
+              title={disabled ? "No disponible mientras se genera el documento" : undefined}
+            >
               <WorkshopButtonIcon icon={ClipboardCheck} tone="secondary" />
               Auditar MDD
             </WorkshopPanelButton>
@@ -244,6 +260,9 @@ export function MddManualAudit({
             <Check className="w-5 h-5 shrink-0 text-[color-mix(in_oklch,var(--success)_88%,var(--foreground))]" />
             <p className="text-sm text-[var(--foreground)] leading-relaxed">{completeMessage}</p>
           </div>
+          {noScore && (
+            <p className="text-xs text-[var(--foreground-subtle)]">Sin nota (auditoría no disponible)</p>
+          )}
           <WorkshopPanelButton tone="secondary" onClick={reset}>
             Auditar de nuevo
           </WorkshopPanelButton>
@@ -255,6 +274,9 @@ export function MddManualAudit({
           <p className="text-xs font-semibold uppercase tracking-wide text-[var(--primary)]">
             Auditoría MDD · Pregunta {preguntaN} de {totalPreguntas}
           </p>
+          {noScore && (
+            <p className="text-xs text-[var(--foreground-subtle)]">Sin nota (auditoría no disponible)</p>
+          )}
           {isSubmitting && (
             <div className="flex items-center gap-2 text-sm text-[var(--foreground-subtle)]">
               <Loader2 className="w-4 h-4 animate-spin shrink-0" />
@@ -269,7 +291,7 @@ export function MddManualAudit({
             value={answer}
             onChange={(e) => setAnswer(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={isSubmitting}
+            disabled={isSubmitting || disabled}
             placeholder="Tu respuesta…"
             rows={3}
             className="w-full rounded-lg border border-[var(--border)] bg-[color-mix(in_oklch,var(--muted)_50%,var(--card))] p-3 text-sm text-[var(--foreground)] outline-none focus:ring-2 focus:ring-[var(--primary)] resize-none"
@@ -278,7 +300,7 @@ export function MddManualAudit({
             <WorkshopPanelButton
               tone="primary"
               onClick={() => void handleAnswer()}
-              disabled={!answer.trim() || isSubmitting}
+              disabled={!answer.trim() || isSubmitting || disabled}
               loading={isSubmitting}
             >
               <WorkshopButtonIcon icon={Send} tone="primary" />

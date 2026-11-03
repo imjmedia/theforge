@@ -6,6 +6,7 @@ import {
 import MddViewer from "@/components/MddViewer";
 import { DocumentClarificationSection } from "@/components/DocumentClarificationSection";
 import { MddManualAudit } from "@/components/MddManualAudit";
+import { isMddStreamingLoading } from "@/store/workshop/helpers/mdd-chat-event";
 import {
   AiGenerationPanel,
   AiGenerativeDots,
@@ -67,6 +68,9 @@ export function WorkshopMddPanel({
   onPersistAndReviewMdd,
   onMddAuditUpdated,
 }: WorkshopMddPanelProps) {
+  // Mientras el stream del chat MDD escribe el editor, el textarea es de solo lectura: una edición del
+  // usuario aquí se perdería con los `draft` y con un descarte del servidor.
+  const mddStreaming = isMddStreamingLoading({ loading, loadingReason });
   return (
     <>
       {mddJustGeneratedFromBenchmark && (
@@ -325,15 +329,20 @@ export function WorkshopMddPanel({
                         stageId={activeStageId}
                         mddContent={mddContent}
                         onUpdated={() => void onMddAuditUpdated()}
+                        disabled={mddStreaming}
                       />
                     ) : null}
                     {mddDirty && (
                       <WorkshopDirtySaveBar
-                        message="Tienes cambios sin guardar. Graba para revisar consistencia (ER, etc.)."
+                        message={
+                          mddStreaming
+                            ? "Guardar y cancelar se habilitan cuando termine la generación del documento."
+                            : "Tienes cambios sin guardar. Graba para revisar consistencia (ER, etc.)."
+                        }
                         onCancel={() => onRevertMddContent()}
                         onSave={() => onPersistAndReviewMdd()}
                         saving={mddReviewing || mddPersisting}
-                        disabled={mddReviewing || mddPersisting}
+                        disabled={mddStreaming || mddReviewing || mddPersisting}
                         savingLabel={mddPersisting ? "Guardando MDD…" : "Grabando y revisando…"}
                       />
                     )}
@@ -343,6 +352,15 @@ export function WorkshopMddPanel({
                         content={mddContent}
                       />
                     ) : null}
+                    {mddStreaming ? (
+                      <p
+                        className="mb-3 rounded-lg border border-[color-mix(in_oklch,var(--primary)_22%,var(--border))] bg-[color-mix(in_oklch,var(--primary)_6%,var(--card))] px-3 py-2 text-xs text-[color-mix(in_oklch,var(--primary)_72%,var(--foreground))]"
+                        role="status"
+                        aria-live="polite"
+                      >
+                        El documento se está generando; la edición se habilita al terminar.
+                      </p>
+                    ) : null}
                     {mddViewMode === "preview" ? (
                       <MddViewer content={mddContent || ""} documentTimestamps={null} />
                     ) : (
@@ -350,6 +368,7 @@ export function WorkshopMddPanel({
                         <textarea
                           value={mddContent}
                           onChange={(e) => onMddContentChange(e.target.value)}
+                          readOnly={mddStreaming}
                           placeholder="# Master Design Doc\n\nEl contenido del MDD se irá generando aquí..."
                           className="w-full min-h-full bg-[color-mix(in_oklch,var(--muted)_50%,var(--card))] border border-[var(--border)] rounded-lg p-4 text-sm font-mono text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent outline-none resize-none"
                           spellCheck={false}

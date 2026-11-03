@@ -1,3 +1,4 @@
+import type { AuditorOutcome } from "@theforge/shared-types";
 import type { AuditorGapsState } from "../state/mdd-state.schema.js";
 
 export const MDD_AUDIT_PASS_THRESHOLD = 85;
@@ -9,6 +10,9 @@ export const MDD_AUDIT_COMPLETE_MESSAGE =
 
 export const MDD_AUDIT_DONE_MESSAGE =
   "Auditoría completada. El MDD se actualizó con tus respuestas.";
+
+export const MDD_AUDIT_UNAVAILABLE_MESSAGE =
+  "El Auditor no estuvo disponible: el MDD queda sin nota. Reintenta la auditoría más tarde.";
 
 export interface MddAuditQuestionItem {
   sections: string[];
@@ -27,7 +31,9 @@ export interface MddManualAuditState {
   stageId: string;
   threadId: string;
   mddDraft: string;
-  auditorScore: number;
+  /** `undefined` = sin nota (Auditor no disponible); nunca se persiste ni se muestra como 0. */
+  auditorScore?: number;
+  auditorOutcome?: AuditorOutcome;
   auditorFeedback: string;
   auditorGaps: AuditorGapsState | null;
   questionPlan: MddAuditQuestionItem[];
@@ -45,7 +51,8 @@ export type MddManualAuditEvent =
       type: "audit_complete";
       message: string;
       mddContent: string;
-      auditorScore: number;
+      auditorScore?: number;
+      auditorOutcome?: AuditorOutcome;
       gaps?: AuditorGapsState | null;
     }
   | {
@@ -55,7 +62,8 @@ export type MddManualAuditEvent =
       n: number;
       total: number;
       mddContent: string;
-      auditorScore: number;
+      auditorScore?: number;
+      auditorOutcome?: AuditorOutcome;
       gaps?: AuditorGapsState | null;
     }
   | {
@@ -70,6 +78,7 @@ export type MddManualAuditEvent =
       mddContent: string;
       message?: string;
       auditorScore?: number;
+      auditorOutcome?: AuditorOutcome;
       gaps?: AuditorGapsState | null;
     }
   | { type: "error"; message: string; code?: string };

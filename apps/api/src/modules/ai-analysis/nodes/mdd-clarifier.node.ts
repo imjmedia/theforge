@@ -24,6 +24,7 @@ import {
 } from "../utils/mdd-clarifier-draft.util.js";
 import { buildClarifierDbgaBrief } from "../utils/mdd-clarifier-dbga-brief.util.js";
 import { enrichClarifiedScopeFromInventory } from "../utils/enrich-clarified-scope.util.js";
+import { formatScorePercent, resolveManagerScore } from "./mdd-manager/manager-context.util.js";
 import { getUserBrief } from "../utils/mdd-user-brief.js";
 import { buildUserDeclaredStackPromptBlock } from "../utils/user-declared-stack.util.js";
 import { extractFirstJsonObject, parseJsonOrThrow } from "../utils/parse-json.js";
@@ -105,7 +106,7 @@ export function createMddClarifierNode(llm: BaseChatModel) {
         const identifiedInfra = extractIdentifiedInfraFromText(draftAndUser);
         const alreadyDocumented = extractAlreadyDocumentedTopics(state.mddDraft ?? "");
         const contextParts = [
-          "**Precisión actual:** " + (state.auditorScore ?? 0) + "%. Objetivo: 85% (a partir de 85% se cede la intervención al usuario).",
+          "**Precisión actual:** " + formatScorePercent(resolveManagerScore(state)) + ". Objetivo: 85% (a partir de 85% se cede la intervención al usuario).",
           "**Borrador actual del MDD:**",
           state.mddDraft || "(vacío)",
           alreadyDocumented.length > 0

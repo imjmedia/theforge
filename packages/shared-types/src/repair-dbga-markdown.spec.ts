@@ -92,4 +92,12 @@ Primer arranque
     assert.match(out, /^1\. Paso uno/m);
     assert.match(out, /^2\. Paso dos/m);
   });
+
+  it("repairGluedDbgaBullets arregla viñetas pero ya no promueve «N. … Engine» a #### (regla de cliente retirada)", () => {
+    const out = repairGluedDbgaBullets("•\tItem\n7. Translation Engine\n8. Alpha Engine\n");
+    assert.match(out, /^- Item$/m);
+    assert.match(out, /^7\. Translation Engine$/m);
+    assert.match(out, /^8\. Alpha Engine$/m);
+    assert.doesNotMatch(out, /^####/m);
+  });
 });

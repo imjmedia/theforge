@@ -1,24 +1,43 @@
 import { Annotation } from "@langchain/langgraph";
 import type { MddDeliveryGateResult } from "@theforge/shared-types";
 import type { MddStructured } from "./mdd-structured.schema.js";
-import type { AuditorGapsState, MDDAuditorDecision, MddPlanStep } from "./mdd-state.schema.js";
+import type { AuditorGapsState, AuditorOutcome, AuditorUnavailableReason, MDDAuditorDecision, MddPlanStep } from "./mdd-state.schema.js";
 import type { DeliveryGateFixTarget } from "../utils/mdd-delivery-gate-loop.util.js";
+
+/** True si el texto parece un MDD completo (título + §1), no un parche/fragmento de sección. */
+export function looksLikeFullMdd(text: string): boolean {
+  return /^#\s*Master\s+Design\s+Document/i.test(text) && /##\s*1\.\s*Contexto/i.test(text);
+}
+
+/** Primeros 60 caracteres en una línea, para diagnóstico sin volcar el documento. */
+function draftPreview(text: string): string {
+  return text.slice(0, 60).replace(/\s+/g, " ");
+}
 
 /**
  * Combina actualizaciones concurrentes de mddDraft en el mismo paso del grafo.
  * Evita INVALID_CONCURRENT_GRAPH_UPDATE (LastValue) cuando resume + nodo escriben el borrador.
  * Prefiere la actualización más reciente (right); solo conserva left si right parece fragmento roto.
+ *
+ * Aviso de pérdida: solo salta cuando AMBOS valores parecen un MDD completo, son distintos y ninguno
+ * contiene al otro (dos escritores reales de documento completo: uno de los dos se pierde). Un parche
+ * de sección o una edición normal del formatter (un valor contiene al otro, o `b` es un fragmento) no
+ * avisa, para que el warn no tape el caso que debe detectar.
  */
 export function reduceMddDraft(left: string, right: string): string {
   const a = (left ?? "").trim();
   const b = (right ?? "").trim();
   if (!b) return a;
   if (!a) return b;
+  if (a !== b && looksLikeFullMdd(a) && looksLikeFullMdd(b) && !a.includes(b) && !b.includes(a)) {
+    console.warn(
+      `[MDD:reduceMddDraft] dos MDD completos distintos en el mismo paso (len ${a.length}/${b.length}); ` +
+        `se conserva el último. left="${draftPreview(a)}" right="${draftPreview(b)}"`,
+    );
+  }
   if (b.length >= a.length) return b;
 
-  const looksLikeFullMdd =
-    /^#\s*Master\s+Design\s+Document/i.test(b) && /##\s*1\.\s*Contexto/i.test(b);
-  if (looksLikeFullMdd) return b;
+  if (looksLikeFullMdd(b)) return b;
 
   if (b.length < a.length * 0.2) return a;
 
@@ -48,7 +67,8 @@ export const MDDStateAnnotation = Annotation.Root({
     reducer: reduceMddDraft,
     default: () => "",
   }),
-  auditorScore: Annotation<number>(),
+  /** Nota del Auditor; `undefined` cuando el Auditor no estuvo disponible (ver `auditorOutcome`). */
+  auditorScore: Annotation<number | undefined>(),
   auditorFeedback: Annotation<string | undefined>(),
   auditorGaps: Annotation<AuditorGapsState | undefined>(),
   auditorDecision: Annotation<MDDAuditorDecision | undefined>(),
@@ -142,6 +162,10 @@ export const MDDStateAnnotation = Annotation.Root({
   stackArchitectAttempt: Annotation<number | undefined>(),
   /** True tras primera pasada del Auditor — evita re-auditoría en gate loop. */
   auditorRan: Annotation<boolean | undefined>(),
+  /** `scored` (nota válida) | `unavailable` (sin nota; decide el gate determinista). Opcional por compat. con checkpoints viejos. */
+  auditorOutcome: Annotation<AuditorOutcome | undefined>(),
+  /** Motivo de `auditorOutcome: "unavailable"` (`invalid` no cuenta como caída de infraestructura en el eval). */
+  auditorUnavailableReason: Annotation<AuditorUnavailableReason | undefined>(),
 });
 
 export type MDDStateType = typeof MDDStateAnnotation.State;

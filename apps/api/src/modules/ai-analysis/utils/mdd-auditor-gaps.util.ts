@@ -60,7 +60,12 @@ export function computeDeterministicAuditorScore(
   return Math.max(0, Math.min(100, score));
 }
 
-/** Gaps estructurales mínimos (solo secciones canónicas faltantes) — fallback si el LLM no responde. */
+/**
+ * Gaps estructurales mínimos (solo secciones canónicas faltantes) para cuando el Auditor LLM no
+ * está disponible. NO puntúa: `score: null` y `status: "NO_EVALUADO"`. Antes inventaba una nota
+ * (0 con las 7 secciones presentes, 50-65 con faltantes: escala invertida) que el panel y el eval
+ * contaban como nota real.
+ */
 export function synthesizeStructuralAuditorGaps(
   validation: ValidateMddStructureResult,
 ): AuditorGapsState {
@@ -72,10 +77,9 @@ export function synthesizeStructuralAuditorGaps(
       fix: `Generar la sección «${sec}» con contenido sustancial según la plantilla canónica del MDD.`,
     });
   }
-  const score = validation.missingSections.length > 0 ? Math.min(84, 70 - validation.missingSections.length * 5) : 0;
   return {
-    score: Math.max(0, score),
-    status: "RECHAZADO",
+    score: null,
+    status: "NO_EVALUADO",
     critical_gaps,
     syntax_errors: [],
     infrastructure_ready: false,

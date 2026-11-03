@@ -29,6 +29,38 @@ describe("sqlToErDiagramContent", () => {
     assert.match(out!, /: "tenant"/);
   });
 
+  it("etiqueta por la raíz de la FK y no inventa etiquetas semánticas por nombre de tabla", () => {
+    const sql = `CREATE TABLE users (
+  id UUID PRIMARY KEY
+);
+CREATE TABLE roles (
+  id UUID PRIMARY KEY,
+  application_id UUID REFERENCES applications(id)
+);
+CREATE TABLE sessions (
+  id UUID PRIMARY KEY,
+  user_id UUID REFERENCES users(id)
+);
+CREATE TABLE user_application_roles (
+  id UUID PRIMARY KEY,
+  user_id UUID REFERENCES users(id),
+  role_id UUID REFERENCES roles(id)
+);
+CREATE TABLE audit_log (
+  id UUID PRIMARY KEY,
+  actor UUID REFERENCES users(id),
+  target_id UUID
+);`;
+    const out = sqlToErDiagramContent(sql);
+    assert.ok(out);
+    assert.match(out!, /users \|\|--o\{ sessions : "user"/);
+    assert.match(out!, /applications \|\|--o\{ roles : "application"/);
+    assert.match(out!, /roles \|\|--o\{ user_application_roles : "role"/);
+    // FK sin sufijo _id: fallback por tabla padre, nunca una etiqueta inventada.
+    assert.match(out!, /users \|\|--o\{ audit_log : "references users"/);
+    assert.doesNotMatch(out!, /: "(has|defines|assigned|includes)"/);
+  });
+
   it("no emite PK FK cuando la columna es PK y FK", () => {
     const sql = `CREATE TABLE users (
   id UUID PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,

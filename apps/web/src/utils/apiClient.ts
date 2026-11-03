@@ -9,7 +9,7 @@ export interface TheForgeUser {
   name?: string | null;
 }
 
-export const API_BASE = import.meta.env.VITE_API_URL ?? "/api";
+export const API_BASE = import.meta.env?.VITE_API_URL ?? "/api";
 
 /** Decodifica JWT sin verificar firma. */
 function decodeJwt(token: string): Record<string, unknown> | null {

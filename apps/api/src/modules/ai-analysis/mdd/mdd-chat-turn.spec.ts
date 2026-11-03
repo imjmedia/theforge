@@ -6,7 +6,12 @@ import type { MddJobData } from "./mdd-queue.service.js";
 
 type Stubbed = {
   threadLock: ThreadRunLockService;
-  prisma: { agentStateCheckpoint: { findFirst: () => Promise<{ mddStageId: string } | null> } };
+  prisma: {
+    agentStateCheckpoint: { findFirst: () => Promise<{ mddStageId: string } | null> };
+    project: { findUnique: () => Promise<{ id: string; stages: unknown[] }> };
+    stage: { updateMany: () => Promise<{ count: number }> };
+  };
+  agentSupervisor: { resolveRouteFromProject: (p: unknown, hint?: string | null) => Promise<{ stageId: string }> };
   resolveMddLockStageId: () => Promise<string>;
   streamMddAnalysisWithManager: (...args: unknown[]) => AsyncGenerator<MddChatJobEvent>;
   streamMddResume: (...args: unknown[]) => AsyncGenerator<MddChatJobEvent>;
@@ -15,10 +20,17 @@ type Stubbed = {
 function makeService(events: MddChatJobEvent[], opts: { checkpoint?: boolean; lock?: ThreadRunLockService } = {}) {
   const svc = Object.create(AiAnalysisService.prototype) as unknown as Stubbed;
   svc.threadLock = opts.lock ?? new ThreadRunLockService();
+  svc.projects = { claimMddWriteFence: async () => undefined };
   svc.prisma = {
     agentStateCheckpoint: {
       findFirst: async () => (opts.checkpoint === false ? null : { mddStageId: "stage-1" }),
     },
+    // Resolución del hilo (`resolveMddThread`) y claim del fence (ADR 0004): la etapa del hilo existe y acepta el fence.
+    project: { findUnique: async () => ({ id: "p1", stages: [] }) },
+    stage: { updateMany: async () => ({ count: 1 }) },
+  };
+  svc.agentSupervisor = {
+    resolveRouteFromProject: async (_p: unknown, hint?: string | null) => ({ stageId: hint?.trim() || "stage-1" }),
   };
   svc.resolveMddLockStageId = async () => "stage-1";
   const gen = async function* (): AsyncGenerator<MddChatJobEvent> {

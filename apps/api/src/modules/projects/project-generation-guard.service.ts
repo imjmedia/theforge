@@ -34,7 +34,7 @@ type TrackedBgJob = {
 export class ProjectGenerationGuardService {
   /**
    * Streams/jobs MDD activos por proyecto (contador): dos streams del mismo proyecto (p. ej. manager +
-   * regenerate-section) ya no se pisan: cerrar uno dejaba al otro "inactivo" con el antiguo `Set`.
+   * job de sección) ya no se pisan: cerrar uno dejaba al otro "inactivo" con el antiguo `Set`.
    */
   private readonly mddStreams = new Map<string, number>();
   private readonly bgJobs = new Map<string, TrackedBgJob>();

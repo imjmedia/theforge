@@ -8,7 +8,15 @@ import { runDeterministicManagerHandlers } from "./manager-state-handlers.js";
 import { handleManagerDelegateOutcome } from "./manager-delegate.js";
 import { runManagerLlmTurn } from "./manager-llm-turn.js";
 import { createMddManagerNode } from "../mdd-manager.node.js";
-import { TURN_TRANSIENT_RESET, withTurnReset } from "./manager-context.util.js";
+import {
+  TURN_TRANSIENT_RESET,
+  buildQuestionsDirectiveReply,
+  buildWhatNeededReply,
+  describePrecision,
+  isBelowQuality,
+  resolveManagerScore,
+  withTurnReset,
+} from "./manager-context.util.js";
 
 type CmdShape = { goto?: unknown; update?: Record<string, unknown> };
 const asCmd = (c: Command | null): CmdShape => c as unknown as CmdShape;
@@ -41,7 +49,7 @@ async function run(state: MDDStateType, userMessage: string) {
     state,
     llm: fakeLlm(""),
     userMessage,
-    score: state.auditorScore ?? 0,
+    score: resolveManagerScore(state),
   });
 }
 
@@ -272,5 +280,57 @@ describe("reset de flags transitorios al llegar un mensaje nuevo", () => {
     assert.equal(out.update?.auditorRan, undefined);
     assert.ok("auditorRan" in (out.update ?? {}));
     assert.ok("meshJumpCount" in (out.update ?? {}));
+  });
+});
+
+describe("Auditor sin nota: no se convierte en 0", () => {
+  it("resolveManagerScore: unavailable o ausente → undefined; con nota la respeta (0 incluido)", () => {
+    assert.equal(resolveManagerScore(st({ auditorOutcome: "unavailable", auditorScore: 60 })), undefined);
+    assert.equal(resolveManagerScore(st({ auditorScore: undefined })), undefined);
+    assert.equal(resolveManagerScore(st({ auditorOutcome: "scored", auditorScore: 0 })), 0);
+    assert.equal(resolveManagerScore(st({ auditorScore: 72 })), 72);
+  });
+
+  it("mensajes internos dicen 'sin nota (auditoría no disponible)' y nunca '0%'", () => {
+    const a = buildQuestionsDirectiveReply(undefined, ["¿Cuántos almacenes?"]);
+    const b = buildWhatNeededReply(undefined, "Falta el modelo de datos");
+    for (const m of [a, b]) {
+      assert.match(m, /sin nota \(auditoría no disponible\)/);
+      assert.doesNotMatch(m, /\b0\s*%/);
+    }
+    assert.match(buildQuestionsDirectiveReply(60, ["x"]), /Estamos al 60%/);
+    assert.equal(describePrecision(undefined), "sin nota (auditoría no disponible)");
+  });
+
+  it("isBelowQuality: sin nota no alcanza el umbral, pero se distingue del 0 numérico", () => {
+    assert.equal(isBelowQuality(undefined, 85), true);
+    assert.equal(isBelowQuality(84, 85), true);
+    assert.equal(isBelowQuality(85, 85), false);
+  });
+
+  it("sin nota y sin mensaje nunca cede por '>= 85' (no es un 0 ni un 100)", async () => {
+    const cmd = asCmd(
+      await runDeterministicManagerHandlers({ state: st({ mddDraft: LONG_DRAFT }), llm: fakeLlm(""), userMessage: "", score: undefined }),
+    );
+    // Cae al corte genérico de "vuelta del executor" (END), no al de score >= 85 (mismo goto, distinta vía).
+    assert.equal(cmd.goto, END);
+  });
+
+  it("sin nota, 'seguir refinando' sigue yendo a plan_approval como con score bajo", async () => {
+    const msg = "quiero seguir refinando el documento";
+    const cmd = asCmd(
+      await runDeterministicManagerHandlers({
+        state: st({ mddDraft: LONG_DRAFT, auditorOutcome: "unavailable", userInputAccumulated: "Petición: Sistema de inventarios" }),
+        llm: fakeLlm("impacto"),
+        userMessage: msg,
+        score: undefined,
+      }),
+    );
+    assert.equal(cmd.goto, "plan_approval");
+  });
+
+  it("TURN_TRANSIENT_RESET limpia auditorOutcome junto a auditorRan", () => {
+    assert.ok("auditorOutcome" in TURN_TRANSIENT_RESET);
+    assert.equal(TURN_TRANSIENT_RESET.auditorOutcome, undefined);
   });
 });

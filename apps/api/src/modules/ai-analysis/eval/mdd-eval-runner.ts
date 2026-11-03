@@ -6,6 +6,8 @@
  */
 
 import { execFileSync } from "node:child_process";
+import type { AuditorOutcome } from "@theforge/shared-types";
+import type { AuditorUnavailableReason } from "../state/mdd-state.schema.js";
 import type {
   MddEvalAggregates,
   MddEvalCase,
@@ -31,9 +33,13 @@ export type EvalStreamEvent =
       markdown: string;
       /** Porcentaje del semáforo en vivo (regex/semáforo). NO es el score del Auditor LLM. */
       precision?: number;
-      /** Score del Auditor LLM. Solo es válido si `auditorRan` no es false. */
+      /** Score del Auditor LLM. Solo es válido si `auditorRan` no es false y `auditorOutcome !== "unavailable"`. */
       auditorScore?: number;
       auditorRan?: boolean;
+      /** `unavailable` = Auditor sin veredicto válido (sin nota); `scored` = nota válida. */
+      auditorOutcome?: AuditorOutcome;
+      /** Motivo cuando `auditorOutcome === "unavailable"`: `invalid` (calidad) no cuenta como infra caída. */
+      auditorUnavailableReason?: AuditorUnavailableReason;
       status?: "red" | "yellow" | "green";
       deliveryGate?: EvalDeliveryGate;
       auditorFeedback?: string;
@@ -43,7 +49,10 @@ export type EvalStreamEvent =
   | { type: "error"; message: string; code?: string; replanning?: boolean };
 
 export type EvalTokenUsage = {
+  /** Llamadas con resultado medido (`outcome` ok/invalid): las únicas que aportan coste y tokens. */
   llmCalls?: number;
+  /** Llamadas fallidas (`outcome` error/timeout/abort): no cuentan como medidas aunque haya filas. */
+  failedLlmCalls?: number;
   promptTokens?: number;
   completionTokens?: number;
   costUsd?: number;
@@ -143,7 +152,8 @@ function defaultSleep(ms: number): Promise<void> {
 /**
  * Lee el uso de tokens del proyecto temporal. Debe llamarse ANTES de borrarlo (el borrado en cascada
  * elimina las filas de `TokenUsage`). Si no hay generaciones aún, reintenta con pausa.
- * Sin filas tras los reintentos devuelve `{}`: el coste y los tokens quedan NO medidos (undefined, no 0).
+ * Sin filas medidas (ok/invalid) tras los reintentos el coste y los tokens quedan NO medidos (undefined, no 0);
+ * si solo hay filas fallidas se conserva `failedLlmCalls`.
  */
 async function readTokenUsage(
   deps: MddEvalRunnerDeps,
@@ -159,8 +169,20 @@ async function readTokenUsage(
       auditTrail.push(`harness: sin uso de tokens: ${errorMessage(error)}`);
       return {};
     }
-    if ((usage.llmCalls ?? 0) > 0) return usage;
+    if ((usage.llmCalls ?? 0) > 0) {
+      const failed = usage.failedLlmCalls ?? 0;
+      if (failed > 0) auditTrail.push(`harness: ${failed} llamadas fallidas sin coste`);
+      return usage;
+    }
     if (attempt < TOKEN_USAGE_RETRIES) await sleep(TOKEN_USAGE_RETRY_DELAY_MS);
+  }
+  // Solo hay filas de llamadas fallidas: el caso NO está medido (nada de "$0" como si fuera una medición).
+  const failedOnly = usage.failedLlmCalls ?? 0;
+  if (failedOnly > 0) {
+    auditTrail.push(
+      `harness: ${failedOnly} llamadas fallidas sin coste; ninguna llamada completada → coste y tokens no medidos`,
+    );
+    return { failedLlmCalls: failedOnly };
   }
   // Sin filas no hay dato: no se devuelve 0 (la UI pintaría "$0.00" como si fuera una medición real).
   auditTrail.push(
@@ -271,12 +293,26 @@ export async function runEvalCaseWithMarkdown(
   }
 
   const failedStep = done?.failedStep;
-  // Score del Auditor LLM (nunca `precision`, que es el semáforo en vivo). Sin Auditor (nodo escritor
-  // fallido o auditorRan=false): undefined, y no se exige umbral.
+  // Score del Auditor LLM (nunca `precision`, que es el semáforo en vivo). Solo cuenta con
+  // `auditorOutcome === "scored"`; sin el campo (stream antiguo) se conserva el criterio previo
+  // (nota numérica con auditorRan !== false). Auditor caído, nodo escritor fallido o auditorRan=false:
+  // undefined, y no se exige umbral.
+  const auditorUnavailable = !!done && !failedStep && done.auditorOutcome === "unavailable";
   const auditorScore =
-    done && !failedStep && done.auditorRan !== false && typeof done.auditorScore === "number"
+    done &&
+    !failedStep &&
+    done.auditorRan !== false &&
+    (done.auditorOutcome === undefined || done.auditorOutcome === "scored") &&
+    typeof done.auditorScore === "number"
       ? done.auditorScore
       : undefined;
+  const auditorOutcome: AuditorOutcome | undefined = auditorUnavailable
+    ? "unavailable"
+    : auditorScore !== undefined
+      ? "scored"
+      : undefined;
+  if (auditorUnavailable) auditTrail.push("Auditor no disponible");
+  const auditorUnavailableReason = auditorUnavailable ? done?.auditorUnavailableReason : undefined;
   const minAuditor = evalCase.thresholds?.minAuditor ?? DEFAULT_MIN_AUDITOR;
   const gateOk = done?.deliveryGate?.ok;
   const passed =
@@ -292,6 +328,8 @@ export async function runEvalCaseWithMarkdown(
     durationMs: Math.max(0, endMs - startMs),
     markdownLen: markdown.length,
     auditorScore,
+    ...(auditorOutcome ? { auditorOutcome } : {}),
+    ...(auditorUnavailableReason ? { auditorUnavailableReason } : {}),
     precision: done?.precision,
     status: done?.status,
     gateOk,
@@ -300,6 +338,7 @@ export async function runEvalCaseWithMarkdown(
     failedStep,
     auditTrail: [...(done?.auditTrail ?? []), ...auditTrail],
     llmCalls: tokens.llmCalls,
+    ...((tokens.failedLlmCalls ?? 0) > 0 ? { failedLlmCalls: tokens.failedLlmCalls } : {}),
     promptTokens: tokens.promptTokens,
     completionTokens: tokens.completionTokens,
     costUsd: tokens.costUsd,
@@ -342,14 +381,24 @@ function mean(values: number[]): number {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-/** Agregados del resumen. `passRate` es una fracción (0-1). */
+/** Fracción de casos con Auditor caído a partir de la cual la corrida se marca como infra degradada. */
+export const EVAL_INFRA_DEGRADED_AUDITOR_RATIO = 0.2;
+
+/** Agregados del resumen. `passRate` es una fracción (0-1). `avgAuditor` solo promedia casos `scored`. */
 export function computeEvalAggregates(records: readonly MddEvalRunRecord[]): MddEvalAggregates {
   const cases = records.length;
   const passed = records.filter((record) => record.passed).length;
   const auditors = records
+    .filter((record) => record.auditorOutcome !== "unavailable")
     .map((record) => record.auditorScore)
     .filter((value): value is number => typeof value === "number");
-  // Solo los casos con uso medido (llmCalls > 0) aportan coste y llamadas. Sin ninguno: null (no medido).
+  const unavailable = records.filter((record) => record.auditorOutcome === "unavailable");
+  const auditorUnavailableCount = unavailable.length;
+  // `invalid` = el modelo no dio un veredicto válido (calidad, no infra). Infra: transport/error/deadline; sin motivo
+  // (stream o resumen antiguos) se cuenta como infra, como hasta ahora.
+  const auditorInvalidCount = unavailable.filter((record) => record.auditorUnavailableReason === "invalid").length;
+  const auditorInfraCount = auditorUnavailableCount - auditorInvalidCount;
+  // Solo los casos con uso medido (llmCalls > 0: llamadas ok/invalid) aportan coste y llamadas. Sin ninguno: null.
   const conUso = records.filter((record) => (record.llmCalls ?? 0) > 0);
   const costs = conUso
     .map((record) => record.costUsd)
@@ -360,10 +409,14 @@ export function computeEvalAggregates(records: readonly MddEvalRunRecord[]): Mdd
     passRate: cases === 0 ? 0 : roundTo(passed / cases, 4),
     avgRubric: roundTo(mean(records.map((record) => record.rubric.total)), 1),
     avgAuditor: auditors.length === 0 ? null : roundTo(mean(auditors), 1),
+    auditorUnavailableCount,
+    auditorInvalidCount,
+    infraDegraded: cases > 0 && auditorInfraCount / cases > EVAL_INFRA_DEGRADED_AUDITOR_RATIO,
     avgDurationMs: Math.round(mean(records.map((record) => record.durationMs))),
     totalCostUsd: costs.length === 0 ? null : roundTo(costs.reduce((a, b) => a + b, 0), 6),
     totalLlmCalls:
       conUso.length === 0 ? null : conUso.reduce((total, record) => total + (record.llmCalls ?? 0), 0),
+    totalFailedLlmCalls: records.reduce((total, record) => total + (record.failedLlmCalls ?? 0), 0),
   };
 }
 

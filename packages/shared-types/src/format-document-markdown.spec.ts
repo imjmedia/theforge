@@ -90,7 +90,7 @@ describe("formatDocumentMarkdown sin opción (regresión)", () => {
     assert.equal(formatDocumentMarkdown(input), formatDocumentMarkdown(input, { mermaid: "normalize" }));
   });
 
-  it("sigue normalizando mermaid (ER con 'PK, FK' pasa a 'PK')", () => {
+  it("conserva 'PK, FK' (el parser lo acepta; el registro ya no lo reescribe a 'PK')", () => {
     const input = [
       "# Título",
       "",
@@ -103,8 +103,7 @@ describe("formatDocumentMarkdown sin opción (regresión)", () => {
       "",
     ].join("\n");
     const out = formatDocumentMarkdown(input);
-    assert.match(out, /uuid user_id PK\n/);
-    assert.doesNotMatch(out, /PK, FK/);
+    assert.match(out, /uuid user_id PK, FK\n/);
     // Con preserve, en cambio, el bloque queda como llegó.
     assert.match(formatDocumentMarkdown(input, { mermaid: "preserve" }), /uuid user_id PK, FK/);
   });

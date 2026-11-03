@@ -3,12 +3,10 @@ import assert from "node:assert/strict";
 import { runRepairPipeline, classifyAndRepair } from "./repair-pipeline.js";
 
 describe("runRepairPipeline", () => {
-  it("repairs mermaid code blocks", () => {
+  it("conserva un bloque mermaid válido (graph TD no se reescribe)", () => {
     const input = "```mermaid\ngraph TD\n  A -->B\n```";
-    const { text, result } = runRepairPipeline(input);
-    assert.equal(result.changed, true);
-    assert.ok(result.byPattern.mermaid >= 1);
-    assert.ok(text.includes("flowchart TD"));
+    const { text } = runRepairPipeline(input);
+    assert.equal(text, input);
   });
 
   it("repairs SQL code blocks", () => {
@@ -51,10 +49,10 @@ describe("runRepairPipeline", () => {
 });
 
 describe("classifyAndRepair", () => {
-  it("repairs a mermaid string", () => {
-    const r = classifyAndRepair("graph TD\n  A -->B\n  B -->C");
-    assert.equal(r.changed, true);
-    assert.ok(r.text.includes("flowchart TD"));
+  it("conserva un string mermaid válido (graph TD no se reescribe)", () => {
+    const input = "graph TD\n  A -->B\n  B -->C";
+    const r = classifyAndRepair(input);
+    assert.equal(r.text, input);
   });
 
   it("returns unchanged for unknown pattern", () => {

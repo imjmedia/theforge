@@ -102,27 +102,18 @@ export function splitSqlColumnDefs(inner: string): string[] {
   return cols;
 }
 
+/**
+ * Comentario SQL (`-- …`) pegado justo antes de un `CREATE`. Texto colapsado en una sola línea:
+ * el comentario es lo que queda tras el último `;` del bloque previo (no se mira dentro de otra sentencia).
+ */
 function readTableCommentBeforeCreate(before: string): string | undefined {
-  let lastIdx = -1;
-  for (const re of [/--\s*Tabla espejo/gi, /--\s*Índices/gi]) {
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(before)) !== null) {
-      lastIdx = m.index;
-    }
-  }
-  if (lastIdx < 0) return undefined;
-  let comment = before.slice(lastIdx + 2).trim();
+  const tail = before.slice(before.lastIndexOf(";") + 1);
+  const idx = tail.search(/--(?!-)/);
+  if (idx < 0) return undefined;
+  let comment = tail.slice(idx + 2).trim();
   const cut = comment.search(/\sCREATE (?:TABLE|INDEX)\s/i);
   if (cut > 0) comment = comment.slice(0, cut).trim();
   return comment || undefined;
-}
-
-function splitEmbeddedEsquemaSections(chunk: string): string[] {
-  const parts = chunk
-    .split(/\s+(?=Esquema SQL para tablas espejo)/i)
-    .map((p) => p.trim())
-    .filter(Boolean);
-  return parts.length > 0 ? parts : [chunk.trim()];
 }
 
 /** Extrae CREATE TABLE … ); de texto colapsado (espacios/newlines arbitrarios). */
@@ -206,13 +197,13 @@ export function splitEsquemaSqlHeadingFromPayload(line: string): {
   const t = line.trim();
   if (!/\bEsquema SQL\b/i.test(t)) return null;
   const payloadIdx = t.search(
-    /\s+(?=(?:--\s*(?:Tabla espejo|Índices\b)|CREATE\s+(?:TABLE|INDEX)\b))/i,
+    /\s+(?=(?:--(?!-)|CREATE\s+(?:TABLE|INDEX)\b))/i,
   );
   if (payloadIdx <= 0) return null;
   const heading = t.slice(0, payloadIdx).trim();
   const rest = t.slice(payloadIdx).trim();
   if (!/^Esquema SQL/i.test(heading.replace(/^#{1,4}\s+/, ""))) return null;
-  if (!rest || !/CREATE\s+(TABLE|INDEX)|--\s*Tabla/i.test(rest)) return null;
+  if (!rest || !/CREATE\s+(TABLE|INDEX)/i.test(rest)) return null;
   return { heading, rest };
 }
 
@@ -224,16 +215,11 @@ function formatEsquemaHeading(heading: string): string {
 function emitSqlChunk(out: string[], chunkParts: string[]): boolean {
   if (chunkParts.length === 0) return false;
   const joined = chunkParts.join(" ");
-  const sections = splitEmbeddedEsquemaSections(joined);
-  const expandedBlocks: string[] = [];
-  for (const section of sections) {
-    const expanded = expandCollapsedSqlText(section);
-    if (expanded) expandedBlocks.push(expanded);
-  }
-  if (expandedBlocks.length === 0) return false;
+  const expanded = expandCollapsedSqlText(joined);
+  if (!expanded) return false;
   out.push("");
   out.push("```sql");
-  out.push(expandedBlocks.join("\n\n"));
+  out.push(expanded);
   out.push("```");
   out.push("");
   return true;
@@ -268,7 +254,7 @@ function collectCollapsedSqlChunk(
     if (/^#{1,6}\s/.test(lt) && !/^Esquema SQL/i.test(lt)) break;
     if (
       lineLooksCollapsedSql(lt) ||
-      /^--\s*(?:Tabla espejo|Índices\b)/i.test(lt) ||
+      /^--(?!-)\s*\S/.test(lt) ||
       /^CREATE (TABLE|INDEX)\b/i.test(lt)
     ) {
       chunk.push(lt);

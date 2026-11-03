@@ -193,24 +193,13 @@ function extractTablesAndRelations(
 /** Nombres reservados en Mermaid erDiagram (cardinalidad); no usarlos como entidades. */
 const ER_RESERVED = new Set(["one", "many", "to", "u"]);
 
-/** Etiquetas semánticas para relaciones (fromTable-toTable) en lugar del nombre de columna FK. */
-const RELATION_LABELS: Record<string, string> = {
-  "sessions-users": "has",
-  "roles-applications": "defines",
-  "user_application_roles-users": "assigned",
-  "user_application_roles-roles": "includes",
-};
-
 /** Escapa comillas dobles en etiqueta de relación para no romper el parser de Mermaid. */
 function escapeErLabel(s: string): string {
   return (s ?? "").replace(/"/g, "'").trim() || "ref";
 }
 
-/** Etiqueta de relación: mapa semántico, stem de FK (`tenant_id` → `tenant`), o referencia a tabla padre. */
-function getRelationLabel(fromTable: string, toTable: string, fkColumn: string): string {
-  const key = `${fromTable}-${toTable}`;
-  const semantic = RELATION_LABELS[key];
-  if (semantic) return escapeErLabel(semantic);
+/** Etiqueta de relación genérica: stem de FK (`tenant_id` → `tenant`), o referencia a tabla padre. */
+function getRelationLabel(toTable: string, fkColumn: string): string {
   const fk = (fkColumn ?? "").trim();
   if (fk && fk !== "ref" && fk.toLowerCase() !== "id") {
     const stem = fk.replace(/_id$/i, "");
@@ -252,7 +241,7 @@ function buildErDiagram(
     seen.add(key);
     const fromName = ER_RESERVED.has(r.from.toLowerCase()) ? `${r.from}_entity` : r.from;
     const toName = ER_RESERVED.has(r.to.toLowerCase()) ? `${r.to}_entity` : r.to;
-    const label = getRelationLabel(r.from, r.to, r.fkColumn ?? "ref");
+    const label = getRelationLabel(r.to, r.fkColumn ?? "ref");
     lines.push(`${indentEntity}${toName} ||--o{ ${fromName} : "${label}"`);
   }
   return lines.join("\n");
@@ -280,7 +269,7 @@ function suggestAuthStateDiagram(section3Body: string): DiagramSuggestion | null
 }
 
 /**
- * Normaliza diagrama erDiagram: timestamptz→datetime, PK/FK dobles→PK, 2 espacios ASCII.
+ * Normaliza diagrama erDiagram: timestamptz→datetime, claves `PK FK` sin coma→`PK, FK` (repairErDiagramPkFkCommas), 2 espacios ASCII.
  */
 export function normalizeErDiagramForMermaid(content: string): string {
   if (!content?.trim()) return content;

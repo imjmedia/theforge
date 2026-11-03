@@ -9,4 +9,4 @@ Texto.
 ---
 ## 2. Arquitectura y Stack
 
-### Stack.
+Stack.

@@ -90,6 +90,8 @@ export function toRunRecordDto(
     ...(record.failedStep ? { failedStep: record.failedStep } : {}),
     auditTrail: record.auditTrail,
     ...(record.llmCalls !== undefined ? { llmCalls: record.llmCalls } : {}),
+    ...(record.failedLlmCalls !== undefined ? { failedLlmCalls: record.failedLlmCalls } : {}),
+    ...(record.auditorOutcome !== undefined ? { auditorOutcome: record.auditorOutcome } : {}),
     ...(record.promptTokens !== undefined ? { promptTokens: record.promptTokens } : {}),
     ...(record.completionTokens !== undefined ? { completionTokens: record.completionTokens } : {}),
     ...(record.costUsd !== undefined ? { costUsd: record.costUsd } : {}),
@@ -122,6 +124,10 @@ export function toAggregatesDto(summary: MddEvalSummary): MddEvalAggregatesDto {
     avgDurationMs: a.avgDurationMs,
     totalCostUsd: a.totalCostUsd,
     totalLlmCalls: a.totalLlmCalls,
+    ...(a.totalFailedLlmCalls !== undefined ? { totalFailedLlmCalls: a.totalFailedLlmCalls } : {}),
+    ...(a.auditorUnavailableCount !== undefined ? { auditorUnavailableCount: a.auditorUnavailableCount } : {}),
+    ...(a.auditorInvalidCount !== undefined ? { auditorInvalidCount: a.auditorInvalidCount } : {}),
+    ...(a.infraDegraded !== undefined ? { infraDegraded: a.infraDegraded } : {}),
   };
 }
 

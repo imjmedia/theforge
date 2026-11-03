@@ -81,6 +81,74 @@ describe("invokeScopedArchitectLlmWithHeadingCap", () => {
     assert.deepStrictEqual(res.usage_metadata, { input_tokens: 10, output_tokens: 7, total_tokens: 17 });
   });
 
+  it("abort externo durante un stream colgado: rechaza, cierra el iterador (return) y no cae a invoke", async () => {
+    let returned = 0;
+    let invoked = 0;
+    const llm = {
+      stream: () => ({
+        [Symbol.asyncIterator]() {
+          return {
+            next: () => new Promise<IteratorResult<unknown>>(() => undefined), // se cuelga
+            return: () => {
+              returned += 1;
+              return Promise.resolve({ done: true, value: undefined } as IteratorResult<unknown>);
+            },
+          };
+        },
+      }),
+      invoke: async () => {
+        invoked += 1;
+        return { content: "no debe llegar" };
+      },
+    };
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20);
+    await assert.rejects(
+      invokeScopedArchitectLlmWithHeadingCap(llm as never, msgs, {
+        tag: "T",
+        signal: controller.signal,
+        idleTimeoutMs: 5_000,
+        hardTimeoutMs: 5_000,
+      }),
+    );
+    assert.strictEqual(returned, 1, "iterator.return() debe llamarse con abort externo");
+    assert.strictEqual(invoked, 0);
+  });
+
+  it("el fallback por timeout recibe la señal externa: un abort durante el invoke del fallback lo corta", async () => {
+    let invokeStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      invokeStarted = resolve;
+    });
+    const llm = {
+      stream: () => ({
+        [Symbol.asyncIterator]() {
+          return {
+            next: () => new Promise<IteratorResult<unknown>>(() => undefined),
+            return: () => new Promise<IteratorResult<unknown>>(() => undefined),
+          };
+        },
+      }),
+      // El fallback se cuelga hasta que se aborta la señal que recibe.
+      invoke: (_m: unknown, opts?: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          invokeStarted?.();
+          opts?.signal?.addEventListener("abort", () => reject(new Error("invoke abortado")), { once: true });
+        }),
+    };
+    const controller = new AbortController();
+    const run = invokeScopedArchitectLlmWithHeadingCap(llm as never, msgs, {
+      tag: "T",
+      signal: controller.signal,
+      idleTimeoutMs: 30,
+      hardTimeoutMs: 5_000,
+    });
+    void started.then(() => controller.abort());
+    const t0 = Date.now();
+    await assert.rejects(run);
+    assert.ok(Date.now() - t0 < 2_000, "el abort externo debe cortar el fallback");
+  });
+
   it("sin .stream usa invoke", async () => {
     const llm = { invoke: async () => ({ content: "ok directo" }) };
     const res = await invokeScopedArchitectLlmWithHeadingCap(llm as never, msgs, { tag: "T" });

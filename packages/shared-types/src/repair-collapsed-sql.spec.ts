@@ -170,3 +170,35 @@ describe("OBP4MO tenant_id fixture", () => {
     assert.equal((out.match(/CREATE TABLE/g) ?? []).length, 8);
   });
 });
+
+describe("SQL colapsado: corte genérico por comentario `--` y CREATE (sin literales de cliente)", () => {
+  const GENERIC = `-- Pedidos del cliente CREATE TABLE pedidos ( id UUID PRIMARY KEY, total NUMERIC, -- en centavos creado_at TIMESTAMPTZ ); -- Líneas de pedido CREATE TABLE lineas ( id UUID PRIMARY KEY, pedido_id UUID REFERENCES pedidos(id) );`;
+
+  it("extractCreateStatements conserva el comentario previo a cada CREATE, sea cual sea su texto", () => {
+    const stmts = extractCreateStatements(GENERIC);
+    assert.equal(stmts.length, 2);
+    assert.equal(stmts[0]!.comment, "Pedidos del cliente");
+    assert.equal(stmts[1]!.comment, "Líneas de pedido");
+  });
+
+  it("no toma un comentario de columna de la tabla anterior como comentario de la siguiente", () => {
+    const stmts = extractCreateStatements(
+      "CREATE TABLE a ( id UUID, -- nota interna x UUID ); CREATE TABLE b ( id UUID );",
+    );
+    assert.equal(stmts[1]!.comment, undefined);
+  });
+
+  it("splitEsquemaSqlHeadingFromPayload corta por `--` o CREATE sin depender de «Tabla espejo»", () => {
+    const a = splitEsquemaSqlHeadingFromPayload("Esquema SQL del módulo -- Pedidos CREATE TABLE p (id UUID);");
+    assert.equal(a?.heading, "Esquema SQL del módulo");
+    const b = splitEsquemaSqlHeadingFromPayload("Esquema SQL del módulo CREATE TABLE p (id UUID);");
+    assert.equal(b?.heading, "Esquema SQL del módulo");
+    assert.equal(splitEsquemaSqlHeadingFromPayload("Esquema SQL del módulo -- sin create"), null);
+  });
+
+  it("repairCollapsedSqlParagraphs expande un esquema colapsado cualquiera en un fence sql", () => {
+    const out = repairCollapsedSqlParagraphs(`Esquema SQL de pedidos\n\n${GENERIC}\n`);
+    assert.match(out, /```sql\n-- Pedidos del cliente\nCREATE TABLE pedidos \(/);
+    assert.match(out, /CREATE TABLE lineas \(/);
+  });
+});

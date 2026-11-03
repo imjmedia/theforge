@@ -33,6 +33,7 @@ import {
 import {
   MDD_AUDIT_COMPLETE_MESSAGE,
   MDD_AUDIT_DONE_MESSAGE,
+  MDD_AUDIT_UNAVAILABLE_MESSAGE,
   type MddManualAuditEvent,
   type MddManualAuditState,
 } from "./mdd-manual-audit.types.js";
@@ -100,7 +101,10 @@ export class MddManualAuditService {
     );
 
     const validation = validateMddStructure(mddDraft);
-    const score = auditResult.auditorScore ?? 0;
+    // Auditor caído: sin nota (`undefined`), jamás 0. El resultado lo marca `auditorOutcome`.
+    const unavailable = auditResult.auditorOutcome === "unavailable";
+    const score = unavailable ? undefined : auditResult.auditorScore;
+    const auditorOutcome = auditResult.auditorOutcome;
     const gaps = auditResult.auditorGaps ?? null;
     const feedback = auditResult.auditorFeedback ?? "";
 
@@ -112,6 +116,7 @@ export class MddManualAuditService {
         message: MDD_AUDIT_COMPLETE_MESSAGE,
         mddContent: mddDraft,
         auditorScore: score,
+        auditorOutcome,
         gaps,
       };
     }
@@ -120,9 +125,11 @@ export class MddManualAuditService {
     if (questionPlan.length === 0) {
       return {
         type: "audit_complete",
-        message: MDD_AUDIT_COMPLETE_MESSAGE,
+        // Con el Auditor caído no se afirma "sin gaps": se avisa que no hubo veredicto.
+        message: unavailable ? MDD_AUDIT_UNAVAILABLE_MESSAGE : MDD_AUDIT_COMPLETE_MESSAGE,
         mddContent: mddDraft,
         auditorScore: score,
+        auditorOutcome,
         gaps,
       };
     }
@@ -134,6 +141,7 @@ export class MddManualAuditService {
       threadId,
       mddDraft,
       auditorScore: score,
+      auditorOutcome,
       auditorFeedback: feedback,
       auditorGaps: gaps,
       questionPlan,
@@ -161,6 +169,7 @@ export class MddManualAuditService {
       total: first.total,
       mddContent: state.mddDraft,
       auditorScore: score,
+      auditorOutcome,
       gaps,
     };
   }
@@ -212,7 +221,14 @@ export class MddManualAuditService {
       state.stageId,
       state.mddComplexity,
     );
-    state.auditorScore = auditResult.auditorScore ?? state.auditorScore;
+    if (auditResult.auditorOutcome === "unavailable") {
+      // Sin veredicto: se descarta la nota previa (ya no corresponde al borrador actual) en vez de dejarla o poner 0.
+      state.auditorScore = undefined;
+      state.auditorOutcome = "unavailable";
+    } else {
+      state.auditorScore = auditResult.auditorScore ?? state.auditorScore;
+      state.auditorOutcome = auditResult.auditorOutcome ?? state.auditorOutcome;
+    }
     state.auditorFeedback = auditResult.auditorFeedback ?? state.auditorFeedback;
     state.auditorGaps = auditResult.auditorGaps ?? state.auditorGaps;
 
@@ -255,6 +271,7 @@ export class MddManualAuditService {
       mddContent: state.mddDraft,
       message,
       auditorScore: state.auditorScore,
+      auditorOutcome: state.auditorOutcome,
       gaps: state.auditorGaps,
     };
   }
@@ -313,7 +330,9 @@ export class MddManualAuditService {
       const validation = validateMddStructure(mddDraft);
       const structural = synthesizeStructuralAuditorGaps(validation);
       return {
-        auditorScore: structural.score,
+        // Sin nota: el Auditor no estuvo disponible (no se inventa un score).
+        auditorScore: undefined,
+        auditorOutcome: "unavailable",
         auditorFeedback: validation.issues.join(" ") || "Auditoría LLM no disponible",
         auditorGaps: structural,
         auditorDecision: "clarifier",
@@ -361,7 +380,7 @@ export class MddManualAuditService {
     projectId: string,
     stageId: string,
     mddContent: string,
-    _score: number,
+    _score: number | undefined,
     gaps: MddManualAuditState["auditorGaps"],
     feedback: string,
   ): Promise<void> {

@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import type { MddEvalCase, MddEvalScore } from "./mdd-eval.types.js";
 import {
   buildEvalDbgaContent,
+  buildEvalSummary,
   computeEvalAggregates,
   runEvalCase,
   runEvalSuite,
@@ -140,6 +141,19 @@ describe("runEvalCase", () => {
     assert.equal(scored.length, 1);
   });
 
+  it("Auditor con salida inválida: el motivo llega al registro sin nota", async () => {
+    const done = {
+      ...GOOD_DONE,
+      auditorOutcome: "unavailable",
+      auditorUnavailableReason: "invalid",
+    } as EvalStreamEvent;
+    const { deps } = makeDeps({ events: [done] });
+    const record = await runEvalCase(deps, makeCase("ecommerce-invalid"), { timeoutMs: 5_000 });
+    assert.equal(record.auditorOutcome, "unavailable");
+    assert.equal(record.auditorUnavailableReason, "invalid");
+    assert.equal(record.auditorScore, undefined);
+  });
+
   it("falla si el Auditor queda por debajo del umbral del caso", async () => {
     const { deps } = makeDeps({ events: [{ ...GOOD_DONE, auditorScore: 80 } as EvalStreamEvent] });
     const record = await runEvalCase(deps, makeCase("ecommerce-audit"), { timeoutMs: 5_000 });
@@ -162,6 +176,29 @@ describe("runEvalCase", () => {
     assert.equal(record.auditorScore, undefined);
     assert.equal(record.precision, 40);
     assert.equal(record.passed, true);
+  });
+
+  it("Auditor no disponible: sin auditorScore (aunque llegue uno), sin umbral, con marca en el auditTrail", async () => {
+    const done = {
+      ...GOOD_DONE,
+      precision: 55,
+      auditorScore: 0,
+      auditorRan: true,
+      auditorOutcome: "unavailable",
+    } as EvalStreamEvent;
+    const record = await runEvalCase(makeDeps({ events: [done] }).deps, makeCase("ecommerce-auditor-down"), { timeoutMs: 5_000 });
+    assert.equal(record.auditorScore, undefined);
+    assert.equal(record.auditorOutcome, "unavailable");
+    assert.equal(record.passed, true, "sin nota no se exige umbral del Auditor");
+    assert.ok(record.auditTrail.includes("Auditor no disponible"));
+  });
+
+  it("auditorOutcome scored conserva la nota y se anota en el registro", async () => {
+    const done = { ...GOOD_DONE, auditorScore: 88, auditorOutcome: "scored" } as EvalStreamEvent;
+    const record = await runEvalCase(makeDeps({ events: [done] }).deps, makeCase("ecommerce-auditor-scored"), { timeoutMs: 5_000 });
+    assert.equal(record.auditorScore, 88);
+    assert.equal(record.auditorOutcome, "scored");
+    assert.ok(!record.auditTrail.includes("Auditor no disponible"));
   });
 
   it("no exige auditor cuando el Auditor no corrió (failedStep)", async () => {
@@ -333,6 +370,72 @@ describe("computeEvalAggregates", () => {
     assert.equal(empty.totalLlmCalls, null);
   });
 
+  it("Auditor no disponible: no entra en la media del Auditor y se cuenta aparte", () => {
+    const base = {
+      caseId: "a", complexity: "LOW" as const, startedAt: "", markdownLen: 1, gateBlockers: [], gateWarnings: [],
+      auditTrail: [], rubric: rubric(80, true), durationMs: 1000, passed: true,
+    };
+    const agg = computeEvalAggregates([
+      { ...base, caseId: "a", auditorScore: 90, auditorOutcome: "scored" },
+      { ...base, caseId: "b", auditorScore: 80, auditorOutcome: "scored" },
+      // Un score residual en un caso `unavailable` tampoco debe contar.
+      { ...base, caseId: "c", auditorScore: 0, auditorOutcome: "unavailable" },
+      { ...base, caseId: "d", auditorOutcome: "unavailable" },
+      { ...base, caseId: "e", auditorScore: 70, auditorOutcome: "scored" },
+      { ...base, caseId: "f", auditorScore: 100, auditorOutcome: "scored" },
+      { ...base, caseId: "g", auditorScore: 90, auditorOutcome: "scored" },
+      { ...base, caseId: "h", auditorScore: 90, auditorOutcome: "scored" },
+      { ...base, caseId: "i", auditorScore: 90, auditorOutcome: "scored" },
+      { ...base, caseId: "j", auditorScore: 90, auditorOutcome: "scored" },
+    ]);
+    assert.equal(agg.auditorUnavailableCount, 2);
+    assert.equal(agg.avgAuditor, 87.5); // 8 casos `scored`: (90+80+70+100+90*4)/8
+    assert.equal(agg.infraDegraded, false, "2/10 = 20 % exacto no supera el umbral");
+  });
+
+  it("infra degradada cuando el Auditor cae en más del 20 % de los casos", () => {
+    const base = {
+      caseId: "a", complexity: "LOW" as const, startedAt: "", markdownLen: 1, gateBlockers: [], gateWarnings: [],
+      auditTrail: [], rubric: rubric(80, true), durationMs: 1000, passed: true,
+    };
+    const agg = computeEvalAggregates([
+      { ...base, caseId: "a", auditorScore: 90, auditorOutcome: "scored" },
+      { ...base, caseId: "b", auditorOutcome: "unavailable" },
+      { ...base, caseId: "c", auditorOutcome: "unavailable" },
+      { ...base, caseId: "d", auditorScore: 90, auditorOutcome: "scored" },
+    ]);
+    assert.equal(agg.auditorUnavailableCount, 2);
+    assert.equal(agg.infraDegraded, true);
+    assert.equal(agg.avgAuditor, 90);
+
+    const none = computeEvalAggregates([{ ...base, auditorScore: 90 }]);
+    assert.equal(none.auditorUnavailableCount, 0);
+    assert.equal(none.infraDegraded, false);
+  });
+
+  it("salidas inválidas (invalid) se cuentan aparte y no degradan la infra; transport y deadline sí", () => {
+    const base = {
+      caseId: "a", complexity: "LOW" as const, startedAt: "", markdownLen: 1, gateBlockers: [], gateWarnings: [],
+      auditTrail: [], rubric: rubric(80, true), durationMs: 1000, passed: true,
+    };
+    const invalidOnly = computeEvalAggregates([
+      { ...base, caseId: "a", auditorOutcome: "unavailable", auditorUnavailableReason: "invalid" },
+      { ...base, caseId: "b", auditorOutcome: "unavailable", auditorUnavailableReason: "invalid" },
+      { ...base, caseId: "c", auditorScore: 90, auditorOutcome: "scored" },
+    ]);
+    assert.equal(invalidOnly.auditorUnavailableCount, 2);
+    assert.equal(invalidOnly.auditorInvalidCount, 2);
+    assert.equal(invalidOnly.infraDegraded, false, "la calidad del modelo no marca la corrida como infra degradada");
+
+    const infra = computeEvalAggregates([
+      { ...base, caseId: "a", auditorOutcome: "unavailable", auditorUnavailableReason: "transport" },
+      { ...base, caseId: "b", auditorOutcome: "unavailable", auditorUnavailableReason: "deadline" },
+      { ...base, caseId: "c", auditorScore: 90, auditorOutcome: "scored" },
+    ]);
+    assert.equal(infra.auditorInvalidCount, 0);
+    assert.equal(infra.infraDegraded, true, "2/3 caídos por transporte o presupuesto superan el 20 %");
+  });
+
   it("sin ningún caso con uso medido los totales de coste y llamadas son null, no 0", () => {
     const base = {
       caseId: "a", complexity: "LOW" as const, startedAt: "", markdownLen: 1, gateBlockers: [], gateWarnings: [],
@@ -440,6 +543,52 @@ describe("uso de tokens del caso", () => {
     assert.equal(record.costUsd, undefined);
     assert.ok(record.auditTrail.some((line) => line.includes("harness: sin uso de tokens: tabla caída")));
     assert.equal(record.passed, true);
+  });
+
+  it("solo llamadas fallidas (p. ej. 401): el caso NO queda medido, failedLlmCalls = N y coste no medido", async () => {
+    const { deps, sleeps } = withCallLog({ events: [GOOD_DONE] }, () => ({
+      llmCalls: 0,
+      failedLlmCalls: 4,
+      promptTokens: 0,
+      completionTokens: 0,
+      costUsd: 0,
+    }));
+    const record = await runEvalCase(deps, makeCase("ecommerce-401"), { timeoutMs: 5_000 });
+    assert.equal(record.llmCalls, undefined);
+    assert.equal(record.failedLlmCalls, 4);
+    assert.equal(record.promptTokens, undefined);
+    assert.equal(record.completionTokens, undefined);
+    assert.equal(record.costUsd, undefined);
+    assert.deepEqual(sleeps, [1_000, 1_000, 1_000], "reintenta por si aún llegan filas medidas");
+    assert.ok(record.auditTrail.some((line) => line.includes("4 llamadas fallidas sin coste")));
+    const summary = buildEvalSummary({
+      runId: "r-fallidas",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      finishedAt: "2026-01-01T00:01:00.000Z",
+      records: [record],
+    });
+    assert.equal(summary.aggregates.totalCostUsd, null);
+    assert.equal(summary.aggregates.totalLlmCalls, null);
+    assert.equal(summary.aggregates.totalFailedLlmCalls, 4);
+  });
+
+  it("mezcla de llamadas ok y fallidas: se miden las ok, se anotan las fallidas y el resumen las suma", async () => {
+    const { deps } = withCallLog({ events: [GOOD_DONE] }, () => ({
+      llmCalls: 5,
+      failedLlmCalls: 2,
+      promptTokens: 1000,
+      completionTokens: 500,
+      costUsd: 0.1,
+    }));
+    const record = await runEvalCase(deps, makeCase("ecommerce-mix"), { timeoutMs: 5_000 });
+    assert.equal(record.llmCalls, 5);
+    assert.equal(record.failedLlmCalls, 2);
+    assert.equal(record.costUsd, 0.1);
+    assert.ok(record.auditTrail.some((line) => line.includes("2 llamadas fallidas sin coste")));
+    const agg = computeEvalAggregates([record]);
+    assert.equal(agg.totalLlmCalls, 5);
+    assert.equal(agg.totalCostUsd, 0.1);
+    assert.equal(agg.totalFailedLlmCalls, 2);
   });
 
   it("en el resumen, un suite sin uso medido da totales null en los agregados", async () => {

@@ -16,7 +16,7 @@ Controller (chat / cascade / MDD queue)
 
 - **`token-usage.context.ts`** — `AsyncLocalStorage<TokenUsageContextValue>`. Helpers: `runWithTokenUsageContext(payload, fn)`, `runWithTokenUsageContext` para propagación transparente a través de awaits.
 - **`token-usage.service.ts`** — `TokenUsageService` (NestJS provider): `record(event)` persite un evento. `getSummary(projectId)` agrega por documento/modelo vía `aggregateTokenUsageRows` (función pura, testeable). `recordAsync()` fire-and-forget para adapters de streaming.
-- **`token-usage-recorder.ts`** — Helper DI-agnóstico en `apps/api/src/modules/ai/utils/`. `recordTokenUsageFromContext(provider, model, promptTok, completionTok, totalTok)` consume el contexto activo vía `getActiveTokenUsageContext()` y delega al `TokenUsageService` registrado en `globalThis` por `onModuleInit`.
+- **`token-usage-recorder.ts`** — Helper DI-agnóstico en `apps/api/src/modules/ai/utils/`. `recordTokenUsageFromContext(provider, model, promptTok, completionTok, totalTok, telemetría?)` consume el contexto activo vía `getActiveTokenUsageContext()` y delega al `TokenUsageService` registrado en `globalThis` por `onModuleInit`.
 - **`chat-model-pricing.ts`** — Catálogo USD/MXN por `(providerId, modelId)`. `calculateChatCostUsd(...)` calcula el coste; `usdToMxn(usd)` (en `FxRateService`) lo convierte.
 - **`fx-rate.service.ts`** — Lee `AppConfig.mxn_per_usd` con cache 60s. `FxRateService.usdToMxn(usd)` async. `invalidate()` se llama desde `SystemConfigService.patchSettings` cuando cambia el TC.
 
@@ -50,7 +50,7 @@ Convenciones:
 
 Para proveedores custom o precios negociados por tenant, usar `registerChatModelPricingOverride(providerId, modelId, pricing)` en runtime (expuesto en `chat-model-pricing.ts`).
 
-Si el modelo no está catalogado, `calculateChatCostUsd` devuelve 0 — el evento se persiste con `costUsd=0 / costMxn=0` y la UI lo muestra como "coste $0.00" (no es un error). La agregación por documento sigue mostrando tokens reales.
+Si el modelo no está catalogado, `calculateChatCostUsd` devuelve 0 — el evento se persiste con `costUsd=0 / costMxn=0` la fila queda con `costKnown: false` y la UI muestra «coste desconocido» en lugar de $0.00: el 0 no significa gratis. La agregación por documento sigue mostrando tokens reales.
 
 ## Cómo agregar un nuevo `documentField`
 
@@ -77,10 +77,20 @@ node --import tsx --test \
   src/modules/ai-analysis/token-usage/token-usage.context.spec.ts \
   src/modules/ai-analysis/token-usage/token-usage.service.spec.ts \
   src/modules/fx-rate/fx-rate.service.spec.ts \
-  src/modules/ai-analysis/utils/mdd-llm-retry.util.derive.spec.ts
+  src/modules/ai-analysis/utils/mdd-llm-retry.util.derive.spec.ts \
+  src/modules/ai/utils/token-usage-recorder.spec.ts \
+  src/modules/ai-analysis/utils/mdd-llm-retry.util.telemetry.spec.ts \
+  src/modules/ai-analysis/utils/mdd-scoped-stream.util.telemetry.spec.ts
 ```
 
-53 specs verde (23 + 11 por documentación futura).
+El conteo de specs en verde no se mantiene en este documento: se obtiene al ejecutar el comando.
+
+## Contadores del resumen (lote 2b)
+
+- `GET /ai-analysis/token-usage` añade por documento y por modelo: `failedCalls` (error, timeout o abort; entran en `calls` con coste 0 y no se facturan), `estimatedCalls` (tokens chars/4) y `costUnknown` (hay filas sin tarifa: el coste mostrado no es completo).
+- `classifyTokenUsageOutcome` (`token-usage.context.ts`) es la regla única para contar una fila: `measured` (`ok` o `invalid`; sin `outcome` si `costKnown !== false`), `failed` (`error`, `timeout`, `abort`) o `unknown` (sin `outcome` y con `costKnown === false`, que no cuenta como medida ni como fallida). La usan el resumen y el eval.
+- El contrato de respuesta está en `packages/shared-types/src/token-usage-api.ts`. `TokenUsageCard` muestra «(+N fallidas)» y los rótulos «coste estimado» y «coste desconocido».
+
 
 ## Endpoints
 
@@ -88,3 +98,26 @@ node --import tsx --test \
 - `GET /api/ai-analysis/token-usage/events?projectId&stageId&documentField&limit` — eventos crudos (debug).
 
 Ambos requieren `super_admin` ? no — sólo sesión autenticada. Renderizados en UI por `TokenUsageCard` (`apps/web/src/components/TokenUsageCard.tsx`) integrado en `WorkshopMetricsColumnInner.tsx`.
+
+## Telemetría por llamada (O14)
+
+`TokenUsage` guarda, además de tokens y coste, columnas nullable por llamada: `latencyMs`, `attempts`,
+`outcome` (`ok | timeout | abort | error | invalid`), `costKnown` (false si el modelo no tiene tarifa:
+el coste 0 no significa gratis), `estimated` (true si los tokens son chars/4) y `modelActual`
+(`response_metadata.chained_model`).
+
+- El contexto (`withTokenUsageContextPatch`) acepta `node`, `capability`, `latencyMs`, `attempts`, `outcome`,
+  `costKnown`, `estimated` y `modelActual`; `capability` no tiene columna y hace de `node` si este falta.
+- `TokenUsageService.recordEstimated(...)` / `recordUsageEstimateOnAbort(...)` (recorder) registran pases
+  abortados o cortados antes de `usage_metadata` como estimación marcada.
+- `modelId` es el modelo configurado; `modelActual` el que respondió (fallback de la cadena). El coste se
+  tarifa con `modelActual` si existe (`resolvePricingModelId`).
+- `skipCost` (recorder/servicio): un `error` sin salida parcial (p. ej. 400, 401/403, contexto excedido, cuota o 5xx) no fue facturado por el proveedor: la fila se registra con tokens 0, `costUsd` 0 y `costKnown` false.
+  `abort`/`timeout`, o un error con salida parcial, sí conservan la estimación con coste (`mdd-llm-retry.util.ts`,
+  `estimateFailedAttempt`).
+- Los adaptadores HTTP (`anthropic`, `gemini`, `openai-compatible` en `apps/api/src/modules/ai/adapters/`) llaman a
+  `recordTokenUsageFromContext` tanto en la respuesta completa como en el stream. Los pases MDD registran por su
+  propio camino (`mdd-llm-retry.util.ts`, `mdd-scoped-stream.util.ts`).
+- En cada llamada MDD se escribe además una línea `[MDD:LlmCall]` (JSON de una línea con `node`, modelo, tokens,
+  latencia y resultado; `estimated: true` solo cuando la fila es estimación).
+- Un fallo de escritura se loggea como `error` y suma a `failedWrites` (`getTelemetryHealth()`); nunca lanza.

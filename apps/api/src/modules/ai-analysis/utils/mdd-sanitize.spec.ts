@@ -19,7 +19,6 @@ import {
   deduplicateOutboxTablesInDraft,
   deduplicateUatSections,
   extractNodeVersionFromSection2,
-  draftHasRequestIdDualApprovalApi,
   ensureOutboxTableInDraft,
   ensureSection6WhenSection7Present,
   ensureSecurityLockoutInSection6,
@@ -33,7 +32,6 @@ import {
   detectSection2Section7NodeVersionMismatchIssue,
   fixDeterministicMddCoherence,
   finalizeMddDeliverable,
-  fixDualApprovalSchemaInDraft,
   getSectionsToPreserveFromExecutorPlan,
   normalizeCanonicalMddSectionHeadings,
   ensureMissingCanonicalSections,
@@ -1096,71 +1094,8 @@ ${block}`;
 
 });
 
-describe("fixDualApprovalSchemaInDraft", () => {
-  it("divide endpoint único export/approve en approve-first y approve-second", () => {
-    const draft = `## 1. Contexto
-
-Aprobación dual para exportación de claves.
-
-## 4. Contratos de API
-
-| POST | \`/api/keys/:keyId/export/approve\` | Aprobar exportación (dual) | JWT (admin_security) |
-
-#### POST /api/keys/:keyId/export/approve
-
-Aprueba solicitud. Primer aprobador → first_approved; segundo → approved.
-`;
-    const out = fixDualApprovalSchemaInDraft(draft);
-    assert.ok(out.includes("approve-first"));
-    assert.ok(out.includes("approve-second"));
-    assert.ok(out.includes("| POST | `/api/keys/:keyId/export/approve-first` | Primera aprobación"));
-    assert.ok(!/\|\s*POST\s*\|[^|\n]*\/export\/approve(?!-first|-second)/i.test(out));
-  });
-
-  it("no divide approve cuando el patrón :requestId/approve + execute ya está documentado", () => {
-    const draft = `## 1. Contexto
-
-Aprobación dual para exportación de claves.
-
-## 4. Contratos de API
-
-| POST | /api/v1/keys/:id/export/:requestId/approve | Aprobar (1.ª o 2.ª) | JWT |
-| POST | /api/v1/keys/:id/export/:requestId/execute | Ejecutar exportación | JWT |
-| POST | /api/v1/keys/:id/export/:requestId/reject | Rechazar | JWT |
-`;
-    assert.ok(draftHasRequestIdDualApprovalApi(draft));
-    const out = fixDualApprovalSchemaInDraft(draft);
-    assert.ok(!out.includes("approve-first"));
-    assert.ok(out.includes("/:requestId/approve"));
-    assert.ok(out.includes("/:requestId/execute"));
-  });
-
-  it("convierte approved_by en first_approver_id + second_approver_id", () => {
-    const draft = `## 1. Contexto
-
-Aprobación dual para exportación de claves.
-
-## 3. Modelo de Datos
-
-\`\`\`sql
-CREATE TABLE approval_requests (
-  id UUID PRIMARY KEY,
-  requested_by UUID NOT NULL REFERENCES users(id),
-  approved_by UUID REFERENCES users(id),
-  status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected'))
-);
-\`\`\`
-`;
-    const out = fixDualApprovalSchemaInDraft(draft);
-    assert.ok(out.includes("first_approver_id"));
-    assert.ok(out.includes("second_approver_id"));
-    assert.ok(!/\bapproved_by\b/i.test(out));
-    assert.ok(out.includes("first_approved"));
-  });
-});
-
 describe("applyDeterministicCrossConsistencyFixes", () => {
-  it("combina SQL, dual approval y coherencia monolito", () => {
+  it("combina SQL y coherencia monolito sin reescribir la aprobación dual", () => {
     const draft = `## 1. Contexto
 
 Aprobación dual obligatoria.
@@ -1183,7 +1118,7 @@ CREATE TABLE approval_requests (
 TLS entre microservicios.
 `;
     const out = applyDeterministicCrossConsistencyFixes(draft);
-    assert.ok(out.includes("second_approver_id"));
+    assert.ok(!out.includes("second_approver_id"), "no inventa columnas de aprobación dual");
     assert.ok(out.includes("módulos internos"));
     assert.ok(!/entre microservicios/i.test(out));
   });

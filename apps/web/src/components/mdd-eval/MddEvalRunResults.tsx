@@ -1,6 +1,6 @@
 import { Fragment, useState } from "react";
 import { ChevronDown, ChevronRight, FileText } from "lucide-react";
-import type { MddEvalRunDto, MddEvalRunRecordDto } from "@theforge/shared-types";
+import type { AuditorOutcome, MddEvalRunDto, MddEvalRunRecordDto } from "@theforge/shared-types";
 import { Badge, Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import {
@@ -161,6 +161,24 @@ export function MddEvalRunResults({ run, onViewMarkdown }: MddEvalRunResultsProp
         </p>
       ) : null}
 
+      {agg?.infraDegraded ? (
+        <p role="alert" className="rounded-md border border-[var(--destructive)]/40 p-3 text-sm text-[var(--destructive)]">
+          Infra degradada: el Auditor no estuvo disponible en demasiados casos y las notas de esta corrida no son comparables.
+        </p>
+      ) : null}
+
+      {agg && (agg.auditorUnavailableCount ?? 0) > 0 ? (
+        <p className="text-sm text-[var(--foreground-muted)]">
+          Auditor no disponible en {agg.auditorUnavailableCount}/{agg.cases} casos
+        </p>
+      ) : null}
+
+      {agg && (agg.totalFailedLlmCalls ?? 0) > 0 ? (
+        <p className="text-sm text-[var(--foreground-muted)]">
+          {agg.totalFailedLlmCalls} llamadas LLM fallidas (sin coste)
+        </p>
+      ) : null}
+
       {agg ? (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
           <Stat label="Casos" value={`${agg.passed}/${agg.cases} PASS`} />
@@ -223,7 +241,7 @@ export function MddEvalRunResults({ run, onViewMarkdown }: MddEvalRunResultsProp
                         <Badge variant={complexityTone(record.complexity)}>{complexityLabel(record.complexity)}</Badge>
                       </td>
                       <td className="px-3 py-2 text-right">{formatScore(record.rubric.total)}</td>
-                      <td className="px-3 py-2 text-right">{formatScore(record.auditorScore)}</td>
+                      <td className="px-3 py-2 text-right">{(record.auditorOutcome satisfies AuditorOutcome | undefined) === "unavailable" ? "Sin nota" : formatScore(record.auditorScore)}</td>
                       <td className="px-3 py-2">
                         {record.gateOk === undefined ? (
                           "—"
@@ -235,7 +253,15 @@ export function MddEvalRunResults({ run, onViewMarkdown }: MddEvalRunResultsProp
                       </td>
                       <td className="px-3 py-2 text-right">{formatPoints(record.precision)}</td>
                       <td className="whitespace-nowrap px-3 py-2 text-right">{formatDuration(record.durationMs)}</td>
-                      <td className="px-3 py-2 text-right">{formatCost(record.costUsd)}</td>
+                      <td className="px-3 py-2 text-right">
+                        {formatCost(record.costUsd)}
+                        <div className="text-xs text-[var(--foreground-muted)]">
+                          {record.llmCalls !== undefined ? `${record.llmCalls} llamadas` : "—"}
+                          {(record.failedLlmCalls ?? 0) > 0 ? (
+                            <span className="ml-1 text-[var(--warning)]">(+{record.failedLlmCalls} fallidas)</span>
+                          ) : null}
+                        </div>
+                      </td>
                       <td className="px-3 py-2">
                         <Badge variant={record.passed ? "success" : "destructive"}>{passLabel(record.passed)}</Badge>
                       </td>

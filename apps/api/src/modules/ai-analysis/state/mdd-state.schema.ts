@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { mddStructuredSchema } from "./mdd-structured.schema.js";
+import { auditorOutcomeSchema } from "@theforge/shared-types";
 
 /** Alineado con `Project.complexity` (Prisma): gobierna apéndices de rigor en Clarifier / Arquitecto / Auditor y el desglose del estimador en vivo. */
 export const mddComplexityLevelSchema = z.enum(["LOW", "MEDIUM", "HIGH"]);
@@ -16,10 +17,26 @@ export const auditorCriticalGapSchema = z.object({
   fix: z.string(),
 });
 
-/** Gaps estructurados del Auditor (fuente de verdad para estimador cuando existe). */
+/**
+ * Resultado de la pasada del Auditor.
+ * - `scored`: el LLM devolvió un veredicto válido (hay nota real).
+ * - `unavailable`: sin JSON válido tras la reparación acotada, o fallo de transporte: NO hay nota
+ *   (ni 0 ni escala inventada) y la entrega la decide el gate determinista de `prepare_output`.
+ */
+export { auditorOutcomeSchema } from "@theforge/shared-types";
+export type { AuditorOutcome } from "@theforge/shared-types";
+
+/** Motivo de `auditorOutcome: "unavailable"`: `invalid` = salida de calidad del modelo; el resto = infraestructura/error. */
+export const auditorUnavailableReasonSchema = z.enum(["invalid", "transport", "error", "deadline"]);
+export type AuditorUnavailableReason = z.infer<typeof auditorUnavailableReasonSchema>;
+
+/**
+ * Gaps estructurados del Auditor (fuente de verdad para estimador cuando existe).
+ * `score` ausente/null = Auditor no disponible (sin nota); entonces `status` es `NO_EVALUADO`.
+ */
 export const auditorGapsSchema = z.object({
-  score: z.number().min(0).max(100),
-  status: z.enum(["APROBADO", "RECHAZADO"]),
+  score: z.number().min(0).max(100).nullish(),
+  status: z.enum(["APROBADO", "RECHAZADO", "NO_EVALUADO"]),
   critical_gaps: z.array(auditorCriticalGapSchema),
   syntax_errors: z.array(z.string()),
   infrastructure_ready: z.boolean(),
@@ -56,7 +73,7 @@ export const mddStateSchema = z.object({
   /** Accumulated MDD document (each agent appends). Derived from mddStructured when present. */
   mddDraft: z.string(),
   /** Auditor quality score 0–100. If < 85, Manager assigns gap tasks to agents; if >= 85, hand over to user. */
-  auditorScore: z.number().min(0).max(100),
+  auditorScore: z.number().min(0).max(100).optional(),
   /** Feedback from Auditor when score < 85 (passed to Clarifier/agents for correction). */
   auditorFeedback: z.string().optional(),
   /** Gaps estructurados del Auditor (LLM); usado por el estimador en lugar de regex. */
@@ -202,6 +219,13 @@ export const mddStateSchema = z.object({
   stackArchitectAttempt: z.number().int().min(0).optional(),
   /** True tras primera pasada del Auditor (score/gaps only — no re-enrutar a auditor). */
   auditorRan: z.boolean().optional(),
+  /**
+   * Resultado de la última pasada del Auditor (`scored` | `unavailable`). Opcional: los checkpoints
+   * anteriores a este campo no lo tienen y se leen como "sin dato" (compatibilidad hacia atrás).
+   */
+  auditorOutcome: auditorOutcomeSchema.optional(),
+  /** Motivo de `auditorOutcome: "unavailable"`. Opcional: ausente en `scored` y en checkpoints anteriores. */
+  auditorUnavailableReason: auditorUnavailableReasonSchema.optional(),
 });
 
 export type MDDState = z.infer<typeof mddStateSchema>;

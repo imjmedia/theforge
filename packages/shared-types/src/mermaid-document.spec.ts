@@ -9,6 +9,7 @@ import {
   normalizeMermaidInDocument,
   normalizeMermaidDiagramBody,
   quoteFlowchartLabelsWithParens,
+  quoteFlowchartSpacedLabels,
   repairErDiagramPkFkCommas,
   repairErDiagramBrdMarkdownLeaks,
   repairFragmentedSequenceMermaidInDocument,
@@ -145,8 +146,9 @@ flowchart LR
 ## Requerimientos`;
     const out = normalizeMermaidInDocument(doc);
     assert.doesNotMatch(out, /```\n### ODOO/);
-    assert.match(out, /ODOO\["Odoo ERP"\] -->\|Webhook\| NEW/);
-    assert.match(out, /FE -->\|"GET \/site-costs"\| NEW/);
+    assert.match(out, /ODOO\[Odoo ERP\] -->\|Webhook\| NEW/);
+    // Preservación: una etiqueta de arista con `/` que el parser acepta no se cita.
+    assert.match(out, /FE -->\|GET \/site-costs\| NEW/);
     assert.match(out, /BE --> NEW/);
     assert.equal((out.match(/```mermaid/g) ?? []).length, 1);
     assert.match(out, /## Requerimientos/);
@@ -248,7 +250,7 @@ flowchart LR
 });
 
 describe("normalizeMermaidDiagramBody — entrecomilla <br/> y especiales", () => {
-  it("cita nodos [] y diamantes {} con <br/> : ? sin anteponer erDiagram", () => {
+  it("conserva nodos [] y diamantes {} válidos con <br/> : ? sin anteponer erDiagram", () => {
     const body = `flowchart TD
     B{Usuario autorizado?}
     C[Registrar en failed_request_logs<br/>failure_type: autorización]
@@ -256,16 +258,16 @@ describe("normalizeMermaidDiagramBody — entrecomilla <br/> y especiales", () =
     const out = normalizeMermaidDiagramBody(body);
     assert.ok(out.startsWith("flowchart TD"), `cabecera inesperada: ${out.split("\n", 1)[0]}`);
     assert.doesNotMatch(out, /erDiagram/);
-    assert.match(out, /B\{"Usuario autorizado\?"\}/);
-    assert.match(out, /C\["Registrar en failed_request_logs<br\/>failure_type: autorización"\]/);
-    assert.match(out, /E\{"Token MCP expirado\?<br\/>pat_expires_at < now"\}/);
+    assert.match(out, /B\{Usuario autorizado\?\}/);
+    assert.match(out, /C\[Registrar en failed_request_logs<br\/>failure_type: autorización\]/);
+    assert.match(out, /E\{Token MCP expirado\?<br\/>pat_expires_at < now\}/);
   });
 
-  it("normaliza <br> suelto a <br/>", () => {
+  it("conserva <br> suelto dentro de comillas (el parser lo acepta)", () => {
     const body = `flowchart TD
     A["Portal<br>checkout"]`;
     const out = normalizeMermaidDiagramBody(body);
-    assert.match(out, /Portal<br\/>checkout/);
+    assert.match(out, /Portal<br>checkout/);
   });
 });
 
@@ -297,6 +299,26 @@ describe("stripMarkdownLeakFromMermaidDiagramBody", () => {
     assert.match(out, /DB-->>API: rows/);
     assert.doesNotMatch(out, /TechnicalMetadata/);
     assert.doesNotMatch(out, /cicd_pipeline/);
+  });
+
+  it("las fugas genéricas (viñetas, headings) se siguen cortando sin reglas de prosa por cliente", () => {
+    const body = `sequenceDiagram
+  participant API
+  API->>API: ok
+- El usuario hace clic en Entrar
+- Al cargar la página se consulta la sesión`;
+    const out = stripMarkdownLeakFromMermaidDiagramBody(body);
+    assert.match(out, /API->>API: ok/);
+    assert.doesNotMatch(out, /El usuario|Al cargar/);
+  });
+
+  it("una línea `[high_security]` ya no se trata como fuga por nombre de etiqueta (no hay regla de cliente)", () => {
+    const body = `flowchart TD
+  a --> b
+[high_security]`;
+    const out = stripMarkdownLeakFromMermaidDiagramBody(body);
+    assert.match(out, /a --> b/);
+    assert.match(out, /\[high_security\]/);
   });
 });
 
@@ -357,7 +379,7 @@ flowchart TD
     assert.match(out, /```\n\n- 1\. \*\*Evento/);
   });
 
-  it("no rompe `subgraph ID[Título con espacios]` (no lo pega como subgraph_ID)", () => {
+  it("no rompe `subgraph ID[Título con espacios]` (no lo pega como subgraph_ID) y lo deja sin reescribir", () => {
     const doc = `## Diagrama
 
 \`\`\`mermaid
@@ -373,7 +395,7 @@ flowchart LR
 \`\`\`
 `;
     const out = normalizeMermaidInDocument(doc);
-    assert.match(out, /subgraph NEW\["Microservicio Costos y Listas de Precios"\]/);
+    assert.match(out, /subgraph NEW\[Microservicio Costos y Listas de Precios\]/);
     assert.match(out, /subgraph LEGACY\[OBP\]/);
     assert.doesNotMatch(out, /subgraph_NEW/);
     assert.doesNotMatch(out, /subgraph_LEGACY/);
@@ -460,7 +482,7 @@ describe("validateMermaid flowchart subgraph", () => {
 });
 
 describe("normalizeMermaidDiagramBody erDiagram PK/FK", () => {
-  it("repara diagrama auth con id PK FK persistido", () => {
+  it("PK FK sin coma se repara a PK, FK (er-pk-fk-commas acotada; ver ADR 0002, addendum 2026-11-03)", () => {
     const raw = `erDiagram
   tenants {
     uuid id PK
@@ -477,16 +499,46 @@ describe("normalizeMermaidDiagramBody erDiagram PK/FK", () => {
     datetime expires_at
   }`;
     const out = normalizeMermaidDiagramBody(raw);
-    assert.doesNotMatch(out, /\bPK\s+FK\b/i);
-    assert.match(out, /uuid id PK/);
+    assert.match(out, /uuid id PK, FK/);
+    assert.match(out, /uuid user_id FK/);
+    assert.doesNotMatch(out, /uuid id PK FK/);
+  });
+
+  it("PK, FK con coma válido se conserva en normalizeMermaidDiagramBody", () => {
+    const raw = `erDiagram\n  users {\n    uuid tenant_id PK, FK\n  }`;
+    assert.match(normalizeMermaidDiagramBody(raw), /uuid tenant_id PK, FK/);
   });
 });
 
 describe("repairErDiagramPkFkCommas", () => {
-  it("colapsa PK, FK y PK FK a un solo marcador PK", () => {
-    assert.equal(repairErDiagramPkFkCommas("uuid tenant_id PK, FK"), "uuid tenant_id PK");
-    assert.equal(repairErDiagramPkFkCommas("uuid id PK FK"), "uuid id PK");
-    assert.equal(repairErDiagramPkFkCommas("uuid id FK PK"), "uuid id PK");
+  const attr = (line: string) => `erDiagram\n  USERS {\n    ${line}\n  }`;
+
+  it("separa dos claves sin coma en PK, FK conservando el orden", () => {
+    assert.equal(repairErDiagramPkFkCommas(attr("uuid id PK FK")), attr("uuid id PK, FK"));
+    assert.equal(repairErDiagramPkFkCommas(attr("uuid id FK PK")), attr("uuid id FK, PK"));
+    assert.equal(repairErDiagramPkFkCommas(attr("uuid id PK FK UK")), attr("uuid id PK, FK, UK"));
+  });
+
+  it("conserva el comentario entre comillas que sigue a las claves", () => {
+    assert.equal(
+      repairErDiagramPkFkCommas(attr('uuid id PK FK "clave primaria"')),
+      attr('uuid id PK, FK "clave primaria"'),
+    );
+  });
+
+  it("no toca una línea que ya tiene PK, FK con coma", () => {
+    assert.equal(repairErDiagramPkFkCommas(attr("uuid tenant_id PK, FK")), attr("uuid tenant_id PK, FK"));
+    assert.equal(repairErDiagramPkFkCommas(attr("uuid tenant_id FK, PK")), attr("uuid tenant_id FK, PK"));
+  });
+
+  it("no toca una sola clave", () => {
+    assert.equal(repairErDiagramPkFkCommas(attr("uuid id PK")), attr("uuid id PK"));
+    assert.equal(repairErDiagramPkFkCommas(attr("uuid user_id FK")), attr("uuid user_id FK"));
+  });
+
+  it("no toca nada fuera de un bloque erDiagram", () => {
+    const flow = "flowchart TD\n  A[uuid id PK FK] --> B";
+    assert.equal(repairErDiagramPkFkCommas(flow), flow);
   });
 
   it("ensureErDiagramHeader antepone erDiagram si falta", () => {
@@ -665,29 +717,28 @@ erDiagram
     assert.doesNotMatch(out, /^• /m);
   });
 
-  it("convierte graph TD legacy a flowchart TD (Mermaid v11)", () => {
+  it("conserva graph TD válido: el registro ya no lo reescribe a flowchart", () => {
     const body = `graph TD
   A[Start] --> B[End]`;
     const out = normalizeMermaidDiagramBody(body);
-    assert.match(out, /^flowchart TD/);
-    assert.doesNotMatch(out, /^graph TD/);
+    assert.match(out, /^graph TD/);
+    assert.doesNotMatch(out, /^flowchart TD/);
   });
 });
 
 describe("normalizeMermaidDiagramBody sequenceDiagram markdown leaks", () => {
-  it("parte Respuesta**Nota:** prosa en flecha + Note over", () => {
+  it("conserva Respuesta**Nota:** en el mensaje (válido; no se parte en Note over)", () => {
     const body = `sequenceDiagram
     participant Admin
     participant API
     participant Frontend
     API-->>Frontend: Respuesta**Nota:** El panel de administración solo es visible para superadmins.`;
     const out = normalizeMermaidDiagramBody(body);
-    assert.match(out, /API-->>Frontend: Respuesta/);
-    assert.match(out, /Note over Frontend: El panel de administración/);
-    assert.doesNotMatch(out, /\*\*Nota:\*\*/);
+    assert.match(out, /API-->>Frontend: Respuesta\*\*Nota:\*\* El panel de administración solo es visible para superadmins\./);
+    assert.doesNotMatch(out, /Note over/);
   });
 
-  it("prepareMermaidDiagramForRender deja sequenceDiagram parseable sin **", () => {
+  it("prepareMermaidDiagramForRender conserva el ** de un mensaje válido de sequenceDiagram", () => {
     const fenced = `\`\`\`mermaid
 sequenceDiagram
     participant Backend
@@ -695,8 +746,8 @@ sequenceDiagram
     Backend-->>UI: OK**Nota:** Mensaje auxiliar.
 \`\`\``;
     const out = prepareMermaidDiagramForRender(fenced);
-    assert.doesNotMatch(out, /\*\*/);
-    assert.match(out, /Note over UI: Mensaje auxiliar/);
+    assert.match(out, /Backend-->>UI: OK\*\*Nota:\*\* Mensaje auxiliar\./);
+    assert.doesNotMatch(out, /Note over UI/);
   });
 });
 
@@ -774,7 +825,7 @@ sequenceDiagram
     assert.equal((out.match(/```mermaid/gi) ?? []).length, 1);
     assert.doesNotMatch(out, /```mermaid[\s\S]*```mermaid/);
     assert.match(out, /BackendChat-->>Usuario/);
-    assert.match(out, /"\{ valid: true/);
+    assert.match(out, /SSO-->>BackendChat: \{ valid: true, user: \{\.\.\.\} \}/);
     assert.doesNotMatch(out, /\nsequenceDiagram\n[\s\S]*```\nsequenceDiagram/m);
   });
 });
@@ -801,6 +852,24 @@ _Propuesta derivada de §2–§4: nota markdown.`;
     const out = normalizeMermaidDiagramBody(raw);
     assert.match(out, /BE_SQL\[\("PostgreSQL · 29 tablas"\)\]/);
     assert.doesNotMatch(out, /Propuesta derivada/);
+  });
+});
+
+describe("quoteFlowchartSpacedLabels — no fusiona nodos ni aristas", () => {
+  it("preserva un nodo mal cerrado con arista dentro del corchete (A[Inicio --> B[Fin])", () => {
+    const raw = "flowchart TD\n    A[Inicio --> B[Fin]";
+    assert.equal(quoteFlowchartSpacedLabels(raw), raw);
+  });
+
+  it("preserva un `[` interior seguido de texto tras el `]` en la misma línea", () => {
+    const raw = "flowchart TD\n    A[Texto [x] B";
+    assert.equal(quoteFlowchartSpacedLabels(raw), raw);
+  });
+
+  it("sigue citando etiquetas con llaves o corchete interior sin arista", () => {
+    const out = quoteFlowchartSpacedLabels("flowchart TD\n    API[GET /x/{id}]\n    A[Texto con [corchete]");
+    assert.match(out, /API\["GET \/x\/\{id\}"\]/);
+    assert.match(out, /A\["Texto con \[corchete"\]/);
   });
 });
 
@@ -878,9 +947,24 @@ describe("subgraph flowchart — BRD ecosystem diagram", () => {
     assert.deepEqual(validateMermaid(out), []);
   });
 
-  it("quoteFlowchartEdgeLabels wraps accent/spaced edge labels", () => {
+  it("quoteFlowchartEdgeLabels preserva etiquetas con acentos o espacios que el parser acepta", () => {
     const out = quoteFlowchartEdgeLabels("flowchart LR\nUSER -->|Comunica vía| WAS");
-    assert.match(out, /USER -->\|"Comunica vía"\| WAS/);
+    assert.equal(out, "flowchart LR\nUSER -->|Comunica vía| WAS");
+  });
+
+  it("quoteFlowchartEdgeLabels cita solo etiquetas con comillas internas, paréntesis o llaves", () => {
+    assert.equal(
+      quoteFlowchartEdgeLabels('flowchart TD\nA -->|dice "ok"| B'),
+      "flowchart TD\nA -->|\"dice 'ok'\"| B",
+    );
+    assert.equal(
+      quoteFlowchartEdgeLabels("flowchart TD\nA -->|valida (JWT)| B"),
+      'flowchart TD\nA -->|"valida (JWT)"| B',
+    );
+    assert.equal(
+      quoteFlowchartEdgeLabels("flowchart TD\nFE -->|GET /x/{id}| NEW"),
+      'flowchart TD\nFE -->|"GET /x/{id}"| NEW',
+    );
   });
 
   it("decodeMermaidHtmlEntities restores quoted subgraph titles", () => {
@@ -1186,9 +1270,16 @@ describe("1A.3 regla 5: formas de nodo de flowchart intactas", () => {
     assert.match(out, /^\s*DB\[\(DB: x\)\]$/m);
   });
 
-  it("el rectángulo con espacios o acentos sigue citándose", () => {
+  it("el rectángulo con espacios o acentos válido no se cita; sí se cita el que trae `[` sin arista", () => {
     const out = normalizeMermaidDiagramBody("flowchart TD\n  A[Módulo Tenants] --> B");
-    assert.match(out, /A\["Módulo Tenants"\]/);
+    assert.match(out, /A\[Módulo Tenants\] --> B/);
+    const broken = normalizeMermaidDiagramBody("flowchart TD\n  A[Texto con [corchete]");
+    assert.match(broken, /A\["Texto con \[corchete"\]/);
+  });
+
+  it("`A[Inicio --> B[Fin]` no se cita: citarlo fusionaría dos nodos y una arista", () => {
+    const raw = "flowchart TD\n  A[Inicio --> B[Fin]";
+    assert.equal(normalizeMermaidDiagramBody(raw), raw);
   });
 
   it("quoteFlowchartLabelsWithParens conserva el trapecio y cita el cilindro con paréntesis anidados", () => {
@@ -1234,15 +1325,15 @@ describe("1A.3 regla 7: ids con espacios solo donde va un id", () => {
 });
 
 describe("1A.3 regla 11: las etiquetas largas no se recortan", () => {
-  it("una etiqueta de 200 caracteres sale completa y con los espacios compactados", () => {
+  it("una etiqueta de 200 caracteres sale completa y sin recortar (los espacios no se compactan)", () => {
     const label = Array.from({ length: 40 }, () => "palabra").join(" ");
     const out = normalizeMermaidDiagramBody(`flowchart TD\n  A["${label.replace(/ /g, "   ")}"] --> B`);
-    assert.ok(out.includes(`A["${label}"]`), out);
+    assert.ok(out.includes(`A["${label.replace(/ /g, "   ")}"]`), out);
   });
 });
 
 describe("1A.3 regla 12: front-matter y directivas init se conservan", () => {
-  it("`%%{init: …}%%` antes de la cabecera sobrevive y los comentarios `%%` normales se quitan", () => {
+  it("`%%{init: …}%%` antes de la cabecera sobrevive y los comentarios `%%` normales también (no se reescriben)", () => {
     const body = `%%{init: {'theme':'dark', 'flowchart': {'curve':'basis'}}}%%
 flowchart TD
     %% comentario
@@ -1252,7 +1343,8 @@ flowchart TD
       out,
       `%%{init: {'theme':'dark', 'flowchart': {'curve':'basis'}}}%%
 flowchart TD
-    A["Inicio: x?"] --> B`,
+    %% comentario
+    A[Inicio: x?] --> B`,
     );
     assert.equal(normalizeMermaidDiagramBody(out), out);
   });

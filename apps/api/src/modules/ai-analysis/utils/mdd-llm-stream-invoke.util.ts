@@ -90,6 +90,32 @@ function toAIMessageChunk(chunk: unknown): AIMessageChunk | null {
   return null;
 }
 
+/** Texto parcial acumulado (`content` string o bloques `text`) para estimar tokens al abortar. */
+function partialTextOf(merged: AIMessageChunk | null): string {
+  const content = merged?.content as unknown;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((b) => (typeof b === "string" ? b : typeof (b as { text?: unknown })?.text === "string" ? (b as { text: string }).text : ""))
+    .join("");
+}
+
+/** Adjunta `partialText` al error (best-effort; ignora valores que no son objetos). */
+function attachPartialText(err: unknown, merged: AIMessageChunk | null): void {
+  if (!err || typeof err !== "object") return;
+  try {
+    (err as { partialText?: string }).partialText = partialTextOf(merged);
+  } catch {
+    /* error congelado: sin texto parcial */
+  }
+}
+
+/** Texto parcial que un error de stream arrastra (vacío si no hay). */
+export function readPartialText(err: unknown): string {
+  const v = err && typeof err === "object" ? (err as { partialText?: unknown }).partialText : undefined;
+  return typeof v === "string" ? v : "";
+}
+
 /**
  * Consume `llm.stream()` agregando chunks con `AIMessageChunk.concat`, que ya
  * fusiona `content`, `tool_call_chunks` (→ `tool_calls` parseados) y
@@ -164,9 +190,14 @@ export async function invokeLlmStreamingWithIdleTimeout(
     if (externalAborted) throw createLlmAbortError(options.tag);
     if (idleTimedOut || hardTimedOut) throw timeoutError();
   } catch (err) {
-    if (externalAborted) throw createLlmAbortError(options.tag);
-    if (idleTimedOut || hardTimedOut) throw timeoutError();
-    throw err;
+    const out: unknown = externalAborted
+      ? createLlmAbortError(options.tag)
+      : idleTimedOut || hardTimedOut
+        ? timeoutError()
+        : err;
+    // O14: el caller estima los tokens del corte con el texto emitido hasta entonces.
+    attachPartialText(out, merged);
+    throw out;
   } finally {
     externalSignal?.removeEventListener("abort", onExternalAbort);
     if (idleTimer) clearTimeout(idleTimer);

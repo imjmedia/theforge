@@ -6,7 +6,7 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { Command } from "@langchain/langgraph";
 import type { LivePrecisionCalculator } from "../estimation/estimation.types.js";
 import type { MDDStateType } from "../state/index.js";
-import { hasRealBenchmark, LOG, mddHasContent, withTurnReset } from "./mdd-manager/manager-context.util.js";
+import { hasRealBenchmark, LOG, mddHasContent, resolveManagerScore, withTurnReset } from "./mdd-manager/manager-context.util.js";
 import { handleManagerDelegateOutcome } from "./mdd-manager/manager-delegate.js";
 import { runManagerLlmTurn } from "./mdd-manager/manager-llm-turn.js";
 import { runDeterministicManagerHandlers } from "./mdd-manager/manager-state-handlers.js";
@@ -33,8 +33,9 @@ export function createMddManagerNode(
 ) {
   return async (state: MDDStateType): Promise<Partial<MDDStateType> | Command> => {
     const userMessage = (state.lastUserMessage ?? "").trim();
-    const score = state.auditorScore ?? 0;
-    LOG("entry lastUserMessage=%s mddDraftLen=%s auditorScore=%s", userMessage.slice(0, 80), (state.mddDraft ?? "").length, score);
+    // Sin nota (Auditor no disponible) se mantiene `undefined`: no se convierte en 0.
+    const score = resolveManagerScore(state);
+    LOG("entry lastUserMessage=%s mddDraftLen=%s auditorScore=%s", userMessage.slice(0, 80), (state.mddDraft ?? "").length, score ?? "sin nota");
 
     const deterministic = await runDeterministicManagerHandlers({
       state,

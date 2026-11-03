@@ -124,3 +124,32 @@ describe("validateEnv", () => {
     assert.equal(env.MDD_BULLMQ_CONCURRENCY, "3");
   });
 });
+
+describe("validateEnv: presupuestos LANGGRAPH_MDD_*_BUDGET_MS", () => {
+  const BUDGETS = [
+    "LANGGRAPH_MDD_AUDITOR_NODE_BUDGET_MS",
+    "LANGGRAPH_MDD_MANAGER_TURN_BUDGET_MS",
+    "LANGGRAPH_MDD_CRITIC_BUDGET_MS",
+    "LANGGRAPH_MDD_CROSS_CONSISTENCY_BUDGET_MS",
+  ];
+
+  it("un presupuesto de 10000 ms es inválido y el mensaje nombra la variable, sin el valor", () => {
+    for (const name of BUDGETS) {
+      const msg = messageOf({ [name]: "10000" });
+      assert.match(msg, new RegExp(name));
+      assert.match(msg, /debe ser un entero ≥ 15000 ms/);
+    }
+  });
+
+  it("un valor no entero o no numérico también falla", () => {
+    assert.match(messageOf({ LANGGRAPH_MDD_CRITIC_BUDGET_MS: "abc" }), /LANGGRAPH_MDD_CRITIC_BUDGET_MS/);
+    assert.match(messageOf({ LANGGRAPH_MDD_CRITIC_BUDGET_MS: "15000.5" }), /entero/);
+  });
+
+  it("15000 ms (el mínimo) y los presupuestos ausentes o vacíos son válidos", () => {
+    const env = validateEnv({ LANGGRAPH_MDD_MANAGER_TURN_BUDGET_MS: "15000", LANGGRAPH_MDD_CRITIC_BUDGET_MS: "" });
+    assert.equal(env.LANGGRAPH_MDD_MANAGER_TURN_BUDGET_MS, 15000);
+    assert.equal(env.LANGGRAPH_MDD_CRITIC_BUDGET_MS, undefined);
+    assert.equal(env.LANGGRAPH_MDD_AUDITOR_NODE_BUDGET_MS, undefined);
+  });
+});

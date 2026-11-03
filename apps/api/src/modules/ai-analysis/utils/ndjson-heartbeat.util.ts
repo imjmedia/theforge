@@ -10,7 +10,8 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Ejecuta una promesa larga (p. ej. LLM) emitiendo eventos de progreso periódicos
- * para evitar timeouts idle de Traefik/nginx durante regenerate-section.
+ * para evitar timeouts idle de Traefik/nginx durante las llamadas LLM largas de los streams MDD
+ * (p. ej. la regeneración de una sección por job `mode: "section"`).
  */
 export async function* awaitWithNdjsonHeartbeat<T>(
   work: Promise<T>,

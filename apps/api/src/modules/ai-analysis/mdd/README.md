@@ -16,9 +16,12 @@ Cola de generación/regeneración del MDD desacoplada del SSE del navegador.
 | `pipeline` | Greenfield — benchmark → MDD | `streamMddAnalysis` |
 | `manager` | Greenfield — chat Manager (turno nuevo) | `streamMddAnalysisWithManager` vía `runMddChatTurn` (ver «Chat vía cola») |
 | `resume` | Greenfield — chat Manager (respuesta del usuario sobre un `threadId`) | `streamMddResume` vía `runMddChatTurn` |
-| `section` | Greenfield — `/seguridad`, etc. | `streamMddRegenerateSection` |
-| `upstream-sync` | Greenfield — cambios DBGA/BRD/Benchmark | `streamMddUpstreamSync` (§1–§7 selectivas; restaura estrictamente las secciones fuera de alcance) |
+| `section` | Greenfield — `/seguridad`, etc. (bajo lease, lote 2b) | `streamMddRegenerateSection` dentro de `withThreadLease` |
+| `section-pipeline` | Greenfield — §5 con paridad de pipeline (bajo lease) | `streamMddRegenerateSection` con `pipelineParity`, dentro de `withThreadLease` |
+| `upstream-sync` | Greenfield — cambios DBGA/BRD/Benchmark (bajo lease) | `streamMddUpstreamSync` (§1–§7 selectivas; restaura estrictamente las secciones fuera de alcance) |
 | `legacy` | Proyectos `LEGACY` | `LegacyCoordinatorService.generateMdd` |
+
+Todos los modos con hilo (`pipeline`, `section`, `section-pipeline`, `upstream-sync`) corren completos bajo el lease por hilo, incluidas la corrección de patrones y la persistencia final. Un hilo ocupado lanza `THREAD_BUSY` (no se reintenta). `LOCK_UNAVAILABLE` se reintenta en jobs de pipeline (`MAX_ATTEMPTS = 2`); `LEASE_LOST` y `MddPersistBlockedError` no se reintentan. Un turno de chat (`manager`/`resume`) se encola con `attempts: 1`.
 
 Un solo job MDD activo o en cola por proyecto (`assertCanEnqueue` → 409 si busy).
 
@@ -32,6 +35,9 @@ Un solo job MDD activo o en cola por proyecto (`assertCanEnqueue` → 409 si bus
 - **Nodo `prepare_output` (streaming):** mismo modo gate — valida SSOT/gate sin reformatear el borrador del grafo.
 - **Final (`done`):** `formatForPersist: true` + pipeline completo (`MddUpdatePipelineService`) con gate de entrega, semáforo y estimación.
 - **Mermaid:** `prepareMddForOutput` y `prepareMddMarkdownForPersist` ya no degradan bloques ` ```mermaid ` a prosa ni pierden fences. La validación contra el parser real llega con el oráculo en runtime (Fase 2); hoy la garantía la da `mermaid-corpus.spec.ts` en CI.
+
+- **Suelo anti-wipe:** `persist` devuelve un resultado explícito. Si el suelo rechaza el documento (`floor` / `too_short`), el stream emite `blocked` sin `persistedOnServer`; en el cierre de un job, `MddPersistBlockedError` se marca como `UnrecoverableError` (no se reintenta).
+- **Auditor sin nota:** un `done` puede llegar con `auditorOutcome: "unavailable"` y sin `auditorScore`; el Workshop lo muestra como «sin nota», nunca como 0.
 
 El Workshop ya no depende de `persistMddContent` tras encolar.
 
@@ -53,7 +59,7 @@ Al cancelar un job **activo**: abort cooperativo entre nodos; el banner se liber
 | `POST` | `/projects/:id/legacy/generate-mdd` | Encola legacy por defecto (`?queue=false` sync) |
 | `GET` | `/projects/:id/legacy/mdd-jobs/:jobId` | Polling legacy |
 
-SSE (`POST …/mdd/stream`, `…/stream/manager`, `…/regenerate-section`) sigue disponible; el Workshop usa jobs por defecto.
+SSE (`POST …/mdd/stream`, `…/stream/manager`) sigue disponible; `…/stream/regenerate-section` fue retirado (regenerar una sección = job `mode: section`); el Workshop usa jobs por defecto.
 
 ## Chat vía cola (`manager` / `resume`)
 
@@ -61,7 +67,7 @@ El turno del chat con Manager corre en el worker BullMQ (no dentro del request H
 
 **Flag:** `MDD_CHAT_VIA_QUEUE` (default `"1"`; `0`/`false`/`off`/`no` lo apagan). El Workshop lo lee de `GET /ai-analysis/mdd/config`; apagado (o API sin el endpoint) usa el NDJSON legacy `mdd/stream/manager|resume`, intacto.
 
-**Job:** `runMddChatTurn` toma el lease por hilo (`ThreadRunLockService`, misma clave que los streams HTTP: `projectId:stageId`); si está ocupado lanza `ThreadBusyError` (no reintentable). Persiste en `done` exactamente como el stream (`runGuardedMddStream` → `persistedOnServer`). Se encola con `attempts: 1` (un turno no es idempotente) y sin preemptar un turno vivo del mismo proyecto (409 si lo hay; solo se liberan jobs huérfanos sin lock).
+**Job:** `runMddChatTurn` toma el lease por hilo (`ThreadRunLockService`, misma clave que los streams HTTP: `projectId:stageId`); si está ocupado lanza `ThreadBusyError` (no reintentable). Si Redis no está listo o el `SET` falla, lanza `LOCK_UNAVAILABLE` (no se cae a un lock en proceso); si el lease se pierde durante el turno (renovación confirmada fallida), el turno aborta con `LEASE_LOST`. Ambos llegan como `error` con ese `code` y ninguno se reintenta en un turno de chat, que se encola con `attempts: 1`. Antes de abrir el stream del turno aplica, bajo ese mismo lease, la corrección de patrones incompatibles (`applyMddPatternCorrectionUnderLease`; solo escribe si hay patrones incompatibles). Persiste en `done` exactamente como el stream (`runGuardedMddStream` → `persistedOnServer`). Se encola con `attempts: 1` (un turno no es idempotente) y sin preemptar un turno vivo del mismo proyecto (409 si lo hay; solo se liberan jobs huérfanos sin lock).
 
 **Relay de eventos:** cada evento del generador (`progress`, `draft`, `interrupt`, `done`, `error`, `blocked`) se agrega a la lista Redis `mdd:job-events:<jobId>` (JSON por entrada, TTL 24 h) y se avisa por el canal homónimo. Solo se conservan los últimos 3 `draft` (los anteriores pasan a `noop` para que los cursores sigan siendo índices estables). Sin `REDIS_URL`: array + `EventEmitter` en proceso (solo dev). El worker garantiza un evento terminal aunque el turno falle o se cancele (`error` con `code: "CANCELLED"`, `THREAD_BUSY`, …).
 
@@ -78,7 +84,7 @@ El turno del chat con Manager corre en el worker BullMQ (no dentro del request H
 1. Con `REDIS_URL` y el worker activos, abre un proyecto y manda al chat MDD un mensaje que delegue en agentes (p. ej. «Regenera §3 y §4»).
 2. Cuando el banner muestre progreso, cierra la pestaña (o reinicia el API).
 3. Espera unos segundos/minutos (el job sigue en `theforge-mdd`; `GET /ai-analysis/mdd/jobs/<id>` → `active` → `completed`).
-4. Reabre el proyecto: el Workshop reanuda los eventos desde el cursor guardado, muestra el progreso restante y aplica el resultado (`done` con `persistedOnServer`, o el `interrupt` con preguntas / plan pendiente de aprobar).
+4. Reabre el proyecto: el Workshop reanuda los eventos desde el cursor guardado, muestra el progreso restante y aplica el resultado (`done` con `persistedOnServer`, o el `interrupt` con preguntas / plan pendiente de aprobar). Si el suelo anti-wipe rechazó el documento (`blocked` con `MDD_PERSIST_FLOOR` o `MDD_PERSIST_TOO_SHORT`) o el turno cayó con `LEASE_LOST` / `LOCK_UNAVAILABLE`, el editor vuelve al estado previo al turno y la web avisa; el documento guardado no cambia.
 5. Con `MDD_CHAT_VIA_QUEUE=0` el comportamiento es el legacy (cerrar la pestaña aborta el turno).
 
 ## Progreso acumulado

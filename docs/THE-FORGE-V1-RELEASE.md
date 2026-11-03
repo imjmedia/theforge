@@ -129,7 +129,7 @@ Hasta este release, la generación del MDD dependía del **SSE del navegador** (
 | Flujo | Comportamiento |
 |-------|----------------|
 | Benchmark → MDD (greenfield) | `POST /ai-analysis/mdd/stream` — NDJSON en vivo; `res.destroy()` al cerrar cliente |
-| Regenerar §N (`/seguridad`, etc.) | `POST …/mdd/stream/regenerate-section` — SSE |
+| Regenerar §N (`/seguridad`, etc.) | `POST …/mdd/jobs` con `mode: "section"` — cola y polling (el endpoint SSE `…/mdd/stream/regenerate-section` fue retirado en el lote 2b) |
 | MDD legacy | `POST …/legacy/generate-mdd` — respuesta bloqueante hasta terminar |
 | Persistencia | Frontend llama `persistMddContent` al recibir `done` |
 
@@ -163,7 +163,7 @@ Cola dedicada **`theforge-mdd`** (`MddQueueService`, `apps/api/src/modules/ai-an
 
 **Excepción deliberada:** el chat interactivo del **Manager** (HITL, aprobación de plan, `resume`) sigue en **SSE** (`POST …/mdd/stream/manager`). Solo arranques masivos (benchmark, legacy, `/sección`) van en background.
 
-Los endpoints SSE (`/mdd/stream`, `/regenerate-section`) permanecen para compatibilidad; el Workshop los sustituyó por jobs.
+Los endpoints SSE `/mdd/stream` y `/mdd/stream/manager` siguen disponibles; `/mdd/stream/regenerate-section` fue retirado en el lote 2b (regenerar una sección = job `mode: "section"`). El Workshop usa jobs.
 
 ### 1.7 Pipeline Tasks planner + auditor (v1.0.0)
 

@@ -48,6 +48,21 @@ export function resolveMddAuditorNodeBudgetMs(): number {
   return readPositiveIntEnv("LANGGRAPH_MDD_AUDITOR_NODE_BUDGET_MS", 360_000);
 }
 
+/** Presupuesto wall-clock total del Manager por turno (structured output o invoke+parse, reparación incluida). */
+export function resolveMddManagerTurnBudgetMs(): number {
+  return readPositiveIntEnv("LANGGRAPH_MDD_MANAGER_TURN_BUDGET_MS", 180_000);
+}
+
+/** Presupuesto wall-clock total de la llamada del Architect Critic (reparación incluida). */
+export function resolveMddCriticBudgetMs(): number {
+  return readPositiveIntEnv("LANGGRAPH_MDD_CRITIC_BUDGET_MS", 120_000);
+}
+
+/** Presupuesto wall-clock total de la pasada LLM de consistencia cruzada (reparación incluida). */
+export function resolveMddCrossConsistencyBudgetMs(): number {
+  return readPositiveIntEnv("LANGGRAPH_MDD_CROSS_CONSISTENCY_BUDGET_MS", 120_000);
+}
+
 /** `true` salvo que `LANGGRAPH_LLM_STREAMING` valga `0`/`false`/`off`/`no`. */
 export function isLlmStreamingEnabled(): boolean {
   const raw = process.env.LANGGRAPH_LLM_STREAMING?.trim().toLowerCase();

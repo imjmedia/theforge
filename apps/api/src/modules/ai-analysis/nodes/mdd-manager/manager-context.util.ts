@@ -3,6 +3,54 @@ import type { MDDStateType } from "../../state/index.js";
 
 export const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Manager] ${msg}`, ...args);
 
+/** Texto que se muestra en lugar de un porcentaje cuando el Auditor no entregó nota. */
+export const SCORE_UNAVAILABLE_LABEL = "sin nota (auditoría no disponible)";
+
+/**
+ * Nota efectiva del Auditor para decisiones del Manager. `undefined` = sin nota (Auditor caído o aún sin valor):
+ * jamás se convierte en 0 ni se compara como tal.
+ */
+export function resolveManagerScore(state: Pick<MDDStateType, "auditorScore" | "auditorOutcome">): number | undefined {
+  if (state.auditorOutcome === "unavailable") return undefined;
+  return typeof state.auditorScore === "number" ? state.auditorScore : undefined;
+}
+
+/** "60%" o, sin nota, la etiqueta explícita (para mensajes internos al usuario/Clarifier). */
+export function formatScorePercent(score: number | undefined): string {
+  return typeof score === "number" ? `${score}%` : SCORE_UNAVAILABLE_LABEL;
+}
+
+/** Complemento de "Estamos …": "al 60%" o "sin nota (auditoría no disponible)". */
+export function describePrecision(precision: number | undefined): string {
+  return typeof precision === "number" ? `al ${precision}%` : SCORE_UNAVAILABLE_LABEL;
+}
+
+/** Mensaje directivo con las preguntas del Clarifier; sin nota lo dice explícitamente en vez de "0%". */
+export function buildQuestionsDirectiveReply(precision: number | undefined, questions: string[]): string {
+  return (
+    "Estamos " +
+    describePrecision(precision) +
+    ". Para avanzar al 85%, necesito que definamos los siguientes puntos.\n\n" +
+    questions.join("\n\n")
+  );
+}
+
+/** Respuesta a "¿qué falta para el 85%?" con el feedback del Auditor. */
+export function buildWhatNeededReply(precision: number | undefined, auditorFeedback: string): string {
+  return (
+    "Estamos " +
+    describePrecision(precision) +
+    ". Para avanzar al 85%, necesitamos:\n\n" +
+    auditorFeedback.trim() +
+    "\n\n¿Quieres que avancemos con estos puntos? Responde validando o indicando cambios concretos."
+  );
+}
+
+/** Sin nota no alcanza el umbral (no se puede afirmar calidad), pero tampoco se trata como 0. */
+export function isBelowQuality(score: number | undefined, threshold: number): boolean {
+  return score === undefined || score < threshold;
+}
+
 export function hasRealBenchmark(state: MDDStateType): boolean {
   const c = (state.dbgaContent ?? "").trim();
   return c.length > 0 && !/^\(sin\s+benchmark|sin\s+contexto/i.test(c);
@@ -66,6 +114,8 @@ export const TURN_TRANSIENT_RESET = {
   architectCriticAttempts: undefined,
   architectCriticFeedback: undefined,
   auditorRan: undefined,
+  auditorOutcome: undefined,
+  auditorUnavailableReason: undefined,
   postCriticParallelDone: undefined,
   section5FormatSkipped: undefined,
   meshJumpCount: undefined,

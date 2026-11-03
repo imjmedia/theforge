@@ -96,14 +96,25 @@ identifica como `<caso>-2` en los ficheros de salida.
 | Columna | Origen | Significado |
 |---|---|---|
 | rúbrica | `scoreMddAgainstCase` (determinista) | 0-100 ponderado sobre estructura, entidades, capacidades, seguridad, infra, contexto, idioma y diagramas, menos penalización por tokens prohibidos. Aprueba si ≥ `minRubric`. |
-| auditor | `precision` del evento `done` (juez único) | Score del Auditor LLM. Aprueba si ≥ `minAuditor`. No se evalúa si el Auditor no corrió (`failedStep`). |
+| auditor | `precision` del evento `done` (juez único) | Score del Auditor LLM. Aprueba si ≥ `minAuditor`. No se evalúa si el Auditor no corrió (`failedStep`). Si no entregó nota (`auditorOutcome: "unavailable"`) la celda muestra «Sin nota», no 0: el caso cuenta en `auditorUnavailableCount` y queda fuera de `avgAuditor`. Si más del 20 % de los casos quedan sin nota, la corrida se marca `infraDegraded` (mide infraestructura caída, no calidad). |
 | gate | `deliveryGate.ok` | Gate de entrega del pipeline. `KO` falla el caso. |
 | % | `precision` (en vivo) | Porcentaje mostrado al usuario. Informativo. |
 | duración | tiempo de pared del caso | Incluye generación; no incluye el borrado del proyecto temporal. |
-| coste | `TokenUsageService.getSummary` | Coste USD de todas las llamadas del proyecto temporal. |
+| coste | `TokenUsageService.getSummary` | Coste USD de todas las llamadas del proyecto temporal. Desde la corrida 3: las filas `estimated` (chars/4) y las `costKnown: false` (modelo sin tarifa) no son coste real; la corrida 3 no es comparable con la 2 en coste. El eval corre sin caché de nodos (`disableNodeCache` por defecto). |
 | estado | `passed` | `PASS` si la rúbrica aprueba, el auditor (si existe) llega al umbral, el gate no es KO y no hubo error. |
 
 `passRate` en `summary.json` es una fracción (0-1); el texto la muestra como porcentaje.
+
+## Llamadas fallidas, Auditor sin nota e infraestructura (lote 2b)
+
+- **`failedLlmCalls`** (por caso) y **`totalFailedLlmCalls`** (resumen): llamadas `error`, `timeout` o `abort`. No suman a `llmCalls` y no tienen coste. Un caso con solo fallos aparece sin coste, no con $0 medido.
+- **`auditorOutcome`** (por caso): `scored` o `unavailable`. Un caso sin nota no entra en `avgAuditor` y no vale 0. El motivo (`invalid`, `transport`, `error` o `deadline`) está en el registro interno (`auditorUnavailableReason`); el DTO aún no lo expone (deuda D-22 del handoff), así que el agregado distingue solo `auditorInvalidCount`.
+- **`auditorUnavailableCount`**: casos sin nota, incluidos los de salida inválida.
+- **`auditorInvalidCount`**: subconjunto con motivo `invalid` (el Auditor respondió sin JSON válido tras reparar). Es un problema de calidad, no de infraestructura.
+- **`infraDegraded`**: `true` si más del 20 % de los casos quedaron sin nota por causas distintas de `invalid`. Una corrida con `infraDegraded` mide infraestructura caída: repetirla antes de sacar conclusiones.
+
+La corrida 3 no es comparable con la 2 en coste, `avgAuditor`, `passRate` ni markdown (ver el handoff `docs/handoffs/2026-11-03-calidad-mdd-lote2-handoff.md`, §8).
+
 
 ## Ficheros de una corrida
 

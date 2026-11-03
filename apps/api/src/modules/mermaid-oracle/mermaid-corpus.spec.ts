@@ -17,13 +17,22 @@
  * (no `skip`): el spec entra en verde y cada paso 1A.3–1A.6 quita las suyas.
  * Si un `todo` pasa, se emite un diagnóstico "RESUELTO" para borrarlo de la tabla.
  *
+ * Además de la regla de oro, el bloque "preservación" asegura que en las etapas de documento
+ * un diagrama válido sale IGUAL al de entrada salvo espacios en blanco: una regla que sustituye
+ * un diagrama válido por otro igualmente válido e idempotente (p. ej. el webhook inventado que
+ * sustituía cualquier flowchart TD con >=8 nodos `sN(...)`, ya retirado) pasa la regla de oro pero
+ * cambia el contenido del usuario.
+ * Los cambios que HOY ocurren están registrados en `PRESERVATION_KNOWN_CHANGES` con su motivo.
+ *
  * Variables de entorno:
  * - `MERMAID_CORPUS_STRICT=1`: ignora `KNOWN_FAILURES` (los rojos conocidos fallan de verdad).
+ * - `MERMAID_PRESERVATION_STRICT=1`: ignora `PRESERVATION_KNOWN_CHANGES` (ver los cambios reales).
+ * - `MERMAID_PRESERVATION_DUMP=1`: imprime, agrupados por etapa, los válidos que cambian.
  *
  * Las etapas se importan de `@theforge/shared-types/*` (dist-cjs): tras tocar
  * `packages/shared-types/src` hay que correr `pnpm --filter @theforge/shared-types build`.
  */
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -260,6 +269,115 @@ describe("corpus válido: ninguna etapa lo rompe (regla de oro)", () => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Preservación: un diagrama válido sale igual (salvo espacios) de las etapas de documento
+// ---------------------------------------------------------------------------
+
+/** Trim por línea, colapso de espacios/tabs múltiples y sin líneas vacías. */
+function normalizeWhitespace(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.trim().replace(/[ \t]+/g, " "))
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
+const DOCUMENT_STAGES = STAGES.filter((s) => s.kind === "document");
+const DOCUMENT_STAGE_NAMES = DOCUMENT_STAGES.map((s) => s.name);
+const NORMALIZING_STAGE_NAMES = DOCUMENT_STAGE_NAMES.filter(
+  (n) => n !== "shared.formatDocumentMarkdown.preserve",
+);
+
+/**
+ * Válidos que HOY cambian de contenido (clave `etapa|id` → motivo). No se ignoran con
+ * `MERMAID_CORPUS_STRICT` (eso es de la regla de oro); sí con `MERMAID_PRESERVATION_STRICT=1`.
+ * Cada paso de limpieza (quitar la regla destructiva) borra sus entradas; si una entrada ya no
+ * cambia, el spec emite el diagnóstico "RESUELTO" para podarla. Una entrada NUEVA fuera de la
+ * lista hace fallar el spec: así se detecta quien reintroduce una regla que reescribe válidos.
+ */
+const PRESERVATION_KNOWN_CHANGES: Record<string, string> = {};
+
+/** Registra `ids` como cambiados por `reason` en todas las etapas que normalizan (no en `.preserve`). */
+function knownChange(
+  reason: string,
+  ids: string[],
+  stages: string[] = NORMALIZING_STAGE_NAMES,
+): void {
+  for (const stage of stages) {
+    for (const id of ids) {
+      const key = `${stage}|${id}`;
+      assert.equal(PRESERVATION_KNOWN_CHANGES[key], undefined, `${key} registrado dos veces`);
+      PRESERVATION_KNOWN_CHANGES[key] = reason;
+    }
+  }
+}
+
+// Medición 2026-11-03 (mermaid 11.15.0 / jsdom; ver ADR 0002, addendum):
+// - 1 válido del corpus cambia en el registro: spec-054 (`par ticipant` → `participant`, par-ticipant y
+//   block-balance son interdependientes: spec-054 se rompe sin cualquiera de las dos). Cambia en las 4 etapas que normalizan.
+// `er-pk-fk-commas` ya no reescribe `PK, FK` válido: solo transforma `PK FK` sin coma.
+// `formatDocumentMarkdown.preserve` no cambia ninguno.
+
+// Cambio de `par ticipant` (spec-054): par-ticipant y block-balance se mantienen juntas en el registro.
+knownChange(
+  "P: `par ticipant ...` (un bloque `par` válido) se reinterpreta como `participant`; par-ticipant y block-balance son interdependientes (spec-054)",
+  ["spec-054-mermaid-fix"],
+);
+
+const PRESERVATION_STRICT = process.env.MERMAID_PRESERVATION_STRICT === "1";
+const PRESERVATION_DUMP = process.env.MERMAID_PRESERVATION_DUMP === "1";
+const preservationDump: string[] = [];
+
+describe("corpus válido: la salida se preserva salvo espacios en blanco", () => {
+  for (const stage of DOCUMENT_STAGES) {
+    describe(stage.name, () => {
+      for (const entry of validEntries) {
+        const key = `${stage.name}|${entry.id}`;
+        const known = PRESERVATION_STRICT ? undefined : PRESERVATION_KNOWN_CHANGES[key];
+        it(entry.id, async (t) => {
+          const result = runStage(stage, entry.body);
+          assert.equal(result.threw, undefined, `${key}: la etapa lanzó ${result.threw}`);
+          assert.notEqual(result.body, null, `${key}: el fence mermaid no quedó exactamente una vez`);
+          const before = normalizeWhitespace(entry.body);
+          const after = normalizeWhitespace(result.body ?? "");
+          const changed = before !== after;
+          if (changed && PRESERVATION_DUMP) preservationDump.push(key);
+          if (known) {
+            t.diagnostic(
+              changed
+                ? `CONOCIDO: ${key} cambia (${known})`
+                : `RESUELTO: ${key} ya se preserva; quítalo de PRESERVATION_KNOWN_CHANGES`,
+            );
+            return;
+          }
+          assert.equal(
+            after,
+            before,
+            `${key}: un diagrama válido cambió de contenido.\n--- entrada ---\n${entry.body}\n--- salida ---\n${result.body}`,
+          );
+        });
+      }
+    });
+  }
+
+  it("lista de cambios conocidos: cada clave apunta a una etapa y un id válidos del corpus", () => {
+    const validIds = new Set(validEntries.map((e) => e.id));
+    const stageNames = new Set(DOCUMENT_STAGE_NAMES);
+    const bad = Object.keys(PRESERVATION_KNOWN_CHANGES).filter((key) => {
+      const [stage, id] = key.split("|");
+      return !stageNames.has(stage) || !validIds.has(id);
+    });
+    assert.deepEqual(bad, []);
+    for (const [key, reason] of Object.entries(PRESERVATION_KNOWN_CHANGES)) {
+      assert.ok(reason.trim().length > 0, `${key}: falta el motivo`);
+    }
+  });
+
+  after(() => {
+    if (PRESERVATION_DUMP) console.log(`PRESERVATION_DUMP\n${preservationDump.join("\n")}`);
+  });
+});
+
 describe("fixtures eval: los bloques ER sobreviven a prepareMddMarkdownForPersist", () => {
   const fixturesDir = path.resolve(process.cwd(), "eval", "mdd", "fixtures");
   const files = [
@@ -295,7 +413,12 @@ describe("fixtures eval: los bloques ER sobreviven a prepareMddMarkdownForPersis
 });
 
 /** Reparados mínimos (de los inválidos del corpus) con `repairMermaidBlockBody`; ver BASELINE impreso. */
-const REPAIR_BASELINE_MIN = 30;
+// `er-pk-fk-commas` vuelve al registro acotada a `PK FK` sin coma: spec-033 (`uuid id PK FK`) se repara de nuevo.
+// Ver ADR 0002, addendum.
+// 2026-11-03: baja de 30 a 29. `broken-fc_label_unclosed_bracket` (`A[Inicio --> B[Fin]`) solo se "reparaba"
+// fusionando dos nodos y una arista en un único nodo (`A["Inicio --> B[Fin"]`): parseaba, pero cambiaba el
+// significado. `quoteFlowchartSpacedLabels` ya no cita etiquetas con operador de arista (ADR 0002, addendum).
+const REPAIR_BASELINE_MIN = 29;
 
 describe("corpus inválido: tasa de reparación (baseline como suelo de regresión)", () => {
   it("cuenta cuántos inválidos quedan 'ok' tras repairMermaidBlockBody", async (t) => {

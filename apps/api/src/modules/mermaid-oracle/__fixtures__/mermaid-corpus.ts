@@ -1620,4 +1620,25 @@ export const MERMAID_CORPUS: MermaidCorpusEntry[] = [
     expectedValid: true,
     body: "sequenceDiagram\n    participant AltaService\n    participant Optimizador\n    participant BreakerSvc\n    participant ElseHandler\n    participant CriticalJob\n    participant LoopRunner\n    participant ParService\n    AltaService->>Optimizador: solicita\n    Optimizador-->>AltaService: resultado\n    BreakerSvc->>ElseHandler: corta\n    ElseHandler->>CriticalJob: continua\n    CriticalJob->>LoopRunner: itera\n    LoopRunner->>ParService: paralelo\n    alt exito\n        ParService-->>AltaService: ok\n    else fallo\n        ParService-->>BreakerSvc: error\n    end",
   },
+  // Goldens H1: flowchart TD válido con >=8 nodos `sN(...)`. Regresión de una regla retirada
+  // (`repairFlattenedWebhookFlowchart`, que los sustituía por un webhook inventado): hoy el parser los acepta y no
+  // se tocan; la preservación del corpus verifica que el diagrama original sobrevive intacto.
+  {
+    id: "hw-fc_flatten_citas_s1_s8",
+    source: "handwritten",
+    expectedValid: true,
+    body: "flowchart TD\n    s1(Solicitud de cita)\n    s2(Validar datos del paciente)\n    s3(Consultar disponibilidad)\n    s4(Reservar horario)\n    s5(Confirmar cita)\n    s6(Enviar recordatorio)\n    s7(Registrar asistencia)\n    s8(Cierre)\n    s1 --> s2 --> s3 --> s4 --> s5 --> s6 --> s7 --> s8",
+  },
+  {
+    id: "hw-fc_flatten_largo_ramas_s1_s12",
+    source: "handwritten",
+    expectedValid: true,
+    body: "flowchart TD\n    s1(Inicio de sesión)\n    s2(Cargar catálogo)\n    s3(Agregar al carrito)\n    s4(Calcular impuestos)\n    s5(Aplicar cupón)\n    s6(Elegir envío)\n    s7(Pagar con tarjeta)\n    s8(Pagar con transferencia)\n    s9(Confirmar pedido)\n    s10(Preparar paquete)\n    s11(Notificar al cliente)\n    s12(Fin)\n    s1 --> s2\n    s2 --> s3\n    s3 --> s4\n    s4 --> s5\n    s5 --> s6\n    s6 -->|tarjeta| s7\n    s6 -->|transferencia| s8\n    s7 --> s9\n    s8 --> s9\n    s9 --> s10\n    s10 --> s11\n    s11 --> s12",
+  },
+  {
+    id: "hw-fc_flatten_decision_s0_s9",
+    source: "handwritten",
+    expectedValid: true,
+    body: "flowchart TD\n    s0(Recibir solicitud de vacaciones)\n    s1(Validar saldo de días)\n    s2(Notificar al jefe directo)\n    s3(Revisar calendario del equipo)\n    s4{¿Aprobada?}\n    s5(Registrar aprobación)\n    s6(Actualizar nómina)\n    s7(Informar al empleado)\n    s8(Registrar rechazo)\n    s9(Cerrar solicitud)\n    s0 --> s1 --> s2 --> s3 --> s4\n    s4 -->|Sí| s5 --> s6 --> s7 --> s9\n    s4 -->|No| s8 --> s7",
+  },
 ];

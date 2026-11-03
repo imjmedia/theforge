@@ -49,6 +49,33 @@ function chatModelChain(runtime: UserLLMRuntime): string[] {
   });
 }
 
+/**
+ * Identidad estable de la cadena de modelos de un LLM: `providerId:modelo1>modelo2…` (orden de
+ * fallback). Sirve para la clave de la caché por nodo: otro proveedor, modelo u orden de fallbacks
+ * da otra cadena. Solo lectura; no incluye claves ni URLs.
+ */
+export function describeLlmModelChain(llm: BaseChatModel): string {
+  const c = llm as unknown as {
+    providerId?: unknown;
+    modelChain?: unknown;
+    modelName?: unknown;
+    model?: unknown;
+  };
+  const provider =
+    typeof c.providerId === "string" && c.providerId
+      ? c.providerId
+      : ((llm.constructor as { name?: string }).name ?? "unknown");
+  let chain: string[] = [];
+  if (Array.isArray(c.modelChain)) {
+    chain = c.modelChain.filter((m): m is string => typeof m === "string");
+  } else if (typeof c.modelName === "string" && c.modelName) {
+    chain = [c.modelName];
+  } else if (typeof c.model === "string" && c.model) {
+    chain = [c.model];
+  }
+  return `${provider}:${chain.length > 0 ? chain.join(">") : "unknown"}`;
+}
+
 /** Opciones de creación del LLM (p. ej. temperature baja para nodos estructurales del MDD). */
 export type CreateDbgaLLMOptions = {
   temperature?: number;

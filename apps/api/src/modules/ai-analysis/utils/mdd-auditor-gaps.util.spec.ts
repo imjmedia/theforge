@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { truncateDraftForAuditorLlm } from "./mdd-auditor-gaps.util.js";
+import { synthesizeStructuralAuditorGaps, truncateDraftForAuditorLlm } from "./mdd-auditor-gaps.util.js";
+import { validateMddStructure } from "./mdd-sanitize.js";
 
 /** Cuenta fences abiertos/cerrados: debe ser par y nunca quedar un fence abierto al final. */
 function fencesBalanced(md: string): boolean {
@@ -117,5 +118,41 @@ describe("truncateDraftForAuditorLlm (fence-aware)", () => {
     const out = truncateDraftForAuditorLlm(draft, 6_000);
     assert.ok(fencesBalanced(out));
     assert.ok(out.includes("CREATE TABLE z (id INT);"));
+  });
+});
+
+
+describe("synthesizeStructuralAuditorGaps (Auditor caído: sin escala inventada)", () => {
+  const FULL = [
+    "# MDD",
+    ...[
+      "## 1. Contexto",
+      "## 2. Arquitectura y Stack",
+      "## 3. Modelo de Datos",
+      "## 4. Contratos de API",
+      "## 5. Lógica y Edge Cases",
+      "## 6. Seguridad",
+      "## 7. Infraestructura",
+    ].flatMap((h) => [h, "contenido de la sección. ".repeat(10)]),
+  ].join("\n");
+
+  it("con las 7 secciones: sin score (null), NO_EVALUADO y sin gaps; nunca 0/RECHAZADO", () => {
+    const validation = validateMddStructure(FULL);
+    assert.equal(validation.missingSections.length, 0);
+    const gaps = synthesizeStructuralAuditorGaps(validation);
+    assert.equal(gaps.score, null);
+    assert.equal(gaps.status, "NO_EVALUADO");
+    assert.deepEqual(gaps.critical_gaps, []);
+  });
+
+  it("con secciones faltantes: sin score (ya no hay escala 70 - 5n invertida), solo los huecos reales", () => {
+    const draft = "# MDD\n## 1. Contexto\ntexto\n## 2. Arquitectura y Stack\ntexto\n";
+    const validation = validateMddStructure(draft);
+    assert.ok(validation.missingSections.length > 0);
+    const gaps = synthesizeStructuralAuditorGaps(validation);
+    assert.equal(gaps.score, null);
+    assert.equal(gaps.status, "NO_EVALUADO");
+    assert.equal(gaps.critical_gaps.length, validation.missingSections.length);
+    assert.ok(gaps.critical_gaps.every((g) => /^Falta la sección obligatoria:/.test(g.issue)));
   });
 });

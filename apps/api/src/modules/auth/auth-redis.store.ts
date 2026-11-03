@@ -12,6 +12,7 @@
 import { Injectable, Logger, OnModuleDestroy, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { createHash, timingSafeEqual } from "node:crypto";
+import { connectIoredisReady } from "../../common/redis/connect-ioredis-ready.js";
 
 export const AUTH_OTP_MAX_ATTEMPTS = 5;
 export const AUTH_STORE_UNAVAILABLE_MESSAGE =
@@ -299,50 +300,12 @@ export class AuthRedisStore implements OnModuleDestroy {
   }
 
   private async connect(url: string): Promise<AuthRedisClient> {
-    // ioredis llega hoisted vía bullmq; import dinámico para no cargarlo sin Redis.
-    const mod = (await import("ioredis")) as unknown as {
-      default?: new (u: string, o?: Record<string, unknown>) => AuthRedisClient;
-      Redis?: new (u: string, o?: Record<string, unknown>) => AuthRedisClient;
-    };
-    const Ctor = mod.default ?? mod.Redis;
-    if (!Ctor) throw new Error("ioredis no exporta un constructor");
-    const client = new Ctor(url, { maxRetriesPerRequest: 2, enableOfflineQueue: false });
-    client.on?.("error", (err: unknown) => {
-      this.logger.warn(`Redis auth error: ${err instanceof Error ? err.message : String(err)}`);
+    const client = await connectIoredisReady<AuthRedisClient>(url, {
+      name: "auth",
+      readyTimeoutMs: READY_TIMEOUT_MS,
+      maxRetriesPerRequest: 2,
     });
-    try {
-      await this.waitUntilReady(client);
-    } catch (err) {
-      client.disconnect?.();
-      throw err;
-    }
     this.redis = client;
     return client;
-  }
-
-  /** Con `enableOfflineQueue:false` un comando previo a `ready` falla: se espera el evento explícitamente. */
-  private waitUntilReady(client: AuthRedisClient): Promise<void> {
-    if (client.status === "ready") return Promise.resolve();
-    return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        cleanup();
-        reject(new Error(`Redis no llegó a "ready" en ${READY_TIMEOUT_MS} ms`));
-      }, READY_TIMEOUT_MS);
-      const onReady = () => {
-        cleanup();
-        resolve();
-      };
-      const onEnd = () => {
-        cleanup();
-        reject(new Error("conexión Redis cerrada antes de estar lista"));
-      };
-      const cleanup = () => {
-        clearTimeout(timer);
-        client.removeListener?.("ready", onReady);
-        client.removeListener?.("end", onEnd);
-      };
-      client.once?.("ready", onReady);
-      client.once?.("end", onEnd);
-    });
   }
 }
