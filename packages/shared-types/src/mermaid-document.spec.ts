@@ -531,6 +531,10 @@ describe("repairErDiagramPkFkCommas", () => {
     assert.equal(repairErDiagramPkFkCommas(attr("uuid tenant_id FK, PK")), attr("uuid tenant_id FK, PK"));
   });
 
+  it("normaliza coma tipográfica U+FF0C entre PK y FK a ASCII", () => {
+    assert.equal(repairErDiagramPkFkCommas(attr("uuid tenant_id PK，FK")), attr("uuid tenant_id PK, FK"));
+  });
+
   it("no toca una sola clave", () => {
     assert.equal(repairErDiagramPkFkCommas(attr("uuid id PK")), attr("uuid id PK"));
     assert.equal(repairErDiagramPkFkCommas(attr("uuid user_id FK")), attr("uuid user_id FK"));

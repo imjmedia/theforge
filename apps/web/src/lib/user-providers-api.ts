@@ -1,4 +1,4 @@
-import { api } from "@/lib/api";
+import { api } from "@/utils/apiClient";
 import { parseErrorMessageFromResponse } from "@/utils/httpError";
 import type {
   ProviderCatalogEntry,

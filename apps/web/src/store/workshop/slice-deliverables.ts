@@ -23,7 +23,7 @@ import {
 import { deliverableStepLabelsForComplexity } from "@theforge/shared-types";
 import { normalizeWorkshopDocumentForEditor } from "../../utils/workshop-document-content.util";
 import { mergeAgentProgressFromMddEvent } from "../../utils/agentProgress";
-import { parseNdjsonLine } from "../../utils/ndjson";
+import { readNdjsonStream } from "../../utils/http-stream";
 import { hasDeliveryGateBlockers } from "./helpers/delivery-gate";
 import { persistField } from "./helpers/persist-field";
 import { errorStateFromCaught, friendlyFetchError, throwStreamHttpError } from "./helpers/store-errors";
@@ -897,57 +897,44 @@ export const createDeliverablesSlice: StateCreator<
       if (!r.ok) {
         await throwStreamHttpError(r, "Error al generar Benchmark & Gap Analysis");
       }
-      const reader = r.body?.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+      if (!r.body) throw new Error("Respuesta sin cuerpo");
       let finalMarkdown: string | null = null;
 
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-          for (const line of lines) {
-            for (const event of parseNdjsonLine(line)) {
-              try {
-                const ev = event as {
-                  type: string;
-                  agent?: string;
-                  message?: string;
-                  markdown?: string;
-                  complexityProposal?: ComplexityPending;
-                  code?: string;
-                };
-                if (ev.type === "progress" && ev.agent != null && ev.message != null) {
-                  set((s) => ({
-                    agentProgress: mergeAgentProgressFromMddEvent(s.agentProgress, {
-                      agent: ev.agent!,
-                      message: ev.message!,
-                    }),
-                  }));
-                } else if (ev.type === "done" && ev.markdown != null) {
-                  finalMarkdown = ev.markdown;
-                  if (ev.complexityProposal != null) {
-                    set((s) => ({
-                      project:
-                        s.project != null
-                          ? { ...s.project, complexityPending: ev.complexityProposal! }
-                          : s.project,
-                    }));
-                  }
-                } else if (ev.type === "error" && ev.message) {
-                  const err = new Error(ev.message) as Error & { code?: string };
-                  if (ev.code) err.code = ev.code;
-                  throw err;
-                }
-              } catch (parseErr) {
-                if (parseErr instanceof SyntaxError) continue;
-                throw parseErr;
-              }
+      for await (const event of readNdjsonStream(r.body)) {
+        try {
+          const ev = event as {
+            type: string;
+            agent?: string;
+            message?: string;
+            markdown?: string;
+            complexityProposal?: ComplexityPending;
+            code?: string;
+          };
+          if (ev.type === "progress" && ev.agent != null && ev.message != null) {
+            set((s) => ({
+              agentProgress: mergeAgentProgressFromMddEvent(s.agentProgress, {
+                agent: ev.agent!,
+                message: ev.message!,
+              }),
+            }));
+          } else if (ev.type === "done" && ev.markdown != null) {
+            finalMarkdown = ev.markdown;
+            if (ev.complexityProposal != null) {
+              set((s) => ({
+                project:
+                  s.project != null
+                    ? { ...s.project, complexityPending: ev.complexityProposal! }
+                    : s.project,
+              }));
             }
+          } else if (ev.type === "error" && ev.message) {
+            const err = new Error(ev.message) as Error & { code?: string };
+            if (ev.code) err.code = ev.code;
+            throw err;
           }
+        } catch (parseErr) {
+          if (parseErr instanceof SyntaxError) continue;
+          throw parseErr;
         }
       }
 

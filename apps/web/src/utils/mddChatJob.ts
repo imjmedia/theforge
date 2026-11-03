@@ -1,5 +1,3 @@
-import { parseNdjsonLine } from "./ndjson";
-
 /**
  * Helpers puros del chat MDD vía cola (BullMQ): estado persistido del job activo (jobId + cursor) para
  * reanudar tras recargar la página, avance del cursor, detección de eventos terminales y lector NDJSON.
@@ -118,37 +116,9 @@ export function chatEventsReconnectDelayMs(failures: number): number {
   return Math.min(15_000, 1_000 * 2 ** Math.max(0, failures - 1));
 }
 
-/** Itera los objetos JSON de un cuerpo NDJSON (tolera líneas partidas entre chunks). */
-export async function* readNdjsonObjects(
-  body: ReadableStream<Uint8Array>,
-): AsyncGenerator<Record<string, unknown>, void, undefined> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        for (const obj of parseNdjsonLine(line)) yield obj;
-      }
-    }
-    buffer += decoder.decode();
-    for (const obj of parseNdjsonLine(buffer)) yield obj;
-  } finally {
-    // Salida anticipada (evento terminal / aborto): cerrar la conexión en vez de dejarla abierta.
-    void reader.cancel().catch(() => undefined);
-    try {
-      reader.releaseLock();
-    } catch {
-      /* lectura aún pendiente al abortar */
-    }
-  }
-}
+import { readNdjsonStream } from "./http-stream";
 
+export { readNdjsonStream as readNdjsonObjects } from "./http-stream";
 export type MddChatEventsOutcome = "terminal" | "aborted";
 
 export type ConsumeMddChatEventsOptions = {
@@ -191,7 +161,7 @@ export async function consumeMddChatEvents(options: ConsumeMddChatEventsOptions)
       }
       if (!res.body) throw new Error("Respuesta sin cuerpo");
       failures = 0;
-      for await (const line of readNdjsonObjects(res.body)) {
+      for await (const line of readNdjsonStream(res.body)) {
         if (options.signal?.aborted) return "aborted";
         if (line.type === "heartbeat") {
           cursor = nextMddChatCursor(cursor, line);

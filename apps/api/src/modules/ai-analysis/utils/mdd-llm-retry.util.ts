@@ -23,7 +23,7 @@
  */
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { Runnable } from "@langchain/core/runnables";
-import type { BaseMessage } from "@langchain/core/messages";
+import { AIMessage, HumanMessage, type BaseMessage } from "@langchain/core/messages";
 import {
   extractChainedModel,
   recordTokenUsageFromContext,
@@ -44,6 +44,18 @@ import {
 } from "./mdd-llm-stream-invoke.util.js";
 
 import { classifyLlmError } from "./llm-error-classify.util.js";
+import {
+  extractLlmFinishReason,
+  isLlmOutputTruncated,
+  LLM_TRUNCATION_CONTINUATION_PROMPT,
+  LlmOutputTruncatedError,
+} from "./llm-output-truncation.util.js";
+
+export {
+  extractLlmFinishReason,
+  isLlmOutputTruncated,
+  LlmOutputTruncatedError,
+} from "./llm-output-truncation.util.js";
 
 export { getActiveLlmAbortSignal, runWithLlmAbortSignal } from "./mdd-llm-stream-invoke.util.js";
 
@@ -179,6 +191,11 @@ export type InvokeWithRetryOptions = {
   random?: () => number;
   /** Sólo para pruebas: reloj (ms) con el que se mide la latencia por intento. Default `Date.now`. */
   now?: () => number;
+  /**
+   * Si true (default), ante truncado por límite de tokens se reintenta una vez pidiendo continuación.
+   * Si sigue truncado, lanza `LlmOutputTruncatedError`.
+   */
+  allowTruncationContinuation?: boolean;
   /**
    * Identidad (proveedor/modelo configurado) con la que se registra el uso. Obligatoria en la práctica
    * cuando se invoca un runnable derivado del modelo (`withStructuredOutput`, `bindTools`…), que no
@@ -348,6 +365,8 @@ async function invokeLlmWithRetryInner(
   // La degradación a no-streaming no debe consumir un intento (el fallo es de
   // transporte, no del modelo); se devuelve el intento una única vez.
   let degradeRefundUsed = false;
+  let truncationContinuationUsed = false;
+  let workingMessages = messages;
 
   for (let attempt = 1; attempt <= max; attempt += 1) {
     if (externalSignal?.aborted) {
@@ -385,7 +404,7 @@ async function invokeLlmWithRetryInner(
       if (useStreaming) {
         let result: Awaited<ReturnType<typeof invokeLlmStreamingWithIdleTimeout>>;
         try {
-          result = await invokeLlmStreamingWithIdleTimeout(llm as StreamableLlmLike, messages, {
+          result = await invokeLlmStreamingWithIdleTimeout(llm as StreamableLlmLike, workingMessages, {
             tag,
             ...(options.idleTimeoutMs != null ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
             ...(options.hardTimeoutMs != null ? { hardTimeoutMs: options.hardTimeoutMs } : {}),
@@ -420,13 +439,32 @@ async function invokeLlmWithRetryInner(
         const onExternalAbort = (): void => abortController.abort();
         externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
         try {
-          response = await (llm as { invoke: (m: BaseMessage[], opts?: { signal?: AbortSignal }) => Promise<unknown> }).invoke(messages, { signal: abortController.signal });
+          response = await (llm as { invoke: (m: BaseMessage[], opts?: { signal?: AbortSignal }) => Promise<unknown> }).invoke(workingMessages, { signal: abortController.signal });
         } finally {
           clearTimeout(timeoutId);
           externalSignal?.removeEventListener("abort", onExternalAbort);
         }
       }
       const latencyMs = Math.max(0, now() - attemptStartedAt);
+      const allowTruncationContinuation = options.allowTruncationContinuation !== false;
+      if (allowTruncationContinuation && isLlmOutputTruncated(response)) {
+        const finishReason = extractLlmFinishReason(response) ?? "length";
+        if (!truncationContinuationUsed) {
+          truncationContinuationUsed = true;
+          const partial = extractLlmText(response);
+          workingMessages = [
+            ...workingMessages,
+            new AIMessage(partial),
+            new HumanMessage(LLM_TRUNCATION_CONTINUATION_PROMPT),
+          ];
+          console.warn(
+            `[${tag}] salida truncada (${finishReason}); reintentando con prompt de continuación`,
+          );
+          attempt -= 1;
+          continue;
+        }
+        throw new LlmOutputTruncatedError(tag, finishReason);
+      }
       const text = extractLlmText(response);
       const toolCalls = extractLlmToolCalls(response);
       const toolsOk = acceptTools && toolCalls.length > 0;
@@ -468,6 +506,7 @@ async function invokeLlmWithRetryInner(
         `[${tag}] respuesta vacía/inválida (attempt ${attempt}/${max}, kind=retry, reason=respuesta_invalida, promptChars=${promptChars}, outLen=${text.length}, tools=${toolCalls.length}), reintentando...`,
       );
     } catch (err) {
+      if (err instanceof LlmOutputTruncatedError) throw err;
       trace.latencyMs = Math.max(0, now() - attemptStartedAt);
       lastAttemptStartedAt = attemptStartedAt;
       // Cancelación externa: cortar de inmediato, sin reintentos ni refund de streaming.

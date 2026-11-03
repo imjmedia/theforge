@@ -1,6 +1,6 @@
 /**
  * Pre-render sanity checks for MDD before persist.
- * - Mermaid: normalize via expert normalizeMermaid from shared-types; auto-repair PK,F comma in erDiagram.
+ * - Mermaid: normalize via expert normalizeMermaid from shared-types; auto-repair PK FK sin coma en erDiagram (`PK, FK` válido se conserva).
  * - §4 Contratos de API tables: no blank lines inside table; alignment row |:---| must be second row (ERR_TABLE_SYNTAX).
  */
 

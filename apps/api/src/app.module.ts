@@ -37,6 +37,7 @@ import { TechnologyDocsMcpModule } from "./modules/technology-docs-mcp/technolog
 import { PluginModule } from "./plugins/plugin.module.js";
 import { PluginsApiModule } from "./modules/plugins/plugins.module.js";
 import { SystemConfigModule } from "./modules/system-config/system-config.module.js";
+import { MermaidOracleModule } from "./modules/mermaid-oracle/mermaid-oracle.module.js";
 import pluginsConfig from "./config/plugins.config.js";
 import { validateEnv } from "./config/env.schema.js";
 
@@ -49,6 +50,7 @@ import { validateEnv } from "./config/env.schema.js";
       validate: validateEnv,
       envFilePath: [join(__dirname, "../../.env"), join(__dirname, "../../../.env"), ".env"],
     }),
+    MermaidOracleModule,
     SystemConfigModule,
     CryptoModule,
     AuthModule,

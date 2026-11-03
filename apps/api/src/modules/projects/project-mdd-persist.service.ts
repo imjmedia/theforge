@@ -11,7 +11,8 @@ import { peelDocumentBodyForPersist } from "@theforge/shared-types";
 import { ChangeLogService } from "../change-log/change-log.service.js";
 import { MddUpdatePipelineService } from "../engine/mdd-update-pipeline.service.js";
 import { prepareMddForOutput } from "../ai-analysis/utils/mdd-prepare-output.js";
-import { storeMddMarkdownForPersist } from "../ai-analysis/utils/mdd-sanitize.js";
+import { storeMddMarkdownForPersistWithOracle } from "../mermaid-oracle/mermaid-oracle-persist.util.js";
+import { MermaidRuntimeService } from "../mermaid-oracle/mermaid-runtime.service.js";
 import {
   buildMddDeliveryGateConflictBody,
   buildMddPatchPipelineErrorBody,
@@ -97,7 +98,12 @@ export class ProjectMddPersistService {
     private readonly estimationRecalc: ProjectEstimationRecalcService,
     @Inject(forwardRef(() => ProjectDeliverableGateService))
     private readonly deliverableGate: ProjectDeliverableGateService,
+    private readonly mermaidRuntime: MermaidRuntimeService,
   ) {}
+
+  private async formatMddForPersist(mddMarkdown: string): Promise<string> {
+    return storeMddMarkdownForPersistWithOracle(mddMarkdown, this.mermaidRuntime);
+  }
 
   /**
    * Reclama la etapa para el turno `fence` (ADR 0004). Solo sube el fence: si la etapa
@@ -155,15 +161,28 @@ export class ProjectMddPersistService {
     }
   }
 
+  /**
+   * Fence del turno: explícito, del lease activo o (PATCH del editor sin lease) reclamo con `Date.now()`.
+   */
+  private async resolveWriteFence(stageId: string, explicit?: number): Promise<number | undefined> {
+    if (explicit !== undefined) return explicit;
+    const fromContext = getActiveMddLeaseFence();
+    if (fromContext !== undefined) return fromContext;
+    const fence = Date.now();
+    await this.claimMddWriteFence(stageId, fence);
+    return fence;
+  }
+
   /** BadRequest 400 con cuerpo estructurado para fallos del pipeline MDD en PATCH. */
   async throwMddPipelineBadRequest(
     result: { code: string; message: string },
     stageId: string,
     mddRaw: string,
+    fence?: number,
   ): Promise<never> {
     if (result.code === MDD_DELIVERY_GATE_ERR) {
       const gate = await evaluateMddDeliveryGatePrepared(mddRaw);
-      void this.persistMddDeliveryGateSnapshot(stageId, gate);
+      void this.persistMddDeliveryGateSnapshot(stageId, gate, fence);
       throw new BadRequestException(
         buildMddPatchPipelineErrorBody(
           MDD_DELIVERY_GATE_ERR,
@@ -296,7 +315,7 @@ export class ProjectMddPersistService {
     await this.updateStageMdd(
       targetStage.id,
       {
-        mddContent: result.persistFormatted ? finalMdd : storeMddMarkdownForPersist(finalMdd),
+        mddContent: result.persistFormatted ? finalMdd : await this.formatMddForPersist(finalMdd),
         shortTermContext: nextCtx as Prisma.InputJsonValue,
       },
       fence,
@@ -305,6 +324,7 @@ export class ProjectMddPersistService {
     void this.persistMddDeliveryGateSnapshot(
       targetStage.id,
       await evaluateMddDeliveryGatePrepared(finalMdd),
+      fence,
     );
     await this.deliverableGate.refreshStageSemaphoreFromProject(projectId);
     const refreshed = await this.prisma.stage.findUnique({
@@ -329,13 +349,13 @@ export class ProjectMddPersistService {
       documentMeta,
       patchFlags,
     } = input;
-    // Fence explícito del turno; sin él, el del lease activo del contexto (tools del Manager dentro de `runExclusive`).
-    const fence = input.fence ?? getActiveMddLeaseFence();
+    // Fence explícito del turno; sin él, lease activo o reclamo del editor (ADR 0004).
+    const fence = await this.resolveWriteFence(stageId, input.fence);
     const mode = resolveMddPersistMode(mddMarkdown, patchFlags);
     const documentData = this.buildStageDocumentUpdate(documentMeta);
 
     if (mode === "format" || mode === "store") {
-      const formatted = storeMddMarkdownForPersist(mddMarkdown);
+      const formatted = await this.formatMddForPersist(mddMarkdown);
       await this.updateStageMdd(stageId, { mddContent: formatted, ...documentData }, fence);
       await this.changeLog.log(projectId, "mddContent", formatted);
       return {
@@ -385,7 +405,7 @@ export class ProjectMddPersistService {
       },
     );
     if (!result.ok) {
-      return await this.throwMddPipelineBadRequest(result, stageId, mddMarkdown);
+      return await this.throwMddPipelineBadRequest(result, stageId, mddMarkdown, fence);
     }
 
     const ok = result;
@@ -421,7 +441,7 @@ export class ProjectMddPersistService {
     await this.updateStageMdd(
       stageId,
       {
-        mddContent: storeMddMarkdownForPersist(ok.sanitizedMdd),
+        mddContent: await this.formatMddForPersist(ok.sanitizedMdd),
         ...documentData,
         shortTermContext: nextCtx as Prisma.InputJsonValue,
       },
@@ -431,6 +451,7 @@ export class ProjectMddPersistService {
     void this.persistMddDeliveryGateSnapshot(
       stageId,
       await evaluateMddDeliveryGatePrepared(ok.sanitizedMdd),
+      fence,
     );
     await this.deliverableGate.refreshStageSemaphoreFromProject(projectId);
     const refreshed = await this.prisma.stage.findUnique({

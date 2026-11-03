@@ -93,12 +93,16 @@ function makeService(updateManyCount: number, stageExists = true) {
       estimationRecalcs += 1;
     },
   };
+  const mermaidRuntime = {
+    createParser: () => ({ parse: async () => ({ ok: true, ast: null }) }),
+  };
   const service = new ProjectMddPersistService(
     prisma as never,
     changeLog as never,
     mddUpdatePipeline as never,
     estimationRecalc as never,
     deliverableGate as never,
+    mermaidRuntime as never,
   );
   return {
     service,
@@ -171,8 +175,9 @@ describe("ProjectMddPersistService.persistMddFromBackgroundJob con fence", () =>
         fence: 7,
       }),
     );
-    assert.equal(h.updateManyCalls.length, 1);
+    assert.equal(h.updateManyCalls.length, 2, "mddContent + snapshot delivery gate");
     assert.deepEqual(h.updateManyCalls[0].where, EXPECTED_WHERE);
+    assert.deepEqual(h.updateManyCalls[1].where, EXPECTED_WHERE);
     assert.ok("mddContent" in h.updateManyCalls[0].data);
     assert.equal(h.changeLogCalls.length, 1);
     assert.equal(h.semaphoreRefreshes(), 1);
@@ -234,7 +239,7 @@ describe("ProjectMddPersistService: fence del lease activo (contexto MDD)", () =
         h.service.persistMddFromBackgroundJob(PROJECT_ID, LONG_MD, { stageId: STAGE_ID, finalize: true }),
       ),
     );
-    assert.equal(h.updateManyCalls.length, 1, "la escritura va condicionada, no por stage.update");
+    assert.equal(h.updateManyCalls.length, 2, "mddContent + snapshot delivery gate");
     assert.deepEqual(h.updateManyCalls[0].where, EXPECTED_WHERE);
     assert.equal(
       h.updateCalls.some((c) => "mddContent" in c.data),
@@ -273,19 +278,31 @@ describe("ProjectMddPersistService: fence del lease activo (contexto MDD)", () =
     });
   });
 
-  it("fuera de lease (PATCH web) sin fence la escritura sigue siendo stage.update", async () => {
-    const h = makeService(0);
-    await h.service.persistMddFromPatch({
-      projectId: PROJECT_ID,
-      stageId: STAGE_ID,
-      mddMarkdown: LONG_MD,
-      mergedForSemaphore: {} as never,
-      stageBaseline: { status: "DRAFT" as never, precisionScore: 0 },
-      patchFlags: { mddFormatOnly: true },
+  it("fuera de lease (PATCH web) reclama Date.now y escribe con updateMany condicionado", async () => {
+    const h = makeService(1);
+    const now = 1_730_000_000_000;
+    const origNow = Date.now;
+    Date.now = () => now;
+    try {
+      await h.service.persistMddFromPatch({
+        projectId: PROJECT_ID,
+        stageId: STAGE_ID,
+        mddMarkdown: LONG_MD,
+        mergedForSemaphore: {} as never,
+        stageBaseline: { status: "DRAFT" as never, precisionScore: 0 },
+        patchFlags: { mddFormatOnly: true },
+      });
+    } finally {
+      Date.now = origNow;
+    }
+    assert.ok(h.updateManyCalls.length >= 2, "reclamo Date.now + escritura mddContent");
+    const writeCall = h.updateManyCalls.find((c) => "mddContent" in c.data);
+    assert.ok(writeCall, "escritura condicionada por fence");
+    assert.deepEqual(writeCall!.where, {
+      id: STAGE_ID,
+      OR: [{ mddLeaseFence: null }, { mddLeaseFence: { lte: BigInt(now) } }],
     });
-    assert.equal(h.updateManyCalls.length, 0);
-    assert.equal(h.updateCalls.length, 1);
-    assert.deepEqual(h.updateCalls[0].where, { id: STAGE_ID });
+    assert.equal(h.updateCalls.length, 0);
   });
 });
 

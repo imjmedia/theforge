@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException, forwardRef } from "@nestjs/common";
+import { Inject, Injectable, BadRequestException, NotFoundException, forwardRef } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service.js";
 import { getRequestUserId, getRequestUserRole } from "../../common/request-user.store.js";
 import { isAdminOrAbove } from "../../common/roles.js";
@@ -459,7 +459,7 @@ export class ProjectsService implements IOrchestratorProjectsPort {
 
   /**
    * Reclama la etapa del hilo para el fence del lease (ADR 0004). Sin `stageId`, la etapa es la primaria (la misma que
-   * elige la persistencia); sin etapas no hay nada que reclamar (la persistencia tampoco escribe). Si la etapa tiene un
+   * elige la persistencia). Sin etapas (o proyecto inexistente) lanza `BadRequestException`. Si la etapa tiene un
    * fence mayor, lanza `MddWriteFencedError`.
    */
   async claimMddWriteFence(projectId: string, stageId: string | null, fence: number): Promise<void> {
@@ -470,7 +470,9 @@ export class ProjectsService implements IOrchestratorProjectsPort {
         include: { stages: { orderBy: { ordinal: "asc" } } },
       });
       targetId = pickPrimaryStage(project?.stages ?? [])?.id;
-      if (!targetId) return;
+      if (!targetId) {
+        throw new BadRequestException("El proyecto no tiene etapas; no se puede reclamar el fence del MDD");
+      }
     }
     await this.mddPersist.claimMddWriteFence(targetId, fence);
   }

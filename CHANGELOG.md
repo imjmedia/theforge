@@ -39,10 +39,13 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 
 ### Added
 
+- **Oráculo Mermaid en runtime de la API** (`apps/api/src/modules/mermaid-oracle/`): `MermaidOracleModule`, `MermaidRuntimeService` (worker_thread, `MERMAID_PARSE_TIMEOUT_MS` default 8000), persist con `storeMddMarkdownForPersistWithOracle`, specs `mermaid-runtime.service.spec.ts`. `POST /ai/mermaid/regenerate` acepta `error` del parser y valida la salida con `resolveMermaidWithOracle`.
+
 - **Oráculo de preservación Mermaid** (`apps/api/src/modules/mermaid-oracle/mermaid-corpus.spec.ts`): un diagrama válido debe salir igual, salvo espacios, en las etapas de documento. `PRESERVATION_KNOWN_CHANGES` registra por motivo los 66 válidos que hoy cambian por reglas genéricas (deuda de las fases 2 y 3). Variables `MERMAID_PRESERVATION_STRICT` y `MERMAID_PRESERVATION_DUMP`.
 - **Foto del formateador** (`apps/api/src/modules/ai-analysis/utils/mdd-sanitize/format-snapshot.spec.ts`, `__snapshots__/`): congela la salida de `formatDocumentMarkdown`, `repairPastedMarkdown` y `prepareMddMarkdownForPersist`; se regenera con `UPDATE_SNAPSHOTS=1`.
 - **Telemetría por llamada** (`packages/database/migrations/20261103000000_token_usage_telemetry/`, `packages/database/schema.prisma`, `apps/api/src/modules/ai-analysis/token-usage/token-usage.service.ts`): `TokenUsage` gana `latencyMs`, `attempts`, `outcome`, `costKnown`, `estimated` y `modelActual`; los grafos MDD registran `node` y `capability`; log `[MDD:LlmCall]`. La estimación chars/4 se marca en abort, timeout y pases scoped sin `usage_metadata`; las llamadas no facturadas (`skipCost`) no tienen coste; la tarifa usa el modelo real.
 - **Caché de nodos por modelo y prompt** (`apps/api/src/modules/ai-analysis/checkpoint/node-cache-key.ts`, `node-cache.service.ts`): la clave incluye modelo y `MDD_PROMPT_VERSION` (`prompts/prompt-version.ts`); LRU de 200 entradas con `stats()`. El eval la desactiva.
+- **`MERMAID_PARSE_TIMEOUT_MS`** (`apps/api/src/config/env.schema.ts`): timeout del parser Mermaid en worker (entero > 0 ms; default 8000 en runtime).
 - **`THREAD_RUN_LOCK_TTL_MS`** (`apps/api/src/config/env.schema.ts`): TTL del lease por hilo, entero ≥ 1000 ms, por defecto 20 min.
 - **`AuditorOutcome` y `MDD_TOP_SECTION_TITLE` exportados** desde `@theforge/shared-types` (`packages/shared-types/src/mdd-eval-api.ts`, `repair-glued-headings.ts`).
 - **Fencing token del lease MDD** (`packages/database/migrations/20261103120000_stage_mdd_lease_fence/migration.sql`, `packages/database/schema.prisma`, `packages/database/scripts/safe-schema-sync.sql` bloque 11): columna `Stage.mddLeaseFence BIGINT` nullable. Decisión en `docs/adr/0004-fencing-token-escrituras-mdd.md`.

@@ -123,7 +123,9 @@ import {
 import { resolveLlmMaxTokensForPurpose } from "./config/llm-config.js";
 import { runWithTokenUsageContext } from "../ai-analysis/token-usage/token-usage.context.js";
 import { MERMAID_REGENERATE_PROMPT } from "./prompts/mermaid-regenerate-prompt.js";
+import { MermaidRuntimeService } from "../mermaid-oracle/mermaid-runtime.service.js";
 import { repairMermaidBlockBody, stripMermaidFenceWrappers } from "@theforge/shared-types/mermaid";
+import { resolveMermaidWithOracle } from "@theforge/shared-types/mermaid-oracle";
 import { PluginDocumentPipelineService } from "../../plugins/plugin-document-pipeline.service.js";
 import type { BeforeDocumentRenderPayload } from "../../plugins/types/plugin-payloads.js";
 
@@ -374,6 +376,7 @@ export class AiService {
     private readonly aiFactory: AIFactory,
     private readonly techDocsMcp: TechnologyDocsMcpClientService,
     @Optional() private readonly pluginPipeline: PluginDocumentPipelineService | null,
+    private readonly mermaidRuntime: MermaidRuntimeService,
   ) {}
 
   private async provider() {
@@ -2032,13 +2035,17 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
   }
 
   /** Regenera diagrama Mermaid roto/incompleto para el visor del Workshop. */
-  async regenerateMermaidDiagram(brokenContent: string): Promise<string> {
+  async regenerateMermaidDiagram(brokenContent: string, parserError?: string): Promise<string> {
     const broken = (brokenContent ?? "").trim();
     if (!broken) return "";
 
+    const errHint = (parserError ?? "").trim();
     const prompt =
       "Reconstruye el diagrama Mermaid siguiente. Completa el flujo si está truncado.\n\n" +
-      `---\n${broken.slice(0, 14_000)}\n---`;
+      (errHint
+        ? `El parser de Mermaid rechazó la versión actual:\n---\n${errHint.slice(0, 4_000)}\n---\n\n`
+        : "") +
+      `Diagrama:\n---\n${broken.slice(0, 14_000)}\n---`;
 
     const raw = await this.generateResponse(prompt, [], {
       systemPrompt: MERMAID_REGENERATE_PROMPT,
@@ -2047,6 +2054,11 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
 
     const body = stripMermaidFenceWrappers(raw.trim());
     const normalized = repairMermaidBlockBody(body);
-    return normalized.trim() || body.trim();
+    const candidate = normalized.trim() || body.trim();
+    const resolution = await resolveMermaidWithOracle(candidate, this.mermaidRuntime.createParser());
+    if (resolution.status === "original" || resolution.status === "repaired") {
+      return resolution.text.trim();
+    }
+    return candidate;
   }
 }

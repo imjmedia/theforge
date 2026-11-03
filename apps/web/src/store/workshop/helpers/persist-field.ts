@@ -10,7 +10,7 @@ import {
   normalizeWorkshopDocumentForEditor,
   workshopDocumentBodiesEqual,
 } from "../../../utils/workshop-document-content.util";
-import { API_BASE, addToOfflineQueue, fetchWithRetry, flushOfflineQueue } from "../../../utils/apiClient";
+import { API_BASE, addToOfflineQueue, fetchWithRetry, flushOfflineQueue, hashOfflineContent } from "../../../utils/apiClient";
 import { parseErrorMessageFromResponse } from "../../../utils/httpError";
 import {
   isStageScopedDeliverableField,
@@ -164,12 +164,26 @@ export async function persistField(
       setState({ synced: true, error: `Error: ${errText}` });
       return { ok: false, error: errText };
     }
-    addToOfflineQueue({ field: fieldName, content: cleaned, projectId, timestamp: Date.now() });
+    addToOfflineQueue({
+      field: fieldName,
+      content: cleaned,
+      projectId,
+      stageId: stageIdForPatch ?? null,
+      timestamp: Date.now(),
+      contentHash: hashOfflineContent(cleaned),
+    });
     setState({ synced: true, error: `Error: ${errText}. Cambio guardado localmente.` });
     return { ok: false, error: errText };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    addToOfflineQueue({ field: fieldName, content: cleaned, projectId, timestamp: Date.now() });
+    addToOfflineQueue({
+      field: fieldName,
+      content: cleaned,
+      projectId,
+      stageId: stageIdForPatch ?? null,
+      timestamp: Date.now(),
+      contentHash: hashOfflineContent(cleaned),
+    });
     setState({ synced: true, error: `Sin conexión: ${msg}. Cambio guardado localmente.` });
     return { ok: false, error: msg };
   }

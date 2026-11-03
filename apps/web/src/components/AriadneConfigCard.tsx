@@ -14,7 +14,7 @@ import {
 import GithubMono from "@lobehub/icons/es/Github/components/Mono";
 import { Button, Input } from "./ui";
 import { AriadneLogo } from "@/components/AriadneLogo";
-import { api } from "@/lib/api";
+import { api } from "@/utils/apiClient";
 import { cn } from "@/lib/utils";
 
 const ARIADNE_REPO_URL = "https://github.com/kreodevs/ariadne";

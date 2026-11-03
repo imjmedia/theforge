@@ -4,7 +4,7 @@ import { SYSTEM_CONFIG_SECRET_MASK, type SystemConfigCategory, type SystemConfig
 import { UnderlineTabs, type UnderlineTabItem } from "./ui/UnderlineTabs";
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from "./ui";
 import { ListRowIconButton } from "./ListRowIconButton";
-import { api } from "@/lib/api";
+import { api } from "@/utils/apiClient";
 import { cn } from "@/lib/utils";
 
 const SOURCE_LABELS = {

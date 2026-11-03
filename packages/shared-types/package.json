@@ -28,6 +28,16 @@
         "default": "./dist-cjs/session.js"
       }
     },
+    "./markdown-fence-scan": {
+      "import": {
+        "types": "./dist/markdown-fence-scan.d.ts",
+        "default": "./dist/markdown-fence-scan.js"
+      },
+      "require": {
+        "types": "./dist-cjs/markdown-fence-scan.d.ts",
+        "default": "./dist-cjs/markdown-fence-scan.js"
+      }
+    },
     "./markdown-repair": {
       "import": {
         "types": "./dist/markdown-repair.d.ts",

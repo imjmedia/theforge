@@ -6,8 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { ComplexityLevel, Prisma, StageStatus, Status } from "@theforge/database";
-import type { Project, Stage } from "@theforge/database";
-import type { Estimation } from "@theforge/database";
+import type { Project } from "@theforge/database";
 import {
   projectMergeBodySchema,
   type MergeConflict,
@@ -38,14 +37,7 @@ import {
   mergeLlmConflicts,
   type MergeSourceSnapshot,
 } from "./project-merge-conflicts.util.js";
-import { flattenStageDeliverables } from "./stage-helpers.js";
-
-type StageWithEst = Stage & { estimation: Estimation | null };
-
-function toApiProject<P extends { stages: StageWithEst[] } & Record<string, unknown>>(project: P) {
-  const flat = flattenStageDeliverables(project.stages, project as import("@theforge/shared-types").ProjectDeliverableSource);
-  return { ...project, ...flat };
-}
+import { toApiProject } from "./project-api.util.js";
 
 function defaultSourceOptions(input?: MergeSourceOptions): Required<MergeSourceOptions> {
   return {
