@@ -1,15 +1,25 @@
 import { NotFoundException } from "@nestjs/common";
 import type { Project } from "@theforge/database";
-import { getRequestUserId } from "../../common/request-user.store.js";
+import {
+  canAccessProject,
+  type ProjectAccessLevel,
+  type ProjectAccessOptions,
+} from "../../common/access/project-access.policy.js";
+import { getRequestUserId, getRequestUserRole } from "../../common/request-user.store.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
 import type { StageWithEstimation } from "./stage-helpers.js";
 
-/** Carga proyecto con etapas si el usuario actual es owner o el proyecto es SHARED. */
-export async function loadAccessibleProjectWithStages(
+/**
+ * Carga proyecto con etapas exigiendo `level` al usuario de la petición actual.
+ * La decisión es `canAccessProject` (fuente única); inexistente y sin acceso responden igual (404).
+ */
+export async function loadAccessibleProjectWithStagesAt(
   prisma: PrismaService,
   projectId: string,
+  level: ProjectAccessLevel,
+  options?: ProjectAccessOptions,
 ): Promise<Project & { stages: StageWithEstimation[] }> {
-  const userId = getRequestUserId();
+  const actor = { userId: getRequestUserId(), role: getRequestUserRole() };
   const project = await prisma.project.findFirst({
     where: { id: projectId },
     include: {
@@ -17,11 +27,18 @@ export async function loadAccessibleProjectWithStages(
       group: { select: { name: true } },
     },
   });
-  if (!project) throw new NotFoundException("Project not found");
-  const isOwner = project.userId === userId;
-  const isShared = project.visibility === "SHARED";
-  if (!isOwner && !isShared) throw new NotFoundException("Project not found");
+  if (!project || !canAccessProject(actor, project, level, options)) {
+    throw new NotFoundException("Project not found");
+  }
   return project as Project & { stages: StageWithEstimation[] };
+}
+
+/** Carga proyecto con etapas si el usuario actual puede verlo (nivel `read`: dueño o SHARED). */
+export async function loadAccessibleProjectWithStages(
+  prisma: PrismaService,
+  projectId: string,
+): Promise<Project & { stages: StageWithEstimation[] }> {
+  return loadAccessibleProjectWithStagesAt(prisma, projectId, "read");
 }
 
 /** Scope de proyecto solo owner (p. ej. crear etapa). */

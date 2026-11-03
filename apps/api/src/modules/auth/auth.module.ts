@@ -7,9 +7,11 @@ import { AuthController, UsersController } from "./auth.controller.js";
 import { AuthService } from "./auth.service.js";
 import { JwtStrategy } from "./jwt.strategy.js";
 import { UserProvidersModule } from "../user-providers/user-providers.module.js";
+import { AuthSecurityModule } from "./auth-security.module.js";
 
 @Module({
   imports: [
+    AuthSecurityModule,
     UserProvidersModule,
     PassportModule.register({ defaultStrategy: "jwt" }),
     JwtModule.registerAsync({
@@ -17,16 +19,8 @@ import { UserProvidersModule } from "../user-providers/user-providers.module.js"
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => {
         const expiresIn = (config.get<string>("JWT_EXPIRES_IN") ?? "7d") as SignOptions["expiresIn"];
-        const secret = config.get<string>("JWT_SECRET");
-        if (!secret) {
-          if (process.env.NODE_ENV === "production") {
-            throw new Error("JWT_SECRET is required in production");
-          }
-          return {
-            secret: "dev-only-insecure-jwt-secret",
-            signOptions: { expiresIn },
-          };
-        }
+        // En producción JWT_SECRET ya está validado en config/env.schema.ts; el fallback es solo para desarrollo.
+        const secret = config.get<string>("JWT_SECRET") || "dev-only-insecure-jwt-secret";
         return {
           secret,
           signOptions: { expiresIn },

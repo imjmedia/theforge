@@ -15,6 +15,7 @@ import {
 import { z } from "zod";
 import { Public } from "../../common/decorators/public.decorator.js";
 import { AuthService } from "./auth.service.js";
+import { AuthRateLimitGuard, AuthRateLimitProfileOf } from "./auth-rate-limit.guard.js";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard.js";
 import { getRequestUserId, getRequestUserRole } from "../../common/request-user.store.js";
 import { requireAdmin, requireSuperAdmin } from "../../common/guards/role.helpers.js";
@@ -64,6 +65,7 @@ export class AuthController {
 
   @Post("otp/request")
   @Public()
+  @UseGuards(AuthRateLimitGuard)
   @HttpCode(200)
   requestOtp(@Body() body: unknown) {
     const parsed = parseBody(requestOtpSchema, body);
@@ -72,6 +74,8 @@ export class AuthController {
 
   @Post("otp/verify")
   @Public()
+  @UseGuards(AuthRateLimitGuard)
+  @AuthRateLimitProfileOf("verify")
   @HttpCode(200)
   verify(@Body() body: unknown) {
     const parsed = parseBody(verifyOtpSchema, body);
@@ -80,6 +84,8 @@ export class AuthController {
 
   @Post("mcp-login")
   @Public()
+  @UseGuards(AuthRateLimitGuard)
+  @AuthRateLimitProfileOf("mcp-login")
   @HttpCode(200)
   mcpLogin(@Body() body: unknown) {
     const parsed = parseBody(mcpLoginSchema, body);
@@ -92,6 +98,7 @@ export class AuthController {
    */
   @Post("sso/login")
   @Public()
+  @UseGuards(AuthRateLimitGuard)
   @HttpCode(200)
   ssoLogin(@Body() body: unknown) {
     const parsed = parseBody(ssoLoginSchema, body);
@@ -104,6 +111,7 @@ export class AuthController {
    */
   @Post("forgeops/provision-user")
   @Public()
+  @UseGuards(AuthRateLimitGuard)
   @HttpCode(200)
   provisionUserFromForgeOps(
     @Headers("authorization") authorization: string | undefined,
@@ -176,6 +184,7 @@ export class AuthController {
   /** POST /auth/register-first-admin — crea el primer admin (público, solo si no hay usuarios). */
   @Post("register-first-admin")
   @Public()
+  @UseGuards(AuthRateLimitGuard)
   @HttpCode(201)
   registerFirstAdmin(@Body() body: unknown) {
     const email = (body != null && typeof body === "object" ? (body as Record<string, unknown>).email : undefined) as string | undefined;
@@ -209,7 +218,7 @@ export class UsersController {
   updateRole(@Param("id") id: string, @Body() body: { role?: string }) {
     requireAdmin();
     if (!body?.role) throw new BadRequestException("role requerido");
-    return this.auth.updateUserRole(id, body.role, getRequestUserId());
+    return this.auth.updateUserRole(id, body.role, getRequestUserId(), getRequestUserRole());
   }
 
   @Post()
@@ -217,34 +226,34 @@ export class UsersController {
   createUser(@Body() body: { email?: string; name?: string; role?: string }) {
     requireAdmin();
     if (!body?.email) throw new BadRequestException("email requerido");
-    return this.auth.createUser(body.email, body.name, body.role);
+    return this.auth.createUser(body.email, body.name, body.role, getRequestUserRole());
   }
 
   @Patch(":id")
   updateProfile(@Param("id") id: string, @Body() body: unknown) {
     requireAdmin();
     const parsed = parseBody(updateUserProfileSchema, body);
-    return this.auth.updateUserProfile(id, parsed);
+    return this.auth.updateUserProfile(id, parsed, getRequestUserRole());
   }
 
   @Delete(":id")
   @HttpCode(200)
   deleteUser(@Param("id") id: string) {
     requireAdmin();
-    return this.auth.deleteUser(id, getRequestUserId());
+    return this.auth.deleteUser(id, getRequestUserId(), getRequestUserRole());
   }
 
   @Get(":id/mcp-secret")
   getMcpSecret(@Param("id") id: string) {
     requireAdmin();
-    return this.auth.getUserMcpSecretAdmin(id);
+    return this.auth.getUserMcpSecretAdmin(id, getRequestUserRole());
   }
 
   @Post(":id/mcp-secret/regenerate")
   @HttpCode(200)
   regenerateMcpSecret(@Param("id") id: string) {
     requireAdmin();
-    return this.auth.regenerateUserMcpSecretAdmin(id);
+    return this.auth.regenerateUserMcpSecretAdmin(id, getRequestUserRole());
   }
 
   @Get(":id/allowed-chat-models")

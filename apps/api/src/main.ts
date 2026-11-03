@@ -11,8 +11,10 @@ import { Logger } from "@nestjs/common";
 import { config } from "dotenv";
 import * as dns from "node:dns";
 import { resolve } from "node:path";
+import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module.js";
+import { DEFAULT_TRUST_PROXY } from "./config/env.schema.js";
 import { ModelsUnavailableExceptionFilter } from "./common/filters/models-unavailable.exception-filter.js";
 import {
   assertRedisConfiguredForProduction,
@@ -71,6 +73,9 @@ async function bootstrap() {
   });
   logger.log("[bootstrap] Nest application created.");
   app.enableShutdownHooks();
+  // Proxies inversos de confianza (`TRUST_PROXY`, default 1 = Traefik/nginx): `req.ip` toma la IP real del cliente (rate limit de auth).
+  const trustProxy = app.get(ConfigService).get<number>("TRUST_PROXY") ?? DEFAULT_TRUST_PROXY;
+  (app.getHttpAdapter().getInstance() as { set: (k: string, v: unknown) => unknown }).set("trust proxy", trustProxy);
   app.useGlobalFilters(new ModelsUnavailableExceptionFilter());
   const origins = corsOriginsFromEnv();
   app.enableCors({ origin: origins, credentials: true });

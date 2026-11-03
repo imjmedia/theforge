@@ -72,6 +72,9 @@ export type GenerateJobType =
   | "plugin-artifact"
   | "upstream-propagate";
 
+/** Prefijo del jobId (BullMQ rechaza ":" en ids personalizados). */
+const DELIVERABLES_JOB_ID_PREFIX = "deliv-";
+
 export interface GenerateJobData {
   type: GenerateJobType;
   projectId: string;
@@ -777,7 +780,7 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   private enqueueInMemory(data: GenerateJobData): string {
-    const jobId = randomUUID();
+    const jobId = `${DELIVERABLES_JOB_ID_PREFIX}${randomUUID()}`;
     this.inMemoryJobs.set(jobId, {
       data,
       status: "queued",
@@ -879,13 +882,29 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
     const payload: GenerateJobData = { ...data, userId };
 
     if (this.queue) {
+      // jobId no adivinable (los IDs secuenciales de BullMQ permitían leer jobs ajenos).
       const job = await this.queue.add(data.type, payload, {
-        jobId: undefined,
+        jobId: `${DELIVERABLES_JOB_ID_PREFIX}${randomUUID()}`,
       });
       return String(job.id);
     }
 
     return this.enqueueInMemory(payload);
+  }
+
+  /**
+   * Referencia mínima para autorizar el acceso a un job (proyecto y quien lo encoló).
+   * Solo lectura: no reconcilia ni muta nada. `userId: null` en jobs antiguos sin `userId` en data.
+   */
+  async getJobAccessRef(jobId: string): Promise<{ projectId: string; userId: string | null } | null> {
+    if (typeof jobId !== "string" || jobId.length === 0) return null;
+    const mem = this.inMemoryJobs.get(jobId);
+    if (mem) return { projectId: mem.data.projectId, userId: mem.data.userId ?? null };
+    if (!this.queue) return null;
+    const job = await this.queue.getJob(jobId);
+    const data = job?.data as GenerateJobData | undefined;
+    if (!data?.projectId) return null;
+    return { projectId: data.projectId, userId: data.userId ?? null };
   }
 
   /** Devuelve el estado público de un job para polling del frontend. */
@@ -929,9 +948,9 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
 
     let status: GenerateJobStatus["status"];
     if (state === "completed") status = "completed";
-    else if (state === "failed") {
-      status = job.attemptsMade < (job.opts?.attempts ?? 1) ? "retrying" : "failed";
-    } else if (state === "active") status = "active";
+    // "failed" en BullMQ es terminal: los reintentos reales pasan por "delayed"/"waiting".
+    else if (state === "failed") status = "failed";
+    else if (state === "active") status = "active";
     else if (state === "delayed") status = "retrying";
     else if (state === "waiting" || state === "waiting-children") status = "queued";
     else status = "unknown";

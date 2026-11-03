@@ -32,7 +32,8 @@ import {
 } from "@theforge/shared-types";
 import { StageStatus, Prisma } from "@theforge/database";
 import { PrismaService } from "../../../prisma/prisma.service.js";
-import { getRequestUserId } from "../../../common/request-user.store.js";
+import { canAccessProject } from "../../../common/access/project-access.policy.js";
+import { getRequestUserId, getRequestUserRole } from "../../../common/request-user.store.js";
 import { ChangeLogService } from "../../change-log/change-log.service.js";
 import { TheForgeService } from "../../theforge/theforge.service.js";
 import { validateTasksJsonWithAriadneGate2 } from "../../theforge/ariadne-validate-tasks-json.util.js";
@@ -110,13 +111,12 @@ export class ProjectIntegrationService {
   ) {}
 
   private async assertAccess(projectId: string): Promise<ProjectRow> {
-    const userId = getRequestUserId();
+    const actor = { userId: getRequestUserId(), role: getRequestUserRole() };
     const project = await this.prisma.project.findFirst({
       where: { id: projectId },
       include: { stages: { orderBy: { ordinal: "asc" } } },
     });
-    if (!project) throw new NotFoundException("Project not found");
-    if (project.userId !== userId && project.visibility !== "SHARED") {
+    if (!project || !canAccessProject(actor, project, "read")) {
       throw new NotFoundException("Project not found");
     }
     return project as ProjectRow;

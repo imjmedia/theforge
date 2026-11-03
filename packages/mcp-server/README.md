@@ -17,6 +17,10 @@ Variables típicas: `THEFORGE_API_URL`, `MCP_M2M_SECRET` (header del cliente en 
 
 **HTTP:** escucha en `0.0.0.0:$PORT`. `GET /health` → `{"ok":true}` sin auth.
 
+**Autenticación por petición (sin estado compartido entre usuarios):** cada petición JSON-RPC HTTP trae su `MCP_M2M_SECRET` (o `Authorization: Bearer`). `index.ts` lo fija en un `AsyncLocalStorage` (`runWithMcpSecret`) y `mcpApiClient` toma de ahí el token en cada llamada; nunca hay un JWT global. Los tokens se cachean **por secret** (clave = sha256 del secret, TTL 55 min, máx. 500 entradas con evicción de la más antigua y limpieza de caducados), así que alternar usuarios no repite `POST /auth/mcp-login`, y logins simultáneos del mismo secret se comparten. Ante un `401` (token caducado o revocado por la API) se hace un único reintento con login fresco para ese secret; si vuelve a fallar, se propaga el error. Una tool invocada sin secret en el contexto falla con «Falta el secret MCP de la petición». En modo stdio (un solo usuario) el secret sale de la variable `MCP_M2M_SECRET`. Spec: `src/mcp-api-client.spec.ts`.
+
+**Errores de login:** `mcp-login` responde 401 si el secret no existe, incluido el anterior tras rotarlo en la web. Un 429 (límite por IP o por secret, con `Retry-After`) no se reintenta: la tool falla con `MCP login failed: HTTP 429`. Solo un 401 de una llamada a la API dispara el login de refresco.
+
 **Healthcheck (Docker / compose):** `http://theforge-mcp:3000/health` por DNS del servicio — **no** `127.0.0.1` (en Dokploy el loopback del panel es el host físico).
 
 **Dokploy Advanced → Swarm health:** `curl -f http://localhost:3000/health` (corre **dentro** del task). No pongas `http://127.0.0.1:3000` como URL de monitor externo.

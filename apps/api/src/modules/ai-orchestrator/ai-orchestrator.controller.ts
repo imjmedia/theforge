@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Post, Res } from "@nestjs/common
 import type { WorkshopChatScope } from "@theforge/shared-types";
 import { AiOrchestratorService } from "./ai-orchestrator.service.js";
 import { parseChatImageAttachments } from "../ai/utils/chat-image-attachments.util.js";
+import { ProjectScoped } from "../../common/access/index.js";
 import { writeSseFromAsyncGenerator, type SseWritable } from "./sse-stream.util.js";
 
 /** Minimal type for SSE response (avoids express types). */
@@ -19,6 +20,7 @@ function parseChatScope(raw: unknown): WorkshopChatScope | undefined {
 export class AiOrchestratorController {
   constructor(private readonly orchestrator: AiOrchestratorService) { }
 
+  @ProjectScoped({ from: "body", key: "projectId", level: "spend", stage: { from: "body", key: "stageId", optional: true } })
   @Post("chat")
   chat(
     @Body()
@@ -67,6 +69,7 @@ export class AiOrchestratorController {
     );
   }
 
+  @ProjectScoped({ from: "body", key: "projectId", level: "spend", stage: { from: "body", key: "stageId", optional: true } })
   @Post("chat/stream")
   async chatStream(
     @Body()
@@ -162,6 +165,8 @@ export class AiOrchestratorController {
     }
   }
 
+  // welcome genera el saludo con LLM (consume créditos del dueño) y puede crear la sesión.
+  @ProjectScoped({ from: "body", key: "projectId", level: "spend", stage: { from: "body", key: "stageId", optional: true } })
   @Post("welcome")
   welcome(
     @Body()
@@ -186,6 +191,7 @@ export class AiOrchestratorController {
     );
   }
 
+  @ProjectScoped({ from: "body", key: "projectId", level: "contribute", stage: { from: "body", key: "stageId", optional: true } })
   @Post("clear-chat")
   clearChat(@Body() body: { projectId: string; sessionId?: string }) {
     const { projectId, sessionId } = body ?? {};

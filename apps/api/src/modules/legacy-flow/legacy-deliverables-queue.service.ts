@@ -23,6 +23,9 @@ import { LegacyCoordinatorService } from "./legacy-coordinator.service.js";
 
 export const LEGACY_DELIVERABLES_QUEUE_NAME = "theforge-legacy-deliverables";
 
+/** Prefijo del jobId (BullMQ rechaza ":" en ids personalizados). */
+const LEGACY_JOB_ID_PREFIX = "legacy-";
+
 export interface LegacyDeliverablesJobData {
   projectId: string;
   stageId?: string;
@@ -177,11 +180,14 @@ export class LegacyDeliverablesQueueService implements OnModuleInit, OnModuleDes
     const payload: LegacyDeliverablesJobData = { ...data, userId };
 
     if (this.queue) {
-      const job = await this.queue.add("legacy-cascade", payload);
+      // jobId no adivinable (los IDs secuenciales de BullMQ permitían leer jobs ajenos).
+      const job = await this.queue.add("legacy-cascade", payload, {
+        jobId: `${LEGACY_JOB_ID_PREFIX}${randomUUID()}`,
+      });
       return String(job.id);
     }
 
-    const jobId = randomUUID();
+    const jobId = `${LEGACY_JOB_ID_PREFIX}${randomUUID()}`;
     this.inMemoryJobs.set(jobId, {
       data: payload,
       status: "queued",
@@ -191,6 +197,21 @@ export class LegacyDeliverablesQueueService implements OnModuleInit, OnModuleDes
     this.logger.log(`In-memory legacy job ${jobId} encolado projectId=${data.projectId}`);
     setImmediate(() => this.startInMemoryJob(jobId, payload));
     return jobId;
+  }
+
+  /**
+   * Referencia mínima para autorizar el acceso a un job (proyecto y quien lo encoló).
+   * Solo lectura: no reconcilia ni muta nada. `userId: null` en jobs antiguos sin `userId` en data.
+   */
+  async getJobAccessRef(jobId: string): Promise<{ projectId: string; userId: string | null } | null> {
+    if (typeof jobId !== "string" || jobId.length === 0) return null;
+    const mem = this.inMemoryJobs.get(jobId);
+    if (mem) return { projectId: mem.data.projectId, userId: mem.data.userId ?? null };
+    if (!this.queue) return null;
+    const job = await this.queue.getJob(jobId);
+    const data = job?.data as LegacyDeliverablesJobData | undefined;
+    if (!data?.projectId) return null;
+    return { projectId: data.projectId, userId: data.userId ?? null };
   }
 
   async getJobStatus(jobId: string): Promise<LegacyDeliverablesJobStatus> {
@@ -236,9 +257,9 @@ export class LegacyDeliverablesQueueService implements OnModuleInit, OnModuleDes
     const state = await job.getState();
     let status: LegacyDeliverablesJobStatus["status"];
     if (state === "completed") status = "completed";
-    else if (state === "failed") {
-      status = job.attemptsMade < (job.opts?.attempts ?? 1) ? "retrying" : "failed";
-    } else if (state === "active") status = "active";
+    // "failed" en BullMQ es terminal: los reintentos reales pasan por "delayed"/"waiting".
+    else if (state === "failed") status = "failed";
+    else if (state === "active") status = "active";
     else if (state === "delayed") status = "retrying";
     else if (state === "waiting" || state === "waiting-children") status = "queued";
     else status = "unknown";

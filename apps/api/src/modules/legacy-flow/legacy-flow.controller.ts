@@ -1,5 +1,6 @@
-import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Query } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Patch, Post, Query } from "@nestjs/common";
 import { generateCodebaseDocRequestSchema } from "@theforge/shared-types";
+import { ProjectScoped } from "../../common/access/project-scoped.decorator.js";
 import { ProjectsService } from "../projects/projects.service.js";
 import { LegacyCoordinatorService } from "./legacy-coordinator.service.js";
 import { LegacyDeliverablesQueueService } from "./legacy-deliverables-queue.service.js";
@@ -31,6 +32,7 @@ export class LegacyFlowController {
    * @param body.stageId - Etapa base opcional.
    * @returns suggestedFiles, affectedRoutes, sharedComponents, sddImpact.
    */
+  @ProjectScoped({ key: "projectId", level: "contribute", stage: { from: "body", key: "stageId", optional: true } })
   @Post("resolve-change-to-files")
   async resolveChangeToFiles(
     @Param("projectId") projectId: string,
@@ -49,6 +51,7 @@ export class LegacyFlowController {
    * @param body.stageId - Etapa base opcional.
    * @returns isShared, routesAffected, screenNames, warning.
    */
+  @ProjectScoped({ key: "projectId", level: "contribute", stage: { from: "body", key: "stageId", optional: true } })
   @Post("check-navigation-impact")
   async checkNavigationImpact(
     @Param("projectId") projectId: string,
@@ -63,6 +66,7 @@ export class LegacyFlowController {
    * Verifica si el proyecto puede transicionar a flujo legacy.
    * Consulta AriadneSpecs para saber si el código está indexado.
    */
+  @ProjectScoped({ key: "projectId", level: "read" })
   @Get("transition-status")
   async transitionStatus(@Param("projectId") projectId: string) {
     return this.legacyTransition.checkTransition(projectId);
@@ -71,6 +75,7 @@ export class LegacyFlowController {
   /**
    * Ejecuta la transición a flujo legacy: crea stage baseline con navigation map.
    */
+  @ProjectScoped({ key: "projectId", level: "contribute" })
   @Post("execute-transition")
   async executeTransition(@Param("projectId") projectId: string) {
     return this.legacyTransition.executeTransition(projectId);
@@ -81,6 +86,7 @@ export class LegacyFlowController {
    * @param projectId - ID del proyecto (debe ser LEGACY con theforgeProjectId).
    * @returns { codebaseDoc: string } o null si TheForge no está configurado.
    */
+  @ProjectScoped({ key: "projectId", level: "spend", stage: { from: "body", key: "stageId", optional: true } })
   @Post("generate-codebase-doc")
   async generateCodebaseDoc(@Param("projectId") projectId: string, @Body() body: unknown) {
     const parsed = generateCodebaseDocRequestSchema.safeParse(body ?? {});
@@ -94,6 +100,7 @@ export class LegacyFlowController {
   /**
    * Tras 409 LEGACY_INDEX_SDD_MISMATCH: confirma si se confía en el índice MCP, en el SDD (Falkor) o continuar con advertencia.
    */
+  @ProjectScoped({ key: "projectId", level: "contribute", stage: { from: "body", key: "stageId", optional: true } })
   @Post("resolve-index-sdd-conflict")
   async resolveIndexSddConflict(
     @Param("projectId") projectId: string,
@@ -112,6 +119,7 @@ export class LegacyFlowController {
    * @param body.codebaseDoc - Contenido Markdown de la documentación.
    * @returns { codebaseDoc: string }.
    */
+  @ProjectScoped({ key: "projectId", level: "contribute", stage: { from: "body", key: "stageId", optional: true } })
   @Patch("codebase-doc")
   async updateCodebaseDoc(
     @Param("projectId") projectId: string,
@@ -127,6 +135,7 @@ export class LegacyFlowController {
    * @param body.description - Descripción de la modificación que quiere el usuario.
    * @returns Lista de archivos, preguntas y respuestas sugeridas (opcional).
    */
+  @ProjectScoped({ key: "projectId", level: "spend", stage: { from: "body", key: "stageId", optional: true } })
   @Post("start")
   async start(
     @Param("projectId") projectId: string,
@@ -142,6 +151,7 @@ export class LegacyFlowController {
    * @param body.answers - Mapa índice → respuesta (p. ej. { "0": "10", "1": "30" }).
    * @returns { ok: true }.
    */
+  @ProjectScoped({ key: "projectId", level: "contribute", stage: { from: "body", key: "stageId", optional: true } })
   @Post("answer")
   async answer(
     @Param("projectId") projectId: string,
@@ -155,6 +165,7 @@ export class LegacyFlowController {
    * Genera el MDD de cambio a partir del estado del flujo (descripción, archivos, respuestas) y contexto AriadneSpecs. Persiste en mddContent.
    * Respuesta ligera por defecto (`ok`, `mddLength`, `wordCount`); `?includeContent=true` incluye el markdown (evitar en UI).
    */
+  @ProjectScoped({ key: "projectId", level: "spend", stage: { from: "body", key: "stageId", optional: true } })
   @Post("generate-mdd")
   async generateMdd(
     @Param("projectId") projectId: string,
@@ -180,26 +191,31 @@ export class LegacyFlowController {
     });
   }
 
-  /** Polling de MDD legacy encolado. */
+  /**
+   * Polling de MDD legacy encolado. El job debe pertenecer al proyecto de la ruta: si no existe o es de otro
+   * proyecto responde 404 (nunca 403, para no revelar que el jobId existe).
+   */
+  @ProjectScoped({ key: "projectId", level: "read" })
   @Get("mdd-jobs/:jobId")
-  getLegacyMddJobStatus(
+  async getLegacyMddJobStatus(
     @Param("projectId") projectId: string,
     @Param("jobId") jobId: string,
   ) {
-    return this.mddQueue.getJobStatus(jobId).then((status) => {
-      if (status.status === "unknown") {
-        throw new BadRequestException("Job no encontrado");
-      }
-      if (status.projectId && status.projectId !== projectId) {
-        throw new BadRequestException("jobId no pertenece a este proyecto");
-      }
-      return status;
-    });
+    const ref = await this.mddQueue.getJobAccessRef(jobId);
+    if (ref === null || ref.projectId !== projectId) {
+      throw new NotFoundException("Job no encontrado");
+    }
+    const status = await this.mddQueue.getJobStatus(jobId);
+    if (status.status === "unknown") {
+      throw new NotFoundException("Job no encontrado");
+    }
+    return status;
   }
 
   /**
    * Genera borrador BRD desde `codebaseDoc` (legacy); To-Be y As-Is eliminados del sistema.
    */
+  @ProjectScoped({ key: "projectId", level: "spend", stage: { from: "body", key: "stageId", optional: true } })
   @Post("suggest-brd-from-codebase-doc")
   @Post("suggest-brd-tobe-from-codebase-doc")
   async suggestBrdFromCodebaseDoc(
@@ -214,6 +230,7 @@ export class LegacyFlowController {
    * @param projectId - ID del proyecto (debe tener mddContent generado previamente).
    * @returns Confirmación de que la cascada terminó.
    */
+  @ProjectScoped({ key: "projectId", level: "spend", stage: { from: "body", key: "stageId", optional: true } })
   @Post("generate-deliverables")
   async generateDeliverables(
     @Param("projectId") projectId: string,
@@ -234,18 +251,21 @@ export class LegacyFlowController {
     return this.coordinator.generateDeliverables(projectId, body.stageId);
   }
 
-  /** Polling de cascada legacy encolada (BullMQ). */
+  /**
+   * Polling de cascada legacy encolada (BullMQ). El job debe pertenecer al proyecto de la ruta: si no existe o es
+   * de otro proyecto responde 404 (nunca 403).
+   */
+  @ProjectScoped({ key: "projectId", level: "read" })
   @Get("deliverables-jobs/:jobId")
-  getLegacyDeliverablesJobStatus(
+  async getLegacyDeliverablesJobStatus(
     @Param("projectId") projectId: string,
     @Param("jobId") jobId: string,
   ) {
-    return this.legacyDeliverablesQueue.getJobStatus(jobId).then((status) => {
-      if (status.projectId && status.projectId !== projectId) {
-        throw new BadRequestException("jobId no pertenece a este proyecto");
-      }
-      return status;
-    });
+    const ref = await this.legacyDeliverablesQueue.getJobAccessRef(jobId);
+    if (ref === null || ref.projectId !== projectId) {
+      throw new NotFoundException("Job no encontrado");
+    }
+    return this.legacyDeliverablesQueue.getJobStatus(jobId);
   }
 
   /**
@@ -255,6 +275,7 @@ export class LegacyFlowController {
    * @param body.stageId - Etapa base opcional.
    * @returns { content: string; field: string }
    */
+  @ProjectScoped({ key: "projectId", level: "spend", stage: { from: "body", key: "stageId", optional: true } })
   @Post("generate-from-codebase")
   async generateFromCodebase(
     @Param("projectId") projectId: string,

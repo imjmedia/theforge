@@ -11,7 +11,8 @@ import {
   notionImportPairBodySchema,
   type NotionImportBody,
 } from "@theforge/shared-types";
-import { getRequestUserId } from "../../common/request-user.store.js";
+import { canAccessProject } from "../../common/access/project-access.policy.js";
+import { getRequestUserId, getRequestUserRole } from "../../common/request-user.store.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
 import { ProjectGroupsService } from "../project-groups/project-groups.service.js";
 import { flattenStageDeliverables, type StageWithEstimation } from "./stage-helpers.js";
@@ -62,7 +63,7 @@ export class ProjectNotionPortabilityService {
   ) {}
 
   private async assertProjectAccess(projectId: string): Promise<ProjectNotionExportSource> {
-    const userId = getRequestUserId();
+    const actor = { userId: getRequestUserId(), role: getRequestUserRole() };
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
       include: {
@@ -72,7 +73,7 @@ export class ProjectNotionPortabilityService {
       },
     });
     if (!project) throw new NotFoundException("Proyecto no encontrado");
-    if (project.userId !== userId && project.visibility !== "SHARED") {
+    if (!canAccessProject(actor, project, "read")) {
       throw new ForbiddenException("Sin acceso al proyecto");
     }
     return project;

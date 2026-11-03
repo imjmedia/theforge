@@ -3,7 +3,6 @@ import {
   Body,
   Controller,
   Delete,
-  ForbiddenException,
   Get,
   NotFoundException,
   Param,
@@ -31,6 +30,42 @@ import { MddJobEventsService } from "./mdd/mdd-job-events.service.js";
 import { parseMddJobEventsCursor, type MddJobRelayEvent } from "./mdd/mdd-job-events.util.js";
 import { isMddChatJobMode, validateMddChatJobPayload } from "./mdd/mdd-queue-job-payload.util.js";
 import { resolveMddChatConfig } from "./mdd/mdd-chat-config.util.js";
+import {
+  isProjectAccessDenied,
+  ProjectAccessExempt,
+  ProjectAccessService,
+  ProjectScoped,
+} from "../../common/access/index.js";
+
+/**
+ * Autorización por proyecto (`@ProjectScoped`): este controller recibe el proyecto por body o query.
+ * `spend` = genera con LLM (credenciales del dueño); `contribute` = escritura sin LLM; `read` = lectura.
+ * `stageId` es opcional y, si viene, debe pertenecer al proyecto.
+ */
+const READ_QUERY = {
+  from: "query",
+  key: "projectId",
+  level: "read",
+  stage: { from: "query", key: "stageId", optional: true },
+} as const;
+const CONTRIBUTE_QUERY = {
+  from: "query",
+  key: "projectId",
+  level: "contribute",
+  stage: { from: "query", key: "stageId", optional: true },
+} as const;
+const CONTRIBUTE_BODY = {
+  from: "body",
+  key: "projectId",
+  level: "contribute",
+  stage: { from: "body", key: "stageId", optional: true },
+} as const;
+const SPEND_BODY = {
+  from: "body",
+  key: "projectId",
+  level: "spend",
+  stage: { from: "body", key: "stageId", optional: true },
+} as const;
 
 @Controller("ai-analysis")
 export class AiAnalysisController {
@@ -46,6 +81,7 @@ export class AiAnalysisController {
     private readonly mddUpstreamSync: MddUpstreamSyncService,
     private readonly tokenUsage: TokenUsageService,
     private readonly mddJobEvents: MddJobEventsService,
+    private readonly access: ProjectAccessService,
   ) { }
 
   private registerMddStreamLock(projectId: string | undefined): void {
@@ -54,6 +90,41 @@ export class AiAnalysisController {
 
   private releaseMddStreamLock(projectId: string | undefined): void {
     if (projectId?.trim()) this.generationGuard.unregisterMddStream(projectId.trim());
+  }
+
+  /**
+   * Resuelve el job a su proyecto y exige `read` sobre él. Nunca 403: job inexistente y job de un proyecto
+   * ajeno responden igual ("Job no encontrado") para no revelar existencia. Si el cliente envía `projectId`,
+   * debe coincidir con el del job.
+   */
+  private async assertMddJobReadable(jobId: string, projectIdFromClient?: string): Promise<void> {
+    const ref = await this.mddQueue.getJobAccessRef(jobId);
+    if (!ref) throw new NotFoundException("Job no encontrado");
+    if (projectIdFromClient && projectIdFromClient !== ref.projectId) {
+      throw new NotFoundException("Job no encontrado");
+    }
+    try {
+      await this.access.assertProject(this.access.actorFromRequest(), ref.projectId, "read");
+    } catch (err) {
+      if (isProjectAccessDenied(err)) throw new NotFoundException("Job no encontrado");
+      throw err;
+    }
+  }
+
+  /** El hilo de Fase 0 vive en memoria ligado a un proyecto: debe ser el ya autorizado por el guard. */
+  private assertPhase0ThreadInProject(threadId: string, projectId: string): void {
+    const state = this.phase0Interview.getState(threadId);
+    if (state && state.projectId !== projectId.trim()) {
+      throw new NotFoundException("Thread no encontrado");
+    }
+  }
+
+  /** Igual que Fase 0, para el hilo de auditoría manual del MDD. */
+  private assertMddAuditThreadInProject(threadId: string, projectId: string): void {
+    const owner = this.mddManualAudit.getThreadProjectId(threadId);
+    if (owner && owner !== projectId.trim()) {
+      throw new NotFoundException("Thread no encontrado");
+    }
   }
 
   /**
@@ -108,6 +179,7 @@ export class AiAnalysisController {
    * GET: usa borrador en vivo si hay stream MDD activo; sino mddContent del proyecto en DB.
    * POST: si body.mddContent está presente, calcula métricas sobre ese contenido (lo que ve el usuario); sino igual que GET.
    */
+  @ProjectScoped(READ_QUERY)
   @Get("estimation")
   async getEstimation(
     @Query("projectId") projectId: string,
@@ -134,6 +206,7 @@ export class AiAnalysisController {
     };
   }
 
+  @ProjectScoped(CONTRIBUTE_BODY)
   @Post("estimation")
   async postEstimation(@Body() body: { projectId?: string; mddContent?: string; stageId?: string }) {
     const id = typeof body?.projectId === "string" ? body.projectId.trim() : "";
@@ -164,6 +237,7 @@ export class AiAnalysisController {
    * Limpia el borrador en vivo del proyecto (para que la estimación use mddContent guardado en DB).
    * Llamar tras PATCH project con mddContent para que el semáforo refleje el contenido guardado.
    */
+  @ProjectScoped(CONTRIBUTE_BODY)
   @Post("estimation/clear-draft")
   async clearEstimationDraft(@Body() body: { projectId?: string; stageId?: string }) {
     const id = typeof body?.projectId === "string" ? body.projectId.trim() : "";
@@ -179,6 +253,7 @@ export class AiAnalysisController {
    * Borra checkpoint LangGraph: siempre el hilo DBGA (`mddStageId` vacío).
    * Con `stageId`, también el hilo MDD Manager de esa etapa.
    */
+  @ProjectScoped(CONTRIBUTE_QUERY)
   @Delete("dbga/checkpoint")
   async clearDbgaCheckpoint(
     @Query("projectId") projectId: string,
@@ -200,6 +275,7 @@ export class AiAnalysisController {
    * Starts a DBGA analysis for the given idea.
    * Body: { idea: string, projectId?: string }. Si projectId viene, se persiste estado por thread para retomar Fase 0.
    */
+  @ProjectScoped({ ...SPEND_BODY, optional: true })
   @Post("start")
   startAnalysis(@Body() body: { idea?: string; projectId?: string }) {
     const idea = typeof body?.idea === "string" ? body.idea.trim() : "";
@@ -214,6 +290,7 @@ export class AiAnalysisController {
    * Streams the DBGA analysis: NDJSON con eventos { type: "progress"|"done"|"error", agent?, message?, markdown? }.
    * Body: { idea: string, projectId?: string }.
    */
+  @ProjectScoped({ ...SPEND_BODY, optional: true })
   @Post("stream")
   async streamAnalysis(
     @Body() body: { idea?: string; projectId?: string },
@@ -259,6 +336,7 @@ export class AiAnalysisController {
    * Body: { projectId: string, mddContent?: string }. Si mddContent no viene, se usa el del proyecto en DB.
    * Respuesta: { mddContent: string }.
    */
+  @ProjectScoped(SPEND_BODY)
   @Post("mdd/review")
   async reviewMdd(@Body() body: { projectId?: string; mddContent?: string }) {
     const id = typeof body?.projectId === "string" ? body.projectId.trim() : "";
@@ -272,6 +350,7 @@ export class AiAnalysisController {
   }
 
   /** Auditoría manual del MDD visible en el Workshop. */
+  @ProjectScoped(SPEND_BODY)
   @Post("mdd/audit")
   async auditMdd(
     @Body() body: { projectId?: string; stageId?: string; mddContent?: string },
@@ -284,6 +363,7 @@ export class AiAnalysisController {
     return this.mddManualAudit.audit(projectId, stageId, mddContent);
   }
 
+  @ProjectScoped(SPEND_BODY)
   @Post("mdd/audit/answer")
   async answerMddAudit(
     @Body() body: { threadId?: string; answer?: string; projectId?: string; stageId?: string },
@@ -294,12 +374,15 @@ export class AiAnalysisController {
     if (!answer) throw new BadRequestException("answer is required");
     const projectId = typeof body?.projectId === "string" ? body.projectId.trim() || undefined : undefined;
     const stageId = typeof body?.stageId === "string" ? body.stageId.trim() || undefined : undefined;
+    // El guard exige projectId (body): el hilo debe ser de ese proyecto.
+    if (projectId) this.assertMddAuditThreadInProject(threadId, projectId);
     return this.mddManualAudit.processAnswer(threadId, answer, projectId, stageId);
   }
 
   /**
    * Analiza diff upstream (DBGA/BRD/Benchmark) vs baseline del MDD para sincronización incremental.
    */
+  @ProjectScoped(READ_QUERY)
   @Get("mdd/upstream-sync/analysis")
   async getMddUpstreamSyncAnalysis(
     @Query("projectId") projectId: string,
@@ -315,6 +398,7 @@ export class AiAnalysisController {
    * Marca el MDD como sincronizado con el upstream actual (re-ancla baseline sin regenerar contenido).
    * Query: projectId (required), stageId (optional).
    */
+  @ProjectScoped(CONTRIBUTE_QUERY)
   @Post("mdd/upstream-sync/accept-baseline")
   async acceptMddUpstreamBaseline(
     @Query("projectId") projectId: string,
@@ -337,6 +421,7 @@ export class AiAnalysisController {
    * Devuelve el threadId del flujo MDD para el proyecto, si existe.
    * El frontend lo usa para rehidratar managerThreadId al reabrir la app y seguir con resume.
    */
+  @ProjectScoped(READ_QUERY)
   @Get("mdd/thread")
   async getMddThread(@Query("projectId") projectId: string, @Query("stageId") stageId?: string) {
     const id = typeof projectId === "string" ? projectId.trim() : "";
@@ -354,6 +439,7 @@ export class AiAnalysisController {
    * Chat con Manager: `manager` (turno nuevo) y `resume` (threadId + userMessage; `images?`). Los eventos del turno
    * se consumen con `GET mdd/jobs/:jobId/events?cursor=N`.
    */
+  @ProjectScoped(SPEND_BODY)
   @Post("mdd/jobs")
   async enqueueMddJob(@Body() body: Record<string, unknown>) {
     const mode = body?.mode as MddJobMode | undefined;
@@ -438,6 +524,7 @@ export class AiAnalysisController {
    * el cliente se desconecta (el job NO se cancela: sigue en el worker). Cada línea incluye `cursor`
    * (índice de la siguiente entrada) para reanudar; `{"type":"heartbeat"}` cada 15 s.
    */
+  @ProjectAccessExempt("autorizado por getJobAccessRef en el handler")
   @Get("mdd/jobs/:jobId/events")
   async streamMddJobEvents(
     @Param("jobId") jobId: string,
@@ -447,9 +534,9 @@ export class AiAnalysisController {
   ) {
     const projectId = typeof projectIdRaw === "string" ? projectIdRaw.trim() : "";
     if (!projectId) throw new BadRequestException("projectId is required");
+    await this.assertMddJobReadable(jobId, projectId);
     const status = await this.mddQueue.getJobStatus(jobId);
     if (status.status === "unknown") throw new NotFoundException("Job no encontrado");
-    if (status.projectId && status.projectId !== projectId) throw new ForbiddenException();
     const cursor = parseMddJobEventsCursor(cursorRaw);
 
     res.setHeader("Content-Type", "application/x-ndjson");
@@ -509,11 +596,13 @@ export class AiAnalysisController {
     stream.pipe(res);
   }
 
+  @ProjectAccessExempt("autorizado por getJobAccessRef en el handler")
   @Get("mdd/jobs/:jobId")
   async getMddJobStatus(@Param("jobId") jobId: string) {
+    await this.assertMddJobReadable(jobId);
     const status = await this.mddQueue.getJobStatus(jobId);
     if (status.status === "unknown") {
-      throw new BadRequestException("Job no encontrado");
+      throw new NotFoundException("Job no encontrado");
     }
     return status;
   }
@@ -524,6 +613,7 @@ export class AiAnalysisController {
    * Body: { dbgaContent?: string, projectId?: string }. dbgaContent opcional; si no hay Benchmark, los agentes generan un MDD base.
    * Preferir POST mdd/jobs para ejecución en background.
    */
+  @ProjectScoped(SPEND_BODY)
   @Post("mdd/stream")
   async streamMdd(
     @Body() body: { dbgaContent?: string; projectId?: string; stageId?: string },
@@ -552,6 +642,7 @@ export class AiAnalysisController {
    * Body: { dbgaContent?: string, projectId: string, initialMessage?: string, mddContent?: string }. Requiere projectId.
    * mddContent = borrador actual del MDD para no perder contenido al delegar.
    */
+  @ProjectScoped(SPEND_BODY)
   @Post("mdd/stream/manager")
   async streamMddManager(
     @Body() body: {
@@ -607,6 +698,7 @@ export class AiAnalysisController {
    * Usado por comandos / en el chat (ej. /infraestructura).
    * Body: { projectId: string, section: number, mddContent?: string }. NDJSON: progress | done | error.
    */
+  @ProjectScoped(SPEND_BODY)
   @Post("mdd/stream/regenerate-section")
   async streamMddRegenerateSection(
     @Body() body: { projectId?: string; section?: number; mddContent?: string; stageId?: string; gapReasons?: string[] },
@@ -670,6 +762,7 @@ export class AiAnalysisController {
    * Body: { projectId: string, threadId: string, userMessage: string, mddContent?: string }.
    * mddContent opcional: si viene, se inyecta en el estado para no perder el documento actual (evita revertir al checkpoint viejo).
    */
+  @ProjectScoped(SPEND_BODY)
   @Post("mdd/stream/resume")
   async streamMddResume(
     @Body() body: {
@@ -710,6 +803,7 @@ export class AiAnalysisController {
   /**
    * Obtiene las decisiones arquitectónicas (ADRs) guardadas para el proyecto.
    */
+  @ProjectScoped(READ_QUERY)
   @Get("mdd/adrs")
   async getAdrs(@Query("projectId") projectId: string) {
     const id = typeof projectId === "string" ? projectId.trim() : "";
@@ -722,11 +816,13 @@ export class AiAnalysisController {
   /**
    * Sugiere un parche markdown para cerrar una brecha BRD→MDD (§1/§4/§5).
    */
+  @ProjectScoped(SPEND_BODY)
   @Post("traceability/suggest-fix")
   async suggestTraceabilityFix(@Body() body: TraceabilitySuggestFixRequest) {
     return this.traceabilitySuggest.suggestFix(body);
   }
 
+  @ProjectScoped(SPEND_BODY)
   @Post("mdd/suggest-governance-patterns")
   async suggestGovernancePatterns(
     @Body() body: { projectId?: string; stageId?: string },
@@ -737,6 +833,7 @@ export class AiAnalysisController {
     return this.aiAnalysis.suggestGovernancePatterns(projectId, stageId);
   }
 
+  @ProjectScoped(CONTRIBUTE_BODY)
   @Post("mdd/record-governance-pattern-adrs")
   async recordGovernancePatternAdrs(
     @Body()
@@ -760,6 +857,7 @@ export class AiAnalysisController {
    * Inicia la Fase 0: toma idea o documento externo, ejecuta prompt de arranque,
    * devuelve borrador inicial + gaps.
    */
+  @ProjectScoped(SPEND_BODY)
   @Post("phase0/start")
   async startPhase0(@Body() body: { idea?: string; projectId?: string }) {
     const idea = typeof body?.idea === "string" ? body.idea.trim() : "";
@@ -772,6 +870,7 @@ export class AiAnalysisController {
   /**
    * Obtiene la siguiente pregunta del entrevistador.
    */
+  @ProjectScoped(READ_QUERY)
   @Get("phase0/question/:threadId")
   async getPhase0Question(
     @Param("threadId") threadId: string,
@@ -779,9 +878,12 @@ export class AiAnalysisController {
   ) {
     if (!threadId) throw new BadRequestException("threadId is required");
     const pid = typeof projectId === "string" ? projectId.trim() || undefined : undefined;
+    // El guard exige projectId (query): el hilo debe ser de ese proyecto.
+    if (pid) this.assertPhase0ThreadInProject(threadId, pid);
     return this.phase0Interview.getQuestion(threadId, pid);
   }
 
+  @ProjectScoped(SPEND_BODY)
   @Post("phase0/audit")
   async auditPhase0(@Body() body: { projectId?: string }) {
     const projectId = typeof body?.projectId === "string" ? body.projectId.trim() : "";
@@ -790,6 +892,7 @@ export class AiAnalysisController {
   }
 
   /** Genera dbgaContent (markdown) desde phase0SummaryContent si falta. */
+  @ProjectScoped(CONTRIBUTE_BODY)
   @Post("phase0/sync-markdown")
   async syncPhase0Markdown(@Body() body: { projectId?: string }) {
     const projectId = typeof body?.projectId === "string" ? body.projectId.trim() : "";
@@ -800,6 +903,7 @@ export class AiAnalysisController {
   /**
    * Envía respuesta a la última pregunta y recibe borrador actualizado.
    */
+  @ProjectScoped(SPEND_BODY)
   @Post("phase0/answer")
   async answerPhase0(@Body() body: { threadId?: string; answer?: string; projectId?: string }) {
     const threadId = typeof body?.threadId === "string" ? body.threadId.trim() : "";
@@ -807,11 +911,14 @@ export class AiAnalysisController {
     const projectId = typeof body?.projectId === "string" ? body.projectId.trim() || undefined : undefined;
     if (!threadId) throw new BadRequestException("threadId is required");
     if (!answer) throw new BadRequestException("answer is required");
+    // El guard exige projectId (body): el hilo debe ser de ese proyecto.
+    if (projectId) this.assertPhase0ThreadInProject(threadId, projectId);
     return this.phase0Interview.processAnswer(threadId, answer, projectId);
   }
 
   // ─── Fase 0 — Modo asistido (chat Workshop) ─────────────────────
 
+  @ProjectScoped(SPEND_BODY)
   @Post("phase0/assisted/start")
   async startPhase0Assisted(@Body() body: { projectId?: string; idea?: string }) {
     const projectId = typeof body?.projectId === "string" ? body.projectId.trim() : "";
@@ -820,6 +927,7 @@ export class AiAnalysisController {
     return this.phase0Interview.startAssisted(projectId, idea);
   }
 
+  @ProjectScoped(SPEND_BODY)
   @Post("phase0/assisted/answer")
   async answerPhase0Assisted(
     @Body() body: { projectId?: string; answer?: string; threadId?: string },
@@ -833,6 +941,7 @@ export class AiAnalysisController {
     return this.phase0Interview.processAssistedAnswer(projectId, answer, threadId);
   }
 
+  @ProjectScoped(SPEND_BODY)
   @Post("phase0/assisted/stop")
   async stopPhase0Assisted(@Body() body: { projectId?: string }) {
     const projectId = typeof body?.projectId === "string" ? body.projectId.trim() : "";
@@ -843,10 +952,15 @@ export class AiAnalysisController {
   /**
    * Obtiene el estado actual de la entrevista Fase 0.
    */
+  @ProjectScoped(READ_QUERY)
   @Get("phase0/state/:threadId")
-  async getPhase0State(@Param("threadId") threadId: string) {
+  async getPhase0State(@Param("threadId") threadId: string, @Query("projectId") projectId: string) {
     const state = this.phase0Interview.getState(threadId);
-    if (!state) throw new BadRequestException("Thread no encontrado");
+    // Hilo inexistente y hilo de otro proyecto responden igual (404): no revela existencia.
+    // El guard exige projectId (query): el hilo debe ser de ese proyecto.
+    if (!state || state.projectId !== (projectId ?? "").trim()) {
+      throw new NotFoundException("Thread no encontrado");
+    }
     return {
       status: state.status,
       preguntasRealizadas: state.preguntasRealizadas,
@@ -863,6 +977,7 @@ export class AiAnalysisController {
    * Excluye el chat del Workshop a menos que `includeChat=true`; opcionalmente filtra por stageId.
    * Costes en USD según catálogo del proveedor activo + estimación MXN (TC fijo 20).
    */
+  @ProjectScoped(READ_QUERY)
   @Get("token-usage")
   async getTokenUsage(
     @Query("projectId") projectId: string,
@@ -879,6 +994,7 @@ export class AiAnalysisController {
   /**
    * Lista cruda de eventos de uso (último N). Pensado para vista detallada / admin.
    */
+  @ProjectScoped(READ_QUERY)
   @Get("token-usage/events")
   async listTokenUsageEvents(
     @Query("projectId") projectId: string,

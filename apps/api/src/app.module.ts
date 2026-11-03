@@ -13,6 +13,7 @@ import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { UserContextInterceptor } from "./common/interceptors/user-context.interceptor.js";
 import { JwtAuthGuard } from "./common/guards/jwt-auth.guard.js";
 import { PrismaModule } from "./prisma/prisma.module.js";
+import { AccessModule } from "./common/access/access.module.js";
 import { HealthController } from "./health.controller.js";
 import { AuthModule } from "./modules/auth/auth.module.js";
 import { AiModule } from "./modules/ai/ai.module.js";
@@ -37,6 +38,7 @@ import { PluginModule } from "./plugins/plugin.module.js";
 import { PluginsApiModule } from "./modules/plugins/plugins.module.js";
 import { SystemConfigModule } from "./modules/system-config/system-config.module.js";
 import pluginsConfig from "./config/plugins.config.js";
+import { validateEnv } from "./config/env.schema.js";
 
 @Module({
   controllers: [HealthController],
@@ -44,12 +46,14 @@ import pluginsConfig from "./config/plugins.config.js";
     ConfigModule.forRoot({
       isGlobal: true,
       load: [pluginsConfig],
+      validate: validateEnv,
       envFilePath: [join(__dirname, "../../.env"), join(__dirname, "../../../.env"), ".env"],
     }),
     SystemConfigModule,
     CryptoModule,
     AuthModule,
     PrismaModule,
+    AccessModule,
     UserProvidersModule,
     AiModule,
     EngineModule,

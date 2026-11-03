@@ -74,3 +74,8 @@ Al programar el auto-wire, **`scheduleAriadneBrownfieldWire`** también hace ups
 - **`POST /theforge/create-stage-from-ariadne-change-pack`** — MCP `create_stage_from_ariadne_change_pack`. Crea etapa LEGACY o importa pack v1 en `stageId` existente (≥2). Contrato en `@theforge/shared-types/ariadne-change-pack`. Con `handoffPlanType: migration_tasks` o `cursorTasksMarkdown` importa tasks del handoff y **omite LLM tasks** en cascada legacy.
 - **Flujo Ariadne recomendado:** (1) `resolve_forge_project_for_ariadne` → (2) `create_stage_from_ariadne_change_pack` → (3) `legacy_generate_mdd` → (4) `legacy_generate_deliverables` (sin `tasks` si migration) → (5) `get_next_implementation_task`.
 - **Secuencia alternativa:** `create_project_stage` + `POST …/integration/stages/:stageId/import-handoff` (handoff NEW) + tools legacy scoped con `stageId`.
+
+## Autorización (resolución Forge ↔ Ariadne)
+
+- `POST /theforge/resolve-forge-project-for-ariadne` y la tool `resolve_forge_project_for_ariadne` solo buscan entre proyectos que el actor puede leer (propios o `SHARED`, `project-ariadne-link.service.ts`). Un proyecto `PRIVATE` ajeno no entra en la búsqueda, así que no aparece ni en el 404 ni en `candidates[]` del 409.
+- `POST /theforge/create-stage-from-ariadne-change-pack` exige `spend` sobre `forgeProjectId` (`theforge.controller.ts`): un colaborador de un proyecto `SHARED` recibe 403 `PROJECT_LEVEL_FORBIDDEN`.

@@ -48,7 +48,7 @@ En la raíz del repo, crea `.env` (plantilla: **`.env.example`**).
 ```env
 DATABASE_URL=postgresql://theforge:theforge@localhost:5432/theforge
 REDIS_URL=redis://localhost:6381
-JWT_SECRET=local-dev-jwt-secret
+JWT_SECRET=local-dev-jwt-secret   # solo `pnpm dev`; para `compose:local` usa 32+ caracteres (ver Opción B)
 TOKEN_MASTER_KEYS={"1":"<openssl rand -base64 32>"}
 TOKEN_ACTIVE_KEY_VERSION=1
 ```
@@ -116,17 +116,33 @@ Usa el compose base + override **local** (nginx con proxy `/api`, sin red `dokpl
 docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 ```
 
+**Variables obligatorias** (en `.env` de la raíz; el compose falla sin ellas y no hay valores por defecto en el repo):
+
+```env
+JWT_SECRET=<openssl rand -hex 32>        # mínimo 32 caracteres; el valor corto de la Opción A no sirve aquí
+POSTGRES_PASSWORD=<openssl rand -hex 24>
+TOKEN_MASTER_KEYS={"1":"<openssl rand -base64 32>"}
+```
+
+Si el volumen `theforge_db_data` ya existía con otra contraseña, Postgres no la cambia al arrancar: recrea el volumen (`docker compose down -v`, borra los datos locales) o rota el rol con `ALTER USER theforge PASSWORD '...'`.
+
 Atajo:
 
 ```bash
 pnpm run compose:local
 ```
 
+**Adminer** (gestor de BD) ya no arranca por defecto: está en el perfil `tools` y no se une a `dokploy-network`. Para levantarlo en local:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile tools up --build
+```
+
 | URL | Servicio |
 |-----|----------|
 | http://localhost:8080 | App (web + `/api` vía nginx) |
 | http://localhost:3000 | API directa (debug) |
-| http://localhost:8081 | Adminer |
+| http://localhost:8081 | Adminer (solo con `--profile tools`) |
 
 El override monta `apps/web/nginx.local.conf` (proxy a `theforge-api:3000`).
 

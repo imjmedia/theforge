@@ -4,6 +4,49 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 
 ## [Unreleased]
 
+> **Seguridad lote 1: aislamiento por proyecto, autenticación que falla cerrado y arranque validado** — Primer lote de la auditoría de seguridad del 2026-11-02 (`docs/seguridad/auditoria-2026-11-02-app-infra.md`). Cierra el IDOR por proyecto, la fuerza bruta del OTP, el JWT compartido del servidor MCP y la falta de revocación de sesiones, y hace que la API y el entrypoint fallen al arrancar si falta un secreto. Rompe contratos y exige pasos operativos antes del deploy (ver `docs/handoffs/2026-11-02-seguridad-lote1-handoff.md`). ID-102 queda parcial (dominio de Adminer en Dokploy y literal en el `Dockerfile` raíz) y ID-109 parcial (los JWT siguen durando 7 días).
+
+### Added
+
+- **Autorización por proyecto** (`apps/api/src/common/access/`, con README): política pura `canAccessProject` con niveles `read | contribute | spend | manage`; `ProjectAccessService`, `ProjectAccessGuard` y los decoradores `@ProjectScoped` y `@ProjectAccessExempt(motivo)`. `route-coverage.spec.ts` deniega por defecto: toda ruta con proyecto debe estar decorada o exenta, y la lista `PENDING` está vacía. Decisión en `docs/adr/0001-autorizacion-por-proyecto.md`.
+- **Validación del entorno al arrancar** (`apps/api/src/config/env.schema.ts`, con README nuevo): zod con reglas de producción para `JWT_SECRET` (≥ 32 caracteres, sin literales conocidos), `DATABASE_URL`, `REDIS_URL`, `TOKEN_MASTER_KEYS` y `CORS_ORIGINS` si el rol sirve HTTP. Añade `THEFORGE_RUNTIME_ROLE` (`all | http | worker`) y `TRUST_PROXY` (default 1).
+- **Revocación de JWT** (`User.tokenVersion`, migración `20261102210000_add_user_token_version`, `packages/database/scripts/safe-schema-sync.sql`): los tokens llevan el claim `tv`. `JwtStrategy` relee rol y email de la BD, con caché de 30 s (`jwt-user-cache.ts`).
+- **Autorización de jobs** (`apps/api/src/modules/projects/job-access.util.ts`, `getJobAccessRef` en las tres colas): consultar exige `read` sobre el proyecto del job; cancelar, quien lo encoló o quien tiene `manage`.
+- **Secret MCP por petición** (`packages/mcp-server/src/mcp-api-client.ts`): `runWithMcpSecret` (AsyncLocalStorage) y caché de tokens por `sha256(secret)`. No hay JWT global compartido.
+- **Variables documentadas** en `.env.example`: `POSTGRES_PASSWORD` (obligatoria en compose) y `TRUST_PROXY`; `JWT_SECRET` queda marcada como obligatoria en producción.
+
+### Fixed
+
+- **IDOR por proyecto** (ID-103, `apps/api/src/modules/`): 150 declaraciones de `@ProjectScoped` (y 16 `@ProjectAccessExempt` con motivo) en `projects`, `integration`, `sessions`, `ai-analysis`, `ai-orchestrator`, `agent-supervisor`, `change-log`, `documentation-gap`, `legacy-flow`, `change-interview`, `plugins`, `ui-screens`, `theforge` y `ai`. Los hilos de Fase 0 y de auditoría quedan ligados al proyecto. `resolve-forge-project-for-ariadne` solo busca entre proyectos propios o `SHARED`; `generation-summary` filtra por lectura y admite como máximo 500 ids; `GET /sessions/:id` exige acceso actual al proyecto. `convergeWebhookSecret` solo lo recibe el dueño: `GET /projects/:id` y `GET /sessions/:id` devuelven `null` a colaboradores (ID-206).
+- **Escalada admin → super_admin** (ID-108, `apps/api/src/common/roles.ts`, `auth.service.ts`): solo un `super_admin` asigna o quita `super_admin`, crea o modifica a uno, y nadie cambia su propio rol. Asignar el mismo rol no revoca sesiones.
+- **JWT no revocable y rol tomado del token** (ID-109, `jwt.strategy.ts`, `auth.service.ts`): el rol y el email se leen de la BD; rotar el secret MCP, cambiar el rol o cambiar el email revoca los JWT previos.
+- **JWT por defecto** (ID-101, `apps/api/src/config/env.schema.ts`, `apps/api/docker-entrypoint.sh`): la API y el entrypoint fallan en producción si `JWT_SECRET` falta, tiene menos de 32 caracteres o es un literal del repo. `docker-compose*.yml` lo exige con `${JWT_SECRET:?}`.
+- **Adminer y contraseña de Postgres** (ID-102, `docker-compose.yml`, `docker-compose.coolify.yml`, `docker-compose.local.yml`): `POSTGRES_PASSWORD` y `JWT_SECRET` no tienen default; Adminer va al perfil `tools` y fuera de `dokploy-network`.
+- **Fuerza bruta de OTP** (ID-105, `apps/api/src/modules/auth/auth-redis.store.ts`, `auth-rate-limit.guard.ts`): el OTP vive en Redis; cinco fallos descartan el código; la comparación usa `timingSafeEqual` y las operaciones son Lua atómicas. En producción sin Redis responde 503. Las rutas de auth limitan por IP y por email y responden 429 con `Retry-After` (`otp/request`, `otp/verify`, `mcp-login`, `sso/login`, `forgeops/provision-user`, `register-first-admin`); `mcp-login` limita además por `sha256(secret)`.
+- **JWT global del servidor MCP** (ID-106, `packages/mcp-server/src/index.ts`, `mcp-api-client.ts`): cada petición usa su propio secret; ante un 401 hay un único reintento con login fresco.
+- **`otp_dev_expose_code` en producción** (ID-113, `apps/api/src/modules/auth/otp-dev-expose.util.ts`): en producción el código nunca se expone, aunque el ajuste esté activo.
+- **Sesiones de entrevista legacy sin dueño** (ID-118, `apps/api/src/modules/legacy-flow/change-interview.controller.ts`): quedan ligadas al proyecto y con nivel por ruta.
+- **Ids de job secuenciales** (`mdd-queue.service.ts`, `deliverables-queue.service.ts`, `legacy-deliverables-queue.service.ts`): cada job recibe un id con prefijo (`mdd-`, `deliv-`, `legacy-`) y un UUID.
+- **Stream SSE de entregables** (`apps/api/src/modules/projects/deliverables-sse.util.ts`): se cierra al desconectarse el cliente, termina en `completed`, `failed` o `unknown`, y tiene tope de 6 h.
+- **Estado `failed` de BullMQ** (`apps/api/src/modules/ai-analysis/mdd/mdd-queue.service.ts`): `failed` es terminal; antes se devolvía `retrying` mientras quedaban reintentos.
+
+### Changed
+
+- **Jobs denegados responden 404** (`apps/api/src/modules/projects/job-access.util.ts`): toda denegación de `GET` y `DELETE` de un job responde `404 Job no encontrado` (antes 400 o 403). `GET` y `DELETE` de `/projects/jobs/:jobId` también resuelven jobs MDD.
+- **Otros 400 pasan a 404**: `GET /ai-analysis/mdd/jobs/:jobId` (job no encontrado), `GET /ai-analysis/phase0/state/:threadId` (thread no encontrado) y las sesiones de entrevista legacy (`Session not found`).
+- **Regenerar el secret MCP** (`POST /auth/mcp-secret/regenerate`) devuelve `{ mcpSecret, accessToken }`; el `accessToken` nuevo evita que la sesión web se cierre. Rotar el secret, cambiar rol o email revoca los JWT previos.
+- **Auth con nuevos 429 y 503**: 429 con `Retry-After` en las rutas de OTP, `mcp-login`, SSO, ForgeOps y registro del primer admin; 503 en producción si no hay Redis.
+- **Colaboradores de `SHARED` no gastan LLM**: `POST /sessions/:id/chat` (siempre), `POST /sessions/:id/messages` con imágenes, `welcome`, aprobar gaps (`documentation-gap`), `import-handoff`, `promote-to-stage` y los `generate-*` exigen `spend`, que solo tiene el dueño; el resto responde 403 `PROJECT_LEVEL_FORBIDDEN`. La web omite ese 403 en la bienvenida (`apps/web/src/store/workshop/slice-session-chat.ts`).
+- **Constructores de auth**: `AuthService` recibe `AuthRedisStore` y `JwtUserCache`; `AuthRedisStore` recibe `ConfigService`. Afecta a los tests que instancian estos servicios.
+- **Operación (breaking)**: `JWT_SECRET` (≥ 32) y `POSTGRES_PASSWORD` son obligatorios en Dokploy, Coolify y local. En un volumen de Postgres existente hay que ejecutar `ALTER USER theforge PASSWORD '<valor>'` antes del deploy, quitar el dominio público de Adminer y aplicar la migración `tokenVersion`. Detalle en el handoff.
+
+> **Auditoría global 2026-11-02** — Seis pasadas de solo lectura (QA, harness IA, backend, frontend, arquitectura, seguridad) sobre `master` bfb3b21f. Sin cambios de código.
+
+### Added
+
+- **Informe consolidado** `docs/handoffs/2026-11-02-auditoria-global.md`: estado real de QA (lint sin `eslint.config`, CI parcial), fortalezas, bugs verificados (flowcharts válidos sustituidos por un webhook inventado en `mermaid.ts`, Auditor que puntúa 0 a documentos completos, carrera `cross_consistency_checker`/`diagram_injector` en el grafo one-shot, IDOR por falta de guard de proyecto, `JWT_SECRET` por defecto, cola offline de la web que pisa contenido), oportunidades priorizadas y decisiones abiertas.
+- **Auditoría de seguridad app + secretos + infra** `docs/seguridad/auditoria-2026-11-02-app-infra.md` (ID-101..ID-125).
+
 > **Eval MDD: el pipeline recibe el brief aunque el caso tenga DBGA** — Las expectativas de cada caso (entidades, capacidades) salen del brief, pero con DBGA el pipeline solo recibía el benchmark. En tres casos el DBGA cubría entre 12% y 24% del brief, así que las entidades y rutas pedidas nunca llegaban al modelo.
 
 ### Fixed

@@ -10,6 +10,7 @@ import {
   type ResolveForgeProjectForAriadneOutput,
 } from "@theforge/shared-types";
 import { PrismaService } from "../../prisma/prisma.service.js";
+import { getRequestUserId } from "../../common/request-user.store.js";
 import type { AriadneListedProject } from "./ariadne-mcp-scope.util.js";
 import { resolveAriadneCodebaseMcpTarget } from "./ariadne-mcp-scope.util.js";
 import {
@@ -115,14 +116,20 @@ export class ProjectAriadneLinkService {
     );
   }
 
+  /**
+   * Candidatos de resolución: solo proyectos propios del solicitante o `SHARED`. Sin este filtro la
+   * resolución (y los `candidates[]` del 409) expondrían nombres y ids de proyectos PRIVATE ajenos.
+   */
   private async loadCandidateRows(): Promise<ForgeProjectLinkRow[]> {
+    const actor = getRequestUserId();
+    const visibleToActor = { OR: [{ userId: actor }, { visibility: "SHARED" as const }] };
     const [links, projectsWithTheforgeId] = await Promise.all([
       this.prisma.projectAriadneLink.findMany({
-        where: { project: { archivedAt: null } },
+        where: { project: { archivedAt: null, ...visibleToActor } },
         include: { project: { select: { id: true, name: true, theforgeProjectId: true } } },
       }),
       this.prisma.project.findMany({
-        where: { archivedAt: null, theforgeProjectId: { not: null } },
+        where: { archivedAt: null, theforgeProjectId: { not: null }, ...visibleToActor },
         select: { id: true, name: true, theforgeProjectId: true },
       }),
     ]);

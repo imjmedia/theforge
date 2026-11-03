@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { summarizePluginDataPresence } from "./project-api.util.js";
+import { summarizePluginDataPresence, toApiProject } from "./project-api.util.js";
 
 describe("summarizePluginDataPresence", () => {
   it("returns null for empty or non-object input", () => {
@@ -28,5 +28,34 @@ describe("summarizePluginDataPresence", () => {
       }),
       { present: true },
     );
+  });
+});
+
+describe("toApiProject: convergeWebhookSecret solo para el dueño", () => {
+  const project = {
+    id: "p-1",
+    userId: "owner",
+    groupId: "g-1",
+    name: "P",
+    convergeWebhookUrl: "https://ci.example.test/hook",
+    convergeWebhookSecret: "s3cr3t-de-prueba",
+    stages: [],
+  };
+
+  it("sin opciones (lector SHARED) redacta el secreto (null) pero conserva el resto de campos", () => {
+    const api = toApiProject(project) as Record<string, unknown>;
+    assert.equal(api.convergeWebhookSecret, null);
+    assert.ok(!JSON.stringify(api).includes("s3cr3t-de-prueba"));
+    assert.equal(api.convergeWebhookUrl, "https://ci.example.test/hook");
+    assert.equal(api.name, "P");
+  });
+
+  it("isOwner=false redacta el secreto", () => {
+    assert.equal((toApiProject(project, { isOwner: false }) as Record<string, unknown>).convergeWebhookSecret, null);
+  });
+
+  it("isOwner=true lo incluye", () => {
+    const api = toApiProject(project, { isOwner: true }) as Record<string, unknown>;
+    assert.equal(api.convergeWebhookSecret, "s3cr3t-de-prueba");
   });
 });

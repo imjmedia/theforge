@@ -409,6 +409,11 @@ export class MddManualAuditService {
     this.estimation.clearLiveDraft(projectId, stageId);
   }
 
+  /** Proyecto al que está ligado un hilo de auditoría en memoria (`undefined` si no se conoce). Sin efectos. */
+  getThreadProjectId(threadId: string): string | undefined {
+    return this.states.get(threadId)?.projectId ?? this.threadMeta.get(threadId)?.projectId;
+  }
+
   private rememberState(state: MddManualAuditState): void {
     this.states.set(state.threadId, state);
     this.threadMeta.set(state.threadId, {

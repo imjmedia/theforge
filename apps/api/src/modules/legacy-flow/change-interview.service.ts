@@ -14,7 +14,7 @@
  * 6. ChangeScope se usa para generar el MDD
  */
 
-import { Injectable, Logger, BadRequestException, Inject, forwardRef } from "@nestjs/common";
+import { Injectable, Logger, BadRequestException, NotFoundException, Inject, forwardRef } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service.js";
 import { AiService } from "../ai/ai.service.js";
 import { ProjectsService } from "../projects/projects.service.js";
@@ -142,16 +142,14 @@ export class ChangeInterviewService {
    * Continúa la conversación con un nuevo mensaje del usuario.
    */
   async continueChat(
+    projectId: string,
     sessionId: string,
     message: string,
   ): Promise<{
     messages: InterviewMessage[];
     changeScope: ChangeScope | null;
   }> {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      throw new BadRequestException("Session not found. Call startInterview first.");
-    }
+    const session = this.getSessionForProject(projectId, sessionId);
     if (session.status === "confirmed" || session.status === "cancelled") {
       throw new BadRequestException(`Interview is already ${session.status}. Start a new one.`);
     }
@@ -201,11 +199,10 @@ export class ChangeInterviewService {
   /**
    * Confirma el ChangeScope actual y lo persiste.
    */
-  async confirmScope(sessionId: string): Promise<{
+  async confirmScope(projectId: string, sessionId: string): Promise<{
     changeScope: ChangeScope;
   }> {
-    const session = this.sessions.get(sessionId);
-    if (!session) throw new BadRequestException("Session not found");
+    const session = this.getSessionForProject(projectId, sessionId);
     if (!session.changeScope) {
       throw new BadRequestException("No change scope to confirm. Complete the interview first.");
     }
@@ -222,23 +219,21 @@ export class ChangeInterviewService {
   /**
    * Cancela la entrevista.
    */
-  async cancelInterview(sessionId: string): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (!session) throw new BadRequestException("Session not found");
+  async cancelInterview(projectId: string, sessionId: string): Promise<void> {
+    const session = this.getSessionForProject(projectId, sessionId);
     session.status = "cancelled";
   }
 
   /**
    * Obtiene el estado actual de la entrevista.
    */
-  async getStatus(sessionId: string): Promise<{
+  async getStatus(projectId: string, sessionId: string): Promise<{
     status: InterviewStatus;
     messages: InterviewMessage[];
     changeScope: ChangeScope | null;
     relevantRoutes: AffectedRoute[];
   }> {
-    const session = this.sessions.get(sessionId);
-    if (!session) throw new BadRequestException("Session not found");
+    const session = this.getSessionForProject(projectId, sessionId);
     return {
       status: session.status,
       messages: session.messages,
@@ -250,6 +245,18 @@ export class ChangeInterviewService {
   // -------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------
+
+  /**
+   * Devuelve la sesión solo si pertenece al proyecto de la ruta. Inexistente o de otro proyecto:
+   * mismo 404, para que un `sessionId` no sirva de oráculo entre proyectos.
+   */
+  private getSessionForProject(projectId: string, sessionId: string): InterviewState {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.projectId !== projectId) {
+      throw new NotFoundException("Session not found");
+    }
+    return session;
+  }
 
   private async fetchNavigationMap(projectId: string): Promise<any | null> {
     try {
