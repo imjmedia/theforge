@@ -43,12 +43,17 @@ import {
 import { mddStateHasDomainAuthSkew } from "../utils/mdd-domain-prompt.util.js";
 import { detectSection3CompositionBlockers } from "../utils/schema-owner.util.js";
 import type { UserLLMRuntime } from "../../ai/providers/llm-runtime.types.js";
-import { createDbgaLLM, createDbgaLLMFromRuntime, createMddApiContractsChunkLlmFromRuntime, createMddAuditorLLM, createMddHighComplexityLLM, resolveMddArchitectScopeMaxTokens } from "../llm/create-dbga-llm.js";
+import { createDbgaLLM, createDbgaLLMFromRuntime, createMddApiContractsChunkLlmFromRuntime, createMddAuditorLLM, describeLlmModelChain, createMddHighComplexityLLM, resolveMddArchitectScopeMaxTokens } from "../llm/create-dbga-llm.js";
 import type { AIFactory } from "../../ai/ai.factory.js";
 import { getMddArchitectTools } from "../tools/tool-registry.js";
 import type { TheForgeService } from "../../theforge/theforge.service.js";
 import { MDDStateAnnotation, type MDDStateType } from "../state/index.js";
-import { isCacheableNodeOutput, type NodeCacheService } from "../checkpoint/node-cache.service.js";
+import {
+  isCacheableNodeOutput,
+  isNodeCacheDisabled,
+  type NodeCacheLike,
+  type NodeCacheService,
+} from "../checkpoint/node-cache.service.js";
 import {
   clarifierInput,
   softwareArchitectInput,
@@ -58,16 +63,23 @@ import {
   crossConsistencyInput,
 } from "../checkpoint/node-input-hash.js";
 import { isHighSplitArchitectPipeline } from "../utils/mdd-architect-pipeline.util.js";
+import { withTokenUsageContextPatch } from "../token-usage/token-usage.context.js";
 
 const MAX_MDD_ITERATIONS = 2;
 
 /**
- * Auditor score-only: no re-enrutar tras primera pasada.
- * Si un nodo escritor falló (`lastStepFailed`), tampoco se audita: puntuar placeholders
- * convertía un error de LLM en "calidad baja" + preguntas genéricas. El gate de
- * prepare_output reporta el estado real y decide el reintento acotado.
+ * Regla de re-ejecución del Auditor (score-only, una pasada por turno). Se salta si:
+ *  - `auditorRan === true`: la pasada del turno ya se consumió, con nota (`auditorOutcome: "scored"`) o
+ *    sin ella (`"unavailable"`: el Auditor caído deja `auditorRan: true` precisamente para no
+ *    re-ejecutarse en bucle). `auditorRan` NO significa "hay nota": eso lo dice `auditorOutcome`.
+ *  - `lastStepFailed`: si un nodo escritor falló no se audita; puntuar placeholders convertía un error
+ *    de LLM en "calidad baja" + preguntas genéricas. El gate de prepare_output reporta el estado real.
+ *
+ * La decisión se apoya SOLO en `auditorRan`: `auditorOutcome` se limpia por turno en
+ * `TURN_TRANSIENT_RESET` (junto con `auditorRan`), así que un `unavailable` de un turno anterior no
+ * puede dejar al Auditor desactivado en el siguiente; `auditorOutcome` solo informa del resultado.
  */
-function shouldSkipAuditor(state: MDDStateType): boolean {
+export function shouldSkipAuditor(state: MDDStateType): boolean {
   return state.auditorRan === true || state.lastStepFailed != null;
 }
 
@@ -123,7 +135,7 @@ function createScopedArchitectNode(
   structuralLlm: Awaited<ReturnType<typeof createDbgaLLM>>,
   architectTools: ReturnType<typeof getMddArchitectTools>,
   compileOptions: MddGraphCompileOptions | undefined,
-  nodeCache: NodeCacheService | null,
+  nodeCache: NodeCacheLike | null,
   onNodeStart?: (nodeName: string) => void,
 ): NodeFn {
   return wrapNodeStart(
@@ -142,33 +154,69 @@ function createScopedArchitectNode(
   );
 }
 
+/**
+ * Telemetría por nodo (O14): todo nodo corre dentro de un patch del contexto de tokens con
+ * `node` y `capability` (por defecto el nombre del nodo), de modo que cada llamada LLM que haga
+ * quede atribuida sin que el nodo lo sepa. Reenvía todos los argumentos (LangGraph pasa
+ * `state` y `config`) y sirve también para nodos que devuelven `Command`. Sin contexto activo
+ * de tokens (tests, scripts) `withTokenUsageContextPatch` es un no-op y el nodo corre igual.
+ */
+export function wrapNodeTelemetry<A extends unknown[], R>(
+  nodeName: string,
+  nodeFn: (...args: A) => R,
+  capability?: string,
+): (...args: A) => R {
+  return (...args: A): R =>
+    withTokenUsageContextPatch({ node: nodeName, capability: capability ?? nodeName }, () =>
+      nodeFn(...args),
+    ) as R;
+}
+
 function wrapNodeStart(
   nodeName: string,
   nodeFn: NodeFn,
   onNodeStart?: (nodeName: string) => void,
 ): NodeFn {
-  if (!onNodeStart) return nodeFn;
-  return async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
+  if (!onNodeStart) return wrapNodeTelemetry(nodeName, nodeFn);
+  return wrapNodeTelemetry(nodeName, async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
     onNodeStart(nodeName);
     return Promise.resolve(nodeFn(state));
-  };
+  });
+}
+
+/**
+ * Fija en la caché la cadena de modelos efectiva del grafo (providerId + modelos y fallbacks de
+ * todos los LLM que usan los nodos, sin duplicados): si cambia el modelo, cambian todas las claves y
+ * un HIT nunca devuelve la salida de otro modelo. Con `null` devuelve `null` (sin caché).
+ */
+export function scopeNodeCacheToModels(
+  cache: NodeCacheService | null,
+  llms: ReadonlyArray<Parameters<typeof describeLlmModelChain>[0] | null | undefined>,
+): NodeCacheLike | null {
+  if (!cache) return null;
+  if (typeof cache.scoped !== "function") return cache;
+  const chains = new Set<string>();
+  for (const llm of llms) if (llm) chains.add(describeLlmModelChain(llm));
+  return cache.scoped([...chains].sort().join("|"));
 }
 
 /**
  * Envuelve un nodo LLM con el cache en memoria.
+ * - La clave incluye nodo, entrada, cadena de modelos y `MDD_PROMPT_VERSION` (ver `buildNodeCacheKey`).
+ * - Bypass total dentro de `runWithNodeCacheDisabled` (eval): no lee ni escribe.
  * - Bypass total mientras `deliveryGateLoopActive === true` (el gate re-ejecuta el nodo a propósito
  *   para corregir; un hit devolvería el mismo resultado que no pasó el gate).
  * - Solo se guardan éxitos con contenido (ver `isCacheableNodeOutput`): nunca `{}` ni `lastStepFailed`.
  */
 export function wrapCache(
-  cache: NodeCacheService | null,
+  cache: NodeCacheLike | null,
   nodeName: string,
   getInput: InputHashFn,
   nodeFn: NodeFn,
 ): NodeFn {
   if (!cache) return nodeFn;
   return async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
-    if (state.deliveryGateLoopActive === true) {
+    if (state.deliveryGateLoopActive === true || isNodeCacheDisabled()) {
       return nodeFn(state);
     }
     const projectId = state.projectId;
@@ -237,7 +285,13 @@ export async function createMddGraph(
     temperature: STRUCTURAL_TEMPERATURE,
   });
   const auditorLlm = await createMddAuditorLLM(aiFactory, userId);
-  const nodeCache = options?.nodeCache ?? null;
+  const nodeCache = scopeNodeCacheToModels(options?.nodeCache ?? null, [
+    llm,
+    structuralLlm,
+    highComplexityLlm,
+    auditorLlm,
+    apiContractsChunkLlm,
+  ]);
   const onNodeStart = options?.onNodeStart;
 
   const clarifierNode = wrapNodeStart(
@@ -544,7 +598,7 @@ export async function createMddGraph(
     .addNode("integration", integrationNode)
     .addNode("format_sec_int", formatSecIntNode)
     .addNode("format_after_redactor", formatterNode("format_after_redactor"))
-    // [PARALELO] CrossConsistency (skip si draft completo) + DiagramInjector (code-only, <3s)
+    // [SERIE] CrossConsistency (skip si draft completo) → DiagramInjector (code-only, <3s)
     .addNode("cross_consistency_checker", consistencyNode)
     .addNode("diagram_injector", diagramInjectorNode)
     .addNode("auditor", auditorNode)
@@ -603,14 +657,13 @@ export async function createMddGraph(
       prepare_output: "prepare_output",
     })
     .addEdge("format_sec_int", "format_after_redactor")
-    // format_after_redactor → cross_consistency_checker + diagram_injector en paralelo.
-    // (Antes pasaba por llm_formatter destructivo; ver CHANGELOG [Unreleased].)
+    // format_after_redactor → cross_consistency_checker → diagram_injector en SERIE.
+    // Ambos escriben mddDraft: en paralelo caían en el mismo superstep y reduceMddDraft
+    // (última escritura gana) perdía el parche de consistencia o el ER inyectado (H3).
+    // El grafo con Manager ya los serializa. (Antes pasaba por llm_formatter destructivo;
+    // ver CHANGELOG [Unreleased].)
     .addEdge("format_after_redactor", "cross_consistency_checker")
-    .addEdge("format_after_redactor", "diagram_injector")
-    .addConditionalEdges("cross_consistency_checker", routeAuditorOrPrepareOutput, {
-      auditor: "auditor",
-      prepare_output: "prepare_output",
-    })
+    .addEdge("cross_consistency_checker", "diagram_injector")
     .addConditionalEdges("diagram_injector", routeAuditorOrPrepareOutput, {
       auditor: "auditor",
       prepare_output: "prepare_output",
@@ -678,7 +731,13 @@ export async function createMddGraphWithManager(
     temperature: STRUCTURAL_TEMPERATURE,
   });
   const auditorLlm = await createMddAuditorLLM(aiFactory, userId);
-  const nodeCache = compileOptions?.nodeCache ?? null;
+  const nodeCache = scopeNodeCacheToModels(compileOptions?.nodeCache ?? null, [
+    llm,
+    structuralLlm,
+    highComplexityLlm,
+    auditorLlm,
+    apiContractsChunkLlm,
+  ]);
   const managerNode = createMddManagerNode(llm, precisionCalculator, managerToolDeps ?? null);
   const askInitialTopicNode = createMddAskInitialTopicNode();
   const clarifierNode = wrapCache(nodeCache, "clarifier", clarifierInput, createMddClarifierNode(llm));
@@ -1054,34 +1113,34 @@ export async function createMddGraphWithManager(
   ] as const;
 
   const builder = new StateGraph(MDDStateAnnotation)
-    .addNode("manager", managerNode, { ends: [...managerEnds] })
-    .addNode("ask_initial_topic", askInitialTopicNode, { ends: ["clarifier"] })
-    .addNode("plan_approval", planApprovalNode, { ends: ["manager", "executor"] })
-    .addNode("executor", executorNode, { ends: [...executorEnds] })
-    .addNode("clarifier", clarifierNode)
-    .addNode("merge_section1_only", mergeSection1Node)
-    .addNode("software_architect", softwareArchitectNode)
-    .addNode("stack_architect", stackArchitectNode)
-    .addNode("data_model", dataModelNode)
-    .addNode("api_contracts", apiContractsNode)
-    .addNode("architect_critic", architectCriticNode)
-    .addNode("format_after_architect", formatterNode)
-    .addNode("security", securityNode)
-    .addNode("integration", integrationNode)
-    .addNode("security_integration", securityIntegrationNode)
-    .addNode("tail_parallel", tailParallelNode)
-    .addNode("post_critic_parallel", postCriticParallelNode)
-    .addNode("data_model_patch", dataModelPatchNode)
+    .addNode("manager", wrapNodeTelemetry("manager", managerNode), { ends: [...managerEnds] })
+    .addNode("ask_initial_topic", wrapNodeTelemetry("ask_initial_topic", askInitialTopicNode), { ends: ["clarifier"] })
+    .addNode("plan_approval", wrapNodeTelemetry("plan_approval", planApprovalNode), { ends: ["manager", "executor"] })
+    .addNode("executor", wrapNodeTelemetry("executor", executorNode), { ends: [...executorEnds] })
+    .addNode("clarifier", wrapNodeTelemetry("clarifier", clarifierNode))
+    .addNode("merge_section1_only", wrapNodeTelemetry("merge_section1_only", mergeSection1Node))
+    .addNode("software_architect", wrapNodeTelemetry("software_architect", softwareArchitectNode))
+    .addNode("stack_architect", wrapNodeTelemetry("stack_architect", stackArchitectNode))
+    .addNode("data_model", wrapNodeTelemetry("data_model", dataModelNode))
+    .addNode("api_contracts", wrapNodeTelemetry("api_contracts", apiContractsNode))
+    .addNode("architect_critic", wrapNodeTelemetry("architect_critic", architectCriticNode))
+    .addNode("format_after_architect", wrapNodeTelemetry("format_after_architect", formatterNode))
+    .addNode("security", wrapNodeTelemetry("security", securityNode))
+    .addNode("integration", wrapNodeTelemetry("integration", integrationNode))
+    .addNode("security_integration", wrapNodeTelemetry("security_integration", securityIntegrationNode))
+    .addNode("tail_parallel", wrapNodeTelemetry("tail_parallel", tailParallelNode))
+    .addNode("post_critic_parallel", wrapNodeTelemetry("post_critic_parallel", postCriticParallelNode))
+    .addNode("data_model_patch", wrapNodeTelemetry("data_model_patch", dataModelPatchNode))
     // Dedicated §5 pass: regenera SOLO §5 cuando el substance check falla
     // únicamente en §5. CHANGELOG [Unreleased] → Added → "Dedicated §5 pass".
-    .addNode("section5", section5Node)
-    .addNode("format_after_redactor", formatterNode)
-    .addNode("cross_consistency_checker", consistencyNode)
-    .addNode("diagram_injector", diagramInjectorNode)
-    .addNode("auditor", auditorNode)
-    .addNode("prepare_output", prepareOutputNode)
-    .addNode("blackboard", blackboardNode)
-    .addNode("structured_hydrator", structuredHydratorNode)
+    .addNode("section5", wrapNodeTelemetry("section5", section5Node))
+    .addNode("format_after_redactor", wrapNodeTelemetry("format_after_redactor", formatterNode))
+    .addNode("cross_consistency_checker", wrapNodeTelemetry("cross_consistency_checker", consistencyNode))
+    .addNode("diagram_injector", wrapNodeTelemetry("diagram_injector", diagramInjectorNode))
+    .addNode("auditor", wrapNodeTelemetry("auditor", auditorNode))
+    .addNode("prepare_output", wrapNodeTelemetry("prepare_output", prepareOutputNode))
+    .addNode("blackboard", wrapNodeTelemetry("blackboard", blackboardNode))
+    .addNode("structured_hydrator", wrapNodeTelemetry("structured_hydrator", structuredHydratorNode))
     .addEdge(START, "manager")
     .addConditionalEdges("clarifier", routeAfterClarifier, {
       manager: "manager",

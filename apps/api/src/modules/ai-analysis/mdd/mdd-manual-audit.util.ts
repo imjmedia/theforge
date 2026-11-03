@@ -12,12 +12,13 @@ export function hasMddAuditDocument(mddContent: string | null | undefined): bool
 }
 
 export function isMddAuditPass(
-  score: number,
+  score: number | undefined,
   validation: ValidateMddStructureResult,
   gaps: AuditorGapsState | null | undefined,
 ): boolean {
   if (validation.missingSections.length > 0) return false;
-  if (score < MDD_AUDIT_PASS_THRESHOLD) return false;
+  // Sin nota (Auditor no disponible) no aprueba: tampoco se trata como 0.
+  if (score === undefined || score < MDD_AUDIT_PASS_THRESHOLD) return false;
   if ((gaps?.critical_gaps?.length ?? 0) > 0) return false;
   if ((gaps?.syntax_errors?.length ?? 0) > 0) return false;
   return true;

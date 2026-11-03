@@ -12,18 +12,22 @@ import {
 } from "./mdd-pre-render.js";
 
 describe("sanitizeMermaidBlock erDiagram PK/FK", () => {
-  it("repara PK, FK con coma a un solo PK", () => {
-    const raw = `erDiagram
+  it("conserva `PK, FK` válido (Mermaid 11 lo acepta) y repara `PK FK` sin coma", () => {
+    const valid = `erDiagram
   users {
     uuid user_id PK, FK
   }`;
-    const out = sanitizeMermaidBlock(raw);
-    assert.match(out, /user_id PK/);
-    assert.doesNotMatch(out, /PK\s*,\s*FK/);
+    assert.match(sanitizeMermaidBlock(valid), /user_id PK, FK/);
+    const invalid = `erDiagram
+  users {
+    uuid user_id PK FK
+  }`;
+    const out = sanitizeMermaidBlock(invalid);
+    assert.match(out, /user_id PK, FK/);
     assert.doesNotMatch(out, /\bPK\s+FK\b/i);
   });
 
-  it("preRenderMddSanity acepta erDiagram reparado", () => {
+  it("preRenderMddSanity acepta erDiagram con `PK, FK` válido", () => {
     const draft = `# MDD
 
 ## 3. Modelo de Datos

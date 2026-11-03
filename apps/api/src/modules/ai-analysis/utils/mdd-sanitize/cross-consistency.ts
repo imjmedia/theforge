@@ -779,150 +779,6 @@ export function draftRequiresDualApproval(draft: string): boolean {
   return pattern.test(draft);
 }
 
-function fixDualApprovalTableSqlBlock(sqlBlock: string): string {
-  let out = sqlBlock;
-  for (const table of DUAL_APPROVAL_TABLES) {
-    const tableRe = new RegExp(
-      `(CREATE\\s+TABLE\\s+${table}\\s*\\([\\s\\S]*?\\)\\s*;)`,
-      "gi",
-    );
-    out = out.replace(tableRe, (block) => {
-      if (/second_approver_id/i.test(block)) return block;
-      let fixed = block;
-      if (/\bapproved_by\b/i.test(fixed) && !/first_approver_id/i.test(fixed)) {
-        fixed = fixed.replace(/\bapproved_by\b/gi, "first_approver_id");
-      }
-      if (/first_approver_id/i.test(fixed)) {
-        if (/(first_approver_id\s+UUID[^,\n]*,)/i.test(fixed)) {
-          fixed = fixed.replace(
-            /(first_approver_id\s+UUID[^,\n]*,)/i,
-            "$1\n  second_approver_id UUID REFERENCES users(id),",
-          );
-        } else {
-          fixed = fixed.replace(
-            /(first_approver_id\s+UUID(?:\s+REFERENCES\s+users\(id\))?)(\s*)(?=\n)/i,
-            "$1,\n  second_approver_id UUID REFERENCES users(id)$2",
-          );
-        }
-      }
-      fixed = fixed.replace(
-        /CHECK\s*\(\s*status\s+IN\s*\(\s*'pending'\s*,\s*'approved'\s*,\s*'rejected'\s*\)\s*\)/i,
-        "CHECK (status IN ('pending', 'first_approved', 'approved', 'rejected', 'expired', 'completed'))",
-      );
-      return fixed;
-    });
-  }
-  return out;
-}
-
-function fixDualApprovalMermaidBlock(mermaid: string): string {
-  let out = mermaid;
-  for (const table of DUAL_APPROVAL_TABLES) {
-    const entityRe = new RegExp(`(${table}\\s*\\{[\\s\\S]*?\\})`, "gi");
-    out = out.replace(entityRe, (entity) => {
-      if (/second_approver_id/i.test(entity)) return entity;
-      if (!/\bapproved_by\b/i.test(entity) && !/first_approver_id/i.test(entity)) return entity;
-      let fixed = entity.replace(/\buuid\s+approved_by\s+FK\b/gi, "uuid first_approver_id FK");
-      if (!/first_approver_id/i.test(fixed)) {
-        fixed = fixed.replace(/\bapproved_by\b/gi, "first_approver_id");
-      }
-      if (!/second_approver_id/i.test(fixed)) {
-        fixed = fixed.replace(/(first_approver_id\s+FK\s*\n)/i, "$1    uuid second_approver_id FK\n");
-      }
-      return fixed;
-    });
-  }
-  return out;
-}
-
-/** Repara filas de tabla §4 rotas tras división approve-first / approve-second. */
-function normalizeDualApprovalSection4TableRows(body: string): string {
-  let out = body.replace(
-    /^\|\s*POST\s*\|\s*`?([^|`\n]+approve-first)`?\s*\|\s*$/gim,
-    "| POST | `$1` | Primera aprobación (dual) | JWT (admin_security) |",
-  );
-  out = out.replace(
-    /^\|\s*POST\s*\|\s*`?([^|`\n]+approve-second)`?\s*\|[^|\n]*(?:\|[^|\n]*)+/gim,
-    "| POST | `$1` | Segunda aprobación (409 si mismo aprobador) | JWT (admin_security) |",
-  );
-  return out;
-}
-
-/** Sustituye un único endpoint de aprobación por approve-first / approve-second en §4. */
-function fixDualApprovalSection4Endpoints(draft: string): string {
-  if (!draftRequiresDualApproval(draft)) return draft;
-  if (draftHasRequestIdDualApprovalApi(draft)) return draft;
-  const section = extractMddSectionBody(draft, "## 4. Contratos de API");
-  if (!section) return draft;
-
-  let body = section.body;
-  const hasSplitEndpoints = /approve-first/i.test(body) && /approve-second/i.test(body);
-  const exportApprovePathRe =
-    /\/export(?:-requests\/:requestId)?\/approve(?!-first|-second)/i;
-  const hasSingleApprove =
-    (/\|\s*POST\s*\|/i.test(body) && exportApprovePathRe.test(body)) ||
-    /#{2,6}\s*POST\s+\/[^\s\n]*\/export(?:-requests\/:requestId)?\/approve(?!-first|-second)/i.test(
-      body,
-    );
-
-  if (hasSplitEndpoints && !hasSingleApprove) {
-    body = normalizeDualApprovalSection4TableRows(body);
-    body = splitDualApprovalEndpointDetailHeadings(body);
-    if (body !== section.body) {
-      return draft.slice(0, section.start) + body + draft.slice(section.end);
-    }
-    return draft;
-  }
-
-  body = body.replace(
-    /^\|\s*POST\s*\|\s*[`']?(\/[^\s`'\n|]*\/export(?:-requests\/:requestId)?\/)approve[`']?\s*\|[^\n]*$/gim,
-    (_line, prefix: string) =>
-      `| POST | \`${prefix}approve-first\` | Primera aprobación (dual) | JWT (admin_security) |\n| POST | \`${prefix}approve-second\` | Segunda aprobación (409 si mismo aprobador) | JWT (admin_security) |`,
-  );
-  body = normalizeDualApprovalSection4TableRows(body);
-  body = splitDualApprovalEndpointDetailHeadings(body);
-
-  if (body === section.body) return draft;
-  return draft.slice(0, section.start) + body + draft.slice(section.end);
-}
-
-/** Divide el bloque detalle `#### POST …/export/approve` en approve-first y approve-second. */
-function splitDualApprovalEndpointDetailHeadings(body: string): string {
-  const headingRe =
-    /####\s*POST\s+(\/[^\s\n]*\/export(?:-requests\/:requestId)?\/)approve(?!-first|-second)[^\n]*\n+([\s\S]*?)(?=\n####\s*POST\s+\/|\n##\s+|\n---\s*\n|$)/i;
-  if (!headingRe.test(body)) return body;
-  return body.replace(headingRe, (_m, prefix: string, detail: string) => {
-    const trimmed = detail.trim();
-    return (
-      `#### POST ${prefix}approve-first\n\nPrimera aprobación. Cambia estado a \`first_approved\`.\n\n${trimmed}\n\n` +
-      `#### POST ${prefix}approve-second\n\nSegunda aprobación (distinto del primero). Cambia a \`approved\` y ejecuta exportación.\n\n${trimmed}\n\n`
-    );
-  });
-}
-
-/** Corrige esquema de aprobación dual (2 aprobadores) en SQL, diagramas ER y §4. */
-export function fixDualApprovalSchemaInDraft(draft: string): string {
-  if (!draft || !draftRequiresDualApproval(draft)) return draft;
-  const hasApprovalTable = DUAL_APPROVAL_TABLES.some((t) =>
-    new RegExp(`CREATE\\s+TABLE\\s+${t}\\b`, "i").test(draft),
-  );
-
-  let out = draft;
-  if (hasApprovalTable) {
-    out = out.replace(/```sql\s*([\s\S]*?)```/gi, (_full, inner: string) => {
-      const fixed = fixDualApprovalTableSqlBlock(inner);
-      return fixed === inner ? _full : "```sql\n" + fixed + "\n```";
-    });
-    out = out.replace(/```mermaid\s*([\s\S]*?)```/gi, (_full, inner: string) => {
-      if (!/erDiagram/i.test(inner)) return _full;
-      const fixed = fixDualApprovalMermaidBlock(inner);
-      return fixed === inner ? _full : "```mermaid\n" + fixed + "\n```";
-    });
-  }
-  out = fixDualApprovalSection4Endpoints(out);
-  return out;
-}
-
 export type CrossConsistencyPatch = { find: string; replace: string };
 
 /**
@@ -1217,7 +1073,7 @@ export function detectCrossConsistencyIssues(draft: string): string[] {
     const contratosDual = extractMddSectionBody(draft, "## 4. Contratos de API");
     if (contratosDual && !draftHasRequestIdDualApprovalApi(draft)) {
       const hasSingleApprove =
-        /\/export(?:-requests)?\/[^|\s\n]*\/approve(?!-first|-second)/i.test(
+        /\/export(?:-requests)?(?:\/[^|\s\n]*)?\/approve(?!-first|-second)/i.test(
           contratosDual.body,
         );
       const hasSplit =
@@ -1351,7 +1207,7 @@ export function detectCrossConsistencyIssues(draft: string): string[] {
 }
 
 /**
- * Paso determinista de consistencia cruzada (sin LLM): SQL, dual approval, coherencia §2/§4/§5/§7.
+ * Paso determinista de consistencia cruzada (sin LLM): SQL, outbox, coherencia §2/§4/§5/§7. La aprobación dual solo se DETECTA (`detectCrossConsistencyIssues`); no se reescribe el borrador.
  */
 export function applyDeterministicCrossConsistencyFixes(draft: string): string {
   if (!draft) return draft;
@@ -1359,12 +1215,7 @@ export function applyDeterministicCrossConsistencyFixes(draft: string): string {
   out = ensureOutboxTableInDraft(out);
   out = deduplicateOutboxTablesInDraft(out);
   out = fixSection7OutboxNarrative(out);
-  out = fixDualApprovalSchemaInDraft(out);
   out = fixDeterministicMddCoherence(out);
   out = fixJwtAlgorithmCoherence(out);
-  // Segunda pasada: rutas ya en /api/v1 y headings detalle pendientes
-  if (draftRequiresDualApproval(out)) {
-    out = fixDualApprovalSchemaInDraft(out);
-  }
   return out;
 }

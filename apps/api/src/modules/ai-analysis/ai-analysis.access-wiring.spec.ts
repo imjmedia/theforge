@@ -42,7 +42,6 @@ describe("AiAnalysisController: niveles por ruta", () => {
     for (const m of [
       "streamMdd",
       "streamMddManager",
-      "streamMddRegenerateSection",
       "streamMddResume",
       "enqueueMddJob",
       "reviewMdd",

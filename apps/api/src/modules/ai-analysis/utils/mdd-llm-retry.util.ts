@@ -24,20 +24,33 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { Runnable } from "@langchain/core/runnables";
 import type { BaseMessage } from "@langchain/core/messages";
-import { recordTokenUsageFromContext } from "../../ai/utils/token-usage-recorder.js";
+import {
+  extractChainedModel,
+  recordTokenUsageFromContext,
+  recordUsageEstimateOnAbort,
+} from "../../ai/utils/token-usage-recorder.js";
+import {
+  getActiveTokenUsageContext,
+  type TokenUsageOutcome,
+} from "../token-usage/token-usage.context.js";
 import { isLlmStreamingEnabled, resolveLlmTimeoutMs } from "./mdd-llm-timeout.util.js";
 import {
   createLlmAbortError,
   getActiveLlmAbortSignal,
   invokeLlmStreamingWithIdleTimeout,
+  readPartialText,
   supportsStreaming,
   type StreamableLlmLike,
 } from "./mdd-llm-stream-invoke.util.js";
+
+import { classifyLlmError } from "./llm-error-classify.util.js";
 
 export { getActiveLlmAbortSignal, runWithLlmAbortSignal } from "./mdd-llm-stream-invoke.util.js";
 
 const DEFAULT_BACKOFF_MS = [0, 1500, 4000];
 const DEFAULT_INVOKE_TIMEOUT_MS = resolveLlmTimeoutMs();
+/** Jitter del backoff: ±20 % para evitar reintentos sincronizados entre nodos paralelos. */
+const BACKOFF_JITTER_RATIO = 0.2;
 
 export type LlmToolCallLike = {
   id?: string;
@@ -133,8 +146,10 @@ export type InvokeWithRetryOptions = {
   /**
    * Validador del texto devuelto. Si retorna `false`, se considera respuesta
    * vacía/inválida y se reintenta. Default: texto no-vacío tras trim.
+   * El segundo argumento es la respuesta cruda (p. ej. `{ raw, parsed }` de structured output con
+   * `includeRaw`), para validar objetos que no viajan en el texto. Una respuesta inválida se traza como `invalid`.
    */
-  isResponseValid?: (text: string) => boolean;
+  isResponseValid?: (text: string, response: unknown) => boolean;
   /** Si true, tool_calls sin texto cuentan como respuesta válida (loops de herramientas). */
   acceptToolCallsWithoutContent?: boolean;
   /** Timeout por llamada LLM (ms). Si se excede, aborta y reintenta. Default 120_000 (2 min). */
@@ -155,6 +170,38 @@ export type InvokeWithRetryOptions = {
    * Al dispararse: se aborta la llamada en vuelo, se corta el backoff y NO se reintenta (lanza AbortError).
    */
   signal?: AbortSignal;
+  /**
+   * Sólo para pruebas: espera inyectable (por defecto un sleep cancelable real). Recibe los ms
+   * efectivos de cada espera (backoff con jitter o `retry-after` del proveedor).
+   */
+  waitFn?: (ms: number, signal: AbortSignal | undefined, tag: string) => Promise<void>;
+  /** Sólo para pruebas: fuente de aleatoriedad `[0,1)` del jitter. Default `Math.random`. */
+  random?: () => number;
+  /** Sólo para pruebas: reloj (ms) con el que se mide la latencia por intento. Default `Date.now`. */
+  now?: () => number;
+  /**
+   * Identidad (proveedor/modelo configurado) con la que se registra el uso. Obligatoria en la práctica
+   * cuando se invoca un runnable derivado del modelo (`withStructuredOutput`, `bindTools`…), que no
+   * expone identidad: sin ella la fila saldría con modelo `unknown`. Pasar `deriveLlmIdentity(llmBase)`.
+   */
+  identityOverride?: { providerId: string; modelId: string };
+};
+
+/** Traza de una invocación completa (todos sus intentos) para el log `[MDD:LlmCall]` (O14). */
+type LlmCallTrace = {
+  tag: string;
+  /** Último intento lanzado (1-based). */
+  attempts: number;
+  /** Latencia del último intento (ms): la misma que se registra en `TokenUsage`. */
+  latencyMs: number | null;
+  /** Desde el primer intento hasta salir, incluyendo backoff (ms). */
+  totalMs: number;
+  outcome: TokenUsageOutcome;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  estimated: boolean;
+  modelActual: string | null;
+  lastError: { kind: string; reason: string } | null;
 };
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -176,6 +223,12 @@ function sleepAbortable(ms: number, signal: AbortSignal | undefined, tag: string
   });
 }
 
+/** Backoff ±20 % (acotado a >= 0). */
+function applyJitter(ms: number, random: () => number): number {
+  const factor = 1 + (random() * 2 - 1) * BACKOFF_JITTER_RATIO;
+  return Math.max(0, Math.round(ms * factor));
+}
+
 /**
  * Tipo del objeto invocable: BaseChatModel directo o Runnable.bindTools(...).
  * Ambos exponen `.invoke(messages): Promise<unknown>`.
@@ -193,12 +246,57 @@ export async function invokeLlmWithRetry(
   messages: BaseMessage[],
   options: InvokeWithRetryOptions,
 ): Promise<unknown> {
+  const now = options.now ?? Date.now;
+  const startedAt = now();
+  const trace: LlmCallTrace = {
+    tag: options.tag || "LLM",
+    attempts: 0,
+    latencyMs: null,
+    totalMs: 0,
+    outcome: "error",
+    promptTokens: null,
+    completionTokens: null,
+    estimated: false,
+    modelActual: null,
+    lastError: null,
+  };
+  try {
+    return await invokeLlmWithRetryInner(llm, messages, options, trace, now);
+  } catch (err) {
+    if (trace.outcome === "ok" || trace.outcome === "invalid") trace.outcome = "error";
+    throw err;
+  } finally {
+    trace.totalMs = Math.max(0, now() - startedAt);
+    logLlmCall(llm, trace, options.identityOverride);
+  }
+}
+
+/**
+ * Resultado de traza para una cancelación externa: `timeout` si la causa es el agotamiento del presupuesto
+ * del nodo (DeadlineExceededError, ver mdd-llm-structured), `abort` en cualquier otro caso.
+ */
+function externalAbortOutcome(signal: AbortSignal): TokenUsageOutcome {
+  return (signal.reason as { name?: unknown } | undefined)?.name === "DeadlineExceededError" ? "timeout" : "abort";
+}
+
+async function invokeLlmWithRetryInner(
+  llm: InvokableLlm,
+  messages: BaseMessage[],
+  options: InvokeWithRetryOptions,
+  trace: LlmCallTrace,
+  now: () => number,
+): Promise<unknown> {
   const max = Math.max(1, options.maxAttempts ?? 3);
   const backoff = options.backoffMs ?? DEFAULT_BACKOFF_MS;
   const isValid = options.isResponseValid ?? ((t) => t.trim().length > 0);
   const acceptTools = options.acceptToolCallsWithoutContent === true;
   const tag = options.tag || "LLM";
   const externalSignal = options.signal ?? getActiveLlmAbortSignal();
+  const waitFn = options.waitFn ?? sleepAbortable;
+  const random = options.random ?? Math.random;
+  const startedAt = now();
+  // Espera impuesta por el proveedor (`retry-after`) para el siguiente intento; sustituye al backoff.
+  let providerWaitMs: number | undefined;
   const promptChars = messages.reduce((acc, m) => {
     const c = (m as { content?: unknown }).content;
     if (typeof c === "string") return acc + c.length;
@@ -207,6 +305,42 @@ export async function invokeLlmWithRetry(
     }
     return acc;
   }, 0);
+  const getPromptText = (): string => promptTextOf(messages);
+  /**
+   * Estimación chars/4 de un intento sin `usage_metadata` (abort, timeout, error). Best-effort.
+   * Un `error` sin salida parcial (400/401/403/contexto, 429 sin presupuesto, 5xx) no fue facturado por
+   * el proveedor: la fila se registra con tokens 0 y coste desconocido (`skipCost`), no con todo el prompt.
+   * `abort`/`timeout` (o un error con parcial recibido) sí consumieron tokens: se estima con coste.
+   */
+  const estimateFailedAttempt = (
+    outcome: TokenUsageOutcome,
+    attempt: number,
+    attemptStartedAt: number,
+    partialText: string,
+  ): void => {
+    if (!getActiveTokenUsageContext()) return;
+    try {
+      const { providerId, modelId } = options.identityOverride ?? deriveLlmIdentity(llm);
+      const billed = outcome !== "error" || partialText.length > 0;
+      recordUsageEstimateOnAbort(null, {
+        providerId,
+        modelId,
+        inputText: billed ? getPromptText() : "",
+        outputText: partialText,
+        outcome,
+        latencyMs: Math.max(0, now() - attemptStartedAt),
+        attempts: attempt,
+        ...(billed ? {} : { skipCost: true }),
+      });
+      trace.estimated = true;
+    } catch {
+      /* telemetría best-effort */
+    }
+  };
+  // Último fallo con excepción ya registrado como estimación (evita duplicar al agotar intentos).
+  let lastFailureRecorded = false;
+  let lastFailureWasException = false;
+  let lastAttemptStartedAt = now();
 
   // Se degrada a no-streaming si el proveedor rechaza `.stream()` (algunos endpoints
   // OpenAI-compat no lo soportan): reintentar en streaming fallaría igual.
@@ -216,9 +350,30 @@ export async function invokeLlmWithRetry(
   let degradeRefundUsed = false;
 
   for (let attempt = 1; attempt <= max; attempt += 1) {
-    if (externalSignal?.aborted) throw createLlmAbortError(tag);
-    const wait = backoff[Math.min(attempt - 1, backoff.length - 1)] ?? 0;
-    if (wait > 0) await sleepAbortable(wait, externalSignal, tag);
+    if (externalSignal?.aborted) {
+      trace.outcome = externalAbortOutcome(externalSignal);
+      trace.lastError = { kind: "abort", reason: "abort" };
+      throw createLlmAbortError(tag);
+    }
+    const baseWait = backoff[Math.min(attempt - 1, backoff.length - 1)] ?? 0;
+    const wait =
+      providerWaitMs ?? (baseWait > 0 ? applyJitter(baseWait, random) : 0);
+    providerWaitMs = undefined;
+    if (wait > 0) {
+      try {
+        await waitFn(wait, externalSignal, tag);
+      } catch (err) {
+        // Cancelación durante el backoff: ocurre fuera del try del intento, así que la traza se actualiza aquí
+        // (si no, conservaría el resultado del intento anterior).
+        if (externalSignal?.aborted) {
+          trace.outcome = externalAbortOutcome(externalSignal);
+          trace.lastError = { kind: "abort", reason: "abort" };
+        }
+        throw err;
+      }
+    }
+    trace.attempts = attempt;
+    const attemptStartedAt = now();
     try {
       const useStreaming =
         !options.disableStreaming &&
@@ -238,7 +393,12 @@ export async function invokeLlmWithRetry(
           });
         } catch (streamErr) {
           const streamMsg = streamErr instanceof Error ? streamErr.message : String(streamErr);
-          if (!/abortado por (inactividad|tope duro)/.test(streamMsg)) {
+          // Sólo se degrada ante fallos de transporte/desconocidos (`retry`): un 401/429/contexto
+          // excedido no depende de `.stream()` y degradar sólo gastaría una llamada extra.
+          if (
+            !/abortado por (inactividad|tope duro)/.test(streamMsg) &&
+            classifyLlmError(streamErr).kind === "retry"
+          ) {
             streamingDegraded = true;
             console.warn(`[${tag}] streaming no disponible (${streamMsg}); usando invoke no-streaming`);
           }
@@ -266,11 +426,31 @@ export async function invokeLlmWithRetry(
           externalSignal?.removeEventListener("abort", onExternalAbort);
         }
       }
-      recordLlmUsageFromMessage(llm, response, tag);
+      const latencyMs = Math.max(0, now() - attemptStartedAt);
       const text = extractLlmText(response);
       const toolCalls = extractLlmToolCalls(response);
       const toolsOk = acceptTools && toolCalls.length > 0;
-      if (toolsOk || isValid(text)) {
+      let valid = false;
+      let validatorError: unknown;
+      try {
+        valid = toolsOk || isValid(text, response);
+      } catch (e) {
+        validatorError = e;
+      }
+      lastFailureRecorded = false;
+      lastFailureWasException = false;
+      // El uso se registra aunque la respuesta no valide: los tokens se gastaron igual.
+      recordLlmUsageFromMessage(llm, response, {
+        identityOverride: options.identityOverride,
+        promptText: getPromptText,
+        latencyMs,
+        attempts: attempt,
+        outcome: valid ? "ok" : "invalid",
+        trace,
+      });
+      if (validatorError !== undefined) throw validatorError;
+      if (valid) {
+        trace.outcome = "ok";
         if (attempt > 1) {
           console.log(
             `[${tag}] retry recuperó respuesta válida (attempt ${attempt}/${max}, promptChars=${promptChars}, outLen=${text.length}, tools=${toolCalls.length})`,
@@ -282,42 +462,121 @@ export async function invokeLlmWithRetry(
         }
         return response;
       }
+      trace.outcome = "invalid";
+      trace.lastError = { kind: "retry", reason: "respuesta_invalida" };
       console.warn(
-        `[${tag}] respuesta vacía/inválida (attempt ${attempt}/${max}, promptChars=${promptChars}, outLen=${text.length}, tools=${toolCalls.length}), reintentando...`,
+        `[${tag}] respuesta vacía/inválida (attempt ${attempt}/${max}, kind=retry, reason=respuesta_invalida, promptChars=${promptChars}, outLen=${text.length}, tools=${toolCalls.length}), reintentando...`,
       );
     } catch (err) {
+      trace.latencyMs = Math.max(0, now() - attemptStartedAt);
+      lastAttemptStartedAt = attemptStartedAt;
       // Cancelación externa: cortar de inmediato, sin reintentos ni refund de streaming.
       if (externalSignal?.aborted) {
+        // Agotamiento del presupuesto de la llamada (DeadlineExceededError, ver mdd-llm-structured): es un timeout, no una cancelación.
+        const abortOutcome = externalAbortOutcome(externalSignal);
+        estimateFailedAttempt(abortOutcome, attempt, attemptStartedAt, readPartialText(err));
+        trace.outcome = abortOutcome;
+        trace.lastError = { kind: "abort", reason: "abort" };
         throw err instanceof Error && err.name === "AbortError" ? err : createLlmAbortError(tag);
       }
       const msg = err instanceof Error ? err.message : String(err);
+      let verdict = classifyLlmError(err);
+      // Un AbortError sin cancelación externa es un timeout propio (abortController local): reintentable.
+      if (verdict.kind === "abort") verdict = { kind: "retry", reason: "timeout_interno" };
+      trace.lastError = { kind: verdict.kind, reason: verdict.reason };
+      lastFailureWasException = true;
+      const isTimeout =
+        /abortado por (inactividad|tope duro)/.test(msg) ||
+        verdict.reason === "timeout_interno" ||
+        /timeout/.test(verdict.reason);
+      lastFailureRecorded = isTimeout;
+      trace.outcome = isTimeout ? "timeout" : "error";
+      // Timeout: el proveedor pudo generar tokens (parcial en streaming); se estima entrada + parcial.
+      // Otros errores transitorios (429/5xx) no consumen tokens: sólo se registra el agotamiento o `no_retry`.
+      if (isTimeout) estimateFailedAttempt("timeout", attempt, attemptStartedAt, readPartialText(err));
+      // Fallo determinista (credenciales, petición inválida, contexto excedido, cuota): otro intento
+      // fallaría igual y gastaría cuota; se corta y se mantiene el contrato (`null`).
+      if (verdict.kind === "no_retry") {
+        estimateFailedAttempt("error", attempt, attemptStartedAt, "");
+        console.error(
+          `[${tag}] error no reintentable en LLM.invoke (attempt ${attempt}/${max}, kind=no_retry, reason=${verdict.reason}): ${msg} — devolviendo null`,
+        );
+        return null;
+      }
       if (streamingDegraded && !degradeRefundUsed) {
         degradeRefundUsed = true;
         attempt -= 1;
         console.warn(`[${tag}] reintento inmediato sin streaming tras: ${msg}`);
         continue;
       }
+      let waitNote = "";
+      if (verdict.kind === "retry_after" && verdict.retryAfterMs !== undefined && attempt < max) {
+        const remaining =
+          options.hardTimeoutMs != null ? options.hardTimeoutMs - (now() - startedAt) : Infinity;
+        if (verdict.retryAfterMs >= remaining) {
+          console.error(
+            `[${tag}] error en LLM.invoke (attempt ${attempt}/${max}, kind=retry_after, reason=${verdict.reason}): ${msg} — retry-after ${verdict.retryAfterMs}ms no cabe en el presupuesto restante (${Math.max(0, Math.round(remaining))}ms), devolviendo null`,
+          );
+          if (!lastFailureRecorded) estimateFailedAttempt("error", attempt, attemptStartedAt, "");
+          return null;
+        }
+        providerWaitMs = verdict.retryAfterMs;
+        waitNote = ` (esperando retry-after ${verdict.retryAfterMs}ms)`;
+      }
       console.warn(
-        `[${tag}] error en LLM.invoke (attempt ${attempt}/${max}): ${msg}, reintentando...`,
+        `[${tag}] error en LLM.invoke (attempt ${attempt}/${max}, kind=${verdict.kind}, reason=${verdict.reason}): ${msg}, reintentando...${waitNote}`,
       );
     }
   }
   console.error(`[${tag}] LLM sin respuesta válida tras ${max} intentos — devolviendo null`);
+  // Agotamiento por errores (no por respuestas inválidas, que ya registraron su uso real).
+  if (lastFailureWasException && !lastFailureRecorded) {
+    estimateFailedAttempt("error", trace.attempts, lastAttemptStartedAt, "");
+  }
   return null;
 }
 
+/** Prompt concatenado como texto (bloques no string se serializan); sólo para estimar tokens. */
+function promptTextOf(messages: BaseMessage[]): string {
+  return messages
+    .map((m) => {
+      const c = (m as { content?: unknown }).content;
+      if (typeof c === "string") return c;
+      if (Array.isArray(c)) return c.map((b) => (typeof b === "string" ? b : JSON.stringify(b))).join("");
+      return "";
+    })
+    .join("");
+}
+
+type LlmUsageRecordContext = {
+  identityOverride?: { providerId: string; modelId: string };
+  promptText: () => string;
+  latencyMs: number;
+  attempts: number;
+  outcome: TokenUsageOutcome;
+  trace: LlmCallTrace;
+};
+
 /**
  * Extrae usage_metadata de un AIMessage de LangChain y lo registra en `TokenUsage`
- * si hay un contexto de telemetría activo. No-op si el LLM no expone usage.
- * El provider/modelo se derivan del llm pasado por parámetro (duck-typing).
+ * si hay un contexto de telemetría activo, con la latencia, el intento y el resultado medidos
+ * aquí y el modelo real (`response_metadata.chained_model`). Si el mensaje no trae uso, registra una
+ * estimación chars/4 marcada `estimated` (la fila existe aunque el proveedor no reporte tokens).
+ * El provider/modelo configurados se derivan del llm pasado por parámetro (duck-typing) o de
+ * `identityOverride`; el modelo real va aparte en `modelActual`.
+ *
+ * Si la respuesta es el objeto de `withStructuredOutput({ includeRaw: true })` (`{ raw, parsed }`), el
+ * uso y los metadatos se leen del mensaje `raw`, que es el que trae `usage_metadata`.
  */
 function recordLlmUsageFromMessage(
   llm: InvokableLlm,
   response: unknown,
-  _tag: string,
+  rec: LlmUsageRecordContext,
 ): void {
+  const { trace } = rec;
+  trace.latencyMs = rec.latencyMs;
   if (!response || typeof response !== "object") return;
-  const message = response as {
+  const message = unwrapRawMessage(response) as {
     usage_metadata?: {
       input_tokens?: number;
       output_tokens?: number;
@@ -340,23 +599,110 @@ function recordLlmUsageFromMessage(
           total_tokens: message.response_metadata.tokenUsage.totalTokens,
         }
       : undefined);
-  if (!usage) return;
-  const promptTokens = usage.input_tokens ?? 0;
-  const completionTokens = usage.output_tokens ?? 0;
-  const totalTokens = usage.total_tokens ?? promptTokens + completionTokens;
-  if (!promptTokens && !completionTokens) return;
-  const { providerId, modelId } = deriveLlmIdentity(llm);
-  recordTokenUsageFromContext(
+  const responseMetadata = (message as { response_metadata?: unknown }).response_metadata;
+  const { providerId, modelId } = rec.identityOverride ?? deriveLlmIdentity(llm);
+  const modelActual = extractChainedModel(responseMetadata);
+  trace.modelActual = modelActual;
+  const promptTokens = usage?.input_tokens ?? 0;
+  const completionTokens = usage?.output_tokens ?? 0;
+  if (usage && (promptTokens || completionTokens)) {
+    const totalTokens = usage.total_tokens ?? promptTokens + completionTokens;
+    trace.promptTokens = promptTokens;
+    trace.completionTokens = completionTokens;
+    trace.estimated = false;
+    recordTokenUsageFromContext(providerId, modelId, promptTokens, completionTokens, totalTokens, {
+      latencyMs: rec.latencyMs,
+      attempts: rec.attempts,
+      outcome: rec.outcome,
+      responseMetadata,
+    });
+    return;
+  }
+  // Sin `usage_metadata` (proveedor que no lo reporta): estimación marcada en vez de perder la fila.
+  trace.estimated = true;
+  if (!getActiveTokenUsageContext()) return;
+  recordUsageEstimateOnAbort(null, {
     providerId,
     modelId,
-    promptTokens,
-    completionTokens,
-    totalTokens,
-  );
+    inputText: rec.promptText(),
+    outputText: extractLlmText(message),
+    outcome: rec.outcome,
+    latencyMs: rec.latencyMs,
+    attempts: rec.attempts,
+    modelActual,
+  });
+}
+
+/** Mensaje `raw` de la salida de `withStructuredOutput({ includeRaw: true })`; si no aplica, la propia respuesta. */
+function unwrapRawMessage(response: object): object {
+  const raw = (response as { raw?: unknown }).raw;
+  return raw && typeof raw === "object" ? raw : response;
 }
 
 /**
- * Extrae provider/modelo del `BaseChatModel` para registrar `TokenUsage`.
+ * Una línea JSON por invocación (`[MDD:LlmCall]`): nodo, etiqueta, modelo configurado y real,
+ * intentos, latencia, resultado y tokens (o `estimated`), más `kind/reason` del último error.
+ * Nunca incluye prompts ni respuestas.
+ */
+function logLlmCall(
+  llm: InvokableLlm,
+  trace: LlmCallTrace,
+  identityOverride?: { providerId: string; modelId: string },
+): void {
+  let identity = { providerId: "unknown", modelId: "unknown" };
+  try {
+    identity = identityOverride ?? deriveLlmIdentity(llm);
+  } catch {
+    /* identidad desconocida */
+  }
+  writeLlmCallLog({
+    tag: trace.tag,
+    providerId: identity.providerId,
+    modelId: identity.modelId,
+    modelActual: trace.modelActual,
+    attempts: trace.attempts,
+    latencyMs: trace.latencyMs,
+    totalMs: trace.totalMs,
+    outcome: trace.outcome,
+    promptTokens: trace.promptTokens,
+    completionTokens: trace.completionTokens,
+    estimated: trace.estimated,
+    kind: trace.lastError?.kind ?? null,
+    reason: trace.lastError?.reason ?? null,
+  });
+}
+
+export type LlmCallLogFields = {
+  tag: string;
+  providerId: string;
+  modelId: string;
+  modelActual: string | null;
+  attempts: number;
+  latencyMs: number | null;
+  totalMs?: number;
+  outcome: TokenUsageOutcome;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  estimated: boolean;
+  kind: string | null;
+  reason: string | null;
+};
+
+/** Escribe la línea `[MDD:LlmCall]` (JSON de una línea; `node` sale del contexto de tokens activo). */
+export function writeLlmCallLog(fields: LlmCallLogFields): void {
+  try {
+    const { estimated, ...rest } = fields;
+    const line = { node: getActiveTokenUsageContext()?.node ?? null, ...rest, ...(estimated ? { estimated: true } : {}) };
+    console.log(`[MDD:LlmCall] ${JSON.stringify(line)}`);
+  } catch {
+    /* log best-effort */
+  }
+}
+
+/**
+ * Extrae provider/modelo CONFIGURADOS del `BaseChatModel` para registrar `TokenUsage`.
+ * El modelo que respondió de verdad (fallback de la cadena) no se mezcla aquí: va aparte como
+ * `modelActual` (`extractChainedModel(response_metadata)`) y el servicio tarifa con él.
  *
  * Estrategia en cascada (de más fuerte a más débil):
  *  1. Nombre de clase (`ChatAnthropic`, `ChatGoogleGenerativeAI`, `ChatOpenAI`, …).

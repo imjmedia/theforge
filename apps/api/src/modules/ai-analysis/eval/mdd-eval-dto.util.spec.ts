@@ -5,6 +5,7 @@ import {
   buildMddEvalCompareDto,
   buildMddEvalRunDto,
   deriveMddEvalRunStatus,
+  toAggregatesDto,
   toCaseDetailDto,
   toCaseSummaryDto,
   toRunRecordDto,
@@ -167,5 +168,53 @@ describe("buildMddEvalCompareDto", () => {
     assert.equal(onlyBase.passedBefore, true);
     assert.equal(dto.aggregatesBefore?.cases, 2);
     assert.equal(dto.aggregatesAfter?.cases, 2);
+  });
+});
+
+describe("failedLlmCalls / totalFailedLlmCalls", () => {
+  it("llegan al DTO del caso cuando vienen definidos", () => {
+    const record = makeRecord("caso-fallido", { failedLlmCalls: 2 });
+    const dto = toRunRecordDto(record, { hasMarkdown: false, keepProjects: false });
+    assert.equal(dto.failedLlmCalls, 2);
+  });
+
+  it("sin failedLlmCalls el DTO del caso no lo incluye", () => {
+    const dto = toRunRecordDto(makeRecord("caso-ok"), { hasMarkdown: false, keepProjects: false });
+    assert.equal(dto.failedLlmCalls, undefined);
+    assert.equal("failedLlmCalls" in dto, false);
+  });
+
+  it("totalFailedLlmCalls llega a los agregados cuando viene definido", () => {
+    const summary = makeSummary("run-fallidas", [makeRecord("caso-a", { failedLlmCalls: 2 })]);
+    const withTotal = { ...summary, aggregates: { ...summary.aggregates, totalFailedLlmCalls: 5 } };
+    assert.equal(toAggregatesDto(withTotal).totalFailedLlmCalls, 5);
+  });
+
+  it("sin totalFailedLlmCalls los agregados no lo incluyen", () => {
+    const summary = makeSummary("run-antiguo", [makeRecord("caso-a")]);
+    const legacy = { ...summary, aggregates: { ...summary.aggregates } };
+    delete legacy.aggregates.totalFailedLlmCalls;
+    const dto = toAggregatesDto(legacy);
+    assert.equal(dto.totalFailedLlmCalls, undefined);
+    assert.equal("totalFailedLlmCalls" in dto, false);
+  });
+});
+
+describe("auditorOutcome / auditorUnavailableCount / infraDegraded llegan a la web", () => {
+  it("el DTO del caso lleva auditorOutcome cuando viene definido", () => {
+    const record = makeRecord("caso-sin-nota", { auditorOutcome: "unavailable" });
+    const dto = toRunRecordDto(record, { hasMarkdown: false, keepProjects: false });
+    assert.equal(dto.auditorOutcome, "unavailable");
+  });
+
+  it("los agregados llevan auditorUnavailableCount e infraDegraded cuando vienen definidos", () => {
+    const summary = makeSummary("run-degradado", [makeRecord("caso-a")]);
+    const withAuditor = {
+      ...summary,
+      aggregates: { ...summary.aggregates, auditorUnavailableCount: 3, infraDegraded: true },
+    };
+    const dto = toAggregatesDto(withAuditor);
+    assert.equal(dto.auditorUnavailableCount, 3);
+    assert.equal(dto.infraDegraded, true);
   });
 });

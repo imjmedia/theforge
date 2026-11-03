@@ -35,6 +35,11 @@ export class OpenRouterFallbackChatModel extends BaseChatModel {
     super({});
   }
 
+  /** Cadena de modelos efectiva en orden de fallback (solo lectura; la usa la clave de la caché por nodo). */
+  get modelChain(): readonly string[] {
+    return this.models;
+  }
+
   _llmType(): string {
     return "openrouter-chat-fallback";
   }

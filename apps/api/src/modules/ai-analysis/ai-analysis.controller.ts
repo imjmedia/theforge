@@ -25,6 +25,10 @@ import { ProjectGenerationGuardService } from "../projects/project-generation-gu
 import { MddQueueService, type MddJobData, type MddJobMode } from "./mdd/mdd-queue.service.js";
 import { MddUpstreamSyncService } from "./mdd/mdd-upstream-sync.service.js";
 import { TokenUsageService } from "./token-usage/token-usage.service.js";
+import {
+  getActiveTokenUsageContext,
+  runWithTokenUsageContext,
+} from "./token-usage/token-usage.context.js";
 import { ndjsonLinesWithHeartbeat } from "./utils/ndjson-stream.util.js";
 import { MddJobEventsService } from "./mdd/mdd-job-events.service.js";
 import { parseMddJobEventsCursor, type MddJobRelayEvent } from "./mdd/mdd-job-events.util.js";
@@ -83,6 +87,24 @@ export class AiAnalysisController {
     private readonly mddJobEvents: MddJobEventsService,
     private readonly access: ProjectAccessService,
   ) { }
+
+  /**
+   * Abre el contexto de coste (`TokenUsage`) para un handler request/response que llama al LLM.
+   * Si ya hay un contexto activo (p. ej. un job o un caller externo), o no hay projectId, lo conserva y no crea otro.
+   * El `projectId` es el ya autorizado por `@ProjectScoped`.
+   */
+  private withUsageContext<T>(
+    projectId: string,
+    stageId: string | null | undefined,
+    documentField: string,
+    context: "initial" | "regenerate",
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    if (!projectId || getActiveTokenUsageContext()) return fn();
+    return Promise.resolve(
+      runWithTokenUsageContext({ projectId, stageId: stageId ?? null, documentField, context }, fn),
+    );
+  }
 
   private registerMddStreamLock(projectId: string | undefined): void {
     if (projectId?.trim()) this.generationGuard.registerMddStream(projectId.trim());
@@ -360,7 +382,9 @@ export class AiAnalysisController {
     const stageId = typeof body?.stageId === "string" ? body.stageId.trim() || undefined : undefined;
     const mddContent =
       typeof body?.mddContent === "string" ? body.mddContent.trim() || undefined : undefined;
-    return this.mddManualAudit.audit(projectId, stageId, mddContent);
+    return this.withUsageContext(projectId, stageId, "mddContent", "regenerate", () =>
+      this.mddManualAudit.audit(projectId, stageId, mddContent),
+    );
   }
 
   @ProjectScoped(SPEND_BODY)
@@ -376,7 +400,13 @@ export class AiAnalysisController {
     const stageId = typeof body?.stageId === "string" ? body.stageId.trim() || undefined : undefined;
     // El guard exige projectId (body): el hilo debe ser de ese proyecto.
     if (projectId) this.assertMddAuditThreadInProject(threadId, projectId);
-    return this.mddManualAudit.processAnswer(threadId, answer, projectId, stageId);
+    return this.withUsageContext(
+      projectId ?? this.mddManualAudit.getThreadProjectId(threadId) ?? "",
+      stageId,
+      "mddContent",
+      "regenerate",
+      () => this.mddManualAudit.processAnswer(threadId, answer, projectId, stageId),
+    );
   }
 
   /**
@@ -694,70 +724,6 @@ export class AiAnalysisController {
   }
 
   /**
-   * Regenera solo una sección del MDD (2–7) con el resto del documento como contexto.
-   * Usado por comandos / en el chat (ej. /infraestructura).
-   * Body: { projectId: string, section: number, mddContent?: string }. NDJSON: progress | done | error.
-   */
-  @ProjectScoped(SPEND_BODY)
-  @Post("mdd/stream/regenerate-section")
-  async streamMddRegenerateSection(
-    @Body() body: { projectId?: string; section?: number; mddContent?: string; stageId?: string; gapReasons?: string[] },
-    @Res() res: Response,
-  ) {
-    const projectId = typeof body?.projectId === "string" ? body.projectId.trim() : "";
-    const section = typeof body?.section === "number" ? body.section : Number(body?.section);
-    const mddContent = typeof body?.mddContent === "string" ? body.mddContent.trim() : undefined;
-    const stageId = typeof body?.stageId === "string" ? body.stageId.trim() || undefined : undefined;
-    const gapReasons = Array.isArray(body?.gapReasons)
-      ? body.gapReasons.filter((g): g is string => typeof g === "string" && g.trim().length > 0)
-      : undefined;
-    if (!projectId) {
-      res.status(400).json({ message: "projectId is required" });
-      return;
-    }
-    const project = await this.prisma.project.findUnique({ where: { id: projectId } });
-    if (project && (project as { projectType?: string }).projectType === "LEGACY") {
-      throw new BadRequestException(
-        "Regenerar sección MDD es solo para proyectos nuevos. En legacy usa el flujo de modificaciones.",
-      );
-    }
-    if (!Number.isInteger(section) || section < 1 || section > 7) {
-      res.status(400).json({ message: "section must be 1–7" });
-      return;
-    }
-    res.setHeader("Content-Type", "application/x-ndjson");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.flushHeaders();
-    this.registerMddStreamLock(projectId);
-    const service = this.aiAnalysis;
-    const stream = Readable.from(
-      (async function* () {
-        try {
-          for await (const event of service.streamMddRegenerateSection(projectId, section, mddContent, stageId, gapReasons)) {
-            yield JSON.stringify(event) + "\n";
-          }
-        } catch (err) {
-          const payload = formatDbgaStreamError(err, "mdd");
-          console.error("[MDD stream/regenerate-section] error:", payload.message);
-          yield JSON.stringify({ type: "error", ...payload }) + "\n";
-        }
-      })(),
-    );
-    res.on("close", () => {
-      this.releaseMddStreamLock(projectId);
-      stream.destroy();
-    });
-    stream.on("error", (err) => {
-      console.error("[MDD stream/regenerate-section] stream error:", err);
-      if (!res.destroyed) {
-        try { res.end(); } catch { /* ignore */ }
-      }
-    });
-    stream.pipe(res);
-  }
-
-  /**
    * Reanuda el flujo MDD con Manager tras la respuesta del usuario.
    * Body: { projectId: string, threadId: string, userMessage: string, mddContent?: string }.
    * mddContent opcional: si viene, se inyecta en el estado para no perder el documento actual (evita revertir al checkpoint viejo).
@@ -819,7 +785,11 @@ export class AiAnalysisController {
   @ProjectScoped(SPEND_BODY)
   @Post("traceability/suggest-fix")
   async suggestTraceabilityFix(@Body() body: TraceabilitySuggestFixRequest) {
-    return this.traceabilitySuggest.suggestFix(body);
+    const projectId = typeof body?.projectId === "string" ? body.projectId.trim() : "";
+    const stageId = typeof body?.stageId === "string" ? body.stageId.trim() || undefined : undefined;
+    return this.withUsageContext(projectId, stageId, "mddContent", "regenerate", () =>
+      this.traceabilitySuggest.suggestFix(body),
+    );
   }
 
   @ProjectScoped(SPEND_BODY)
@@ -830,7 +800,9 @@ export class AiAnalysisController {
     const projectId = typeof body?.projectId === "string" ? body.projectId.trim() : "";
     if (!projectId) throw new BadRequestException("projectId is required");
     const stageId = typeof body?.stageId === "string" ? body.stageId.trim() : undefined;
-    return this.aiAnalysis.suggestGovernancePatterns(projectId, stageId);
+    return this.withUsageContext(projectId, stageId, "mddContent", "regenerate", () =>
+      this.aiAnalysis.suggestGovernancePatterns(projectId, stageId),
+    );
   }
 
   @ProjectScoped(CONTRIBUTE_BODY)
@@ -864,7 +836,9 @@ export class AiAnalysisController {
     const projectId = typeof body?.projectId === "string" ? body.projectId.trim() : "";
     if (!idea) throw new BadRequestException("idea is required");
     if (!projectId) throw new BadRequestException("projectId is required");
-    return this.phase0Interview.start(idea, projectId);
+    return this.withUsageContext(projectId, null, "dbgaContent", "initial", () =>
+      this.phase0Interview.start(idea, projectId),
+    );
   }
 
   /**
@@ -888,7 +862,9 @@ export class AiAnalysisController {
   async auditPhase0(@Body() body: { projectId?: string }) {
     const projectId = typeof body?.projectId === "string" ? body.projectId.trim() : "";
     if (!projectId) throw new BadRequestException("projectId is required");
-    return this.phase0Interview.audit(projectId);
+    return this.withUsageContext(projectId, null, "dbgaContent", "regenerate", () =>
+      this.phase0Interview.audit(projectId),
+    );
   }
 
   /** Genera dbgaContent (markdown) desde phase0SummaryContent si falta. */
@@ -913,7 +889,13 @@ export class AiAnalysisController {
     if (!answer) throw new BadRequestException("answer is required");
     // El guard exige projectId (body): el hilo debe ser de ese proyecto.
     if (projectId) this.assertPhase0ThreadInProject(threadId, projectId);
-    return this.phase0Interview.processAnswer(threadId, answer, projectId);
+    return this.withUsageContext(
+      projectId ?? this.phase0Interview.getState(threadId)?.projectId ?? "",
+      null,
+      "dbgaContent",
+      "regenerate",
+      () => this.phase0Interview.processAnswer(threadId, answer, projectId),
+    );
   }
 
   // ─── Fase 0 — Modo asistido (chat Workshop) ─────────────────────
@@ -924,7 +906,9 @@ export class AiAnalysisController {
     const projectId = typeof body?.projectId === "string" ? body.projectId.trim() : "";
     const idea = typeof body?.idea === "string" ? body.idea.trim() : undefined;
     if (!projectId) throw new BadRequestException("projectId is required");
-    return this.phase0Interview.startAssisted(projectId, idea);
+    return this.withUsageContext(projectId, null, "dbgaContent", "initial", () =>
+      this.phase0Interview.startAssisted(projectId, idea),
+    );
   }
 
   @ProjectScoped(SPEND_BODY)
@@ -938,7 +922,9 @@ export class AiAnalysisController {
       typeof body?.threadId === "string" ? body.threadId.trim() || undefined : undefined;
     if (!projectId) throw new BadRequestException("projectId is required");
     if (!answer) throw new BadRequestException("answer is required");
-    return this.phase0Interview.processAssistedAnswer(projectId, answer, threadId);
+    return this.withUsageContext(projectId, null, "dbgaContent", "regenerate", () =>
+      this.phase0Interview.processAssistedAnswer(projectId, answer, threadId),
+    );
   }
 
   @ProjectScoped(SPEND_BODY)

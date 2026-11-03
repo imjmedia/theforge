@@ -34,7 +34,10 @@ import {
 import {
   appendUserInput,
   dbgaContentWithUserText,
+  buildQuestionsDirectiveReply,
+  buildWhatNeededReply,
   hasRealBenchmark,
+  isBelowQuality,
   LOG,
   mddHasContent,
   stateWithUserMessage,
@@ -67,7 +70,8 @@ export type ManagerHandlerContext = {
   llm: BaseChatModel;
   precisionCalculator?: LivePrecisionCalculator | null;
   userMessage: string;
-  score: number;
+  /** `undefined` = Auditor sin nota (no disponible); nunca 0. */
+  score: number | undefined;
 };
 
 /** Ejecuta handlers deterministas en orden; retorna Command si aplica, null para continuar al LLM. */
@@ -76,7 +80,7 @@ export async function runDeterministicManagerHandlers(
 ): Promise<Command | null> {
   const { state, llm, precisionCalculator, userMessage, score } = ctx;
 
-  if (score >= QUALITY_THRESHOLD && !userMessage) {
+  if (score !== undefined && score >= QUALITY_THRESHOLD && !userMessage) {
     LOG("goto END (score >= 85, sin mensaje nuevo)");
     return new Command({ goto: END });
   }
@@ -198,12 +202,8 @@ export async function runDeterministicManagerHandlers(
           projectId: state.projectId,
           stageId: state.activeStageId ?? null,
         }).precision
-        : (state.auditorScore ?? 0);
-    const directiveReply =
-      "Estamos al " +
-      precision +
-      "%. Para avanzar al 85%, necesito que definamos los siguientes puntos.\n\n" +
-      questions.join("\n\n");
+        : score;
+    const directiveReply = buildQuestionsDirectiveReply(precision, questions);
     LOG("interrupt questions (Clarifier) count=%s con mensaje directivo", questions.length);
     const userAnswer = interrupt({ type: "questions", questions, reply: directiveReply });
     const answerText = typeof userAnswer === "string" ? userAnswer : String(userAnswer ?? "").trim();
@@ -402,7 +402,7 @@ export async function runDeterministicManagerHandlers(
   // Patrón Planner–Executor: toda delegación pasa por plan → plan_approval → executor. Sin atajos.
   
   // Usuario pide seguir refinando → plan (full_pipeline) y aprobación.
-  if (hasDraft && score < QUALITY_THRESHOLD && userMessage && wantsToContinueRefining(userMessage)) {
+  if (hasDraft && isBelowQuality(score, QUALITY_THRESHOLD) && userMessage && wantsToContinueRefining(userMessage)) {
     const stateForDirective = stateWithUserMessage(state, userMessage, "Petición");
     const planDirective = getPlanDirective(stateForDirective);
     const mddPlan = buildMddPlan("full_pipeline", undefined, getUserBrief(stateForDirective), planDirective, state.mddComplexity);
@@ -427,7 +427,7 @@ export async function runDeterministicManagerHandlers(
   }
   
   // Usuario responde con acuerdo breve al feedback del auditor → plan (sections) y aprobación.
-  if (hasDraft && score < QUALITY_THRESHOLD && userMessage && looksLikeShortAgreement(userMessage) && state.auditorFeedback?.trim()) {
+  if (hasDraft && isBelowQuality(score, QUALITY_THRESHOLD) && userMessage && looksLikeShortAgreement(userMessage) && state.auditorFeedback?.trim()) {
     const directive = state.auditorFeedback.trim();
     const sectionsToRun = expandSectionsToRun(
       resolveCorrectionAgents(state.auditorGaps, state.auditorFeedback, inferAgentsFromAuditorFeedback),
@@ -463,7 +463,7 @@ export async function runDeterministicManagerHandlers(
     userMessage &&
     ASK_WHAT_NEEDED_FOR_85_PATTERN.test(userMessage.trim()) &&
     hasDraft &&
-    score < QUALITY_THRESHOLD;
+    isBelowQuality(score, QUALITY_THRESHOLD);
   if (askingWhatNeededFor85 && state.auditorFeedback?.trim()) {
     const precision =
       precisionCalculator && (state.mddDraft ?? "").trim()
@@ -474,12 +474,7 @@ export async function runDeterministicManagerHandlers(
           stageId: state.activeStageId ?? null,
         }).precision
         : score;
-    const replyContent =
-      "Estamos al " +
-      precision +
-      "%. Para avanzar al 85%, necesitamos:\n\n" +
-      state.auditorFeedback.trim() +
-      "\n\n¿Quieres que avancemos con estos puntos? Responde validando o indicando cambios concretos.";
+    const replyContent = buildWhatNeededReply(precision, state.auditorFeedback);
     LOG("interrupt reply (qué falta para 85%, con auditorFeedback)");
     const resumeValue = interrupt({ type: "reply", reply: replyContent });
     const newMsg = typeof resumeValue === "string" ? resumeValue : String(resumeValue ?? "").trim();

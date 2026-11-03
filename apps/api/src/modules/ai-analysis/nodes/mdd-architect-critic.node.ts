@@ -15,41 +15,41 @@ import {
   mddStateHasDomainAuthSkew,
 } from "../utils/mdd-domain-prompt.util.js";
 import { extractFirstJsonObject } from "../utils/parse-json.js";
-import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
+import { invokeLlmStructured } from "../utils/mdd-llm-structured.util.js";
+import { resolveMddCriticBudgetMs } from "../utils/mdd-llm-timeout.util.js";
+import { createLlmAbortError } from "../utils/mdd-llm-stream-invoke.util.js";
 import { z } from "zod";
 import { logMddLlmMetrics, measureMddLlmCall } from "../utils/mdd-llm-metrics.util.js";
 import { buildArchitectCriticOutline } from "../utils/mdd-architect-critic-outline.util.js";
 
-const criticOutputSchema = z.object({
-  verdict: z.enum(["ok", "gap"]),
-  gaps: z.array(z.string()).optional(),
-});
+/** Veredicto del crítico. `passthrough` para no romper campos extra que añada el modelo. */
+export const criticOutputSchema = z
+  .object({
+    verdict: z.enum(["ok", "gap"]),
+    gaps: z.array(z.string()).nullish(),
+  })
+  .passthrough();
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:ArchitectCritic] ${msg}`, ...args);
 
+/** Intentos de transporte de la llamada del Critic; el tope total lo fija `deadlineMs`. */
+const CRITIC_LLM_MAX_ATTEMPTS = 2;
+
 type CriticVerdict = z.infer<typeof criticOutputSchema>;
 
-/** Parsea salida del crítico: JSON estricto + fallback regex cuando el LLM mezcla prosa. */
+/**
+ * Parsea salida del crítico: JSON con el esquema zod. Sin heurísticas por regex: una salida que
+ * no cumple el esquema devuelve `null` (el nodo la reintenta una vez con el error re-inyectado).
+ */
 export function parseArchitectCriticOutput(text: string): CriticVerdict | null {
   const raw = extractFirstJsonObject(text);
-  if (raw) {
-    try {
-      const parsed = criticOutputSchema.safeParse(JSON.parse(raw));
-      if (parsed.success) return parsed.data;
-    } catch {
-      // fallback below
-    }
+  if (!raw) return null;
+  try {
+    const parsed = criticOutputSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
   }
-  if (/verdict\s*[:=]\s*["']?ok["']?/i.test(text)) {
-    return { verdict: "ok" };
-  }
-  if (/verdict\s*[:=]\s*["']?gap["']?/i.test(text)) {
-    const gapLines = [...text.matchAll(/"([^"]{8,200})"/g)]
-      .map((m) => m[1]!.trim())
-      .filter((line) => !/verdict|gaps/i.test(line));
-    return { verdict: "gap", gaps: gapLines.length > 0 ? gapLines.slice(0, 5) : undefined };
-  }
-  return null;
 }
 
 /**
@@ -59,6 +59,11 @@ export function parseArchitectCriticOutput(text: string): CriticVerdict | null {
  * El LLM recibe un OUTLINE compacto (todas las tablas con columnas y todos los endpoints), no un
  * recorte crudo. Fail-open: error del proveedor, respuesta vacía o salida no parseable => "ok"
  * (sin feedback ni reintento); solo un `gap` explícito con ≥1 gap concreto dispara feedback.
+ *
+ * La salida se valida con zod vía `invokeLlmStructured` (una reparación con el error re-inyectado).
+ * Si sigue inválida o falla el transporte NO se inventa veredicto: se registra un `warn` con
+ * intentos y motivo y se continúa sin feedback (el contador avanza para no entrar en bucle).
+ * Una cancelación (`aborted`) se propaga como `AbortError`.
  */
 export function createMddArchitectCriticNode(llm: BaseChatModel) {
   return async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
@@ -130,38 +135,41 @@ export function createMddArchitectCriticNode(llm: BaseChatModel) {
     const prompt = `${ARCHITECT_CRITIC_MDD_PROMPT}\n\n---\n${context}`;
     const startedAt = Date.now();
 
-    try {
-      const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], {
-        tag: "ArchitectCritic",
-        isResponseValid: (t) => t.trim().length > 0,
-      });
-      const text = response ? extractLlmText(response) : "";
-      logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, text.length), {
-        phase: afterSection3Only ? "after_section3" : "after_full",
-      });
-      const parsedData = parseArchitectCriticOutput(text);
-      if (!parsedData) {
-        LOG("critic sin salida parseable (len=%s) → ok, sin reintento", text.length);
-        return { architectCriticFeedback: undefined, architectCriticAttempts: attempts };
-      }
-      const { verdict, gaps } = parsedData;
-      const concreteGaps = (gaps ?? []).map((g) => g.trim()).filter((g) => g.length > 0);
-      if (verdict === "gap" && concreteGaps.length > 0 && attempts <= 1) {
-        const feedback = concreteGaps.join("\n");
-        LOG("verdict=gap attempts=%s feedback=%s", attempts, feedback.slice(0, 80));
-        return {
-          architectCriticFeedback: feedback,
-          architectCriticAttempts: attempts,
-        };
-      }
-      LOG("verdict=%s gaps=%s attempts=%s → seguir", verdict, concreteGaps.length, attempts);
-      return {
-        architectCriticFeedback: undefined,
-        architectCriticAttempts: attempts,
-      };
-    } catch (err) {
-      LOG("critic error: %s → ok (fail-open)", err instanceof Error ? err.message : String(err));
+    const result = await invokeLlmStructured({
+      llm,
+      messages: [new HumanMessage(prompt)],
+      schema: criticOutputSchema,
+      tag: "ArchitectCritic",
+      maxAttempts: CRITIC_LLM_MAX_ATTEMPTS,
+      deadlineMs: resolveMddCriticBudgetMs(),
+    });
+    logMddLlmMetrics(
+      LOG,
+      measureMddLlmCall(startedAt, prompt.length, result.rawText?.length ?? 0),
+      { phase: afterSection3Only ? "after_section3" : "after_full" },
+    );
+    if (!result.ok) {
+      if (result.reason === "aborted") throw createLlmAbortError("ArchitectCritic");
+      console.warn(
+        `[MDD:ArchitectCritic] sin veredicto validado (reason=${result.reason} attempts=${result.attempts}` +
+          `${result.lastError ? ` error=${result.lastError.slice(0, 160)}` : ""}) → sin feedback, el flujo continúa`,
+      );
       return { architectCriticFeedback: undefined, architectCriticAttempts: attempts };
     }
+    const { verdict, gaps } = result.value;
+    const concreteGaps = (gaps ?? []).map((g) => g.trim()).filter((g) => g.length > 0);
+    if (verdict === "gap" && concreteGaps.length > 0 && attempts <= 1) {
+      const feedback = concreteGaps.join("\n");
+      LOG("verdict=gap attempts=%s feedback=%s", attempts, feedback.slice(0, 80));
+      return {
+        architectCriticFeedback: feedback,
+        architectCriticAttempts: attempts,
+      };
+    }
+    LOG("verdict=%s gaps=%s attempts=%s → seguir", verdict, concreteGaps.length, attempts);
+    return {
+      architectCriticFeedback: undefined,
+      architectCriticAttempts: attempts,
+    };
   };
 }

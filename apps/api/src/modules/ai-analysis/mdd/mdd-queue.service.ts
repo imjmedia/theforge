@@ -10,7 +10,7 @@ import {
   forwardRef,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import { Queue, Worker, type Job } from "bullmq";
+import { Queue, UnrecoverableError, Worker, type Job } from "bullmq";
 import type { ChatImagePart, MddJobSnapshot, MddUpstreamSyncStatus } from "@theforge/shared-types";
 import {
   applyMddJobProgress,
@@ -40,10 +40,23 @@ import {
 import { getRequestUserId, runWithRequestUserAsync } from "../../../common/request-user.store.js";
 import { ProjectGenerationGuardService } from "../../projects/project-generation-guard.service.js";
 import { LegacyCoordinatorService } from "../../legacy-flow/legacy-coordinator.service.js";
-import { AiAnalysisService } from "../ai-analysis.service.js";
+import { AiAnalysisService, MddPersistBlockedError } from "../ai-analysis.service.js";
 import { runWithTokenUsageContext } from "../token-usage/token-usage.context.js";
-import { isMddThreadBusyError, isMddUserCancellationError, toMddJobError } from "./mdd-job-error.util.js";
-import { THREAD_BUSY_CODE, THREAD_BUSY_MESSAGE } from "../checkpoint/thread-run-lock.service.js";
+import {
+  isMddLeaseLostError,
+  isMddLockUnavailableError,
+  isMddThreadBusyError,
+  isMddUserCancellationError,
+  toMddJobError,
+} from "./mdd-job-error.util.js";
+import {
+  LEASE_LOST_CODE,
+  LEASE_LOST_MESSAGE,
+  LOCK_UNAVAILABLE_CODE,
+  LOCK_UNAVAILABLE_MESSAGE,
+  THREAD_BUSY_CODE,
+  THREAD_BUSY_MESSAGE,
+} from "../checkpoint/thread-run-lock.service.js";
 import { MddJobEventsService } from "./mdd-job-events.service.js";
 import type { MddJobRelayEvent } from "./mdd-job-events.util.js";
 import { isMddChatJobMode } from "./mdd-queue-job-payload.util.js";
@@ -922,6 +935,8 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
           }),
       );
     } catch (err) {
+      // Persist final bloqueado (suelo anti-wipe / demasiado corto): reintentar generaría el mismo resultado.
+      if (err instanceof MddPersistBlockedError) throw new UnrecoverableError(err.message);
       throw toMddJobError(err);
     } finally {
       stopCancelPoll();
@@ -972,6 +987,10 @@ export class MddQueueService implements OnModuleInit, OnModuleDestroy {
       if (isMddUserCancellationError(err) || signal.aborted) terminal = cancelled;
       else if (isMddThreadBusyError(err)) {
         terminal = { type: "error", code: THREAD_BUSY_CODE, message: THREAD_BUSY_MESSAGE };
+      } else if (isMddLockUnavailableError(err)) {
+        terminal = { type: "error", code: LOCK_UNAVAILABLE_CODE, message: LOCK_UNAVAILABLE_MESSAGE };
+      } else if (isMddLeaseLostError(err)) {
+        terminal = { type: "error", code: LEASE_LOST_CODE, message: LEASE_LOST_MESSAGE };
       } else terminal = { type: "error", ...formatDbgaStreamError(err, "mdd") };
       await relay.emitTerminalIfMissing(terminal);
       throw err;

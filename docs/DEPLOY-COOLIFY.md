@@ -34,7 +34,7 @@ Coolify expone servicios con Traefik/Caddy. Configura **un dominio** con dos rut
 
 El frontend usa `API_BASE = /api` por defecto; no hace falta `VITE_API_URL` en build si el path routing está bien.
 
-**SSE / chat stream (`POST /api/ai-orchestrator/chat/stream`)** y **NDJSON MDD (`POST /api/ai-analysis/mdd/stream/regenerate-section`, manager, resume):** el LLM puede tardar minutos sin enviar tokens. En Traefik (Dokploy/Coolify) sube el timeout de lectura del servicio API (p. ej. `traefik.http.services.theforge-api.loadbalancer.responseforwarding.flushinterval=1s` y `readTimeout` / `idleTimeout` ≥ 3600s si tu versión lo expone). Nginx del repo ya usa `proxy_read_timeout 3600s` en `nginx.local.conf` / `docker/nginx-fullstack.conf`. La API emite comentarios SSE `: keepalive` cada 15s en chat; **regenerate-section** emite NDJSON `{ type: "progress" }` cada 15s mientras el agente LLM trabaja.
+**SSE / chat stream (`POST /api/ai-orchestrator/chat/stream`)** y **NDJSON MDD (`POST /api/ai-analysis/mdd/stream/manager` y `…/mdd/stream/resume`; la regeneración de una sección va por jobs, `POST /api/ai-analysis/mdd/jobs`):** el LLM puede tardar minutos sin enviar tokens. En Traefik (Dokploy/Coolify) sube el timeout de lectura del servicio API (p. ej. `traefik.http.services.theforge-api.loadbalancer.responseforwarding.flushinterval=1s` y `readTimeout` / `idleTimeout` ≥ 3600s si tu versión lo expone). Nginx del repo ya usa `proxy_read_timeout 3600s` en `nginx.local.conf` / `docker/nginx-fullstack.conf`. La API emite comentarios SSE `: keepalive` cada 15s en chat; los streams MDD NDJSON emiten `{ type: "progress" }` cada 15s mientras el agente LLM trabaja.
 
 ### Alternativa: un solo servicio público (nginx proxy)
 

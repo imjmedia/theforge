@@ -18,12 +18,14 @@ export {
 
 export {
   auditorGapsSchema,
+  auditorOutcomeSchema,
   defaultMDDState,
   mddAuditorDecisionSchema,
   mddComplexityLevelSchema,
   mddPlanStepSchema,
   mddStateSchema,
   type AuditorGapsState,
+  type AuditorOutcome,
   type MDDAuditorDecision,
   type MDDState,
   type MddComplexityLevel,

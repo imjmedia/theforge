@@ -1,8 +1,17 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { NodeCacheService, isCacheableNodeOutput, stableStringify } from "./node-cache.service.js";
+import {
+  NODE_CACHE_MAX_ENTRIES,
+  NodeCacheService,
+  isCacheableNodeOutput,
+  runWithNodeCacheDisabled,
+  stableStringify,
+} from "./node-cache.service.js";
 import { crossConsistencyInput, securityInput, softwareArchitectInput } from "./node-input-hash.js";
-import { wrapCache } from "../graph/mdd-graph.js";
+import { scopeNodeCacheToModels, wrapCache } from "../graph/mdd-graph.js";
+import { describeLlmModelChain } from "../llm/create-dbga-llm.js";
+import { buildNodeCacheKey } from "./node-cache-key.js";
+import { MDD_PROMPT_VERSION } from "../prompts/prompt-version.js";
 
 function makeCache(): NodeCacheService {
   const cache = new NodeCacheService();
@@ -128,5 +137,124 @@ describe("wrapCache", () => {
   it("sin cache devuelve el nodo tal cual", () => {
     const f = async () => ({});
     assert.strictEqual(wrapCache(null, "n", () => ({}), f), f);
+  });
+});
+
+describe("NodeCacheService: clave con modelos y promptVersion", () => {
+  it("misma entrada y mismos modelos dan la misma clave; otro modelo da otra", () => {
+    const c = makeCache();
+    const a = c.scoped("openrouter:m1>m2");
+    const a2 = c.scoped("openrouter:m1>m2");
+    const b = c.scoped("openrouter:m3>m2");
+    assert.strictEqual(a.key("n", "p", { x: 1 }), a2.key("n", "p", { x: 1 }));
+    assert.notStrictEqual(a.key("n", "p", { x: 1 }), b.key("n", "p", { x: 1 }));
+    assert.notStrictEqual(a.key("n", "p", { x: 1 }), c.key("n", "p", { x: 1 }));
+  });
+
+  it("MDD_PROMPT_VERSION es un string de fecha y forma parte de la clave", () => {
+    assert.match(MDD_PROMPT_VERSION, /^\d{4}-\d{2}-\d{2}/);
+    const c = makeCache();
+    const expected = buildNodeCacheKey({
+      node: "n",
+      input: { projectId: "p", x: 1 },
+      models: "",
+      promptVersion: MDD_PROMPT_VERSION,
+    });
+    assert.strictEqual(c.key("n", "p", { x: 1 }), expected);
+    assert.notStrictEqual(
+      c.key("n", "p", { x: 1 }),
+      buildNodeCacheKey({ node: "n", input: { projectId: "p", x: 1 }, models: "", promptVersion: "1999-01-01" }),
+    );
+  });
+
+  it("un HIT no cruza modelos: cambiar el modelo del grafo vuelve a ejecutar el nodo", async () => {
+    const cache = makeCache();
+    let calls = 0;
+    const run = async () => {
+      calls += 1;
+      return okOutput;
+    };
+    const state = { mddDraft: "a", projectId: "p" } as never;
+    const fnA = wrapCache(cache.scoped("openai:m1"), "n", (s) => ({ d: s.mddDraft }), run);
+    const fnB = wrapCache(cache.scoped("openai:m2"), "n", (s) => ({ d: s.mddDraft }), run);
+    await fnA(state);
+    await fnA(state);
+    assert.strictEqual(calls, 1);
+    await fnB(state);
+    assert.strictEqual(calls, 2, "otro modelo no reutiliza la salida");
+  });
+
+  it("describeLlmModelChain / scopeNodeCacheToModels usan la cadena de modelos del LLM", () => {
+    const llmA = { providerId: "openrouter", modelChain: ["m1", "m2"] } as never;
+    const llmB = { providerId: "openrouter", modelChain: ["m1", "m3"] } as never;
+    assert.strictEqual(describeLlmModelChain(llmA), "openrouter:m1>m2");
+    const cache = makeCache();
+    const ka = scopeNodeCacheToModels(cache, [llmA, null, llmA])!.key("n", "p", {});
+    const kb = scopeNodeCacheToModels(cache, [llmB])!.key("n", "p", {});
+    assert.notStrictEqual(ka, kb);
+    assert.strictEqual(scopeNodeCacheToModels(null, [llmA]), null);
+  });
+});
+
+describe("NodeCacheService: LRU y stats", () => {
+  it("evicta la menos usada recientemente al superar el tope", () => {
+    const c = makeCache();
+    for (let i = 0; i < NODE_CACHE_MAX_ENTRIES; i++) c.set(`k${i}`, okOutput);
+    assert.strictEqual(c.size, NODE_CACHE_MAX_ENTRIES);
+    // k0 se usa: pasa a ser la más reciente, así que la más antigua es k1
+    assert.ok(c.get("k0"));
+    c.set("nueva", okOutput);
+    assert.strictEqual(c.size, NODE_CACHE_MAX_ENTRIES);
+    assert.strictEqual(c.get("k1"), undefined, "k1 era la menos usada");
+    assert.ok(c.get("k0"), "k0 sobrevive por haberse usado");
+    assert.ok(c.get("nueva"));
+    assert.strictEqual(c.stats().evictions, 1);
+  });
+
+  it("reescribir una clave existente no cuenta como evicción ni crece el tamaño", () => {
+    const c = makeCache();
+    c.set("a", okOutput);
+    c.set("a", okOutput);
+    assert.strictEqual(c.size, 1);
+    assert.strictEqual(c.stats().evictions, 0);
+  });
+
+  it("stats cuenta hits, misses y evicciones", () => {
+    const c = makeCache();
+    assert.deepStrictEqual(
+      { h: c.stats().hits, m: c.stats().misses, e: c.stats().evictions, size: c.stats().size },
+      { h: 0, m: 0, e: 0, size: 0 },
+    );
+    c.set("a", okOutput);
+    c.get("a");
+    c.get("a");
+    c.get("zzz");
+    const st = c.stats();
+    assert.strictEqual(st.hits, 2);
+    assert.strictEqual(st.misses, 1);
+    assert.strictEqual(st.size, 1);
+    assert.strictEqual(st.maxEntries, NODE_CACHE_MAX_ENTRIES);
+  });
+});
+
+describe("wrapCache dentro de runWithNodeCacheDisabled (eval)", () => {
+  it("no lee ni escribe: cada llamada ejecuta el nodo", async () => {
+    const cache = makeCache();
+    let calls = 0;
+    const fn = wrapCache(cache, "n", (s) => ({ d: s.mddDraft }), async () => {
+      calls += 1;
+      return okOutput;
+    });
+    const state = { mddDraft: "a", projectId: "p" } as never;
+    await runWithNodeCacheDisabled(async () => {
+      await fn(state);
+      await fn(state);
+    });
+    assert.strictEqual(calls, 2);
+    assert.strictEqual(cache.size, 0);
+    await fn(state); // fuera del bypass vuelve a cachear
+    await fn(state);
+    assert.strictEqual(calls, 3);
+    assert.strictEqual(cache.size, 1);
   });
 });

@@ -46,3 +46,15 @@ CRUD de proyectos, actualización de MDD y entregables (Blueprint, API, etc.).
 - **Rutas con proyecto:** `GET` y `DELETE` de `/projects/:id/mdd-jobs/:jobId` y `/projects/:id/deliverables-jobs/:jobId` exigen que el job pertenezca a ese proyecto (si no, 404). `GET` y `DELETE` de `/projects/jobs/:jobId` (sin proyecto en la ruta) buscan primero en la cola de entregables y luego en la de MDD.
 - **Estados:** `queued`, `active`, `completed`, `failed`, `retrying` y `unknown`. En la cola MDD, `failed` es terminal; `retrying` solo aparece mientras BullMQ tiene el job en `delayed`.
 - **Stream SSE** (`GET /projects/:id/deliverables-jobs/:jobId/stream`, `deliverables-sse.util.ts`): emite `progress` y `retrying`, y termina con `completed`, `failed` o `unknown` (job no encontrado). Si el stream supera 6 h (`DELIVERABLES_SSE_MAX_DURATION_MS`) emite `timeout`. Al cerrarse el cliente deja de escribir y cancela sus timers. El acceso se comprueba solo al abrir el stream y no se revalida durante su vida (pendiente, ID-205 del informe de lote 1).
+
+## Fence de escritura del MDD
+
+- Cada turno MDD lleva un `fence` numérico monotónico; el diseño completo está en `docs/adr/0004-fencing-token-escrituras-mdd.md`.
+- `claimMddWriteFence(stageId, fence)` sube `Stage.mddLeaseFence` solo si está vacío o es ≤ al del turno. Si no, lanza `MddWriteFencedError` (`code = "MDD_WRITE_FENCED"`).
+- Con fence explícito o del contexto del lease (`common/mdd-lease-context.ts`), `persistMddFromBackgroundJob` y `persistMddFromPatch` escriben `mddContent` con `updateMany` condicionado a `mddLeaseFence`. Sin fence, `stage.update` como antes.
+- Una escritura rechazada lanza antes de change-log, snapshot y refresco de semáforo, así que un turno zombi no deja efectos secundarios.
+- El cableado desde `ai-analysis` está hecho: `claimMddFenceUnderLease` reclama el fence al adquirir el lease (stream HTTP, job y chat en cola), y el persistidor traduce `MddWriteFencedError` a `lease_lost` (ver `ai-analysis/README.md`).
+- `claimMddWriteFence` (`projects.service.ts`, ~465) no reclama nada si el proyecto no tiene etapa primaria: retorna en silencio y el turno corre sin fence (deuda D-5 del handoff).
+- Los snapshots de delivery gate (`persistMddDeliveryGateSnapshot`) se escriben sin fence en `project-mdd-persist.service.ts:166`, `:305` y `:431` (deuda D-4).
+- `index.ts` es la API pública del módulo para otros módulos: exporta `ProjectsService` y `MddWriteFencedError`. `ai-analysis` importa desde ahí; no importar archivos internos.
+- `toApiProject` de `project-api.util.ts` omite `mddLeaseFence` de cada etapa. `project-merge.service.ts` y `project-notion-portability.service.ts` tienen su propio `toApiProject` y todavía lo exponen (deuda D-3).

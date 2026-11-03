@@ -3,13 +3,21 @@
  */
 
 import { AIMessageChunk, type BaseMessage } from "@langchain/core/messages";
-import { recordTokenUsageFromContext } from "../../ai/utils/token-usage-recorder.js";
+import {
+  extractChainedModel,
+  recordTokenUsageFromContext,
+  recordUsageEstimateOnAbort,
+} from "../../ai/utils/token-usage-recorder.js";
+import { getActiveTokenUsageContext, type TokenUsageOutcome } from "../token-usage/token-usage.context.js";
 import {
   deriveLlmIdentity,
   extractLlmText,
+  getActiveLlmAbortSignal,
   invokeLlmWithRetry,
+  writeLlmCallLog,
   type InvokableLlm,
 } from "./mdd-llm-retry.util.js";
+import { createLlmAbortError } from "./mdd-llm-stream-invoke.util.js";
 import { resolveLlmHardTimeoutMs, resolveLlmIdleTimeoutMs } from "./mdd-llm-timeout.util.js";
 
 const CANONICAL_HEADING_RE = /^##\s+[1-7]\.\s+/gm;
@@ -55,6 +63,12 @@ export type ScopedStreamOptions = {
   idleTimeoutMs?: number;
   /** Tope absoluto del stream. Default `LANGGRAPH_LLM_HARD_TIMEOUT_MS`. */
   hardTimeoutMs?: number;
+  /**
+   * Cancelación del turno. Si no se pasa se usa `getActiveLlmAbortSignal()` (ALS fijado por el servicio
+   * alrededor de `graph.stream`). Al dispararse corta el stream en vuelo, registra la estimación con
+   * `outcome: "abort"` y lanza `AbortError` (sin fallback a invoke).
+   */
+  signal?: AbortSignal;
 };
 
 type UsageMetadata = { input_tokens: number; output_tokens: number; total_tokens: number };
@@ -92,6 +106,9 @@ export async function invokeScopedArchitectLlmWithHeadingCap(
     return invokeLlmWithRetry(llm, messages, { tag: options.tag });
   }
 
+  const externalSignal = options.signal ?? getActiveLlmAbortSignal();
+  if (externalSignal?.aborted) throw createLlmAbortError(options.tag);
+
   const idleTimeoutMs = options.idleTimeoutMs ?? resolveLlmIdleTimeoutMs();
   const hardTimeoutMs = options.hardTimeoutMs ?? resolveLlmHardTimeoutMs();
   const startedAt = Date.now();
@@ -119,11 +136,21 @@ export async function invokeScopedArchitectLlmWithHeadingCap(
     idleTimer = setTimeout(() => fire("idle"), idleTimeoutMs);
   };
   const hardTimer = setTimeout(() => fire("hard"), hardTimeoutMs);
+  // Cancelación del turno: se enlaza con el controller propio (que ya llega al proveedor) y corta la carrera.
+  let externalAborted = false;
+  const onExternalAbort = (): void => {
+    if (externalAborted || timeoutKind) return;
+    externalAborted = true;
+    abortController.abort();
+    rejectTimeout?.(createLlmAbortError(options.tag));
+  };
+  externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
 
   let acc = "";
   let aborted = false;
   let chunks = 0;
   let usage: UsageMetadata | undefined;
+  let modelActual: string | null = null;
   let iterator: AsyncIterator<unknown> | undefined;
   try {
     armIdle();
@@ -141,6 +168,7 @@ export async function invokeScopedArchitectLlmWithHeadingCap(
       acc += extractLlmText(chunk);
       const u = readChunkUsage(chunk);
       if (u) usage = addUsage(usage, u);
+      modelActual ??= extractChainedModel((chunk as { response_metadata?: unknown } | null)?.response_metadata);
       if (hasSecondCanonicalMddHeading(acc)) {
         acc = trimBeforeSecondCanonicalMddHeading(acc);
         aborted = true;
@@ -148,15 +176,37 @@ export async function invokeScopedArchitectLlmWithHeadingCap(
       }
     }
   } catch (err) {
+    if (externalAborted || externalSignal?.aborted) {
+      // El proveedor ya procesó el prompt: se estima entrada + parcial (con coste) como `abort`.
+      const elapsed = Date.now() - startedAt;
+      recordScopedEstimate(llm, messages, acc, "abort", elapsed, modelActual);
+      logScopedCall(llm, options.tag, "abort", elapsed, null, modelActual, { kind: "abort", reason: "abort" });
+      throw err instanceof Error && err.name === "AbortError" ? err : createLlmAbortError(options.tag);
+    }
     const msg = err instanceof Error ? err.message : String(err);
+    const isTimeout = err instanceof ScopedStreamTimeoutError;
     console.warn(
-      `[${options.tag}] scoped stream ${err instanceof ScopedStreamTimeoutError ? "timeout" : "error"}: ${msg} (chunks=${chunks}, elapsed=${Date.now() - startedAt}ms); fallback invoke`,
+      `[${options.tag}] scoped stream ${isTimeout ? "timeout" : "error"}: ${msg} (chunks=${chunks}, elapsed=${Date.now() - startedAt}ms); fallback invoke`,
     );
-    return invokeLlmWithRetry(llm, messages, { tag: `${options.tag}:fallback`, disableStreaming: true });
+    // El stream cortado no trajo `usage_metadata`: se estima entrada + parcial (un error sin salida
+    // no consumió tokens y no se registra; el fallback registra lo suyo).
+    if (isTimeout || acc) {
+      recordScopedEstimate(llm, messages, acc, isTimeout ? "timeout" : "error", Date.now() - startedAt, modelActual);
+    }
+    logScopedCall(llm, options.tag, isTimeout ? "timeout" : "error", Date.now() - startedAt, null, modelActual, {
+      kind: "retry",
+      reason: isTimeout ? "timeout_stream" : "error_stream",
+    });
+    return invokeLlmWithRetry(llm, messages, {
+      tag: `${options.tag}:fallback`,
+      disableStreaming: true,
+      ...(externalSignal ? { signal: externalSignal } : {}),
+    });
   } finally {
     if (idleTimer) clearTimeout(idleTimer);
     clearTimeout(hardTimer);
-    if (iterator && (aborted || timeoutKind)) {
+    externalSignal?.removeEventListener("abort", onExternalAbort);
+    if (iterator && (aborted || timeoutKind || externalAborted)) {
       // No se espera: un stream colgado puede no resolver nunca `return()`.
       void Promise.resolve(iterator.return?.()).catch(() => undefined);
     }
@@ -170,13 +220,94 @@ export async function invokeScopedArchitectLlmWithHeadingCap(
   if (aborted) {
     console.log(`[${options.tag}] scoped stream abort: 2º heading canónico detectado`);
   }
+  const latencyMs = Date.now() - startedAt;
   if (usage && (usage.input_tokens || usage.output_tokens)) {
     try {
       const { providerId, modelId } = deriveLlmIdentity(llm);
-      recordTokenUsageFromContext(providerId, modelId, usage.input_tokens, usage.output_tokens, usage.total_tokens);
+      recordTokenUsageFromContext(providerId, modelId, usage.input_tokens, usage.output_tokens, usage.total_tokens, {
+        latencyMs,
+        attempts: 1,
+        outcome: "ok",
+        responseMetadata: modelActual ? { chained_model: modelActual } : undefined,
+      });
     } catch {
       /* telemetría best-effort */
     }
+    logScopedCall(llm, options.tag, "ok", latencyMs, usage, modelActual, null);
+  } else {
+    // El pase terminó bien pero sin `usage_metadata` (típico al cortar el stream por scope antes
+    // del chunk final de uso): se estima chars/4 y la fila queda `estimated`, no se pierde el coste.
+    recordScopedEstimate(llm, messages, acc, "ok", latencyMs, modelActual);
+    logScopedCall(llm, options.tag, "ok", latencyMs, null, modelActual, null);
   }
   return new AIMessageChunk({ content: acc, ...(usage ? { usage_metadata: usage } : {}) });
+}
+
+function promptTextOf(messages: BaseMessage[]): string {
+  return messages
+    .map((m) => {
+      const c = (m as { content?: unknown }).content;
+      if (typeof c === "string") return c;
+      if (Array.isArray(c)) return c.map((b) => (typeof b === "string" ? b : JSON.stringify(b))).join("");
+      return "";
+    })
+    .join("");
+}
+
+/** Estimación chars/4 del pase scoped sin `usage_metadata`. Best-effort, nunca lanza. */
+function recordScopedEstimate(
+  llm: InvokableLlm,
+  messages: BaseMessage[],
+  outputText: string,
+  outcome: TokenUsageOutcome,
+  latencyMs: number,
+  modelActual: string | null,
+): void {
+  if (!getActiveTokenUsageContext()) return;
+  try {
+    const { providerId, modelId } = deriveLlmIdentity(llm);
+    recordUsageEstimateOnAbort(null, {
+      providerId,
+      modelId,
+      inputText: promptTextOf(messages),
+      outputText,
+      outcome,
+      latencyMs,
+      attempts: 1,
+      modelActual,
+    });
+  } catch {
+    /* telemetría best-effort */
+  }
+}
+
+function logScopedCall(
+  llm: InvokableLlm,
+  tag: string,
+  outcome: TokenUsageOutcome,
+  latencyMs: number,
+  usage: UsageMetadata | null | undefined,
+  modelActual: string | null,
+  lastError: { kind: string; reason: string } | null,
+): void {
+  let identity = { providerId: "unknown", modelId: "unknown" };
+  try {
+    identity = deriveLlmIdentity(llm);
+  } catch {
+    /* identidad desconocida */
+  }
+  writeLlmCallLog({
+    tag,
+    providerId: identity.providerId,
+    modelId: identity.modelId,
+    modelActual,
+    attempts: 1,
+    latencyMs,
+    outcome,
+    promptTokens: usage?.input_tokens ?? null,
+    completionTokens: usage?.output_tokens ?? null,
+    estimated: !usage,
+    kind: lastError?.kind ?? null,
+    reason: lastError?.reason ?? null,
+  });
 }

@@ -10,15 +10,44 @@ import {
   applyCrossConsistencyPatches,
   applyDeterministicCrossConsistencyFixes,
   detectCrossConsistencyIssues,
-  parseCrossConsistencyPatches,
   validateMddStructure,
 } from "../utils/mdd-sanitize.js";
 import { mddDeliveryGateHasBlockers } from "../utils/mdd-delivery-gate.util.js";
-import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
+import { invokeLlmStructured } from "../utils/mdd-llm-structured.util.js";
+import { resolveMddCrossConsistencyBudgetMs } from "../utils/mdd-llm-timeout.util.js";
+import { createLlmAbortError } from "../utils/mdd-llm-stream-invoke.util.js";
+import { z } from "zod";
 import { logMddNodeOutput } from "../utils/mdd-sanitize.js";
 import { preserveTailSectionsIfSubstantial, preserveTailSectionsFromSnapshots } from "../utils/mdd-section-preserve.util.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:CrossConsistency] ${msg}`, ...args);
+
+const OK_CONSISTENT = "OK_CONSISTENT";
+
+/** Intentos de transporte de la pasada LLM; el tope total lo fija `deadlineMs`. */
+const CROSS_CONSISTENCY_LLM_MAX_ATTEMPTS = 2;
+
+/**
+ * Respuesta del revisor: el sentinela `OK_CONSISTENT` (se normaliza a `{ consistent: true }`) o un
+ * array de parches find/replace. Un parche mal formado invalida todo el array (→ reparación).
+ */
+export const crossConsistencyOutputSchema = z.union([
+  z.object({ consistent: z.literal(true) }),
+  z.array(z.object({ find: z.string(), replace: z.string() })),
+]);
+
+export type CrossConsistencyOutput = z.infer<typeof crossConsistencyOutputSchema>;
+
+/** Extractor: sentinela → `{"consistent":true}`; si no, el array JSON (fence o primer `[`…último `]`). */
+export function extractCrossConsistencyJson(text: string): string | null {
+  if (text.includes(OK_CONSISTENT)) return JSON.stringify({ consistent: true });
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const raw = fenced?.[1]?.trim() ?? text.trim();
+  const start = raw.indexOf("[");
+  const end = raw.lastIndexOf("]");
+  if (start === -1 || end <= start) return null;
+  return raw.slice(start, end + 1);
+}
 
 function preserveTailAfterCrossConsistency(
   state: MDDStateType,
@@ -78,27 +107,36 @@ export function createMddCrossConsistencyNode(llm: BaseChatModel) {
     try {
       const prompt = `${CROSS_CONSISTENCY_MDD_PROMPT}\n\n---\n${buildCrossConsistencyUserMessage(deterministicDraft, issues)}`;
       const inputLen = deterministicDraft.length;
-      const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], {
+      const result = await invokeLlmStructured({
+        llm,
+        messages: [new HumanMessage(prompt)],
+        schema: crossConsistencyOutputSchema,
         tag: "CrossConsistency",
-        isResponseValid: (text) => text.trim().length > 0,
+        extractJson: extractCrossConsistencyJson,
+        maxAttempts: CROSS_CONSISTENCY_LLM_MAX_ATTEMPTS,
+        deadlineMs: resolveMddCrossConsistencyBudgetMs(),
       });
-      const text = response ? extractLlmText(response) : "";
 
-      if (!text.trim()) {
-        LOG("LLM sin respuesta tras reintentos — conservando paso determinista (inputLen=%s)", inputLen);
+      if (!result.ok) {
+        if (result.reason === "aborted") throw createLlmAbortError("CrossConsistency");
+        console.warn(
+          `[MDD:CrossConsistency] salida LLM sin validar (reason=${result.reason} attempts=${result.attempts}` +
+            `${result.lastError ? ` error=${result.lastError.slice(0, 160)}` : ""}) — conservando solo el paso determinista (inputLen=${inputLen})`,
+        );
         current = preserveTailSectionsIfSubstantial(baselineDraft, current);
         return current !== draft ? { mddDraft: current } : {};
       }
 
-      if (text.includes("OK_CONSISTENT")) {
+      const output = result.value;
+      if (!Array.isArray(output)) {
         LOG("LLM: OK_CONSISTENT");
         current = preserveTailAfterCrossConsistency(state, baselineDraft, current);
         return current !== draft ? { mddDraft: current } : {};
       }
 
-      const patches = parseCrossConsistencyPatches(text);
+      const patches = output;
       if (patches.length === 0) {
-        LOG("LLM sin parches parseables, conservando paso determinista");
+        LOG("LLM devolvió 0 parches, conservando paso determinista");
         current = preserveTailAfterCrossConsistency(state, baselineDraft, current);
         return current !== draft ? { mddDraft: current } : {};
       }
@@ -115,6 +153,7 @@ export function createMddCrossConsistencyNode(llm: BaseChatModel) {
       }
       return {};
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
       LOG("error LLM: %s — conservando paso determinista", err instanceof Error ? err.message : String(err));
       current = preserveTailAfterCrossConsistency(state, baselineDraft, current);
       if (current !== draft) {

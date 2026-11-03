@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, Logger, forwardRef } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException, forwardRef } from "@nestjs/common";
 import { Prisma, type Status } from "@theforge/database";
 import type { MddDeliveryGateResult } from "@theforge/shared-types";
 import { computeMddCascadeDelta } from "@theforge/shared-types";
@@ -21,6 +21,7 @@ import {
 import { mergeDeliveryGateIntoShortTermContext } from "../ai-analysis/utils/mdd-delivery-gate.util.js";
 import { cleanDocumentContent } from "../sessions/document-content.util.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
+import { getActiveMddLeaseFence } from "../../common/mdd-lease-context.js";
 import { loadAccessibleProjectWithStages } from "./project-access.util.js";
 import {
   buildSemaphoreBaseFromProject,
@@ -39,6 +40,31 @@ import {
   mergeSddGraphIntoShortTermContext,
 } from "../engine/mdd-coherence/sdd-graph-context.util.js";
 
+const MDD_WRITE_FENCED_MESSAGE =
+  "Escritura del MDD rechazada: la etapa fue reclamada por un turno más reciente";
+
+/** Escritura del MDD rechazada por fencing (ADR 0004): un turno más reciente reclamó la etapa. */
+export class MddWriteFencedError extends Error {
+  readonly code = "MDD_WRITE_FENCED";
+  readonly stageId: string;
+  readonly fence: number;
+
+  constructor(stageId: string, fence: number) {
+    super(MDD_WRITE_FENCED_MESSAGE);
+    this.name = "MddWriteFencedError";
+    this.stageId = stageId;
+    this.fence = fence;
+  }
+}
+
+/** Condición de escritura con fence: la etapa no tiene fence o su fence es ≤ al del turno. */
+function mddFenceWhere(stageId: string, fence: number): Prisma.StageWhereInput {
+  return {
+    id: stageId,
+    OR: [{ mddLeaseFence: null }, { mddLeaseFence: { lte: BigInt(fence) } }],
+  };
+}
+
 export type PersistMddFromPatchInput = {
   projectId: string;
   stageId: string;
@@ -50,6 +76,8 @@ export type PersistMddFromPatchInput = {
     documentVersion?: number | null;
   };
   patchFlags: MddPatchPersistFlags;
+  /** Fence del turno (ADR 0004). Sin valor, la escritura no se condiciona. */
+  fence?: number;
 };
 
 export type PersistMddFromPatchResult = {
@@ -71,9 +99,27 @@ export class ProjectMddPersistService {
     private readonly deliverableGate: ProjectDeliverableGateService,
   ) {}
 
+  /**
+   * Reclama la etapa para el turno `fence` (ADR 0004). Solo sube el fence: si la etapa
+   * ya tiene uno mayor, lanza `MddWriteFencedError`.
+   */
+  async claimMddWriteFence(stageId: string, fence: number): Promise<void> {
+    const { count } = await this.prisma.stage.updateMany({
+      where: mddFenceWhere(stageId, fence),
+      data: { mddLeaseFence: BigInt(fence) },
+    });
+    if (count === 0) await this.throwFenceMiss(stageId, fence);
+  }
+
+  /**
+   * Snapshot auxiliar del delivery gate en `shortTermContext`. Con `fence` (turno de background),
+   * la escritura va condicionada al mismo `where` del fence: si un turno más nuevo ya reclamó la
+   * etapa, no escribe y solo registra un `warn` (no lanza: es un snapshot auxiliar).
+   */
   async persistMddDeliveryGateSnapshot(
     stageId: string,
     gate: MddDeliveryGateResult,
+    fence?: number,
   ): Promise<void> {
     try {
       const stage = await this.prisma.stage.findUnique({
@@ -86,12 +132,22 @@ export class ProjectMddPersistService {
         !Array.isArray(stage.shortTermContext)
           ? (stage.shortTermContext as Record<string, unknown>)
           : {};
-      await this.prisma.stage.update({
-        where: { id: stageId },
-        data: {
-          shortTermContext: mergeDeliveryGateIntoShortTermContext(prev, gate) as Prisma.InputJsonValue,
-        },
+      const data = {
+        shortTermContext: mergeDeliveryGateIntoShortTermContext(prev, gate) as Prisma.InputJsonValue,
+      };
+      if (fence === undefined) {
+        await this.prisma.stage.update({ where: { id: stageId }, data });
+        return;
+      }
+      const { count } = await this.prisma.stage.updateMany({
+        where: mddFenceWhere(stageId, fence),
+        data,
       });
+      if (count === 0) {
+        this.logger.warn(
+          `[DeliveryGate] snapshot omitido: la etapa ${stageId} fue reclamada por un turno más reciente`,
+        );
+      }
     } catch (err) {
       this.logger.warn(
         `[DeliveryGate] snapshot persist failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -130,9 +186,17 @@ export class ProjectMddPersistService {
   async persistMddFromBackgroundJob(
     projectId: string,
     rawMarkdown: string,
-    options?: { stageId?: string; finalize?: boolean; lockedPatternIds?: readonly string[] },
+    options?: {
+      stageId?: string;
+      finalize?: boolean;
+      lockedPatternIds?: readonly string[];
+      /** Fence del turno (ADR 0004). Con valor, las escrituras de mddContent se condicionan. */
+      fence?: number;
+    },
   ): Promise<void> {
     const existing = await loadAccessibleProjectWithStages(this.prisma, projectId);
+    // Fence explícito del turno; sin él, el del lease activo del contexto (tools del Manager dentro de `runExclusive`).
+    const fence = options?.fence ?? getActiveMddLeaseFence();
     const targetStage: StageWithEstimation | undefined =
       (options?.stageId?.trim() && existing.stages.find((s) => s.id === options.stageId!.trim())) ||
       pickPrimaryStage(existing.stages);
@@ -154,10 +218,7 @@ export class ProjectMddPersistService {
     if (!options?.finalize) {
       const prepared = await prepareMddForOutput(mddForPipeline, { formatForPersist: false });
       const stored = applyLockedPatterns(prepared);
-      await this.prisma.stage.update({
-        where: { id: targetStage.id },
-        data: { mddContent: stored },
-      });
+      await this.updateStageMdd(targetStage.id, { mddContent: stored }, fence);
       await this.changeLog.log(projectId, "mddContent", prepared);
       return;
     }
@@ -194,7 +255,7 @@ export class ProjectMddPersistService {
     if (!result.ok) {
       if (result.code === MDD_DELIVERY_GATE_ERR) {
         const gate = await evaluateMddDeliveryGatePrepared(mddForPipeline);
-        void this.persistMddDeliveryGateSnapshot(targetStage.id, gate);
+        void this.persistMddDeliveryGateSnapshot(targetStage.id, gate, fence);
       }
       throw new BadRequestException({
         code: result.code,
@@ -232,13 +293,14 @@ export class ProjectMddPersistService {
       finalMdd,
     );
 
-    await this.prisma.stage.update({
-      where: { id: targetStage.id },
-      data: {
+    await this.updateStageMdd(
+      targetStage.id,
+      {
         mddContent: result.persistFormatted ? finalMdd : storeMddMarkdownForPersist(finalMdd),
         shortTermContext: nextCtx as Prisma.InputJsonValue,
       },
-    });
+      fence,
+    );
     await this.changeLog.log(projectId, "mddContent", finalMdd);
     void this.persistMddDeliveryGateSnapshot(
       targetStage.id,
@@ -267,15 +329,14 @@ export class ProjectMddPersistService {
       documentMeta,
       patchFlags,
     } = input;
+    // Fence explícito del turno; sin él, el del lease activo del contexto (tools del Manager dentro de `runExclusive`).
+    const fence = input.fence ?? getActiveMddLeaseFence();
     const mode = resolveMddPersistMode(mddMarkdown, patchFlags);
     const documentData = this.buildStageDocumentUpdate(documentMeta);
 
     if (mode === "format" || mode === "store") {
       const formatted = storeMddMarkdownForPersist(mddMarkdown);
-      await this.prisma.stage.update({
-        where: { id: stageId },
-        data: { mddContent: formatted, ...documentData },
-      });
+      await this.updateStageMdd(stageId, { mddContent: formatted, ...documentData }, fence);
       await this.changeLog.log(projectId, "mddContent", formatted);
       return {
         sanitizedMdd: formatted,
@@ -357,14 +418,15 @@ export class ProjectMddPersistService {
       ok.sanitizedMdd,
     );
 
-    await this.prisma.stage.update({
-      where: { id: stageId },
-      data: {
+    await this.updateStageMdd(
+      stageId,
+      {
         mddContent: storeMddMarkdownForPersist(ok.sanitizedMdd),
         ...documentData,
         shortTermContext: nextCtx as Prisma.InputJsonValue,
       },
-    });
+      fence,
+    );
     await this.changeLog.log(projectId, "mddContent", ok.sanitizedMdd);
     void this.persistMddDeliveryGateSnapshot(
       stageId,
@@ -380,6 +442,36 @@ export class ProjectMddPersistService {
       status: refreshed?.status ?? ok.status,
       precisionScore: refreshed?.precisionScore ?? ok.precisionScore,
     };
+  }
+
+  /**
+   * Escribe la etapa. Sin `fence`, `stage.update` como siempre. Con `fence`, `updateMany`
+   * condicionado: si no afecta a ninguna fila, lanza `MddWriteFencedError` (ADR 0004).
+   */
+  private async updateStageMdd(
+    stageId: string,
+    data: Prisma.StageUpdateManyMutationInput,
+    fence?: number,
+  ): Promise<void> {
+    if (fence === undefined) {
+      await this.prisma.stage.update({ where: { id: stageId }, data });
+      return;
+    }
+    const { count } = await this.prisma.stage.updateMany({
+      where: mddFenceWhere(stageId, fence),
+      data,
+    });
+    if (count === 0) await this.throwFenceMiss(stageId, fence);
+  }
+
+  /**
+   * `updateMany` condicionado sin filas: la etapa no existe (`NotFoundException`) o existe con un fence mayor
+   * (`MddWriteFencedError`). Sin esta distinción, un id inexistente parecía un turno zombi.
+   */
+  private async throwFenceMiss(stageId: string, fence: number): Promise<never> {
+    const exists = await this.prisma.stage.findUnique({ where: { id: stageId }, select: { id: true } });
+    if (!exists) throw new NotFoundException("Etapa no encontrada");
+    throw new MddWriteFencedError(stageId, fence);
   }
 
   private buildStageDocumentUpdate(

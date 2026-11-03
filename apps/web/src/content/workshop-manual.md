@@ -24,6 +24,7 @@ En el propio Workshop suele mostrarse una cadena del tipo:
 
 **Complejidad media (producto nuevo):** en la barra de documentos no verás MDD ni entregables fuera de la matriz (Spec → API → Guía UX/UI → Tasks); el insumo sigue siendo Paso 0 / Spec. Las pestañas con contenido se muestran con fondo verde esmeralda; las vacías, con borde punteado gris.
 - **MDD (Master Design Document):** documento maestro de 7 secciones; gobierna el resto (SDD).
+- Mientras el chat genera o regenera el MDD, el editor está en solo lectura: Guardar y Cancelar se habilitan cuando termina la generación.
 - **Spec:** benchmark + alcance clarificado; conviene tenerlo antes de cerrar el MDD.
 - **Entregables:** cuando el **semáforo** está en verde y existe Spec, usa **Generar entregables** (o generación individual desde cada pestaña) para arquitectura, casos, historias, blueprint, API, flujos, infra, etc.
 
@@ -37,7 +38,7 @@ En el propio Workshop suele mostrarse una cadena del tipo:
 ## 3. Semáforo y estimación
 
 - **Rojo / Amarillo / Verde:** indica si el MDD cumple reglas mínimas (entidades, contratos, casos límite, etc.) para generar código y documentos pesados.
-- **Precisión %:** desglose de la última auditoría; puedes abrir **Ver logs y desglose**.
+- **Precisión %:** desglose de la última auditoría; puedes abrir **Ver logs y desglose**. Si el Auditor no pudo puntuar el documento, la precisión aparece como «sin nota», no como 0.
 - **Estimación:** horas y MXN por rol; fórmula fija (no es “precio comercial” obligatorio, es referencia interna).
 
 Sin **verde + Spec** no se habilita la generación masiva de entregables coherente con el diseño.

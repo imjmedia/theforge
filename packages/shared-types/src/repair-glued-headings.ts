@@ -3,7 +3,8 @@
  * SSOT compartido entre `formatDocumentMarkdown` (Workshop /formatear), `mdd-sanitize` y `MddViewer`.
  */
 
-const MDD_TOP_SECTION_TITLE =
+/** Títulos de las secciones top (§1–§9) del MDD canónico; prefijo (`\b`), sin ancla final. */
+export const MDD_TOP_SECTION_TITLE =
   /^(?:Contexto|Arquitectura y Stack|Modelo de Datos|Contratos de API|Lógica y Edge Cases|Seguridad|Integración y DevOps|Testing|UI\/UX|Manifest)\b/i;
 
 /** `1. Contexto y Alcance ### Propósito` (sin `##`) → H2 + ### en líneas separadas. */

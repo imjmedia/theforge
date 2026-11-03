@@ -14,12 +14,13 @@ import { describe, it } from "node:test";
 import { requestUserStore } from "../../../common/request-user.store.js";
 import type { PrismaService } from "../../../prisma/prisma.service.js";
 import type { AiAnalysisService } from "../ai-analysis.service.js";
+import { isNodeCacheDisabled } from "../checkpoint/node-cache.service.js";
 import {
   getActiveTokenUsageContext,
   type TokenUsageContextPayload,
 } from "../token-usage/token-usage.context.js";
 import type { TokenUsageService } from "../token-usage/token-usage.service.js";
-import { buildMddEvalDeps } from "./mdd-eval-nest-deps.js";
+import { buildMddEvalDeps, countLlmCallsByOutcome } from "./mdd-eval-nest-deps.js";
 import type { EvalStreamEvent } from "./mdd-eval-runner.js";
 
 const USER_ID = "user-eval";
@@ -67,7 +68,7 @@ async function recoger(iterable: AsyncIterable<EvalStreamEvent>): Promise<EvalSt
 }
 
 /** Dobles de la factoría: solo `streamMddAnalysis` es real para este test; el resto falla si se usa. */
-function dobles() {
+function dobles(options: { disableNodeCache?: boolean } = {}) {
   const llamadas: Array<{ projectId?: string; stageId?: string | null; signal?: AbortSignal }> = [];
   const aiService = {
     streamMddAnalysis(
@@ -94,6 +95,10 @@ function dobles() {
         await sleep(1);
         yield sonda(leer("paso-3"));
 
+        // Paso 4: estado de la caché por nodo dentro de un `next()` (tras pausas).
+        await sleep(1);
+        yield { type: "progress", agent: "cache", message: String(isNodeCacheDisabled()) } as EvalStreamEvent;
+
         yield { type: "done", markdown: "# MDD de prueba" } as EvalStreamEvent;
       })();
     },
@@ -117,6 +122,7 @@ function dobles() {
     userId: USER_ID,
     groupId: GROUP_ID,
     keepProjects: false,
+    ...options,
   });
   return { deps, llamadas };
 }
@@ -185,5 +191,84 @@ describe("buildMddEvalDeps().generate: propagación del contexto de tokens", () 
     const { deps } = dobles();
     await recoger(deps.generate("dbga", "proj-3", "stage-3", new AbortController().signal));
     assert.equal(getActiveTokenUsageContext(), null);
+  });
+});
+
+/** Estado de `isNodeCacheDisabled()` observado en cada evento `cache` (uno por paso del generador). */
+function cacheDesactivada(eventos: EvalStreamEvent[]): boolean[] {
+  return eventos
+    .filter((evento) => (evento as { agent?: string }).agent === "cache")
+    .map((evento) => (evento as { message: string }).message === "true");
+}
+
+describe("buildMddEvalDeps().generate: caché por nodo", () => {
+  it("por defecto la desactiva dentro de cada next() y no queda desactivada fuera", async () => {
+    const { deps } = dobles();
+    const eventos = await recoger(deps.generate("dbga", "proj-c1", "stage-c1", new AbortController().signal));
+    assert.deepEqual(cacheDesactivada(eventos), [true]);
+    assert.equal(isNodeCacheDisabled(), false, "no se filtra al llamador");
+  });
+
+  it("disableNodeCache: false deja la caché activa en el pipeline", async () => {
+    const { deps } = dobles({ disableNodeCache: false });
+    const eventos = await recoger(deps.generate("dbga", "proj-c2", "stage-c2", new AbortController().signal));
+    assert.deepEqual(cacheDesactivada(eventos), [false]);
+  });
+
+  it("disableNodeCache: true es equivalente al default", async () => {
+    const { deps } = dobles({ disableNodeCache: true });
+    const eventos = await recoger(deps.generate("dbga", "proj-c3", "stage-c3", new AbortController().signal));
+    assert.deepEqual(cacheDesactivada(eventos), [true]);
+  });
+});
+
+describe("countLlmCallsByOutcome / buildMddEvalDeps().getTokenUsage", () => {
+  it("ok e invalid cuentan como medidas; error, timeout y abort como fallidas", () => {
+    assert.deepEqual(
+      countLlmCallsByOutcome([
+        { outcome: "ok" },
+        { outcome: "invalid" },
+        { outcome: "error", costKnown: false },
+        { outcome: "timeout" },
+        { outcome: "abort" },
+      ]),
+      { measured: 2, failed: 3 },
+    );
+  });
+
+  it("filas antiguas sin outcome: miden si costKnown !== false", () => {
+    assert.deepEqual(
+      countLlmCallsByOutcome([{ outcome: null }, {}, { costKnown: true }, { outcome: null, costKnown: false }]),
+      { measured: 3, failed: 0 },
+    );
+  });
+
+  it("un caso con solo filas error: llmCalls 0 y failedLlmCalls = N (no medido)", async () => {
+    const eventos = [
+      { documentField: "mddContent", outcome: "error", costKnown: false },
+      { documentField: "mddContent", outcome: "error", costKnown: false },
+      { documentField: "mddContent", outcome: "error", costKnown: false },
+      { documentField: "chat", outcome: "ok", costKnown: true },
+    ];
+    const tokenUsage = {
+      getSummary: async () => ({
+        totalPromptTokens: 0,
+        totalCompletionTokens: 0,
+        totalCostUsd: 0,
+        documents: [{ generations: 3 }],
+      }),
+      listEvents: async () => eventos,
+    };
+    const deps = buildMddEvalDeps({
+      prisma: {} as unknown as PrismaService,
+      aiService: {} as unknown as AiAnalysisService,
+      tokenUsage: tokenUsage as unknown as TokenUsageService,
+      userId: USER_ID,
+      groupId: GROUP_ID,
+      keepProjects: false,
+    });
+    const usage = await deps.getTokenUsage("proj-401");
+    assert.equal(usage.llmCalls, 0);
+    assert.equal(usage.failedLlmCalls, 3);
   });
 });

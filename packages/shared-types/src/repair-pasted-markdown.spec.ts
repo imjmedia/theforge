@@ -16,6 +16,7 @@ import {
   repairIndentedProseBlocks,
   repairMddInfraManifestJsonBlock,
   repairPromoteBareSectionHeadings,
+  repairDemoteFalseApiHeadings,
 } from "./repair-pasted-markdown.js";
 import { formatDocumentMarkdown } from "./format-document-markdown.js";
 import { readFileSync } from "node:fs";
@@ -446,8 +447,117 @@ describe("repairPromoteBareSectionHeadings respeta fences", () => {
     assert.equal(formatDocumentMarkdown(doc), doc);
   });
 
-  it("sigue promoviendo un título suelto fuera del fence", () => {
+  it("sigue promoviendo un título numerado suelto fuera del fence", () => {
+    const out = repairPromoteBareSectionHeadings("Texto\n\n2.1 Resumen ejecutivo\n\n- punto");
+    assert.match(out, /^### 2\.1 Resumen ejecutivo$/m);
+  });
+});
+
+describe("repairPromoteBareSectionHeadings: señal estructural fuerte (isBareTitle acotado)", () => {
+  const promote = (line: string, before = "Texto previo.", after = "Texto posterior."): string =>
+    repairPromoteBareSectionHeadings(`${before}\n\n${line}\n\n${after}`);
+
+  for (const frase of [
+    "Ver §3.",
+    "Ver detalle",
+    "No aplica.",
+    "No aplica",
+    "Nota:",
+    "Pendiente;",
+    "Detalle en [la sección 3](#3)",
+    "Resumen del `pago`",
+    "Si no existe",
+  ]) {
+    it(`no promueve la frase suelta «${frase}»`, () => {
+      const out = promote(frase);
+      assert.doesNotMatch(out, /^#{1,6}\s/m);
+      assert.ok(out.split("\n").includes(frase), `la línea «${frase}» debe conservarse tal cual`);
+    });
+  }
+
+  it("no promueve una línea suelta en mayúscula sin señal estructural (Resumen ejecutivo)", () => {
     const out = repairPromoteBareSectionHeadings("Texto\n\nResumen ejecutivo\n\n- punto");
-    assert.match(out, /^### Resumen ejecutivo$/m);
+    assert.doesNotMatch(out, /^#{1,6}\s/m);
+  });
+
+  it("no promueve una línea suelta seguida de JSON ni de tabla", () => {
+    assert.doesNotMatch(repairPromoteBareSectionHeadings("Texto\n\nEjemplo de payload\n{\n  \"a\": 1\n}"), /^#{1,6}\s/m);
+    assert.doesNotMatch(repairPromoteBareSectionHeadings("Texto\n\nEjemplo de tabla\n| a | b |"), /^#{1,6}\s/m);
+  });
+
+  it("promueve un encabezado numerado rodeado de líneas vacías", () => {
+    assert.match(promote("2.1 Reglas de negocio"), /^### 2\.1 Reglas de negocio$/m);
+    assert.match(promote("3 Integraciones"), /^### 3 Integraciones$/m);
+  });
+
+  it("promueve el título exacto de una sección canónica del MDD", () => {
+    assert.match(promote("Modelo de Datos"), /^### Modelo de Datos$/m);
+    assert.match(promote("Seguridad"), /^### Seguridad$/m);
+  });
+
+  it("no promueve un encabezado numerado sin líneas vacías alrededor", () => {
+    const out = repairPromoteBareSectionHeadings("Texto\n2.1 Reglas de negocio\n- punto");
+    assert.doesNotMatch(out, /^#{1,6}\s/m);
+  });
+
+  it("no confunde un ítem de lista ordenada (`1. Item`) con un encabezado numerado", () => {
+    assert.doesNotMatch(promote("1. Primer paso"), /^#{1,6}\s/m);
+  });
+
+  it("no promueve un título numerado que arranca con conector (`2.1 Ver detalle`)", () => {
+    assert.doesNotMatch(promote("2.1 Ver detalle"), /^#{1,6}\s/m);
+  });
+
+  it("«Headers:», «Request body» y «Response 200» siguen sin promoverse", () => {
+    for (const label of ["Headers:", "Request body", "Response 200", "Content-Type"]) {
+      assert.doesNotMatch(promote(label), /^#{1,6}\s/m, label);
+    }
+  });
+
+  it("end-to-end: formatDocumentMarkdown no vuelve encabezado «Ver §3.» ni «No aplica.»", () => {
+    const out = formatDocumentMarkdown("## 5. Sección\n\nTexto previo.\n\nVer §3.\n\nNo aplica.\n\nFin del párrafo.\n");
+    assert.doesNotMatch(out, /^#{3,6}\s+(Ver §3|No aplica)/m);
+    assert.match(out, /^Ver §3\.$/m);
+    assert.match(out, /^No aplica\.$/m);
+  });
+});
+
+describe("reglas de cliente retiradas: la entrada se conserva", () => {
+  it("títulos fijos (Feature candidates, Riesgos y mitigaciones, Flujo de sincronización…) ya no se promueven por nombre", () => {
+    const raw = [
+      "Texto",
+      "",
+      "Feature candidates para el MVP",
+      "",
+      "Riesgos y mitigaciones",
+      "",
+      "Flujo de sincronización",
+      "",
+      "Endpoint de recepción",
+      "",
+      "- fin",
+    ].join("\n");
+    assert.doesNotMatch(repairPromoteBareSectionHeadings(raw), /^#{1,6}\s/m);
+  });
+
+  it("`**OBP (…):** diagrama` ya no se envuelve en fence text", () => {
+    const raw = "**OBP (desnormalizado):** a ──▶ b";
+    assert.doesNotMatch(repairAsciiDiagramBlocks(raw), /```text/);
+  });
+
+  it("`### Odoo genera…`, `### OBP …` y `### Este microservicio…` ya no se degradan a negrita", () => {
+    const raw = "### Odoo genera una OC\n\n### Este microservicio tiene dos puertos\n";
+    assert.equal(repairDemoteFalseApiHeadings(raw), raw);
+  });
+
+  it("las etiquetas genéricas de contrato siguen degradándose (### Headers: → negrita)", () => {
+    assert.equal(repairDemoteFalseApiHeadings("### Headers: x-api-key"), "**Headers:** x-api-key");
+    assert.equal(repairDemoteFalseApiHeadings("### Response 200 ok"), "**Response 200** ok");
+    assert.equal(repairDemoteFalseApiHeadings("### Content-Type: json"), "**Content-Type:** json");
+  });
+
+  it("`-- Tabla espejo` suelto ya no abre un fence sql (sí lo hace CREATE TABLE)", () => {
+    assert.doesNotMatch(repairOrphanSqlBlocks("Intro\n\n-- Tabla espejo de x\n\nFin"), /```sql/);
+    assert.match(repairOrphanSqlBlocks("Intro\n\nCREATE TABLE x (\n id UUID\n);\n\n## Fin"), /```sql\nCREATE TABLE x/);
   });
 });

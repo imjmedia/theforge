@@ -24,6 +24,16 @@ export function summarizePluginDataPresence(
 }
 
 /**
+ * Quita el fence interno del MDD (ADR 0004) de una etapa: es un detalle de escritura, no un campo de la API.
+ * Además evita serializar un `BigInt` en las respuestas.
+ */
+export function omitMddLeaseFence<S extends { mddLeaseFence?: unknown }>(stage: S): S {
+  const { mddLeaseFence: _fence, ...stageRest } = stage;
+  // El tipo conserva la forma de Stage para los consumidores internos (no leen el fence); en runtime el campo ya no está.
+  return stageRest as S;
+}
+
+/**
  * Proyecto completo aplanado para API (MDD/semáforo desde etapa principal).
  *
  * `convergeWebhookSecret` es un secreto del dueño: solo viaja con `isOwner: true`. Un lector SHARED ajeno
@@ -36,9 +46,10 @@ export function toApiProject<P extends { stages: StageWithEst[] } & Record<strin
 ) {
   const flat = flattenStageDeliverables(project.stages, project as ProjectDeliverableSource);
   const group = project.group as { name: string } | undefined;
-  const { group: _g, ...rest } = project;
+  const { group: _g, stages, ...rest } = project;
   return {
     ...rest,
+    stages: stages.map(omitMddLeaseFence),
     ...(options.isOwner === true ? {} : { convergeWebhookSecret: null }),
     ...flat,
     groupId: project.groupId as string,

@@ -63,7 +63,7 @@ function stripJsonFromMermaidBlocks(body: string): string {
 
 /**
  * Dentro de bloques ```mermaid con erDiagram: relaciones : "id" con el nombre de FK correcto.
- * Anotaciones PK/FK: un solo marcador por línea (PK si es PK+FK); ver repairErDiagramPkFkCommas.
+ * Anotaciones PK/FK: varias claves de un atributo van separadas por coma (`PK, FK`); ver repairErDiagramPkFkCommas.
  */
 function sanitizeErDiagramInMermaidBlocks(body: string): string {
   return body.replace(/```mermaid\s*([\s\S]*?)```/gi, (_match, inner) => {

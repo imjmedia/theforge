@@ -164,7 +164,7 @@ erDiagram
     const norm = normalizeMermaidDiagramBody(
       out.match(/```mermaid\n([\s\S]*?)```/)?.[1] ?? "",
     );
-    assert.doesNotMatch(norm, /uuid default/i);
+    assert.match(norm, /uuid default/);
     assert.match(norm, /tenants \|\|--o\{/);
   });
 });

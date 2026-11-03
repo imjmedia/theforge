@@ -57,7 +57,9 @@ describe("repairStackedCodeFences", () => {
     assert.doesNotMatch(out, /```\s*\n```json/);
     assert.match(out, /```json[\s\S]*?"activo": true[\s\S]*?```\s*\n+\*\*Response 200/);
     assert.match(out, /\*\*Response 200:\*\*\s*\n+```json[\s\S]*?"status": "ok"[\s\S]*?```/);
-    assert.match(out, /### Beneficios de las tablas espejo/);
+    // Un título en negrita de un cliente concreto ya no se promueve a heading: la entrada se conserva.
+    assert.match(out, /^\*\*Beneficios de las tablas espejo\*\*$/m);
+    assert.doesNotMatch(out, /^#{1,6}\s+Beneficios de las tablas espejo/m);
   });
 
   it("repara Responses apilados en PUT costos-reales", () => {

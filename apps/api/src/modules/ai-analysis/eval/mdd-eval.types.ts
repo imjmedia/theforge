@@ -13,6 +13,8 @@
  * dependen de este archivo y de nada más entre sí.
  */
 
+import type { AuditorOutcome } from "@theforge/shared-types";
+import type { AuditorUnavailableReason } from "../state/mdd-state.schema.js";
 import { z } from "zod";
 
 export const mddEvalComplexitySchema = z.enum(["LOW", "MEDIUM", "HIGH"]);
@@ -115,7 +117,12 @@ export type MddEvalRunRecord = {
   markdownLen: number;
   /** Ruta del markdown generado guardado en disco. */
   markdownPath?: string;
+  /** Nota del Auditor LLM; solo existe si `auditorOutcome === "scored"` (nunca se inventa con el Auditor caído). */
   auditorScore?: number;
+  /** `unavailable` = el Auditor no devolvió veredicto válido en este caso (no entra en la media del Auditor). */
+  auditorOutcome?: AuditorOutcome;
+  /** Motivo cuando `auditorOutcome === "unavailable"`. Ausente en registros antiguos. */
+  auditorUnavailableReason?: AuditorUnavailableReason;
   /** Porcentaje mostrado al usuario (métrica en vivo). */
   precision?: number;
   status?: "red" | "yellow" | "green";
@@ -124,7 +131,10 @@ export type MddEvalRunRecord = {
   gateWarnings: string[];
   failedStep?: { node: string; error: string };
   auditTrail: string[];
+  /** Llamadas medidas (`outcome` ok/invalid). 0/ausente = caso no medido. */
   llmCalls?: number;
+  /** Llamadas fallidas (error/timeout/abort), sin coste; solo presente si hubo alguna. */
+  failedLlmCalls?: number;
   promptTokens?: number;
   completionTokens?: number;
   costUsd?: number;
@@ -140,9 +150,17 @@ export type MddEvalAggregates = {
   passRate: number;
   avgRubric: number;
   avgAuditor: number | null;
+  /** Casos cuyo Auditor no estuvo disponible (excluidos de `avgAuditor`). Ausente en resúmenes antiguos. */
+  auditorUnavailableCount?: number;
+  /** Subconjunto de `auditorUnavailableCount` con `invalid` (salida de calidad; no cuenta para `infraDegraded`). */
+  auditorInvalidCount?: number;
+  /** true si los `unavailable` por infraestructura (`unavailable` − `invalid`) superan el 20 % de los casos. */
+  infraDegraded?: boolean;
   avgDurationMs: number;
   totalCostUsd: number | null;
   totalLlmCalls: number | null;
+  /** Suma de llamadas fallidas (error/timeout/abort) de todos los casos. Ausente en resúmenes antiguos. */
+  totalFailedLlmCalls?: number;
 };
 
 export type MddEvalSummary = {

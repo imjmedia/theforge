@@ -5,8 +5,8 @@
 import { repairCollapsedSqlParagraphs, repairCollapsedSqlInsideFences, repairFragmentedSqlFences, openFenceLangBeforeCloseLine } from "./repair-collapsed-sql.js";
 import { repairDirectoryTreeBlocks } from "./repair-directory-tree.js";
 import { fencedLineMask } from "./markdown-table.js";
-import { repairFlowSectionsToMermaid } from "./repair-flow-sections.js";
 import { repairInfraMarkdown } from "./repair-infra-markdown.js";
+import { MDD_TOP_SECTION_TITLE } from "./repair-glued-headings.js";
 
 const SQL_GLUE_REPLACEMENTS: Array<[RegExp, string]> = [
   [/DEFAULT_NOW\(\)/gi, "DEFAULT NOW()"],
@@ -214,15 +214,9 @@ export function repairIndentedProseBlocks(text: string): string {
   return out.join("\n");
 }
 
-/** `**Flujo de X** **Odoo genera**` → heading + bullet */
+/** `**Seguridad** **API Key** …` → `### Seguridad` + viñeta (títulos en negrita pegados). */
 export function repairGluedBoldFlowTitles(text: string): string {
-  return text
-    .replace(
-      /^\*\*Flujo de procesamiento\*\*\s*\*\*Odoo genera\*\*\s*(.+)$/gim,
-      "### Flujo de procesamiento\n\n- Odoo genera $1",
-    )
-    .replace(/^\*\*Seguridad\*\*\s*\*\*API Key\*\*\s*(.+)$/gim, "### Seguridad\n\n- API Key $1")
-    .replace(/^\*\*Beneficios de las\*\*\s*tablas espejo\s*$/gim, "### Beneficios de las tablas espejo");
+  return text.replace(/^\*\*Seguridad\*\*\s*\*\*API Key\*\*\s*(.+)$/gim, "### Seguridad\n\n- API Key $1");
 }
 
 /** Índice del `}` que cierra el primer objeto JSON `{...}` (respeta strings). */
@@ -330,7 +324,7 @@ export function repairOrphanContratosApiFences(text: string): string {
   return result.join("\n");
 }
 
-/** Contratos API (webhook, costos-reales, JWT, env): fences JSON/env rotos. */
+/** Contratos API (request/response JSON, JWT, variables de entorno): fences JSON/env rotos. */
 export function repairApiContractJsonFences(text: string): string {
   let out = text.replace(/\r\n/g, "\n");
   out = repairCloseJsonBeforeContractMarkers(out);
@@ -357,7 +351,6 @@ export function repairApiContractJsonFences(text: string): string {
     },
   );
   out = out.replace(/^(#{1,4}\s+Variables de entorno)\s*\n\}\s*\n/gm, "$1\n\n");
-  out = out.replace(/^\*\*Beneficios de las tablas espejo\*\*\s*$/gim, "### Beneficios de las tablas espejo");
   out = out.replace(
     /(\*\*Backend\s*\(NestJS\):\*\*|\*\*Frontends que consuman[^\n]*\*\*)\s*\n+```\s*\n+```env/gi,
     "$1\n\n```env",
@@ -464,32 +457,58 @@ export function repairMetadataCoverTable(text: string): string {
   );
 }
 
+/** Etiquetas de contrato API que nunca son sección (aunque queden entre líneas vacías). */
 const DO_NOT_PROMOTE_TITLE =
-  /^(Headers?:|Request body|Response \d+|Recibe eventos|Content-Type|X-Odoo|Beneficios de las|Flujo de procesamiento|Seguridad|Donde:|Detalle ejecutable|OBP4MO \(normalizado\):|OBP \(desnormalizado\):|Este microservicio tiene|Odoo genera|Endpoint receptor de webhooks$)/i;
+  /^(Headers?:|Request body|Response \d+|Content-Type|Donde:|Detalle ejecutable)/i;
 
-/** Encabezados sueltos (sin #) que deberían ser sección. */
+/** Conectores/verbos con los que empieza una referencia o frase, nunca un título de sección. */
+const BARE_TITLE_PROSE_START =
+  /^(?:ver|véase|vea|consulta|consultar|según|como|cuando|si|y|o|pero|además|también|por|para|de|del|con|sin|que|no|esto|esta|este|el|la|los|las|un|una)\b/i;
+
+/** Encabezado numerado suelto: `2.1 Reglas de negocio`, `3 Seguridad` (no `1. Item`, que es lista ordenada). */
+const BARE_NUMBERED_TITLE = /^\d+(?:\.\d+)*\s+([A-ZÁÉÍÓÚÑ].*)$/;
+
+/**
+ * ¿`t` es un título suelto (sin `#`) que debe promoverse a `###`?
+ *
+ * Regla (conservadora: ante la duda, no se promueve; una línea de prosa no debe volverse encabezado):
+ * 1. Exclusiones duras: vacía/larga (<4 o >100), etiquetas de contrato (`DO_NOT_PROMOTE_TITLE`),
+ *    markdown ya estructurado (`#`, tabla, fence, viñeta, regla horizontal, emoji de estado, endpoint HTTP,
+ *    `Módulo N —`, `contexto:`), puntuación final (`.`, `:`, `;`, `!`, `?`), `§`, enlaces `[..](..)`,
+ *    backticks, y frases que empiezan por conector/verbo de referencia («Ver…», «No aplica», «Si…»).
+ * 2. Solo se promueve con señal estructural fuerte, y siempre con línea vacía antes y después
+ *    (inicio/fin de documento cuentan como vacías):
+ *    a. encabezado numerado `^\d+(\.\d+)*\s+Mayúscula…` (`2.1 Reglas de negocio`), o
+ *    b. título exacto de una sección canónica del MDD (`Contexto`, `Modelo de Datos`, `Seguridad`, …).
+ *    Cualquier otra línea suelta en mayúscula NO se promueve.
+ */
+function isBareSectionTitle(t: string, prev: string, next: string): boolean {
+  if (t.length < 4 || t.length > 100) return false;
+  if (DO_NOT_PROMOTE_TITLE.test(t)) return false;
+  if (/^#{1,6}\s/.test(t)) return false;
+  if (t.startsWith("|") || t.startsWith("```")) return false;
+  if (/^[-*]\s/.test(t)) return false;
+  if (/^🔴|^🟡|^🟢/.test(t)) return false;
+  if (/^[-*_]{3,}$/.test(t)) return false;
+  if (/^(GET|POST|PUT|PATCH|DELETE)\s+\//.test(t)) return false;
+  if (/^Módulo \d+ —/.test(t)) return false;
+  if (/^contexto:/i.test(t)) return false;
+  if (/[.:;!?]\s*$/.test(t)) return false;
+  if (t.includes("§") || t.includes("`") || /\[[^\]]*\]\([^)]*\)/.test(t)) return false;
+  if (!/^[A-ZÁÉÍÓÚÑ0-9]/.test(t)) return false;
+  const numbered = BARE_NUMBERED_TITLE.exec(t);
+  const label = numbered ? numbered[1]! : t;
+  if (BARE_TITLE_PROSE_START.test(label)) return false;
+  if (prev !== "" || next !== "") return false;
+  if (numbered) return true;
+  const canonical = MDD_TOP_SECTION_TITLE.exec(t);
+  return canonical !== null && canonical[0].length === t.length;
+}
+
+/** Encabezados sueltos (sin #) que deberían ser sección (ver `isBareSectionTitle`). */
 export function repairPromoteBareSectionHeadings(text: string): string {
   const lines = text.split("\n");
   const out: string[] = [];
-  const isBareTitle = (t: string, prev: string, next: string): boolean => {
-    if (t.length < 4 || t.length > 100) return false;
-    if (DO_NOT_PROMOTE_TITLE.test(t)) return false;
-    if (/^#{1,6}\s/.test(t)) return false;
-    if (t.startsWith("|") || t.startsWith("```")) return false;
-    if (/^[-*]\s/.test(t)) return false;
-    if (/^🔴|^🟡|^🟢/.test(t)) return false;
-    if (/^[-*_]{3,}$/.test(t)) return false;
-    if (/^(GET|POST|PUT|PATCH|DELETE)\s+\//.test(t)) return false;
-    if (/^Módulo \d+ —/.test(t)) return false;
-    if (/^contexto:/i.test(t)) return false;
-    if (/[.!?]\s*$/.test(t) && t.length > 40) return false;
-    if (/:$/.test(t) && t.length < 60) return false;
-    if (!/^[A-ZÁÉÍÓÚÑ0-9]/.test(t)) return false;
-    if (/^[{\[]/.test(next)) return true;
-    if (prev === "" && (next === "" || next.startsWith("-") || next.startsWith("|"))) return true;
-    if (prev === "" && /^[A-Za-z].{0,80}$/.test(t) && !t.includes(". ")) return true;
-    return false;
-  };
 
   // Un título «suelto» dentro de un fence (p. ej. `Ingresos,Gastos,50` en ```mermaid sankey-beta) es
   // contenido del bloque, no un encabezado: no se promueve.
@@ -507,27 +526,7 @@ export function repairPromoteBareSectionHeadings(text: string): string {
       out.push(`### ${t}`);
       continue;
     }
-    if (/^Feature candidates/i.test(t)) {
-      out.push(`## ${t}`);
-      continue;
-    }
-    if (/^Riesgos y mitigaciones/i.test(t)) {
-      out.push(`## ${t}`);
-      continue;
-    }
-    if (/^Esquema SQL/i.test(t)) {
-      out.push(/^#{1,4}\s/.test(t) ? line : `### ${t}`);
-      continue;
-    }
-    if (/^Flujo de sincronización/i.test(t)) {
-      out.push(`### ${t}`);
-      continue;
-    }
-    if (/^Endpoint de recepción/i.test(t)) {
-      out.push(`### ${t}`);
-      continue;
-    }
-    if (isBareTitle(t, prev, next)) {
+    if (isBareSectionTitle(t, prev, next)) {
       out.push(`### ${t}`);
       continue;
     }
@@ -563,8 +562,7 @@ export function repairOrphanSqlBlocks(text: string): string {
     const sqlStart =
       /^Esquema SQL\b/i.test(t) ||
       /^CREATE TABLE\b/i.test(t) ||
-      /^CREATE INDEX\b/i.test(t) ||
-      /^-- Tabla espejo/i.test(t);
+      /^CREATE INDEX\b/i.test(t);
     if (!inSqlFence && sqlStart) {
       out.push("```sql");
       inSqlFence = true;
@@ -857,12 +855,7 @@ function mapTextOutsideFences(text: string, fn: (chunk: string) => string): stri
 
 /** Diagramas ASCII (relaciones en una línea o bloques de arquitectura) → bloque ```text```. */
 export function repairAsciiDiagramBlocks(text: string): string {
-  let out = text.replace(
-    /^\*\*(OBP4MO|OBP) \([^)]+\):\*\*\s*(.+)$/gim,
-    (_m, label: string, diagram: string) =>
-      `**${label}:**\n\n\`\`\`text\n${diagram.trim()}\n\`\`\``,
-  );
-  out = out.replace(/^((?:pais|ubicacion|País).{10,200}(?:──|└|┬|┘).*)$/gim, (line) => {
+  let out = text.replace(/^((?:pais|ubicacion|País).{10,200}(?:──|└|┬|┘).*)$/gim, (line) => {
     const t = line.trim();
     if (t.startsWith("```")) return line;
     return `\`\`\`text\n${t}\n\`\`\``;
@@ -871,14 +864,12 @@ export function repairAsciiDiagramBlocks(text: string): string {
   return repairMultilineAsciiDiagramBlocks(out);
 }
 
-/** Quita ### erróneos en subtítulos de contrato API / Odoo. */
+/** Quita ### erróneos en subtítulos de contrato API (Headers, Request body, Response N…). */
 export function repairDemoteFalseApiHeadings(text: string): string {
-  let out = text.replace(
-    /^### (Headers?:|Request body \(ejemplo|Response \d+|Recibe eventos|Content-Type:|API Key|Odoo genera|Donde:|OBP4MO \(normalizado\):|OBP \(desnormalizado\):)\s*/gim,
+  return text.replace(
+    /^### (Headers?:|Request body \(ejemplo|Response \d+|Content-Type:|API Key|Donde:)\s*/gim,
     "**$1** ",
   );
-  out = out.replace(/^### (Este microservicio[^\n]+)/gim, "$1");
-  return out;
 }
 
 /** Envuelve manifest §7 suelto en ```json (incl. ### Manifest de Infraestructura). */
@@ -944,7 +935,7 @@ export function repairMddInfraManifestJsonBlock(text: string): string {
   return text.slice(0, sectionStart) + newBody + text.slice(sectionEnd);
 }
 
-/** Bloques JSON sueltos (webhook / Odoo) → fence json. */
+/** Bloques JSON sueltos (`{` … `}` sin fence, ≥3 líneas) → fence json. */
 export function repairLooseJsonBlocks(text: string): string {
   const lines = text.split("\n");
   const out: string[] = [];
@@ -1315,7 +1306,6 @@ export function repairPastedMarkdown(text: string): string {
   out = repairTabSeparatedTables(out);
   out = repairIndentedLists(out);
   out = repairIndentedProseBlocks(out);
-  out = repairFlowSectionsToMermaid(out);
   out = repairInfraMarkdown(out);
   out = repairTableBoundaries(out);
   out = repairApiContractJsonFences(out);

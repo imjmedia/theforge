@@ -56,19 +56,42 @@ export function isMddProviderAuthOrQuotaError(err: unknown): boolean {
   );
 }
 
+function errorCode(err: unknown): string | undefined {
+  if (!err || typeof err !== "object") return undefined;
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+}
+
 /** Otro turno (stream o job) ya tiene el lease del hilo; reintentar a los 15 s no lo libera. */
 export function isMddThreadBusyError(err: unknown): boolean {
-  return /THREAD_BUSY|turno en curso para este hilo/i.test(errorMessage(err));
+  return errorCode(err) === "THREAD_BUSY" || /THREAD_BUSY|turno en curso para este hilo/i.test(errorMessage(err));
+}
+
+/**
+ * Redis no estaba listo (o falló el `SET`) al tomar el lease del hilo: nada se ejecutó, así que es seguro
+ * reintentar. El reintento queda acotado por `attempts` de la cola (`MAX_ATTEMPTS`) con su backoff.
+ */
+export function isMddLockUnavailableError(err: unknown): boolean {
+  return errorCode(err) === "LOCK_UNAVAILABLE" || /\bLOCK_UNAVAILABLE\b/.test(errorMessage(err));
+}
+
+/** El lease del hilo se perdió a mitad del turno: otro turno pudo escribir el checkpoint; no se reintenta. */
+export function isMddLeaseLostError(err: unknown): boolean {
+  return errorCode(err) === "LEASE_LOST" || /\bLEASE_LOST\b/.test(errorMessage(err));
 }
 
 /** True si BullMQ no debe reintentar (el reintento repetiría un pipeline caro con el mismo resultado). */
 export function isMddNonRetryableJobError(err: unknown): boolean {
+  // Primero: el mensaje de LOCK_UNAVAILABLE incluye la causa de Redis (p. ej. "timed out") y no debe
+  // confundirse con un timeout del LLM ni con una cancelación.
+  if (isMddLockUnavailableError(err)) return false;
   return (
     isMddUserCancellationError(err) ||
     isMddLlmTimeoutError(err) ||
     isMddGraphRecursionError(err) ||
     isMddProviderAuthOrQuotaError(err) ||
-    isMddThreadBusyError(err)
+    isMddThreadBusyError(err) ||
+    isMddLeaseLostError(err)
   );
 }
 

@@ -13,7 +13,7 @@
   - `repair-infra-markdown.ts` (650 líneas) - Reparación de infraestructura
   - `repair-collapsed-sql.ts` (460 líneas) - Expansión de SQL
   - `repair-directory-tree.ts` (173 líneas) - Formato de árboles
-  - `repair-flow-sections.ts` (227 líneas) - Prose a flowchart
+  - `repair-flow-sections.ts` (227 líneas) - Prose a flowchart. **Eliminado** en el lote 2 de calidad del MDD (2026-11-03, ADR 0002): generaba diagramas desde viñetas y llamaba al reemplazo por webhook inventado
 
 ### Fortalezas
 1. **Especialización en dominio:** Maneja mermaid, infraestructura, SQL colapsado

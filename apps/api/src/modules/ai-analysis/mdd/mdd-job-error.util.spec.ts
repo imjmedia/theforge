@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { UnrecoverableError } from "bullmq";
-import { isMddUserCancellationError, toMddJobError } from "./mdd-job-error.util.js";
+import {
+  ThreadBusyError,
+  ThreadLeaseLostError,
+  ThreadLockUnavailableError,
+} from "../checkpoint/thread-run-lock.service.js";
+import {
+  isMddLeaseLostError,
+  isMddLockUnavailableError,
+  isMddNonRetryableJobError,
+  isMddUserCancellationError,
+  toMddJobError,
+} from "./mdd-job-error.util.js";
 
 test("isMddUserCancellationError detects cancel message", () => {
   assert.equal(isMddUserCancellationError(new Error("Cancelado por el usuario")), true);
@@ -55,4 +66,32 @@ test("toMddJobError keeps transient network errors retryable", () => {
   }
   const plain = new Error("boom");
   assert.equal(toMddJobError(plain), plain);
+});
+
+test("toMddJobError: LOCK_UNAVAILABLE es reintentable (lo acota MAX_ATTEMPTS de la cola)", () => {
+  const err = new ThreadLockUnavailableError("p:_", new Error("Stream isn't writeable"));
+  assert.equal(isMddLockUnavailableError(err), true);
+  assert.equal(isMddNonRetryableJobError(err), false);
+  assert.equal(toMddJobError(err), err);
+  assert.equal(toMddJobError(err) instanceof UnrecoverableError, false);
+});
+
+test("toMddJobError: LOCK_UNAVAILABLE sigue reintentable aunque la causa de Redis parezca timeout o abort", () => {
+  for (const cause of ["Command timed out", "connect ETIMEDOUT 10.0.0.1:6379", "Connection aborted"]) {
+    const err = new ThreadLockUnavailableError("p:_", new Error(cause));
+    assert.equal(toMddJobError(err) instanceof UnrecoverableError, false, cause);
+  }
+  // también cuando solo llega el mensaje serializado (sin la clase ni `code`)
+  assert.equal(
+    toMddJobError(new Error("LOCK_UNAVAILABLE: No se pudo tomar el bloqueo (timed out)")) instanceof UnrecoverableError,
+    false,
+  );
+});
+
+test("toMddJobError: LEASE_LOST y THREAD_BUSY son UnrecoverableError (por clase y por mensaje)", () => {
+  const lost = new ThreadLeaseLostError("p:_");
+  assert.equal(isMddLeaseLostError(lost), true);
+  assert.ok(toMddJobError(lost) instanceof UnrecoverableError);
+  assert.ok(toMddJobError(new Error("LEASE_LOST: se perdió el bloqueo")) instanceof UnrecoverableError);
+  assert.ok(toMddJobError(new ThreadBusyError("p:_")) instanceof UnrecoverableError);
 });

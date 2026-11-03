@@ -253,3 +253,15 @@ BEGIN
       FOREIGN KEY ("stageId") REFERENCES "Stage"("id") ON DELETE SET NULL ON UPDATE CASCADE;
   END IF;
 END $$;
+
+-- 10b. TokenUsage: telemetría por llamada (migración 20261103000000_token_usage_telemetry).
+ALTER TABLE "TokenUsage" ADD COLUMN IF NOT EXISTS "latencyMs" INTEGER;
+ALTER TABLE "TokenUsage" ADD COLUMN IF NOT EXISTS "attempts" INTEGER;
+ALTER TABLE "TokenUsage" ADD COLUMN IF NOT EXISTS "outcome" TEXT;
+ALTER TABLE "TokenUsage" ADD COLUMN IF NOT EXISTS "costKnown" BOOLEAN;
+ALTER TABLE "TokenUsage" ADD COLUMN IF NOT EXISTS "estimated" BOOLEAN;
+ALTER TABLE "TokenUsage" ADD COLUMN IF NOT EXISTS "modelActual" TEXT;
+
+-- 11. Stage.mddLeaseFence: fencing token del lease MDD.
+-- ADR 0004 (migración 20261103120000_stage_mdd_lease_fence).
+ALTER TABLE "Stage" ADD COLUMN IF NOT EXISTS "mddLeaseFence" BIGINT;

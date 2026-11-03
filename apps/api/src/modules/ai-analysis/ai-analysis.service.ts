@@ -11,6 +11,7 @@ import { createDbgaGraph } from "./graph/dbga-graph.js";
 import { createMddGraph, createMddGraphWithManager } from "./graph/mdd-graph.js";
 import { defaultDBGAState, type DBGAState } from "./state/index.js";
 import { defaultMDDState, type MDDState, type MDDStateType } from "./state/index.js";
+import type { AuditorUnavailableReason } from "./state/mdd-state.schema.js";
 import {
   composeBrdPreamble,
 } from "./utils/brd-tobe-gate.util.js";
@@ -20,9 +21,21 @@ import {
   ThreadRunLockService,
   THREAD_BUSY_CODE,
   THREAD_BUSY_MESSAGE,
+  LOCK_UNAVAILABLE_CODE,
+  LOCK_UNAVAILABLE_MESSAGE,
+  LEASE_LOST_CODE,
+  LEASE_LOST_MESSAGE,
+  ThreadLeaseLostError,
+  ThreadLockUnavailableError,
   type ThreadRunLease,
 } from "./checkpoint/thread-run-lock.service.js";
 import { runWithLlmAbortSignal } from "./utils/mdd-llm-stream-invoke.util.js";
+import { runWithMddLeaseContext, type MddLeaseContext } from "../../common/mdd-lease-context.js";
+import {
+  getActiveTokenUsageContext,
+  runWithTokenUsageContext,
+  type TokenUsageContextPayload,
+} from "./token-usage/token-usage.context.js";
 import { NodeCacheService } from "./checkpoint/node-cache.service.js";
 import { EstimationService } from "./estimation/estimation.service.js";
 import type { AuditorGaps, MddAgentEditLogEntry } from "./estimation/estimation.types.js";
@@ -46,12 +59,11 @@ import {
 import { evaluateMddPersistTailGuard } from "./utils/mdd-persist-tail-guard.util.js";
 import { evaluateMddDraftPersistFloor } from "./utils/mdd-draft-persist-floor.util.js";
 import { logMddPersistFenceDiag } from "./utils/mdd-persist-fence-diag.util.js";
-import { ProjectsService } from "../projects/projects.service.js";
-import { pickPrimaryStage } from "../projects/stage-helpers.js";
+import { MddWriteFencedError, pickPrimaryStage, ProjectsService } from "../projects/index.js";
 import { TheForgeService } from "../theforge/theforge.service.js";
 import { AgentSupervisorService } from "../agent-supervisor/agent-supervisor.service.js";
 import { EpisodicMemoryKind, type ComplexityLevel } from "@theforge/database";
-import { contentIncludesVisionBlock, peelDocumentBodyForPersist, type ChatImagePart, type MddDeliveryGateResult, expandMddSectionsForSync, MDD_SECTION_TITLES } from "@theforge/shared-types";
+import { contentIncludesVisionBlock, peelDocumentBodyForPersist, type AuditorOutcome, type ChatImagePart, type MddDeliveryGateResult, expandMddSectionsForSync, MDD_SECTION_TITLES } from "@theforge/shared-types";
 import { formatVisionContextBlock, mergeUserTextWithVisionBlock } from "../ai/utils/vision-context.util.js";
 import { markdownToMddStructured } from "./utils/mdd-markdown-to-structured.js";
 import { HumanMessage } from "@langchain/core/messages";
@@ -157,6 +169,40 @@ async function* runRegenWithHeartbeat<T>(
   }
 }
 
+/** Resultado de `persist()` del persistidor MDD (suelo anti-wipe, lease y borradores repetidos). */
+export type MddPersistResult =
+  | { ok: true }
+  | { ok: false; reason: "floor" | "too_short" | "unchanged" | "lease_lost" };
+
+/** Código del evento `blocked` cuando el suelo anti-wipe descarta el resultado del turno. */
+export const MDD_PERSIST_FLOOR_CODE = "MDD_PERSIST_FLOOR";
+export const MDD_PERSIST_FLOOR_MESSAGE =
+  "El resultado no se guardó porque es mucho más corto que el documento guardado (menos de la mitad). Se conservó el documento anterior; revisa el resultado o vuelve a intentarlo.";
+/** Código del evento `blocked` cuando el resultado es demasiado corto para persistirse. */
+export const MDD_PERSIST_TOO_SHORT_CODE = "MDD_PERSIST_TOO_SHORT";
+export const MDD_PERSIST_TOO_SHORT_MESSAGE =
+  "El resultado no se guardó porque es demasiado corto o está vacío. Se conservó el documento anterior; vuelve a intentarlo.";
+
+/** Lanzado por el job cuando el persist final se bloquea (suelo anti-wipe / resultado demasiado corto). No reintentable. */
+export class MddPersistBlockedError extends Error {
+  constructor(readonly code: typeof MDD_PERSIST_FLOOR_CODE | typeof MDD_PERSIST_TOO_SHORT_CODE, message: string) {
+    super(`${code}: ${message}`);
+    this.name = "MddPersistBlockedError";
+  }
+}
+
+/** Evento `blocked` que corresponde a un persist rechazado (`floor` / `too_short`); `undefined` si no bloquea. */
+export function mddPersistBlockedEvent(
+  result: MddPersistResult | { ok: false; reason: string },
+): { type: "blocked"; code: string; message: string } | undefined {
+  if (result.ok) return undefined;
+  if (result.reason === "floor") return { type: "blocked", code: MDD_PERSIST_FLOOR_CODE, message: MDD_PERSIST_FLOOR_MESSAGE };
+  if (result.reason === "too_short") {
+    return { type: "blocked", code: MDD_PERSIST_TOO_SHORT_CODE, message: MDD_PERSIST_TOO_SHORT_MESSAGE };
+  }
+  return undefined;
+}
+
 export type StreamProgressEvent =
   | { type: "progress"; agent: string; message: string; phase?: "active" | "done" }
   | { type: "draft"; markdown: string; deliveryGate?: MddDeliveryGateResult }
@@ -169,8 +215,12 @@ export type StreamProgressEvent =
     precision?: number;
     /** Score del Auditor LLM (no el porcentaje del semáforo). Solo válido si `auditorRan` es true. */
     auditorScore?: number;
-    /** true cuando el nodo Auditor LLM corrió en este turno/pasada. */
+    /** true cuando el nodo Auditor LLM corrió en este turno/pasada (con o sin nota: ver `auditorOutcome`). */
     auditorRan?: boolean;
+    /** `scored` = hay nota válida; `unavailable` = Auditor sin veredicto (sin `auditorScore`; decide el gate determinista). Ausente = no corrió o checkpoint antiguo. */
+    auditorOutcome?: AuditorOutcome;
+    /** Motivo cuando `auditorOutcome === "unavailable"` (`invalid` es calidad del modelo; el resto, infraestructura). */
+    auditorUnavailableReason?: AuditorUnavailableReason;
     status?: "red" | "yellow" | "green";
     deliveryGate?: MddDeliveryGateResult;
     auditorFeedback?: string;
@@ -242,20 +292,64 @@ export type MddChatTurnHooks = {
   onEvent?: (event: MddChatJobEvent) => void | Promise<void>;
 };
 
+/** Contextos AsyncLocalStorage que `withAlsGenerator` fija en cada paso de un generador. */
+type AlsGeneratorContext = {
+  /** Telemetría de tokens: solo se fija si no hay ya un contexto activo (job / eval / stream exterior). */
+  tokenUsage?: TokenUsageContextPayload;
+  /** Señal de aborto LLM del turno (la leen los nodos que no reciben `config.signal`). */
+  signal?: AbortSignal;
+  /** Lease MDD del turno (fence): los tools del Manager lo leen para condicionar sus escrituras (ADR 0004). */
+  lease?: MddLeaseContext;
+};
+
 /**
- * Avanza el generador interno ejecutando cada `next()` dentro del contexto de aborto LLM: así las
- * llamadas LLM de los nodos (que no reciben `config.signal`) ven la señal del turno.
+ * Contexto de telemetría de tokens de un stream HTTP: mismo contrato que la ruta de jobs
+ * (`mdd-queue.service`), sin `jobId`. Sin `projectId` no hay a quién atribuir el uso: no hay contexto.
  */
-async function* withLlmAbortContext<T, R>(
-  signal: AbortSignal | undefined,
+function streamTokenUsageContext(
+  projectId: string | null | undefined,
+  stageId: string | null | undefined,
+  documentField: string,
+  context: "initial" | "regenerate",
+): TokenUsageContextPayload | undefined {
+  const pid = projectId?.trim();
+  if (!pid) return undefined;
+  return { projectId: pid, stageId: stageId?.trim() || null, documentField, context, jobId: undefined };
+}
+
+/**
+ * Avanza el generador interno ejecutando CADA `next()` dentro de los contextos AsyncLocalStorage pedidos:
+ * el cuerpo de un generador se reanuda en cada `next()`, así que envolver solo su creación no llegaría a
+ * las llamadas LLM de pasos posteriores. Contextos:
+ * - aborto LLM: las llamadas LLM de los nodos (que no reciben `config.signal`) ven la señal del turno;
+ * - tokens: los adapters registran uso solo con contexto activo. Si ya hay uno (job de la cola, eval,
+ *   stream exterior) se respeta y no se crea otro;
+ * - lease MDD: el fence del turno (`getActiveMddLeaseFence`), para que las escrituras sin fence explícito queden
+ *   condicionadas a la etapa.
+ * Sin contextos que fijar, delega tal cual.
+ */
+async function* withAlsGenerator<T, R>(
+  ctx: AlsGeneratorContext,
   gen: AsyncGenerator<T, R, undefined>,
 ): AsyncGenerator<T, R, undefined> {
-  if (!signal) return yield* gen;
+  if (!ctx.signal && !ctx.tokenUsage && !ctx.lease) return yield* gen;
+  const step = (): Promise<IteratorResult<T, R>> => {
+    const withAbort = (): Promise<IteratorResult<T, R>> => {
+      const run = (): Promise<IteratorResult<T, R>> =>
+        ctx.signal ? runWithLlmAbortSignal(ctx.signal, () => gen.next()) : gen.next();
+      return ctx.lease ? runWithMddLeaseContext(ctx.lease, run) : run();
+    };
+    // Se evalúa por paso: un consumidor que ya fijó contexto (eval) gana siempre.
+    if (ctx.tokenUsage && getActiveTokenUsageContext() === null) {
+      return runWithTokenUsageContext(ctx.tokenUsage, withAbort) as Promise<IteratorResult<T, R>>;
+    }
+    return withAbort();
+  };
   try {
     for (;;) {
-      const step = await runWithLlmAbortSignal(signal, () => gen.next());
-      if (step.done) return step.value;
-      yield step.value;
+      const next = await step();
+      if (next.done) return next.value;
+      yield next.value;
     }
   } finally {
     // Si el consumidor cortó antes de tiempo, ejecuta los `finally` del generador interno.
@@ -538,19 +632,61 @@ export class AiAnalysisService {
 
   // ─── Hilo MDD: lease por hilo, persistencia server-side y memoria de checkpoint ───────────────
 
-  /** Etapa efectiva del hilo MDD (misma resolución que el stream manager) para la clave del lease. */
-  private async resolveMddLockStageId(projectId: string, stageIdFromClient?: string | null): Promise<string> {
-    const fallback = (stageIdFromClient ?? "").trim();
+  /**
+   * Hilo MDD canónico: clave del lease y etapa de persistencia. Único punto de resolución para el stream HTTP
+   * (manager / resume / pipeline), el job BullMQ y el chat.
+   * - `threadStageId` (resume / chat con checkpoint): la etapa del checkpoint ES la identidad del hilo; no se re-resuelve.
+   * - `stageHint` (etapa que mandó el cliente): se resuelve con el supervisor. Si la BD no responde o el proyecto no
+   *   existe, falla cerrado con `ThreadLockUnavailableError` en vez de caer a la etapa del cliente (dos turnos
+   *   podrían tomar claves distintas para el mismo hilo).
+   */
+  private async resolveMddThread(
+    projectId: string,
+    source: { stageHint?: string | null } | { threadStageId: string | null },
+  ): Promise<{ key: string; stageId: string | null }> {
+    const pid = projectId.trim();
+    if ("threadStageId" in source) {
+      const stageId = (source.threadStageId ?? "").trim();
+      return { key: mddThreadLockKey(pid, stageId), stageId: stageId || null };
+    }
+    let stageId: string;
     try {
       const project = await this.prisma.project.findUnique({
-        where: { id: projectId.trim() },
+        where: { id: pid },
         include: { stages: { orderBy: { ordinal: "asc" } } },
       });
-      if (!project) return fallback;
-      const route = await this.agentSupervisor.resolveRouteFromProject(project, stageIdFromClient);
-      return (route.stageId ?? "").trim();
-    } catch {
-      return fallback;
+      if (!project) throw new Error("proyecto no encontrado");
+      const route = await this.agentSupervisor.resolveRouteFromProject(project, source.stageHint);
+      stageId = (route.stageId ?? "").trim();
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new ThreadLockUnavailableError(
+        mddThreadLockKey(pid, source.stageHint),
+        new Error(`No se pudo resolver la etapa del hilo MDD: ${reason}`),
+      );
+    }
+    return { key: mddThreadLockKey(pid, stageId), stageId: stageId || null };
+  }
+
+  /**
+   * Reclamo del fence del lease sobre la etapa del hilo (ADR 0004). Delega en `ProjectsService.claimMddWriteFence`, que
+   * resuelve la etapa primaria si el hilo no tiene `stageId` y reutiliza la misma condición que la persistencia.
+   * Si la etapa tiene un fence mayor, lanza `MddWriteFencedError`.
+   */
+  private async claimMddWriteFence(projectId: string, stageId: string | null, fence: number): Promise<void> {
+    await this.projects.claimMddWriteFence(projectId, stageId, fence);
+  }
+
+  /**
+   * Reclama el fence del lease al adquirirlo (ADR 0004). Si otro turno ya reclamó la etapa con un fence mayor, el lease
+   * de este turno está perdido: lanza `ThreadLeaseLostError`. Lo usan el stream HTTP, el job y el chat en cola.
+   */
+  private async claimMddFenceUnderLease(projectId: string, stageId: string | null, lease: ThreadRunLease): Promise<void> {
+    try {
+      await this.claimMddWriteFence(projectId, stageId, lease.fence);
+    } catch (err) {
+      if (err instanceof MddWriteFencedError) throw new ThreadLeaseLostError(lease.key);
+      throw err;
     }
   }
 
@@ -591,12 +727,26 @@ export class AiAnalysisService {
     /** También aplica el suelo con `finalize` (un `done` degenerado no debe pisar un MDD grande). */
     enforceFloorOnFinalize?: boolean;
     onPersisted?: (info: { length: number; finalize: boolean }) => void;
-  }): { persist: (markdown: string, finalize: boolean) => Promise<boolean>; lastLen: () => number } {
+    /** Lease del hilo: si ya no se tiene, NO se escribe (`lease_lost`). Sin lease (modos sin hilo) no se comprueba. */
+    isLeaseHeld?: () => boolean;
+    /** Fence del lease (ADR 0004), leído al escribir: la escritura se condiciona a la etapa. */
+    fence?: () => number | undefined;
+  }): {
+    persist: (markdown: string, finalize: boolean) => Promise<MddPersistResult>;
+    lastLen: () => number;
+    /** true si ya hay un documento guardado (baseline del hilo o escrito por este persistidor) que un descarte conserva. */
+    hasStoredDocument: () => boolean;
+  } {
     let lastPersistedLen = 0;
-    const persist = async (markdown: string, finalize: boolean): Promise<boolean> => {
+    const persist = async (markdown: string, finalize: boolean): Promise<MddPersistResult> => {
+      if (args.isLeaseHeld && !args.isLeaseHeld()) {
+        this.logger.warn(`${args.label}: lease del hilo perdido; se descarta el persist`);
+        return { ok: false, reason: "lease_lost" };
+      }
       const cleaned = cleanDocumentContent(markdown);
-      if (cleaned.trim().length < 48) return false;
-      if (cleaned.length === lastPersistedLen && !finalize) return false;
+      if (cleaned.trim().length < 48) return { ok: false, reason: "too_short" };
+      // Ya guardado igual por este persistidor: no hay nada que escribir (no es un error).
+      if (cleaned.length === lastPersistedLen && !finalize) return { ok: false, reason: "unchanged" };
       const floor = evaluateMddDraftPersistFloor({
         candidateLen: cleaned.trim().length,
         storedBaselineLen: args.storedBaselineLen,
@@ -604,18 +754,33 @@ export class AiAnalysisService {
       });
       if (!floor.allowed) {
         this.logger.warn(`${args.label}: ${floor.reason}`);
-        return false;
+        return { ok: false, reason: "floor" };
       }
+      try {
+        await this.projects.persistMddFromBackgroundJob(args.projectId, markdown, {
+          stageId: args.stageId?.trim() || undefined,
+          finalize,
+          lockedPatternIds: [...args.lockedPatternIds],
+          fence: args.fence?.(),
+        });
+      } catch (err) {
+        // Fence (ADR 0004): un turno más reciente reclamó la etapa. Es una pérdida del lease, no un fallo de escritura.
+        if (err instanceof MddWriteFencedError) {
+          this.logger.warn(`${args.label}: escritura rechazada por fence; un turno más reciente reclamó la etapa`);
+          return { ok: false, reason: "lease_lost" };
+        }
+        throw err;
+      }
+      // Solo tras escribir: si `finalize` lanza (delivery gate), el reintento como borrador no debe verse como «unchanged».
       lastPersistedLen = cleaned.length;
-      await this.projects.persistMddFromBackgroundJob(args.projectId, markdown, {
-        stageId: args.stageId?.trim() || undefined,
-        finalize,
-        lockedPatternIds: [...args.lockedPatternIds],
-      });
       args.onPersisted?.({ length: cleaned.length, finalize });
-      return true;
+      return { ok: true };
     };
-    return { persist, lastLen: () => lastPersistedLen };
+    return {
+      persist,
+      lastLen: () => lastPersistedLen,
+      hasStoredDocument: () => args.storedBaselineLen > 0 || lastPersistedLen > 0,
+    };
   }
 
   /** Prepara el persistidor del `done` de un stream (resuelve patrones bloqueados y baseline actuales). */
@@ -624,6 +789,8 @@ export class AiAnalysisService {
     stageId: string | undefined,
     clientDraft: string | undefined,
     label: string,
+    isLeaseHeld?: () => boolean,
+    fence?: () => number | undefined,
   ): Promise<ReturnType<AiAnalysisService["createMddPersister"]>> {
     const resolved = await this.resolveLockedPatternIdsForMddJob({
       mode: "manager",
@@ -639,70 +806,112 @@ export class AiAnalysisService {
       lockedPatternIds: correctedIds,
       storedBaselineLen: peelDocumentBodyForPersist(resolved.stageMddContent).trim().length,
       enforceFloorOnFinalize: true,
+      isLeaseHeld,
+      fence,
     });
   }
 
   /**
    * Persiste el MDD final de un stream ANTES de emitir `done` (antes solo persistía el job: un stream
    * cerrado por el cliente perdía el trabajo). Intenta finalize (delivery gate); si el gate rechaza,
-   * conserva el borrador como intermedio. Nunca rompe el stream.
+   * conserva el borrador como intermedio. Nunca rompe el stream. Devuelve el resultado REAL del persist
+   * (`floor` / `too_short` / `lease_lost` / `unchanged`) o `write_failed` si ambos intentos de escritura
+   * lanzaron (en ese caso el cliente sigue siendo quien persiste).
    */
   private async persistMddStreamDone(
     persister: ReturnType<AiAnalysisService["createMddPersister"]>,
     markdown: string | undefined,
     label: string,
-  ): Promise<boolean> {
+  ): Promise<MddPersistResult | { ok: false; reason: "write_failed" }> {
     const md = (markdown ?? "").trim();
-    if (md.length < 48 || (md.length < 200 && /\(Sin contenido generado\.\)/.test(md))) return false;
+    if (md.length < 48 || (md.length < 200 && /\(Sin contenido generado\.\)/.test(md))) {
+      return { ok: false, reason: "too_short" };
+    }
     try {
-      await persister.persist(md, true);
-      return true;
+      return await persister.persist(md, true);
     } catch (err) {
       this.logger.warn(
         `${label}: persist final falló (${err instanceof Error ? err.message : String(err)}); guardando como borrador`,
       );
     }
     try {
-      await persister.persist(md, false);
-      return true;
+      return await persister.persist(md, false);
     } catch (err) {
       this.logger.warn(`${label}: persist borrador falló: ${err instanceof Error ? err.message : String(err)}`);
-      return false;
+      return { ok: false, reason: "write_failed" };
     }
   }
 
   /**
-   * Envuelve un turno MDD: lease por hilo (Redis `SET NX PX` / Map en dev; `THREAD_BUSY` si ya hay un turno),
-   * contexto de aborto LLM y persistencia server-side en `done`. El lease se libera en `finally`
-   * (también si el cliente corta el stream y el generador recibe `return()`).
+   * Envuelve un turno MDD: lease por hilo (Redis `SET NX PX` / Map en dev; `THREAD_BUSY` si ya hay un turno,
+   * `LOCK_UNAVAILABLE` si Redis no responde: falla cerrado), contexto de aborto LLM (señal del turno +
+   * señal del lease) y persistencia server-side en `done`. Si el lease se pierde, el turno termina con
+   * `error` `LEASE_LOST` y NO se persiste. El resultado del persist no se ignora: `floor` / `too_short`
+   * emiten `blocked` (sin `persistedOnServer`). El lease se libera en `finally` (también si el cliente corta
+   * el stream y el generador recibe `return()`).
    */
   private async *runGuardedMddStream<E extends { type: string }>(params: {
     tag: string;
     /** Sin projectId no hay hilo que bloquear. */
     projectId: string | undefined;
-    lockStageId: string | undefined;
+    /** Origen de la etapa del hilo (ver `resolveMddThread`): la clave del lease y la persistencia salen de ahí. */
+    threadSource: { stageHint?: string | null } | { threadStageId: string | null };
     options?: MddStreamRunOptions;
-    persist?: { stageId: string | undefined; clientDraft?: string };
-    inner: () => AsyncGenerator<E, void, undefined>;
+    persist?: { clientDraft?: string };
+    /** Telemetría de tokens del turno, con la etapa del hilo ya resuelta; sin ella el stream no registra coste. */
+    tokenUsage?: (threadStageId: string | null) => TokenUsageContextPayload | undefined;
+    /** Recibe la señal efectiva del turno (cliente/job + lease) para `graph.stream({ signal })`. */
+    inner: (signal: AbortSignal | undefined) => AsyncGenerator<E, void, undefined>;
   }): AsyncGenerator<E, void, undefined> {
     const pid = params.projectId?.trim();
+    let thread: { key: string; stageId: string | null } | undefined;
     let lease: ThreadRunLease | null = null;
     if (pid) {
-      lease = await this.threadLock.acquire(mddThreadLockKey(pid, params.lockStageId));
+      try {
+        thread = await this.resolveMddThread(pid, params.threadSource);
+        lease = await this.threadLock.acquire(thread.key);
+      } catch (err) {
+        if (!(err instanceof ThreadLockUnavailableError)) throw err;
+        this.logger.warn(`[${params.tag}] lock no disponible projectId=${pid}: ${err.message}`);
+        yield { type: "error", code: LOCK_UNAVAILABLE_CODE, message: LOCK_UNAVAILABLE_MESSAGE } as unknown as E;
+        return;
+      }
       if (!lease) {
-        this.logger.warn(`[${params.tag}] hilo ocupado projectId=${pid} stage=${params.lockStageId ?? ""}`);
+        this.logger.warn(`[${params.tag}] hilo ocupado projectId=${pid} stage=${thread.stageId ?? ""}`);
         yield { type: "error", code: THREAD_BUSY_CODE, message: THREAD_BUSY_MESSAGE } as unknown as E;
         return;
       }
     }
+    const held = lease;
+    const leaseLost = (): boolean => held != null && (held.signal.aborted || !held.isHeld());
+    const leaseLostEvent = (): E => {
+      this.logger.warn(`[${params.tag}] lease perdido projectId=${pid ?? ""}: se descarta el resultado del turno`);
+      return { type: "error", code: LEASE_LOST_CODE, message: LEASE_LOST_MESSAGE } as unknown as E;
+    };
     try {
+      if (held && pid) {
+        try {
+          await this.claimMddFenceUnderLease(pid, thread?.stageId ?? null, held);
+        } catch (err) {
+          if (err instanceof ThreadLeaseLostError) {
+            yield leaseLostEvent();
+            return;
+          }
+          throw err;
+        }
+      }
+      const signals = [params.options?.signal, held?.signal].filter((s): s is AbortSignal => s != null);
+      const turnSignal =
+        signals.length === 0 ? undefined : signals.length === 1 ? signals[0] : AbortSignal.any(signals);
       let persister: ReturnType<AiAnalysisService["createMddPersister"]> | null = null;
       if (pid && params.persist && params.options?.persistOnDone !== false) {
         persister = await this.createMddStreamPersister(
           pid,
-          params.persist.stageId,
+          thread?.stageId ?? undefined,
           params.persist.clientDraft,
           `[${params.tag}] persist`,
+          held ? () => held.isHeld() : undefined,
+          held ? () => held.fence : undefined,
         ).catch((err: unknown) => {
           this.logger.warn(
             `[${params.tag}] no se pudo preparar la persistencia server-side: ${err instanceof Error ? err.message : String(err)}`,
@@ -710,14 +919,64 @@ export class AiAnalysisService {
           return null;
         });
       }
-      for await (const event of withLlmAbortContext(params.options?.signal, params.inner())) {
-        if (persister && event.type === "done") {
-          const persisted = await this.persistMddStreamDone(persister, (event as { markdown?: string }).markdown, `[${params.tag}] persist`);
-          // El cliente web no debe volver a hacer PATCH del mismo contenido (doble guardado reseteaba pendingCascadeDelta).
-          if (persisted) (event as { persistedOnServer?: boolean }).persistedOnServer = true;
+      let terminalSent = false;
+      try {
+        for await (const event of withAlsGenerator(
+          {
+            signal: turnSignal,
+            tokenUsage: params.tokenUsage?.(thread?.stageId ?? null),
+            lease: held && thread ? { fence: held.fence, key: thread.key } : undefined,
+          },
+          params.inner(turnSignal),
+        )) {
+          if (leaseLost()) {
+            yield leaseLostEvent();
+            return;
+          }
+          if (persister && event.type === "done") {
+            const outcome = await this.persistMddStreamDone(
+              persister,
+              (event as { markdown?: string }).markdown,
+              `[${params.tag}] persist`,
+            );
+            if (!outcome.ok && outcome.reason === "lease_lost") {
+              yield leaseLostEvent();
+              return;
+            }
+            // Proyecto sin MDD guardado y resultado vacío/placeholder: no hay "documento anterior" que conservar,
+            // así que `blocked` (cuyo mensaje y el aviso de la web dicen "se conservó el documento") sería falso.
+            // Se emite `done` sin `persistedOnServer`, como antes: la web trata un `done` corto como no-op (sin PATCH).
+            const nothingToPreserve =
+              !outcome.ok && outcome.reason === "too_short" && !persister.hasStoredDocument();
+            const blocked = nothingToPreserve ? undefined : mddPersistBlockedEvent(outcome);
+            if (nothingToPreserve) {
+              this.logger.warn(`[${params.tag}] resultado vacío o placeholder sin documento previo; no se persiste`);
+            }
+            if (blocked) {
+              this.logger.warn(`[${params.tag}] resultado bloqueado (${blocked.code}); no se emite done`);
+              yield blocked as unknown as E;
+              return;
+            }
+            // El cliente web no debe volver a hacer PATCH del mismo contenido (doble guardado reseteaba pendingCascadeDelta).
+            // `unchanged` = ya estaba guardado igual; `write_failed` = no se guardó: el cliente persiste.
+            if (outcome.ok || outcome.reason === "unchanged") {
+              (event as { persistedOnServer?: boolean }).persistedOnServer = true;
+            }
+          }
+          if (event.type === "done" || event.type === "error" || event.type === "blocked" || event.type === "interrupt") {
+            terminalSent = true;
+          }
+          yield event;
         }
-        yield event;
+      } catch (err) {
+        // El aborto por pérdida del lease surge como excepción del generador interno: se reporta como LEASE_LOST.
+        if (leaseLost()) {
+          yield leaseLostEvent();
+          return;
+        }
+        throw err;
       }
+      if (!terminalSent && leaseLost()) yield leaseLostEvent();
     } finally {
       await lease?.release();
     }
@@ -793,6 +1052,17 @@ export class AiAnalysisService {
     idea: string,
     projectId?: string,
   ): AsyncGenerator<StreamProgressEvent> {
+    // Cada `next()` corre con contexto de tokens (Benchmark/DBGA): sin él los adapters no registran coste.
+    yield* withAlsGenerator(
+      { tokenUsage: streamTokenUsageContext(projectId, null, "dbgaContent", "initial") },
+      this.runDbgaAnalysisStream(idea, projectId),
+    );
+  }
+
+  private async *runDbgaAnalysisStream(
+    idea: string,
+    projectId?: string,
+  ): AsyncGenerator<StreamProgressEvent, void, undefined> {
     if (isInsufficientDbgaIdea(idea)) {
       yield {
         type: "error",
@@ -942,9 +1212,16 @@ export class AiAnalysisService {
     yield* this.runGuardedMddStream<StreamProgressEvent>({
       tag: "MDD stream/pipeline",
       projectId: pid,
-      lockStageId: pid ? await this.resolveMddLockStageId(pid, stageId) : undefined,
+      threadSource: { stageHint: stageId },
       options,
-      inner: () => this.runMddPipelineStream(dbgaContent, projectId, stageId, clientMddContent, options?.signal),
+      tokenUsage: (threadStageId) =>
+        streamTokenUsageContext(
+          pid,
+          threadStageId || stageId,
+          "mddContent",
+          clientMddContent?.trim() ? "regenerate" : "initial",
+        ),
+      inner: (signal) => this.runMddPipelineStream(dbgaContent, projectId, stageId, clientMddContent, signal),
     });
   }
 
@@ -1145,8 +1422,12 @@ export class AiAnalysisService {
         auditTrail,
         mddAgentEditLog: editLogTracker.log.length > 0 ? editLogTracker.log : undefined,
         ...(lastState?.lastStepFailed ? { failedStep: lastState.lastStepFailed } : {}),
-        auditorScore: typeof lastState.auditorScore === "number" && lastState.auditorRan ? lastState.auditorScore : undefined,
+        auditorScore: typeof lastState.auditorScore === "number" && lastState.auditorRan && lastState.auditorOutcome !== "unavailable" ? lastState.auditorScore : undefined,
         auditorRan: lastState.auditorRan === true,
+        ...(lastState.auditorRan && lastState.auditorOutcome ? { auditorOutcome: lastState.auditorOutcome } : {}),
+        ...(lastState.auditorRan && lastState.auditorOutcome === "unavailable" && lastState.auditorUnavailableReason
+          ? { auditorUnavailableReason: lastState.auditorUnavailableReason }
+          : {}),
       };
     } catch (err) {
       if (projectId?.trim() && !isMddUserCancellationError(err)) {
@@ -1171,14 +1452,20 @@ export class AiAnalysisService {
     imageAttachments?: ChatImagePart[],
     options?: MddStreamRunOptions,
   ): AsyncGenerator<StreamMddManagerEvent> {
-    const lockStageId = await this.resolveMddLockStageId(projectId, stageIdFromClient);
     yield* this.runGuardedMddStream<StreamMddManagerEvent>({
       tag: "MDD stream/manager",
       projectId,
-      lockStageId,
+      threadSource: { stageHint: stageIdFromClient },
       options,
-      persist: { stageId: lockStageId || undefined, clientDraft: (initialMddDraft ?? "").trim() || undefined },
-      inner: () =>
+      persist: { clientDraft: (initialMddDraft ?? "").trim() || undefined },
+      tokenUsage: (threadStageId) =>
+        streamTokenUsageContext(
+          projectId,
+          threadStageId,
+          "mddContent",
+          (initialMddDraft ?? "").trim() || (initialMessage ?? "").trim() ? "regenerate" : "initial",
+        ),
+      inner: (signal) =>
         this.runMddManagerStream(
           dbgaContent,
           projectId,
@@ -1186,7 +1473,7 @@ export class AiAnalysisService {
           initialMddDraft,
           stageIdFromClient,
           imageAttachments,
-          options?.signal,
+          signal,
         ),
     });
   }
@@ -1528,8 +1815,12 @@ export class AiAnalysisService {
         auditTrail,
         mddAgentEditLog: editLogTracker.log.length > 0 ? editLogTracker.log : undefined,
         ...(lastState?.lastStepFailed ? { failedStep: lastState.lastStepFailed } : {}),
-        auditorScore: typeof lastState.auditorScore === "number" && lastState.auditorRan ? lastState.auditorScore : undefined,
+        auditorScore: typeof lastState.auditorScore === "number" && lastState.auditorRan && lastState.auditorOutcome !== "unavailable" ? lastState.auditorScore : undefined,
         auditorRan: lastState.auditorRan === true,
+        ...(lastState.auditorRan && lastState.auditorOutcome ? { auditorOutcome: lastState.auditorOutcome } : {}),
+        ...(lastState.auditorRan && lastState.auditorOutcome === "unavailable" && lastState.auditorUnavailableReason
+          ? { auditorUnavailableReason: lastState.auditorUnavailableReason }
+          : {}),
       };
     } catch (err) {
       if (isGraphInterrupt(err) && err.interrupts?.length > 0) {
@@ -1627,17 +1918,20 @@ export class AiAnalysisService {
       tag: "MDD stream/resume",
       // Sin checkpoint no hay hilo que bloquear; el stream interno responde con el error habitual.
       projectId: cpRow ? projectId : undefined,
-      lockStageId: cpRow?.mddStageId ?? undefined,
+      // La etapa del checkpoint es la identidad del hilo (misma clave que `runMddChatTurn`); no se re-resuelve.
+      threadSource: { threadStageId: cpRow?.mddStageId ?? null },
       options,
-      persist: { stageId: cpRow?.mddStageId?.trim() || undefined, clientDraft: clientDraftForPersist },
-      inner: () =>
+      persist: { clientDraft: clientDraftForPersist },
+      // Un resume continúa un hilo existente: siempre es "regenerate" (mismo criterio que el job con mddContent).
+      tokenUsage: (threadStageId) => streamTokenUsageContext(projectId, threadStageId, "mddContent", "regenerate"),
+      inner: (signal) =>
         this.runMddResumeStream(
           projectId,
           threadId,
           userMessage,
           mddContentFromClient,
           imageAttachments,
-          options?.signal,
+          signal,
         ),
     });
   }
@@ -2002,8 +2296,12 @@ export class AiAnalysisService {
           auditTrail,
           mddAgentEditLog: editLogTracker.log.length > 0 ? editLogTracker.log : undefined,
           ...(lastState?.lastStepFailed ? { failedStep: lastState.lastStepFailed } : {}),
-          auditorScore: typeof lastState?.auditorScore === "number" && lastState?.auditorRan ? lastState?.auditorScore : undefined,
+          auditorScore: typeof lastState?.auditorScore === "number" && lastState?.auditorRan && lastState?.auditorOutcome !== "unavailable" ? lastState?.auditorScore : undefined,
           auditorRan: lastState?.auditorRan === true,
+          ...(lastState?.auditorRan && lastState?.auditorOutcome ? { auditorOutcome: lastState.auditorOutcome } : {}),
+          ...(lastState?.auditorRan && lastState?.auditorOutcome === "unavailable" && lastState?.auditorUnavailableReason
+            ? { auditorUnavailableReason: lastState.auditorUnavailableReason }
+            : {}),
         };
       }
     } catch (err) {
@@ -2082,7 +2380,7 @@ export class AiAnalysisService {
    * Entrada alternativa: comandos / en el chat (ej. /infraestructura, /contexto). No reemplaza el flujo
    * con Manager (streamMddAnalysisWithManager / streamMddResume): si el usuario escribe texto
    * normal, el frontend sigue usando manager/resume; este método solo se invoca cuando el
-   * cliente envía explícitamente section 1–7 (regenerate-section). NDJSON: progress | done | error.
+   * cliente envía explícitamente section 1–7 (job `mode: section`; el endpoint HTTP fue retirado). NDJSON: progress | done | error.
    * §1: sintetizador de contexto; aborta con error si el cuerpo queda < 200 chars (no hace done falso).
    */
   async *streamMddRegenerateSection(
@@ -2093,7 +2391,33 @@ export class AiAnalysisService {
     gapReasons?: string[],
     upstreamContext?: { dbgaContent?: string; changeSummary?: string },
     regenOptions?: { pipelineParity?: boolean },
+    streamOptions?: { signal?: AbortSignal },
   ): AsyncGenerator<StreamMddManagerEvent> {
+    // Si ya hay contexto (job de la cola: modos section / section-pipeline) se respeta; el stream HTTP crea uno.
+    // `signal` (job: señal combinada con la del lease) corta la llamada LLM en vuelo.
+    yield* withAlsGenerator(
+      { signal: streamOptions?.signal, tokenUsage: streamTokenUsageContext(projectId, stageId, "mddContent", "regenerate") },
+      this.runMddRegenerateSectionStream(
+        projectId,
+        section,
+        mddContentFromClient,
+        stageId,
+        gapReasons,
+        upstreamContext,
+        regenOptions,
+      ),
+    );
+  }
+
+  private async *runMddRegenerateSectionStream(
+    projectId: string,
+    section: number,
+    mddContentFromClient?: string,
+    stageId?: string | null,
+    gapReasons?: string[],
+    upstreamContext?: { dbgaContent?: string; changeSummary?: string },
+    regenOptions?: { pipelineParity?: boolean },
+  ): AsyncGenerator<StreamMddManagerEvent, void, undefined> {
     const pid = projectId?.trim();
     if (!pid) {
       yield { type: "error", message: "projectId es requerido" };
@@ -2545,7 +2869,22 @@ export class AiAnalysisService {
     changeSummary: string,
     dbgaContent: string,
     stageId?: string | null,
+    streamOptions?: { signal?: AbortSignal },
   ): AsyncGenerator<StreamMddManagerEvent> {
+    yield* withAlsGenerator(
+      { signal: streamOptions?.signal, tokenUsage: streamTokenUsageContext(projectId, stageId, "mddContent", "regenerate") },
+      this.runMddUpstreamSyncStream(projectId, sections, changeSummary, dbgaContent, stageId, streamOptions),
+    );
+  }
+
+  private async *runMddUpstreamSyncStream(
+    projectId: string,
+    sections: number[],
+    changeSummary: string,
+    dbgaContent: string,
+    stageId?: string | null,
+    streamOptions?: { signal?: AbortSignal },
+  ): AsyncGenerator<StreamMddManagerEvent, void, undefined> {
     const pid = projectId?.trim();
     if (!pid) {
       yield { type: "error", message: "projectId es requerido" };
@@ -2609,6 +2948,8 @@ export class AiAnalysisService {
         stageId,
         gapLines,
         upstreamCtx,
+        undefined,
+        streamOptions,
       )) {
         if (event.type === "progress") yield event;
         if (event.type === "error") {
@@ -2753,8 +3094,13 @@ export class AiAnalysisService {
     onProgress: (p: MddJobProgress) => void,
     options?: { signal?: AbortSignal },
   ): Promise<MddJobResult> {
-    const { mode, projectId, stageId } = data;
-    const resolvedPatterns = await this.resolveLockedPatternIdsForMddJob(data);
+    // Etapa del hilo resuelta UNA vez con `resolveMddThread`: clave del lease, baseline y destino de la persistencia.
+    // `data.stageId` solo es pista: si el cliente manda otra etapa, se escribe sobre la del hilo.
+    const { mode, projectId } = data;
+    const thread = await this.resolveMddThread(projectId, { stageHint: data.stageId });
+    const jobData: MddJobData = { ...data, stageId: thread.stageId ?? undefined };
+    const { stageId } = jobData;
+    const resolvedPatterns = await this.resolveLockedPatternIdsForMddJob(jobData);
     const { correctedIds: lockedPatternIds, corrections } = resolveGovernancePatternIncompatibilities(
       resolvedPatterns.lockedPatternIds,
     );
@@ -2767,15 +3113,6 @@ export class AiAnalysisService {
         phase: "pattern-compat",
         message: formatGovernancePatternCorrectionsNotice(corrections),
       });
-      const stageBody = peelDocumentBodyForPersist(resolvedPatterns.stageMddContent);
-      if (stageBody.trim().length >= 48) {
-        const correctedMd = updateMddGovernancePatterns(stageBody, lockedPatternIds);
-        await this.projects.persistMddFromBackgroundJob(projectId, correctedMd, {
-          stageId: resolvedPatterns.stageId ?? (stageId?.trim() || undefined),
-          finalize: false,
-          lockedPatternIds: [...lockedPatternIds],
-        });
-      }
     }
 
     // Suelo anti-wipe entre reintentos de BullMQ: `lastPersistedLen` se reinicia en cada
@@ -2783,6 +3120,9 @@ export class AiAnalysisService {
     // el MDD bueno del intento 1 (job 92: 70k → 3084).
     const storedBaselineLen = peelDocumentBodyForPersist(resolvedPatterns.stageMddContent).trim().length;
 
+    // Lease del hilo mientras corre `withThreadLease` (lo fija `runExclusive`). Fuera de él no hay lease:
+    // `isLeaseHeld` devuelve false y el persistidor no escribe (falla cerrado).
+    let jobLease: ThreadRunLease | null = null;
     const persister = this.createMddPersister({
       projectId,
       stageId: stageId?.trim() || undefined,
@@ -2791,14 +3131,43 @@ export class AiAnalysisService {
       storedBaselineLen,
       onPersisted: ({ length, finalize }) =>
         onProgress({ phase: finalize ? "persisted" : "draft", mddLength: length }),
+      isLeaseHeld: () => jobLease?.isHeld() === true,
+      fence: () => jobLease?.fence,
     });
-    const persistMarkdown = async (markdown: string, finalize: boolean): Promise<void> => {
-      await persister.persist(markdown, finalize);
+    /**
+     * Persiste y NO ignora el resultado. Borrador intermedio (`isFinal` false): `floor` / `too_short` /
+     * `unchanged` se omiten (solo alimenta la vista previa), pero `lease_lost` aborta con
+     * `ThreadLeaseLostError`. Cierre del job (`isFinal`): `floor` / `too_short` lanzan `MddPersistBlockedError`
+     * (mismos códigos que el evento `blocked` de los streams).
+     */
+    const persistMarkdown = async (markdown: string, finalize: boolean, isFinal = false): Promise<void> => {
+      const result = await persister.persist(markdown, finalize);
+      if (result.ok || result.reason === "unchanged") return;
+      if (result.reason === "lease_lost") {
+        throw new ThreadLeaseLostError(jobLease?.key ?? mddThreadLockKey(projectId, stageId));
+      }
+      if (!isFinal) return;
+      const blocked = mddPersistBlockedEvent(result);
+      if (blocked) {
+        throw new MddPersistBlockedError(
+          blocked.code as typeof MDD_PERSIST_FLOOR_CODE | typeof MDD_PERSIST_TOO_SHORT_CODE,
+          blocked.message,
+        );
+      }
+    };
+
+    /**
+     * Corrección de patrones incompatibles bajo el lease del hilo (ver `applyMddPatternCorrectionUnderLease`):
+     * se escribe ANTES del trabajo del modo, con el contenido vigente de la etapa.
+     */
+    const applyPatternCorrection = async (lease: ThreadRunLease): Promise<void> => {
+      if (corrections.length === 0) return;
+      await this.applyMddPatternCorrectionUnderLease(jobData, lease, `MDD job ${mode} (${projectId})`);
     };
 
     type MddJobEvent = StreamMddManagerEvent | StreamProgressEvent;
 
-    const consume = async (events: AsyncGenerator<MddJobEvent>): Promise<MddJobResult> => {
+    const consume = async (events: AsyncGenerator<MddJobEvent>, lease?: ThreadRunLease): Promise<MddJobResult> => {
       let finalMarkdown = "";
       let result: MddJobResult | null = null;
       for await (const event of events) {
@@ -2838,7 +3207,7 @@ export class AiAnalysisService {
           // by regenerating individual sections).
           const isSectionRegen =
             mode === "section" || mode === "section-pipeline" || mode === "upstream-sync";
-          await persistMarkdown(event.markdown, !isSectionRegen);
+          await persistMarkdown(event.markdown, !isSectionRegen, true);
           if (projectId?.trim()) {
             this.estimationService.clearLiveDraft(projectId.trim(), stageId ?? undefined);
           }
@@ -2852,6 +3221,8 @@ export class AiAnalysisService {
           };
           return result;
         } else if (event.type === "error") {
+          // Modos de sección (con `lease`): si el lease se perdió, el error del stream es consecuencia de eso.
+          if (lease && (!lease.isHeld() || lease.signal.aborted)) throw new ThreadLeaseLostError(lease.key);
           throw new Error(event.message);
         } else if (event.type === "blocked") {
           throw new Error(event.message);
@@ -2875,11 +3246,28 @@ export class AiAnalysisService {
     const streamOptions: MddStreamRunOptions = { signal: options?.signal, persistOnDone: false };
     // Un stream HTTP y un job nunca corren a la vez sobre el mismo hilo: el job toma el mismo lease
     // (reentrante, así los streams internos no se autobloquean). Si está ocupado lanza THREAD_BUSY
-    // (no reintentable en BullMQ).
-    const withThreadLease = async <T,>(fn: () => Promise<T>): Promise<T> => {
-      const lockStage = await this.resolveMddLockStageId(projectId, stageId);
-      return this.threadLock.runExclusive(mddThreadLockKey(projectId, lockStage), fn);
+    // (no reintentable en BullMQ); si Redis no responde, LOCK_UNAVAILABLE (reintentable acotado).
+    // `fn` recibe la señal del lease (perderlo la aborta) y el lease; la señal se combina con la del job para que
+    // perder el lease corte el LLM en vuelo. Todos los modos con hilo (pipeline, manager/resume, section*,
+    // upstream-sync) corren COMPLETOS dentro de este lease: ninguno escribe sin él.
+    const withThreadLease = async <T,>(fn: (leaseSignal: AbortSignal, lease: ThreadRunLease) => Promise<T>): Promise<T> => {
+      const key = thread.key;
+      return this.threadLock.runExclusive(key, async (leaseSignal, lease) => {
+        jobLease = lease;
+        try {
+          await this.claimMddFenceUnderLease(projectId, thread.stageId, lease);
+          return await fn(leaseSignal, lease);
+        } finally {
+          jobLease = null;
+        }
+      });
     };
+    const leasedSignal = (leaseSignal: AbortSignal): AbortSignal =>
+      options?.signal ? AbortSignal.any([options.signal, leaseSignal]) : leaseSignal;
+    const leasedStreamOptions = (leaseSignal: AbortSignal): MddStreamRunOptions => ({
+      ...streamOptions,
+      signal: leasedSignal(leaseSignal),
+    });
 
     switch (mode) {
       case "pipeline": {
@@ -2887,53 +3275,54 @@ export class AiAnalysisService {
           this.nodeCacheService.invalidateAll();
           this.logger.log(`MDD pipeline forceFullPipeline: node cache invalidated projectId=${projectId}`);
         }
-        const jobResult = await withThreadLease(() =>
-          consume(
+        const jobResult = await withThreadLease(async (leaseSignal, lease) => {
+          await applyPatternCorrection(lease);
+          return consume(
             this.streamMddAnalysis(
               data.dbgaContent ?? "",
               projectId,
               stageId,
               data.mddContent,
-              streamOptions,
+              leasedStreamOptions(leaseSignal),
             ) as AsyncGenerator<MddJobEvent>,
-          ),
-        );
+          );
+        });
         if (jobResult.ok && jobResult.outcome === "done") {
           return this.finalizeMddJobUpstreamBaseline(projectId, stageId, jobResult);
         }
         return jobResult;
-      }
-      case "manager":
-      case "resume": {
-        // Chat con Manager: mismo turno que el stream HTTP (persistencia en `done`, interrupt → waiting_user),
-        // ejecutado bajo el lease del hilo. El worker de la cola añade el relay de eventos (`executeChatJob`).
-        return this.runMddChatTurn(data, { signal: options?.signal, onProgress });
       }
       case "section-pipeline": {
         const rawSection = data.section;
         if (rawSection !== 5) {
           throw new Error("section-pipeline only supports section 5");
         }
-        onProgress({
-          phase: "section-pipeline",
-          section: 5,
-          message: "Regenerando §5 (paridad pipeline)…",
+        // Todo el modo corre bajo el lease: la corrección, el stream y el cierre (ThreadBusyError si el hilo está ocupado).
+        return withThreadLease(async (leaseSignal, lease) => {
+          await applyPatternCorrection(lease);
+          onProgress({
+            phase: "section-pipeline",
+            section: 5,
+            message: "Regenerando §5 (paridad pipeline)…",
+          });
+          const jobResult = await consume(
+            this.streamMddRegenerateSection(
+              projectId,
+              5,
+              data.mddContent,
+              stageId,
+              data.gapReasons,
+              undefined,
+              { pipelineParity: true },
+              { signal: leasedSignal(leaseSignal) },
+            ),
+            lease,
+          );
+          if (jobResult.ok && jobResult.outcome === "done") {
+            return this.finalizeMddJobUpstreamBaseline(projectId, stageId, jobResult);
+          }
+          return jobResult;
         });
-        const jobResult = await consume(
-          this.streamMddRegenerateSection(
-            projectId,
-            5,
-            data.mddContent,
-            stageId,
-            data.gapReasons,
-            undefined,
-            { pipelineParity: true },
-          ),
-        );
-        if (jobResult.ok && jobResult.outcome === "done") {
-          return this.finalizeMddJobUpstreamBaseline(projectId, stageId, jobResult);
-        }
-        return jobResult;
       }
       case "section": {
         const rawSection = data.section;
@@ -2941,49 +3330,62 @@ export class AiAnalysisService {
           throw new Error("section must be 1–7");
         }
         const section = rawSection;
-        onProgress({ phase: "section", section, message: `Regenerando §${section}…` });
-        const jobResult = await consume(
-          this.streamMddRegenerateSection(
-            projectId,
-            section,
-            data.mddContent,
-            stageId,
-            data.gapReasons,
-          ),
-        );
-        if (jobResult.ok && jobResult.outcome === "done") {
-          return this.finalizeMddJobUpstreamBaseline(projectId, stageId, jobResult);
-        }
-        return jobResult;
+        // Todo el modo corre bajo el lease: la corrección, el stream y el cierre (ThreadBusyError si el hilo está ocupado).
+        return withThreadLease(async (leaseSignal, lease) => {
+          await applyPatternCorrection(lease);
+          onProgress({ phase: "section", section, message: `Regenerando §${section}…` });
+          const jobResult = await consume(
+            this.streamMddRegenerateSection(
+              projectId,
+              section,
+              data.mddContent,
+              stageId,
+              data.gapReasons,
+              undefined,
+              undefined,
+              { signal: leasedSignal(leaseSignal) },
+            ),
+            lease,
+          );
+          if (jobResult.ok && jobResult.outcome === "done") {
+            return this.finalizeMddJobUpstreamBaseline(projectId, stageId, jobResult);
+          }
+          return jobResult;
+        });
       }
       case "upstream-sync": {
-        const analysis = await this.mddUpstreamSync.analyze(projectId, stageId);
-        const sections = this.mddUpstreamSync.normalizeSections(data.upstreamSections, analysis);
-        if (!sections.length) {
-          throw new Error("No hay secciones MDD para sincronizar desde upstream.");
-        }
-        const summary =
-          data.upstreamChangeSummary?.trim() || this.mddUpstreamSync.buildSyncSummary(analysis);
-        const docs = await this.mddUpstreamSync.loadUpstreamDocuments(projectId, stageId);
-        onProgress({ phase: "upstream-sync", message: `Sincronizando ${sections.length} sección(es)…` });
-        const jobResult = await consume(
-          this.streamMddUpstreamSync(
-            projectId,
-            sections,
-            summary,
-            data.dbgaContent ?? docs.dbgaContent,
-            stageId,
-          ),
-        );
-        if (jobResult.ok && jobResult.outcome === "done") {
-          const targetStage = stageId?.trim() || docs.stageId;
-          await this.mddUpstreamSync.captureBaseline(projectId, targetStage).catch((err) => {
-            this.logger.warn(
-              `[MDD upstream-sync] capture baseline failed: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          });
-        }
-        return jobResult;
+        // Todo el modo corre bajo el lease: la corrección, el análisis, el stream y el baseline (ThreadBusyError si ocupado).
+        return withThreadLease(async (leaseSignal, lease) => {
+          await applyPatternCorrection(lease);
+          const analysis = await this.mddUpstreamSync.analyze(projectId, stageId);
+          const sections = this.mddUpstreamSync.normalizeSections(data.upstreamSections, analysis);
+          if (!sections.length) {
+            throw new Error("No hay secciones MDD para sincronizar desde upstream.");
+          }
+          const summary =
+            data.upstreamChangeSummary?.trim() || this.mddUpstreamSync.buildSyncSummary(analysis);
+          const docs = await this.mddUpstreamSync.loadUpstreamDocuments(projectId, stageId);
+          onProgress({ phase: "upstream-sync", message: `Sincronizando ${sections.length} sección(es)…` });
+          const jobResult = await consume(
+            this.streamMddUpstreamSync(
+              projectId,
+              sections,
+              summary,
+              data.dbgaContent ?? docs.dbgaContent,
+              stageId,
+              { signal: leasedSignal(leaseSignal) },
+            ),
+          );
+          if (jobResult.ok && jobResult.outcome === "done") {
+            const targetStage = stageId?.trim() || docs.stageId;
+            await this.mddUpstreamSync.captureBaseline(projectId, targetStage).catch((err) => {
+              this.logger.warn(
+                `[MDD upstream-sync] capture baseline failed: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            });
+          }
+          return jobResult;
+        });
       }
       default:
         throw new Error(`Modo MDD no soportado en job: ${mode}`);
@@ -2991,9 +3393,42 @@ export class AiAnalysisService {
   }
 
   /**
+   * Corrección de patrones incompatibles (`resolveGovernancePatternIncompatibilities`) bajo el lease del hilo.
+   * Relee el contenido VIGENTE de la etapa (no el leído al empezar el job o el turno), lo corrige y lo escribe por
+   * el mismo persistidor (`isLeaseHeld`, suelo anti-wipe). Sin patrones incompatibles, o sin cuerpo suficiente,
+   * no escribe nada. Lo usan el job (`runMddGenerationJob`) y el chat en cola (`runMddChatTurn`).
+   * `jobData.stageId` es la etapa ya resuelta del hilo (la misma clave que el lease).
+   */
+  private async applyMddPatternCorrectionUnderLease(
+    jobData: MddJobData,
+    lease: ThreadRunLease,
+    label: string,
+  ): Promise<void> {
+    const fresh = await this.resolveLockedPatternIdsForMddJob(jobData);
+    const { correctedIds, corrections } = resolveGovernancePatternIncompatibilities(fresh.lockedPatternIds);
+    if (corrections.length === 0) return;
+    const stageBody = peelDocumentBodyForPersist(fresh.stageMddContent);
+    if (stageBody.trim().length < 48) return;
+    const persister = this.createMddPersister({
+      projectId: jobData.projectId,
+      stageId: jobData.stageId?.trim() || undefined,
+      label,
+      lockedPatternIds: correctedIds,
+      storedBaselineLen: stageBody.trim().length,
+      isLeaseHeld: () => lease.isHeld(),
+      fence: () => lease.fence,
+    });
+    const result = await persister.persist(updateMddGovernancePatterns(stageBody, correctedIds), false);
+    if (!result.ok && result.reason === "lease_lost") {
+      throw new ThreadLeaseLostError(lease.key);
+    }
+  }
+
+  /**
    * Turno de chat con Manager (`manager` / `resume`) para el worker BullMQ. Reutiliza los streams HTTP
    * (`streamMddAnalysisWithManager` / `streamMddResume`) con persistencia en `done` (`persistedOnServer`),
    * bajo el mismo lease por hilo: si hay otro turno en curso lanza `ThreadBusyError` (el job no se reintenta).
+   * Antes del turno aplica la corrección de patrones incompatibles bajo ese mismo lease.
    * `interrupt` completa el job con `status: "waiting_user"`; la respuesta del usuario encola un `resume`.
    * Los errores del propio turno (evento `error`) también completan el job (`ok: false`) para no re-ejecutarlo.
    */
@@ -3002,7 +3437,7 @@ export class AiAnalysisService {
     const signal = hooks.signal;
     const requestedStage = data.stageId?.trim() || undefined;
     const streamOptions: MddStreamRunOptions = { signal };
-    let lockKey: string | null;
+    let thread: { key: string; stageId: string | null } | null;
     let resultStageId: string | undefined = requestedStage;
     let open: () => AsyncGenerator<StreamMddManagerEvent>;
 
@@ -3013,7 +3448,8 @@ export class AiAnalysisService {
         .findFirst({ where: { projectId: projectId.trim(), threadId }, select: { mddStageId: true } })
         .catch(() => null);
       // Sin checkpoint no hay hilo que bloquear: el stream responde con su error habitual.
-      lockKey = cp ? mddThreadLockKey(projectId, cp.mddStageId) : null;
+      // La etapa del checkpoint es la identidad del hilo: misma clave que `streamMddResume` (no se re-resuelve).
+      thread = cp ? await this.resolveMddThread(projectId, { threadStageId: cp.mddStageId }) : null;
       resultStageId = cp?.mddStageId?.trim() || requestedStage;
       open = () =>
         this.streamMddResume(
@@ -3025,8 +3461,7 @@ export class AiAnalysisService {
           streamOptions,
         );
     } else if (mode === "manager") {
-      const lockStage = await this.resolveMddLockStageId(projectId, requestedStage);
-      lockKey = mddThreadLockKey(projectId, lockStage);
+      thread = await this.resolveMddThread(projectId, { stageHint: requestedStage });
       open = () =>
         this.streamMddAnalysisWithManager(
           data.dbgaContent ?? "",
@@ -3104,7 +3539,15 @@ export class AiAnalysisService {
       );
     };
 
-    return lockKey ? this.threadLock.runExclusive(lockKey, consume) : consume();
+    // Sin hilo (resume sin checkpoint) no hay lease: no hay corrección ni turno que bloquear.
+    if (!thread) return consume();
+    const threadData: MddJobData = { ...data, stageId: thread.stageId ?? undefined };
+    return this.threadLock.runExclusive(thread.key, async (_leaseSignal, lease) => {
+      await this.claimMddFenceUnderLease(projectId, threadData.stageId ?? null, lease);
+      // La corrección de patrones se escribe bajo el mismo lease y ANTES de abrir el stream del turno (`open()` corre en `consume`).
+      await this.applyMddPatternCorrectionUnderLease(threadData, lease, `MDD chat ${mode} (${projectId})`);
+      return consume();
+    });
   }
 
   /** Captura baseline upstream y adjunta estado de sync al resultado del job para el Workshop. */

@@ -48,6 +48,7 @@ import {
   generationStatusWithoutSddGraph,
   resetWorkshopSemaphoreSnapshot,
 } from "./helpers/semaphore-snapshot";
+import { isMddStreamingLoading } from "./helpers/mdd-chat-event";
 import { selectPersistedMddBaseline } from "./selectors";
 import type { Project } from "./types";
 import type { WorkshopState } from "./workshop-state.types";
@@ -386,6 +387,10 @@ export const createMddSlice: StateCreator<WorkshopState, [], [], MddSliceActions
   },
 
   revertMddContent: () => {
+    if (isMddStreamingLoading(get())) {
+      set({ notice: "Espera a que termine la generación del MDD para descartar los cambios." });
+      return;
+    }
     set({ mddContent: get().mddPersistedBaseline });
   },
 
@@ -475,6 +480,10 @@ export const createMddSlice: StateCreator<WorkshopState, [], [], MddSliceActions
   /** Persiste el MDD y refresca estimación/semáforo. No reemplaza el contenido por la respuesta del review
    *  para que las ediciones manuales del usuario se respeten. */
   persistAndReviewMdd: async () => {
+    if (isMddStreamingLoading(get())) {
+      set({ notice: "Espera a que termine la generación del MDD para guardar." });
+      return;
+    }
     const { projectId, project, mddContent, persistMddContent, fetchEstimation } = get();
     if (!projectId?.trim() || !project) return;
     const content = (mddContent ?? "").trim();

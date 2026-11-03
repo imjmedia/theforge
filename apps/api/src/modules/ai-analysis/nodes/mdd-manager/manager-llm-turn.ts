@@ -4,7 +4,10 @@ import { z } from "zod";
 import { MANAGER_MDD_PROMPT } from "../../prompts/load-prompts.js";
 import type { MDDStateType } from "../../state/index.js";
 import { getUserBrief } from "../../utils/mdd-user-brief.js";
-import { parseJsonOrThrow } from "../../utils/parse-json.js";
+import { invokeLlmStructured } from "../../utils/mdd-llm-structured.util.js";
+import { resolveLlmTimeoutMs, resolveMddManagerTurnBudgetMs } from "../../utils/mdd-llm-timeout.util.js";
+import { deriveLlmIdentity, invokeLlmWithRetry, type InvokableLlm } from "../../utils/mdd-llm-retry.util.js";
+import { createLlmAbortError } from "../../utils/mdd-llm-stream-invoke.util.js";
 import { getAgenticRagToolset } from "../../tools/tool-registry.js";
 import { runAgentToolsRound } from "../../utils/mdd-agent-tools-invoke.js";
 import type { MddManagerToolDeps } from "./manager-types.js";
@@ -63,6 +66,8 @@ export type RunManagerLlmTurnOptions = {
   userMessage: string;
   hasBench: boolean;
   hasDraft: boolean;
+  /** Sólo pruebas: reloj del presupuesto del turno (default `Date.now`). */
+  now?: () => number;
 };
 
 function buildManagerPromptContext(
@@ -120,11 +125,69 @@ export function managerParseFallbackDecision(
   };
 }
 
+/** Salida del Manager ya validada (union discriminada de `managerOutputSchema`). */
+type ManagerParsedOutput = z.infer<typeof managerOutputSchema>;
+
+/** Holgura mínima (ms) para lanzar una etapa del turno; por debajo no se invoca y se aplica el fallback. */
+const MIN_MANAGER_STAGE_BUDGET_MS = 15_000;
+
+/** Presupuesto único del turno: lo fija `runManagerLlmTurn` y cada etapa lo consulta; ninguna abre uno nuevo. */
+type ManagerTurnBudget = { deadlineAt: number; now: () => number };
+
+/** Milisegundos que quedan del presupuesto del turno (nunca negativos). */
+function turnBudgetLeftMs(budget: ManagerTurnBudget): number {
+  return Math.max(0, budget.deadlineAt - budget.now());
+}
+
+/** Candidato a salida del Manager dentro de la respuesta: `parsed` con `includeRaw`, o el objeto directo. */
+function managerStructuredCandidate(response: unknown): unknown {
+  if (response == null || typeof response !== "object") return null;
+  // Con `includeRaw` el objeto va en `parsed` (null si el parseo falló); sin él, la respuesta es el objeto.
+  return "raw" in response ? (response as { parsed?: unknown }).parsed : response;
+}
+
+/**
+ * Invoca el runnable de structured output (strict, function calling) con timeout, abort por señal
+ * (ALS / `config.signal`) y SIN reintento ni streaming (la respuesta ya es un objeto parseado, no
+ * texto). Devuelve `null` si falla por transporte/timeout o si la salida no cumple el esquema (el caller
+ * cae al camino invoke+parse con reparación). Una cancelación se propaga como `AbortError`.
+ *
+ * `stageBudgetMs` es el presupuesto restante del turno. Sin streaming, `timeoutMs` es el tope real de la
+ * llamada: `hardTimeoutMs` solo actúa en streaming, así que aquí no se pasa.
+ *
+ * Telemetría: `includeRaw: true` hace que el runnable devuelva `{ raw, parsed }`; el uso real
+ * (`raw.usage_metadata`, `raw.response_metadata`) lo registra `invokeLlmWithRetry`, y el runnable derivado
+ * no tiene identidad de modelo, así que se le pasa la del `llm` base (`identityOverride`). Un `parsed`
+ * nulo o fuera de esquema se marca como respuesta inválida (`isResponseValid`): la traza y el uso quedan como `invalid`.
+ */
+async function invokeManagerStructuredOutput(
+  llm: BaseChatModel,
+  messages: HumanMessage[],
+  stageBudgetMs: number,
+): Promise<z.infer<typeof managerStructuredOutputSchema> | null> {
+  const runnable = (llm as unknown as { withStructuredOutput(schema: unknown, config?: unknown): InvokableLlm }).withStructuredOutput(
+    managerStructuredOutputSchema,
+    { method: "function_calling", strict: true, includeRaw: true },
+  );
+  const response = await invokeLlmWithRetry(runnable, messages, {
+    tag: "Manager",
+    maxAttempts: 1,
+    disableStreaming: true,
+    timeoutMs: Math.min(stageBudgetMs, resolveLlmTimeoutMs()),
+    isResponseValid: (_text, raw) => managerStructuredOutputSchema.safeParse(managerStructuredCandidate(raw)).success,
+    identityOverride: deriveLlmIdentity(llm),
+  });
+  if (response == null || typeof response !== "object") return null;
+  const parsed = managerStructuredOutputSchema.safeParse(managerStructuredCandidate(response));
+  return parsed.success ? parsed.data : null;
+}
+
 async function parseManagerLlmResponse(
   llm: BaseChatModel,
   messages: HumanMessage[],
   complexity: MDDStateType["mddComplexity"] | undefined,
   fallback: ManagerParseFallback,
+  turnBudget: ManagerTurnBudget,
 ): Promise<Pick<ManagerLlmTurnResult, "action" | "replyContent" | "delegateTarget" | "sectionsToRun"> & { memoryQuery?: string }> {
   let action: "reply" | "delegate" | "search_memory" = "reply";
   // Sin texto por defecto: un reply vacío del LLM se convierte en delegate (runManagerLlmTurn), nunca en
@@ -140,76 +203,63 @@ async function parseManagerLlmResponse(
     delegateTarget = decision.delegateTarget;
     sectionsToRun = decision.sectionsToRun;
   };
+  const applyParsed = (parsed: ManagerParsedOutput | z.infer<typeof managerStructuredOutputSchema>) => {
+    action = parsed.action;
+    if (parsed.action === "reply" && parsed.reply?.trim()) replyContent = parsed.reply.trim();
+    if (parsed.action === "delegate") {
+      delegateTarget = parsed.target;
+      if (parsed.target === "sections" && Array.isArray(parsed.sections) && parsed.sections.length > 0) {
+        sectionsToRun = expandSectionsToRun(parsed.sections, { complexity });
+      }
+    }
+    if (parsed.action === "search_memory") memoryQuery = parsed.memorySearchQuery;
+  };
 
   const useStructuredOutput =
     "withStructuredOutput" in llm && typeof (llm as { withStructuredOutput?: (schema: unknown, config?: unknown) => unknown }).withStructuredOutput === "function";
+  // Cada etapa mide su tope contra el presupuesto del turno; ninguna abre uno nuevo.
+  const turnBudgetAvailable = (): boolean => turnBudgetLeftMs(turnBudget) >= MIN_MANAGER_STAGE_BUDGET_MS;
 
-  if (useStructuredOutput) {
+  if (useStructuredOutput && turnBudgetAvailable()) {
     try {
-      const runnable = (llm as { withStructuredOutput(schema: unknown, config?: unknown): { invoke(input: unknown): Promise<unknown> } }).withStructuredOutput(
-        managerStructuredOutputSchema,
-        { method: "function_calling", strict: true },
-      );
-      const parsed = (await runnable.invoke(messages)) as z.infer<typeof managerStructuredOutputSchema>;
-      action = parsed.action;
-      if (parsed.action === "reply" && parsed.reply?.trim()) replyContent = parsed.reply.trim();
-      if (parsed.action === "delegate") {
-        delegateTarget = parsed.target;
-        if (parsed.target === "sections" && Array.isArray(parsed.sections) && parsed.sections.length > 0) {
-          sectionsToRun = expandSectionsToRun(parsed.sections, { complexity });
-        }
+      const structured = await invokeManagerStructuredOutput(llm, messages, turnBudgetLeftMs(turnBudget));
+      if (structured) {
+        applyParsed(structured);
+        return { action, replyContent, delegateTarget, sectionsToRun, memoryQuery };
       }
-      if (parsed.action === "search_memory") {
-        memoryQuery = parsed.memorySearchQuery;
-      }
+      LOG("structured output sin resultado válido, fallback a invoke+parse con reparación");
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
       LOG("structured output falló, fallback a invoke+parse: %s", err instanceof Error ? err.message : String(err));
-      const response = await llm.invoke(messages);
-      const text = typeof response.content === "string" ? response.content : "";
-      if (text.trim()) {
-        try {
-          const parsed = parseJsonOrThrow(text, managerOutputSchema);
-          action = parsed.action;
-          if (parsed.action === "reply" && parsed.reply?.trim()) replyContent = parsed.reply.trim();
-          if (parsed.action === "delegate" && "target" in parsed) {
-            delegateTarget = parsed.target;
-            if (parsed.target === "sections" && Array.isArray(parsed.sections) && parsed.sections.length > 0) {
-              sectionsToRun = expandSectionsToRun(parsed.sections, { complexity });
-            }
-          }
-          if (parsed.action === "search_memory") {
-            memoryQuery = parsed.memorySearchQuery;
-          }
-        } catch {
-          applyParseFallback("no parseable");
-        }
-      } else {
-        applyParseFallback("vacía");
-      }
     }
+  }
+
+  // Sin presupuesto para otra llamada (el structured lo consumió o ya estaba agotado): no se invoca.
+  if (!turnBudgetAvailable()) {
+    applyParseFallback(`presupuesto del turno agotado (restante ${turnBudgetLeftMs(turnBudget)} ms, no se invoca)`);
+    return { action, replyContent, delegateTarget, sectionsToRun, memoryQuery };
+  }
+
+  // Camino invoke+parse: timeout, abort por ALS, reintento de transporte acotado y UNA reparación
+  // del JSON (error de validación re-inyectado) antes del fallback "delegar".
+  const result = await invokeLlmStructured({
+    llm,
+    messages,
+    schema: managerOutputSchema,
+    tag: "Manager",
+    deadlineMs: turnBudgetLeftMs(turnBudget),
+    now: turnBudget.now,
+  });
+  if (result.ok) {
+    applyParsed(result.value);
+  } else if (result.reason === "aborted") {
+    throw createLlmAbortError("Manager");
+  } else if (result.reason === "transport") {
+    applyParseFallback(`sin respuesta (attempts=${result.attempts})`);
+  } else if (result.reason === "deadline") {
+    applyParseFallback(`presupuesto agotado (attempts=${result.attempts})`);
   } else {
-    const response = await llm.invoke(messages);
-    const text = typeof response.content === "string" ? response.content : "";
-    if (text.trim()) {
-      try {
-        const parsed = parseJsonOrThrow(text, managerOutputSchema);
-        action = parsed.action;
-        if (parsed.action === "reply" && parsed.reply?.trim()) replyContent = parsed.reply.trim();
-        if (parsed.action === "delegate" && "target" in parsed) {
-          delegateTarget = parsed.target;
-          if (parsed.target === "sections" && Array.isArray(parsed.sections) && parsed.sections.length > 0) {
-            sectionsToRun = expandSectionsToRun(parsed.sections, { complexity });
-          }
-        }
-        if (parsed.action === "search_memory") {
-          memoryQuery = parsed.memorySearchQuery;
-        }
-      } catch {
-        applyParseFallback("no parseable");
-      }
-    } else {
-      applyParseFallback("vacía");
-    }
+    applyParseFallback(`no parseable (attempts=${result.attempts}: ${(result.lastError ?? "").slice(0, 120)})`);
   }
 
   return { action, replyContent, delegateTarget, sectionsToRun, memoryQuery };
@@ -218,6 +268,10 @@ async function parseManagerLlmResponse(
 /** Invoca el LLM del Manager (structured output + opcional búsqueda en memoria) y aplica guardrails de reply. */
 export async function runManagerLlmTurn(options: RunManagerLlmTurnOptions): Promise<ManagerLlmTurnResult> {
   const { llm, toolDeps, state, userMessage, hasBench, hasDraft } = options;
+  // Presupuesto del turno (LANGGRAPH_MDD_MANAGER_TURN_BUDGET_MS) fijado UNA vez: el structured output, el
+  // invoke+parse con reparación y cada vuelta del bucle de search_memory consumen el mismo reloj.
+  const now = options.now ?? Date.now;
+  const turnBudget: ManagerTurnBudget = { deadlineAt: now() + resolveMddManagerTurnBudgetMs(), now };
   const round = (state.managerRound ?? 0) + 1;
   const prompt = buildManagerPromptContext(state, userMessage, hasBench, round);
   let messages: HumanMessage[] = [new HumanMessage(prompt)];
@@ -226,9 +280,10 @@ export async function runManagerLlmTurn(options: RunManagerLlmTurnOptions): Prom
   let replyContent = "";
   let delegateTarget: "clarifier_only" | "full_pipeline" | "sections" | undefined;
   let sectionsToRun: string[] | undefined;
+  let budgetExhaustedInTools = false;
 
   for (let i = 0; i < 2; i++) {
-    const parsed = await parseManagerLlmResponse(llm, messages, state.mddComplexity, { hasDraft, userMessage });
+    const parsed = await parseManagerLlmResponse(llm, messages, state.mddComplexity, { hasDraft, userMessage }, turnBudget);
     action = parsed.action;
     replyContent = parsed.replyContent;
     delegateTarget = parsed.delegateTarget;
@@ -252,8 +307,16 @@ export async function runManagerLlmTurn(options: RunManagerLlmTurnOptions): Prom
             },
           );
           if (tools.length > 0) {
-            const toolSummary = await runAgentToolsRound(llm, tools, parsed.memoryQuery);
-            memoryContext = "### Herramientas MDD / TheForge (patch, enmienda, MCP):\n" + toolSummary;
+            // La ronda comparte el presupuesto del turno: sin holgura no invoca al LLM y el turno delega.
+            const toolRound = await runAgentToolsRound(llm, tools, parsed.memoryQuery, {
+              deadlineAt: turnBudget.deadlineAt,
+              now: turnBudget.now,
+            });
+            if (toolRound.budgetExhausted) {
+              budgetExhaustedInTools = true;
+              break;
+            }
+            memoryContext = "### Herramientas MDD / TheForge (patch, enmienda, MCP):\n" + toolRound.text;
           }
         } catch (err) {
           memoryContext += `\n\n(Error ejecutando herramientas agénticas: ${err instanceof Error ? err.message : String(err)})`;
@@ -264,6 +327,14 @@ export async function runManagerLlmTurn(options: RunManagerLlmTurnOptions): Prom
       continue;
     }
     break;
+  }
+
+  if (budgetExhaustedInTools) {
+    const decision = managerParseFallbackDecision({ hasDraft, userMessage }, state.mddComplexity);
+    LOG("presupuesto del turno agotado en la búsqueda de herramientas → delegate (target=%s sections=%s)", decision.delegateTarget, decision.sectionsToRun?.join(",") ?? "-");
+    action = decision.action;
+    delegateTarget = decision.delegateTarget;
+    sectionsToRun = decision.sectionsToRun;
   }
 
   LOG("action=%s delegateTarget=%s sectionsToRun=%s", action, delegateTarget, sectionsToRun?.length);

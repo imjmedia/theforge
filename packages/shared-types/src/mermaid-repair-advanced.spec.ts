@@ -326,12 +326,12 @@ describe("assessMermaidFixStrategy — classifiedErrors", () => {
 });
 
 describe("normalizeMermaidDiagramBody — integration", () => {
-  it("strips comments before normalization", () => {
+  it("conserva los comentarios %% (el registro ya no los quita) y no altera las aristas", () => {
     const input = `flowchart TD
-  %% This comment should be removed
+  %% This comment should be kept
   A --> B`;
     const out = normalizeMermaidDiagramBody(input);
-    assert.doesNotMatch(out, /%%/);
+    assert.match(out, /%% This comment should be kept/);
     assert.match(out, /A --> B/);
   });
 
@@ -344,15 +344,14 @@ describe("normalizeMermaidDiagramBody — integration", () => {
     assert.equal(normalizeMermaidDiagramBody(out), out);
   });
 
-  it("quotes Chinese labels in flowchart", () => {
+  it("conserva etiquetas chinas sin comillas: el parser las acepta y el registro no las reescribe", () => {
     const input = `flowchart TD
   A[用户管理] --> B[角色管理]`;
     const out = normalizeMermaidDiagramBody(input);
-    assert.match(out, /A\["用户管理"\]/);
-    assert.match(out, /B\["角色管理"\]/);
+    assert.equal(out, input);
   });
 
-  it("pairs orphaned activate/deactivate in sequence", () => {
+  it("conserva un activate sin deactivate: el parser lo acepta y el registro no añade el deactivate", () => {
     const input = `sequenceDiagram
   participant A
   participant B
@@ -360,8 +359,7 @@ describe("normalizeMermaidDiagramBody — integration", () => {
   activate B
   B-->>A: Response`;
     const out = normalizeMermaidDiagramBody(input);
-    assert.match(out, /activate B/);
-    assert.match(out, /deactivate B/);
+    assert.equal(out, input);
   });
 
   it("conserva la arista a sí mismo `A --> A` (válida en Mermaid 11) en el pipeline", () => {
@@ -428,10 +426,10 @@ Scripting -->|"Strategy Pattern"| OpenRouter[OpenRouter API]text`;
     assert.match(out, /Gateway -->/);
   });
 
-  it("quoteFlowchartSpacedLabels quotes accent labels", () => {
+  it("quoteFlowchartSpacedLabels no cita rectángulos con acentos que el parser acepta", () => {
     const out = quoteFlowchartSpacedLabels(brokenFlowchart);
-    assert.match(out, /TenantsModule\["Módulo Tenants"\]/);
-    assert.match(out, /UsersModule\["Módulo Usuarios"\]/);
+    assert.match(out, /TenantsModule\[Módulo Tenants\]/);
+    assert.match(out, /UsersModule\[Módulo Usuarios\]/);
   });
 
   it("flowchart fixture validates after full repair pipeline", () => {
@@ -464,7 +462,7 @@ Scripting -->|"Strategy Pattern"| OpenRouter[OpenRouter API]text`;
 
   it("erDiagram fixture validates after full repair pipeline", () => {
     const repaired = resolveMermaidBlockForRender(brokenEr);
-    assert.match(repaired, /string original_request/);
+    assert.match(repaired, /text original_request/);
     assert.doesNotMatch(repaired, /original_request string/);
     assert.match(repaired, /llm_configs \{/);
     assert.equal(validateMermaid(repaired).length, 0);
@@ -510,7 +508,7 @@ describe("1A.3 reglas 8, 9, 17 y 18: sequenceDiagram válido no se reescribe", (
     assert.equal(normalizeMermaidDiagramBody(out1), input);
   });
 
-  it("regla 18: `Note over X` se conserva y la reparación de `**Nota:**` es idempotente", () => {
+  it("regla 18: `Note over X` se conserva y un `**Nota:**` en mensaje válido también (idempotente)", () => {
     const valid = `sequenceDiagram
     participant A
     Note over A: Aviso`;
@@ -521,7 +519,7 @@ describe("1A.3 reglas 8, 9, 17 y 18: sequenceDiagram válido no se reescribe", (
     participant Frontend
     API-->>Frontend: Respuesta**Nota:** Solo visible para superadmins.`;
     const out1 = normalizeMermaidDiagramBody(glued);
-    assert.match(out1, /^Note over Frontend: Solo visible para superadmins\.$/m);
+    assert.match(out1, /^\s*API-->>Frontend: Respuesta\*\*Nota:\*\* Solo visible para superadmins\.$/m);
     assert.equal(normalizeMermaidDiagramBody(out1), out1);
   });
 });

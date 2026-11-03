@@ -259,3 +259,168 @@ describe("invokeLlmWithRetry — abort signal", () => {
     assert.equal(calls, 1);
   });
 });
+
+describe("invokeLlmWithRetry — política por tipo de error", () => {
+  /** LLM que lanza `errors[i]` en la llamada i+1 (o responde ok tras agotarlos). */
+  function failingLlm(errors: unknown[], okAfter = true) {
+    const llm = {
+      callCount: 0,
+      invoke: async (): Promise<unknown> => {
+        llm.callCount += 1;
+        const e = errors[llm.callCount - 1];
+        if (e !== undefined) throw e;
+        if (okAfter) return { content: "ok" };
+        return { content: "" };
+      },
+    };
+    return llm;
+  }
+  const httpError = (status: number, message: string, extra: Record<string, unknown> = {}) =>
+    Object.assign(new Error(message), { status }, extra);
+  /** Espera inyectada: registra los ms pedidos sin dormir. */
+  const recorder = () => {
+    const waits: number[] = [];
+    return { waits, waitFn: async (ms: number) => void waits.push(ms) };
+  };
+
+  it("401 -> sin segundo intento y devuelve null", async () => {
+    const llm = failingLlm([httpError(401, "401 invalid x-api-key")]);
+    const { waits, waitFn } = recorder();
+    const r = await invokeLlmWithRetry(llm as never, [], {
+      tag: "test",
+      maxAttempts: 3,
+      backoffMs: [0, 1500, 4000],
+      disableStreaming: true,
+      waitFn,
+    });
+    assert.equal(r, null);
+    assert.equal(llm.callCount, 1);
+    assert.deepEqual(waits, []);
+  });
+
+  it("400 de contexto excedido -> sin reintento", async () => {
+    const llm = failingLlm([httpError(400, "prompt is too long: 300000 tokens")]);
+    const r = await invokeLlmWithRetry(llm as never, [], { tag: "test", backoffMs: [0, 0, 0], disableStreaming: true });
+    assert.equal(r, null);
+    assert.equal(llm.callCount, 1);
+  });
+
+  it("429 con retry-after: 2 -> espera 2000 ms (no el backoff) y recupera", async () => {
+    const llm = failingLlm([httpError(429, "429 rate limit", { headers: { "retry-after": "2" } })]);
+    const { waits, waitFn } = recorder();
+    const r = await invokeLlmWithRetry(llm as never, [], {
+      tag: "test",
+      maxAttempts: 3,
+      backoffMs: [0, 1500, 4000],
+      disableStreaming: true,
+      waitFn,
+    });
+    assert.equal(extractLlmText(r), "ok");
+    assert.equal(llm.callCount, 2);
+    assert.deepEqual(waits, [2000]);
+  });
+
+  it("429 sin retry-after -> usa el backoff normal (con jitter)", async () => {
+    const llm = failingLlm([httpError(429, "429 rate limit")]);
+    const { waits, waitFn } = recorder();
+    await invokeLlmWithRetry(llm as never, [], {
+      tag: "test",
+      backoffMs: [0, 1000, 4000],
+      disableStreaming: true,
+      waitFn,
+      random: () => 0.5, // jitter neutro
+    });
+    assert.deepEqual(waits, [1000]);
+  });
+
+  it("429 con retry-after que no cabe en hardTimeoutMs -> corta con null", async () => {
+    const llm = failingLlm([httpError(429, "429", { headers: { "retry-after": "20" } })]);
+    const { waits, waitFn } = recorder();
+    const r = await invokeLlmWithRetry(llm as never, [], {
+      tag: "test",
+      backoffMs: [0, 0, 0],
+      hardTimeoutMs: 5_000,
+      disableStreaming: true,
+      waitFn,
+    });
+    assert.equal(r, null);
+    assert.equal(llm.callCount, 1);
+    assert.deepEqual(waits, []);
+  });
+
+  it("500 -> reintenta con jitter ±20 % dentro de rango", async () => {
+    for (const [rnd, expected] of [
+      [0, 800],
+      [0.5, 1000],
+      [0.999999, 1200],
+    ] as const) {
+      const llm = failingLlm([httpError(500, "500 Internal Server Error")]);
+      const { waits, waitFn } = recorder();
+      const r = await invokeLlmWithRetry(llm as never, [], {
+        tag: "test",
+        backoffMs: [0, 1000, 4000],
+        disableStreaming: true,
+        waitFn,
+        random: () => rnd,
+      });
+      assert.equal(extractLlmText(r), "ok");
+      assert.equal(llm.callCount, 2);
+      assert.equal(waits.length, 1);
+      assert.ok(Math.abs((waits[0] ?? 0) - expected) <= 1, `jitter ${rnd}: ${waits[0]} vs ${expected}`);
+    }
+  });
+
+  it("jitter real (Math.random) queda en [0.8x, 1.2x]", async () => {
+    for (let i = 0; i < 20; i += 1) {
+      const llm = failingLlm([httpError(502, "Bad Gateway")]);
+      const { waits, waitFn } = recorder();
+      await invokeLlmWithRetry(llm as never, [], { tag: "test", backoffMs: [0, 1000], maxAttempts: 2, disableStreaming: true, waitFn });
+      assert.ok((waits[0] ?? 0) >= 800 && (waits[0] ?? 0) <= 1200, String(waits[0]));
+    }
+  });
+
+  it("error desconocido sigue reintentando (comportamiento histórico)", async () => {
+    const llm = failingLlm([new Error("algo raro"), new Error("otra vez")]);
+    const r = await invokeLlmWithRetry(llm as never, [], { tag: "test", maxAttempts: 3, backoffMs: [0, 0, 0], disableStreaming: true });
+    assert.equal(extractLlmText(r), "ok");
+    assert.equal(llm.callCount, 3);
+  });
+
+  it("abort externo -> lanza AbortError sin reintento ni espera", async () => {
+    const ac = new AbortController();
+    const llm = {
+      callCount: 0,
+      invoke: async () => {
+        llm.callCount += 1;
+        ac.abort();
+        throw httpError(500, "500 tras cancelar");
+      },
+    };
+    const { waits, waitFn } = recorder();
+    await assert.rejects(
+      invokeLlmWithRetry(llm as never, [], { tag: "test", signal: ac.signal, backoffMs: [0, 100, 100], disableStreaming: true, waitFn }),
+      (err: Error) => err.name === "AbortError",
+    );
+    assert.equal(llm.callCount, 1);
+    assert.deepEqual(waits, []);
+  });
+
+  it("streaming: un 401 en .stream() no degrada ni gasta un segundo intento", async () => {
+    let streamCalls = 0;
+    let invokeCalls = 0;
+    const llm = {
+      invoke: async () => {
+        invokeCalls += 1;
+        return { content: "ok" };
+      },
+      stream: async () => {
+        streamCalls += 1;
+        throw httpError(401, "401 unauthorized");
+      },
+    };
+    const r = await invokeLlmWithRetry(llm as never, [], { tag: "test", backoffMs: [0, 0, 0] });
+    assert.equal(r, null);
+    assert.equal(streamCalls, 1);
+    assert.equal(invokeCalls, 0);
+  });
+});

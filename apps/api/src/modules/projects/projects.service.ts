@@ -447,9 +447,32 @@ export class ProjectsService implements IOrchestratorProjectsPort {
   async persistMddFromBackgroundJob(
     projectId: string,
     rawMarkdown: string,
-    options?: { stageId?: string; finalize?: boolean; lockedPatternIds?: readonly string[] },
+    options?: {
+      stageId?: string;
+      finalize?: boolean;
+      lockedPatternIds?: readonly string[];
+      fence?: number;
+    },
   ): Promise<void> {
     return this.mddPersist.persistMddFromBackgroundJob(projectId, rawMarkdown, options);
+  }
+
+  /**
+   * Reclama la etapa del hilo para el fence del lease (ADR 0004). Sin `stageId`, la etapa es la primaria (la misma que
+   * elige la persistencia); sin etapas no hay nada que reclamar (la persistencia tampoco escribe). Si la etapa tiene un
+   * fence mayor, lanza `MddWriteFencedError`.
+   */
+  async claimMddWriteFence(projectId: string, stageId: string | null, fence: number): Promise<void> {
+    let targetId = stageId?.trim() || undefined;
+    if (!targetId) {
+      const project = await this.prisma.project.findUnique({
+        where: { id: projectId.trim() },
+        include: { stages: { orderBy: { ordinal: "asc" } } },
+      });
+      targetId = pickPrimaryStage(project?.stages ?? [])?.id;
+      if (!targetId) return;
+    }
+    await this.mddPersist.claimMddWriteFence(targetId, fence);
   }
 
   async getOpenApiSpec(projectId: string): Promise<Record<string, any>> {

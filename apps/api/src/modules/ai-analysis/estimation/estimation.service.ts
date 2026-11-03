@@ -1278,18 +1278,20 @@ export class EstimationService {
     let consistencyScore: number | undefined;
     let completeness: DocumentCompleteness | undefined;
     let mddQualityScore: number | undefined;
-    const auditorForQuality = options?.auditorGaps;
+    // Gaps del Auditor SIN nota (Auditor no disponible: `score` null/ausente) no son titular: fallback a regex.
+    const auditorForQuality =
+      typeof options?.auditorGaps?.score === "number" ? options.auditorGaps : undefined;
     const mddQualitySource: "auditor" | "regex" = auditorForQuality ? "auditor" : "regex";
     const auditorScore = auditorForQuality
-      ? Math.min(100, Math.max(0, Math.round(auditorForQuality.score)))
+      ? Math.min(100, Math.max(0, Math.round(auditorForQuality.score ?? 0)))
       : undefined;
 
     if (hasDocs) {
       // ── Métrica integral ──────────────────────────────────
       // 1. Calidad MDD (path existente: auditor o regex)
       let mddQuality: number;
-      if (options?.auditorGaps) {
-        mddQuality = Math.min(100, Math.max(0, options.auditorGaps.score));
+      if (auditorForQuality && typeof auditorForQuality.score === "number") {
+        mddQuality = Math.min(100, Math.max(0, auditorForQuality.score));
       } else {
         const sections = detectReferenceSections(md);
         const gaps = adjustGapsForEstimationComplexity(computeConsistencyGaps(md), cx);
@@ -1381,9 +1383,9 @@ export class EstimationService {
         mddReadinessHints = [];
       }
 
-    } else if (options?.auditorGaps) {
-      const g = options.auditorGaps;
-      precision = Math.min(100, Math.max(0, g.score));
+    } else if (auditorForQuality) {
+      const g = auditorForQuality;
+      precision = Math.min(100, Math.max(0, g.score ?? 0));
       mddQualityScore = precision;
       const strictInfra = cx === "HIGH";
       const hasGreenCriteria = strictInfra

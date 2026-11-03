@@ -204,8 +204,7 @@ export function repairGluedDbgaBullets(text: string): string {
     .replace(/^(\s*)-\*\*([R]\d+\.\d+)\*\*\s*-/gm, "$1- **$2** -")
     .replace(/^(\s*)-\*\*(Responsabilidad|Estado|Flujo):\*\*/gim, "$1- **$2:**")
     .replace(/^(\s*)•\t+/gm, "$1- ")
-    .replace(/^(\s*)•\s+/gm, "$1- ")
-    .replace(/^(\s*)(\d+)\.\s+((?:Translation|Alpha|Execution|Data Ingestion|LLM Orchestrator|Notification)\s+Engine[^\n]*)$/gim, "$1#### $2. $3");
+    .replace(/^(\s*)•\s+/gm, "$1- ");
 }
 
 /** Líneas de diagrama ASCII con prefijo `- ` erróneo (`- │`, `- ▼`). */

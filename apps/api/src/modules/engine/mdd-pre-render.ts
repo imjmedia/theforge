@@ -5,7 +5,6 @@
  */
 
 import {
-  erDiagramHasPkFkComma,
   normalizeMermaid,
   repairErDiagramPkFkCommas,
   splitMermaidFenceBodyAtDocumentLeak,
@@ -50,14 +49,6 @@ export function validateMermaidSyntax(content: string): { ok: boolean; error?: s
   if (!content || typeof content !== "string") return { ok: true };
   const trimmed = content.trim();
 
-  if (erDiagramHasPkFkComma(trimmed)) {
-    return {
-      ok: false,
-      error: ERR_MERMAID_SYNTAX,
-      message:
-        "Diagrama Mermaid inválido: no se permite coma entre PK y FK en atributos. Corrija el bloque erDiagram.",
-    };
-  }
 
   const errors = validateMermaid(trimmed);
   if (errors.length > 0) {
@@ -182,18 +173,6 @@ export function preRenderMddSanity(draft: string): PreRenderResult {
   const trimmed = (draft || "").trim();
   if (!trimmed) return { ok: true };
 
-  const erCommaBlocks = trimmed.match(/```mermaid\s*([\s\S]*?)```/gi) ?? [];
-  for (const block of erCommaBlocks) {
-    const inner = block.replace(/^```mermaid\s*/i, "").replace(/```$/i, "").trim();
-    if (erDiagramHasPkFkComma(inner)) {
-      return {
-        ok: false,
-        code: ERR_MERMAID_SYNTAX,
-        message:
-          "Diagrama Mermaid inválido: no se permite coma entre PK y FK en atributos. Corrija el bloque erDiagram.",
-      };
-    }
-  }
 
   return { ok: true };
 }

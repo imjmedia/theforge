@@ -250,6 +250,8 @@ model Stage {
   shortTermContext Json?
   /// Snapshot (hashes + metadatos) de DBGA/BRD/Benchmark al último MDD finalizado en etapa.
   mddUpstreamBaseline Json?
+  /// Fence monotónico del último turno MDD que reclamó la etapa; las escrituras con fence menor se rechazan (ADR 0004).
+  mddLeaseFence BigInt?
   episodicMemories EpisodicMemory[]
   documentationGaps DocumentationGap[]
   agentSessionLogs AgentSessionLog[]
@@ -647,6 +649,18 @@ model TokenUsage {
   costMxn         Float
   /// JobId opcional (agrupa múltiples calls del mismo job).
   jobId           String?
+  /// Latencia de la llamada en milisegundos (hasta la respuesta completa o el corte). Null si no se midió.
+  latencyMs       Int?
+  /// Intentos realizados hasta obtener este resultado (1 = sin reintentos). Null si no se midió.
+  attempts        Int?
+  /// Resultado de la llamada: ok | timeout | abort | error | invalid. Null en filas anteriores a la telemetría.
+  outcome         String?
+  /// false cuando no hay tarifa catalogada y el coste es desconocido (costUsd/costMxn = 0 no significan gratis).
+  costKnown       Boolean?
+  /// true cuando los tokens son una estimación chars/4 (abort/timeout o stream cortado antes de usage_metadata).
+  estimated       Boolean?
+  /// Modelo real que respondió (p. ej. response_metadata.chained_model de la cadena de fallback). Null si se desconoce.
+  modelActual     String?
   createdAt       DateTime @default(now())
 
   @@index([projectId, documentField, createdAt(sort: Desc)])

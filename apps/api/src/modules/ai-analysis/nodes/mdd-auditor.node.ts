@@ -11,6 +11,9 @@
  * secciones canónicas faltantes (94 + bloqueo de `done`), por decisión de producto. Los gaps
  * deterministas (contrato/trazabilidad/BRD) solo viajan como texto `[lint] …` en el feedback;
  * `critical_gaps` son los del LLM y `syntax_errors` suma solo errores SQL/JSON objetivos.
+ *
+ * El veredicto pasa por `invokeLlmStructured` (zod + 1 reparación con el error re-inyectado). Sin veredicto
+ * válido el resultado es `auditorOutcome: "unavailable"`: sin nota, sin bloqueo y sin `clarifier`.
  */
 
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
@@ -18,12 +21,14 @@ import { HumanMessage } from "@langchain/core/messages";
 import type { LivePrecisionCalculator } from "../estimation/estimation.types.js";
 import { AUDITOR_MDD_PROMPT } from "../prompts/load-prompts.js";
 import { auditorGapsSchema, mddAuditorDecisionSchema, type MDDStateType } from "../state/index.js";
-import { parseJsonOrThrow } from "../utils/parse-json.js";
+import { repairTruncatedJsonObject } from "../utils/parse-json.js";
 import { applyPreDeliveryGateFixes, validateMddStructure } from "../utils/mdd-sanitize.js";
 import { getInternalDirectivesContext } from "../utils/mdd-mesh-topology.js";
 import { auditorConstitutionRigorAppendix } from "../utils/mdd-complexity-rigor.js";
 import { domainInventoryPromptBlock } from "../utils/mdd-domain-prompt.util.js";
-import { extractLlmText, invokeLlmWithRetry } from "../utils/mdd-llm-retry.util.js";
+import type { InvokeWithRetryOptions } from "../utils/mdd-llm-retry.util.js";
+import { createLlmAbortError } from "../utils/mdd-llm-stream-invoke.util.js";
+import { defaultExtractJson, invokeLlmStructured, type InvokeLlmStructuredArgs } from "../utils/mdd-llm-structured.util.js";
 import { resolveMddAuditorNodeBudgetMs, resolveMddAuditorPerInvokeHardTimeoutMs } from "../utils/mdd-llm-timeout.util.js";
 import {
   buildAuditorFeedbackFromGaps,
@@ -46,8 +51,32 @@ import { draftIsSubstantialForScopedRepair } from "../utils/mdd-section-preserve
 
 const AUDIT_PASS_THRESHOLD = MDD_AUDIT_PASS_THRESHOLD;
 
-/** Intentos de la única llamada LLM del Auditor (la segunda solo si la primera vuelve vacía). */
+/** Intentos de transporte de cada invocación LLM del Auditor (la 2ª solo si la 1ª vuelve vacía o falla). */
 const AUDITOR_LLM_MAX_ATTEMPTS = 2;
+
+/** Reparaciones del veredicto tras una salida inválida (re-inyecta el error de validación al modelo). */
+const AUDITOR_REPAIR_ATTEMPTS = 1;
+
+type AuditorUnavailableReason = "invalid" | "transport" | "error" | "deadline";
+
+const AUDITOR_UNAVAILABLE_REASON_TEXT: Record<AuditorUnavailableReason, string> = {
+  invalid: "respuesta sin JSON válido tras 1 reparación",
+  transport: "fallo de transporte con el modelo",
+  error: "error interno del nodo",
+  deadline: "presupuesto de tiempo del Auditor agotado",
+};
+
+/**
+ * Extractor del veredicto: el de `invokeLlmStructured` + rescate de JSON truncado por tope de
+ * tokens (lo que antes hacía `parseJsonOrThrow`), para no convertir una respuesta casi completa
+ * en "Auditor no disponible".
+ */
+function extractAuditorJson(text: string): string | null {
+  const direct = defaultExtractJson(text);
+  if (direct) return direct;
+  const stripped = text.replace(/^```json?\s*|\s*```$/g, "").trim();
+  return repairTruncatedJsonObject(stripped);
+}
 
 const auditorCriticalGapItemSchema = z.union([
   z.object({
@@ -66,10 +95,14 @@ const auditorCriticalGapItemSchema = z.union([
   fix: z.string(),
 }));
 
-const auditorOutputSchema = z.object({
+/**
+ * Veredicto del Auditor (LLM). `passthrough()`: campos extra del modelo no invalidan la salida.
+ * `auditorDecision` es opcional: el nodo recalcula la decisión desde el score y los gaps, nunca la lee del LLM.
+ */
+export const auditorOutputSchema = z.object({
   auditorScore: z.number().min(0).max(100),
   auditorFeedback: z.string().optional().nullable(),
-  auditorDecision: mddAuditorDecisionSchema,
+  auditorDecision: mddAuditorDecisionSchema.optional(),
   status: z.string().optional(),
   critical_gaps: z.array(auditorCriticalGapItemSchema).optional().default([]),
   syntax_errors: z.union([
@@ -82,7 +115,7 @@ const auditorOutputSchema = z.object({
     z.boolean(),
     z.any().transform((v) => Boolean(v)),
   ]).optional(),
-});
+}).passthrough();
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:Auditor] ${msg}`, ...args);
 
@@ -144,25 +177,35 @@ export function formatDeterministicGapsAsLintFeedback(
   return shown.join(" ");
 }
 
+/**
+ * Auditor sin veredicto válido (JSON inválido tras la reparación, fallo de transporte o error interno):
+ * "sin nota". NO puntúa (antes: 0/RECHAZADO con las 7 secciones, 50-65 con faltantes), NO bloquea la
+ * entrega (la decide el gate determinista de `prepare_output`) y NO manda a `clarifier`.
+ *
+ * `auditorRan: true` se conserva a propósito: es lo que impide re-ejecutar el Auditor en bucle
+ * (`shouldSkipAuditor`); "hay nota" lo dice `auditorOutcome === "scored"`, no `auditorRan`.
+ * `auditorScore: undefined` limpia además una nota de un turno anterior que viviera en el checkpoint.
+ */
 function buildStructuralAuditorResult(
   state: MDDStateType,
   validation: ReturnType<typeof validateMddStructure>,
+  reason: AuditorUnavailableReason,
 ): Partial<MDDStateType> {
   const auditorGaps = synthesizeStructuralAuditorGaps(validation);
-  const score = auditorGaps.score;
-  const decision: "done" | "clarifier" = "clarifier";
-  const iteration = (state.mddIteration ?? 0) + 1;
+  const structuralNote =
+    buildAuditorFeedbackFromGaps(auditorGaps) || (validation.issues.length > 0 ? validation.issues.join(" ") : "");
   const feedback =
-    buildAuditorFeedbackFromGaps(auditorGaps) ||
-    (validation.issues.length > 0
-      ? validation.issues.join(" ")
-      : "Auditoría LLM no disponible; revisa secciones canónicas del MDD.");
+    `Auditoría LLM no disponible (${AUDITOR_UNAVAILABLE_REASON_TEXT[reason]}); ` +
+    "la entrega la decide el gate determinista." +
+    (structuralNote ? ` ${structuralNote}` : "");
   return {
-    auditorScore: score,
+    auditorOutcome: "unavailable",
+    auditorUnavailableReason: reason,
+    auditorScore: undefined,
     auditorFeedback: feedback,
     auditorGaps,
-    auditorDecision: decision,
-    mddIteration: decision === "clarifier" ? iteration : (state.mddIteration ?? 0),
+    auditorDecision: "done",
+    mddIteration: state.mddIteration ?? 0,
     delegateTarget: undefined,
     sectionsToRun: undefined,
     acceptedProposalDirective: undefined,
@@ -177,6 +220,8 @@ function buildStructuralAuditorResult(
 export function createMddAuditorNode(
   llm: BaseChatModel,
   _precisionCalculator?: LivePrecisionCalculator | null,
+  /** Solo pruebas: sobreescribe opciones de transporte (`backoffMs`, `disableStreaming`, …) y del presupuesto (`deadlineMs`, `setTimer`, `clearTimer`). */
+  invokeOverrides?: Partial<InvokeWithRetryOptions & Pick<InvokeLlmStructuredArgs<unknown>, "deadlineMs" | "setTimer" | "clearTimer">>,
 ) {
   return async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
     LOG("entry mddDraftLen=%s (lint determinista previo, sin tools)", (state.mddDraft ?? "").length);
@@ -217,28 +262,32 @@ export function createMddAuditorNode(
       prompt += formatDeterministicLintForPrompt(lint);
       prompt += "\n**Responde únicamente con el JSON de salida.**";
 
-      const response = await invokeLlmWithRetry(llm, [new HumanMessage(prompt)], {
+      const llmVerdict = await invokeLlmStructured({
+        llm,
+        messages: [new HumanMessage(prompt)],
+        schema: auditorOutputSchema,
         tag: "Auditor",
+        repairAttempts: AUDITOR_REPAIR_ATTEMPTS,
+        extractJson: extractAuditorJson,
         maxAttempts: AUDITOR_LLM_MAX_ATTEMPTS,
-        isResponseValid: (text) => text.trim().length > 0,
         hardTimeoutMs: Math.min(auditorPerInvokeMs, auditorNodeBudgetMs),
+        deadlineMs: auditorNodeBudgetMs,
+        ...invokeOverrides,
       });
-      const lastContent = response ? extractLlmText(response) : "";
 
       const structuralBase = deterministicBase;
 
-      if (!lastContent.trim()) {
-        LOG("sin respuesta LLM → fallback estructural (secciones canónicas)");
-        return buildStructuralAuditorResult(state, validation);
+      if (!llmVerdict.ok) {
+        if (llmVerdict.reason === "aborted") throw createLlmAbortError("Auditor");
+        LOG(
+          "sin veredicto validado (reason=%s attempts=%s%s) → Auditor no disponible (sin nota)",
+          llmVerdict.reason,
+          llmVerdict.attempts,
+          llmVerdict.lastError ? ` error=${llmVerdict.lastError.slice(0, 160)}` : "",
+        );
+        return buildStructuralAuditorResult(state, validation, llmVerdict.reason);
       }
-
-      let parsed: z.infer<typeof auditorOutputSchema>;
-      try {
-        parsed = parseJsonOrThrow(lastContent, auditorOutputSchema) as unknown as z.infer<typeof auditorOutputSchema>;
-      } catch (parseErr) {
-        LOG("fallback estructural: parse error — %s", parseErr instanceof Error ? parseErr.message.slice(0, 300) : String(parseErr).slice(0, 300));
-        return buildStructuralAuditorResult(state, validation);
-      }
+      const parsed = llmVerdict.value;
 
       let score = Math.min(100, Math.max(0, parsed.auditorScore));
 
@@ -324,10 +373,13 @@ export function createMddAuditorNode(
         sectionsToRun: undefined,
         acceptedProposalDirective: undefined,
         auditorRan: true,
+        auditorOutcome: "scored",
+        auditorUnavailableReason: undefined,
       };
     } catch (err) {
-      LOG("error: %s — fallback estructural", err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300));
-      return buildStructuralAuditorResult(state, validation);
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      LOG("error: %s — Auditor no disponible (sin nota)", err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300));
+      return buildStructuralAuditorResult(state, validation, "error");
     }
   };
 }

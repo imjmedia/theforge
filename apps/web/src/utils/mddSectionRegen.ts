@@ -127,7 +127,7 @@ export function mddSectionRegenShortLabel(section: number): string {
   return short || cmd.label;
 }
 
-/** Texto de aviso sutil mientras corre regenerate-section (no banner de MDD completo). */
+/** Texto de aviso sutil mientras corre la regeneración de una sección (job `mode: "section"`; no banner de MDD completo). */
 export function buildMddSectionRegenNotice(section: number): string {
   const label = mddSectionRegenShortLabel(section);
   return `Regenerando §${section} (${label})…`;

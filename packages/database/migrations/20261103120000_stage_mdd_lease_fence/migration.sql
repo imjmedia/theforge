@@ -1,0 +1,1 @@
+ALTER TABLE "Stage" ADD COLUMN IF NOT EXISTS "mddLeaseFence" BIGINT;

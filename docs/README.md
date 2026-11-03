@@ -22,7 +22,11 @@ Punto de entrada para humanos y agentes. **Arquitectura y producto (NotebookLM):
 | Seguridad: revisión del lote 1, veredicto por ID | [seguridad/auditoria-2026-11-02-lote1.md](seguridad/auditoria-2026-11-02-lote1.md) |
 | Lote 1 de seguridad: pasos operativos antes del deploy y pendientes | [handoffs/2026-11-02-seguridad-lote1-handoff.md](handoffs/2026-11-02-seguridad-lote1-handoff.md) |
 | Auditoría global 2026-11-02 | [handoffs/2026-11-02-auditoria-global.md](handoffs/2026-11-02-auditoria-global.md) |
+| Calidad del MDD, lote 2: pasos antes del deploy, contratos nuevos y deuda | [handoffs/2026-11-03-calidad-mdd-lote2-handoff.md](handoffs/2026-11-03-calidad-mdd-lote2-handoff.md) |
 | Decisiones de arquitectura (ADR) | [adr/0001-autorizacion-por-proyecto.md](adr/0001-autorizacion-por-proyecto.md) |
+| ADR 0002: reparar Mermaid solo si el parser rechaza el original | [adr/0002-reparacion-mermaid-solo-si-el-parser-rechaza.md](adr/0002-reparacion-mermaid-solo-si-el-parser-rechaza.md) |
+| ADR 0003: lease por hilo MDD que falla cerrado | [adr/0003-lease-por-hilo-falla-cerrado.md](adr/0003-lease-por-hilo-falla-cerrado.md) |
+| ADR 0004: fencing token en las escrituras del MDD | [adr/0004-fencing-token-escrituras-mdd.md](adr/0004-fencing-token-escrituras-mdd.md) |
 | Histórico / roadmaps no prioritarios | [archive/README.md](archive/README.md) |
 
 ## Raíz del monorepo (no están en `docs/`)

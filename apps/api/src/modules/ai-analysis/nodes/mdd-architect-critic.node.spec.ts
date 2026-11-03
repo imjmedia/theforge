@@ -1,10 +1,11 @@
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import {
   buildArchitectCriticOutline,
   parseCreateTables,
   parseEndpoints,
 } from "../utils/mdd-architect-critic-outline.util.js";
+import { runWithLlmAbortSignal } from "../utils/mdd-llm-retry.util.js";
 import { createMddArchitectCriticNode, parseArchitectCriticOutput } from "./mdd-architect-critic.node.js";
 
 function makeSection3(tableCount: number): string {
@@ -77,6 +78,15 @@ describe("parseArchitectCriticOutput", () => {
   it("devuelve null con texto no parseable", () => {
     assert.equal(parseArchitectCriticOutput("lo siento, no puedo"), null);
   });
+
+  it("ya no fabrica veredicto por regex: 'verdict: ok' en prosa => null", () => {
+    assert.equal(parseArchitectCriticOutput("verdict: ok"), null);
+    assert.equal(parseArchitectCriticOutput('verdict: gap "Falta la tabla de aplicaciones completa"'), null);
+  });
+
+  it("acepta campos extra (passthrough) y gaps null", () => {
+    assert.deepEqual(parseArchitectCriticOutput('{"verdict":"ok","gaps":null,"nota":"x"}')?.verdict, "ok");
+  });
 });
 
 describe("createMddArchitectCriticNode", () => {
@@ -92,6 +102,56 @@ describe("createMddArchitectCriticNode", () => {
     const out = await createMddArchitectCriticNode(llm as never)(baseState as never);
     assert.equal(out.architectCriticFeedback, undefined);
     assert.equal(out.architectCriticAttempts, 1);
+  });
+
+  it("salida inválida => una reparación con el error re-inyectado => válida (2 intentos)", async () => {
+    const calls: Array<Array<{ content: string }>> = [];
+    const llm = {
+      invoke: async (msgs: Array<{ content: string }>) => {
+        calls.push(msgs);
+        return calls.length === 1
+          ? { content: '{"verdict":"quizá"}' }
+          : { content: '{"verdict":"gap","gaps":["Falta tabla aplicaciones en el SQL"]}' };
+      },
+    };
+    const out = await createMddArchitectCriticNode(llm as never)(baseState as never);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1]!.length, 3, "prompt + salida previa + petición de reparación");
+    assert.match(calls[1]![2]!.content, /verdict/);
+    assert.equal(out.architectCriticFeedback, "Falta tabla aplicaciones en el SQL");
+    assert.equal(out.architectCriticAttempts, 1);
+  });
+
+  it("dos salidas inválidas => sin feedback ni veredicto inventado (aunque la prosa diga 'verdict: gap')", async () => {
+    let n = 0;
+    const llm = {
+      invoke: async () => {
+        n += 1;
+        return { content: 'verdict: gap "Falta la tabla de aplicaciones en el modelo"' };
+      },
+    };
+    const out = await createMddArchitectCriticNode(llm as never)(baseState as never);
+    assert.equal(n, 2, "intento + una reparación, sin más");
+    assert.equal(out.architectCriticFeedback, undefined);
+    assert.equal(out.architectCriticAttempts, 1);
+    assert.deepEqual(Object.keys(out).sort(), ["architectCriticAttempts", "architectCriticFeedback"]);
+  });
+
+  it("abort => se propaga como AbortError (no se traga como fail-open)", async () => {
+    let n = 0;
+    const llm = {
+      invoke: async () => {
+        n += 1;
+        return { content: '{"verdict":"ok"}' };
+      },
+    };
+    const ac = new AbortController();
+    ac.abort();
+    await assert.rejects(
+      runWithLlmAbortSignal(ac.signal, () => createMddArchitectCriticNode(llm as never)(baseState as never)),
+      (err: Error) => err.name === "AbortError",
+    );
+    assert.equal(n, 0);
   });
 
   it("error del proveedor => ok (fail-open)", async () => {
@@ -131,5 +191,41 @@ describe("createMddArchitectCriticNode", () => {
     const big = `# MDD\n\n## 3. Modelo de Datos\n\n${makeSection3(20)}\n\n## 4. Contratos de API\n\n${makeSection4(3)}\n`;
     await createMddArchitectCriticNode(llm as never)({ ...baseState, mddDraft: big } as never);
     assert.ok(sent.includes("tabla_20("), "la tabla 20 debe llegar al crítico");
+  });
+});
+
+describe("createMddArchitectCriticNode — presupuesto (LANGGRAPH_MDD_CRITIC_BUDGET_MS)", () => {
+  it("presupuesto agotado con la llamada colgada => sin feedback ni veredicto inventado", async () => {
+    const draft = `# MDD\n\n## 3. Modelo de Datos\n\n${makeSection3(3)}\n\n## 4. Contratos de API\n\n${makeSection4(3)}\n`;
+    const state = {
+      mddDraft: draft,
+      acceptedProposalDirective: "Agregar tabla aplicaciones y endpoint GET /applications",
+      architectCriticAttempts: 0,
+    };
+    const prev = process.env.LANGGRAPH_MDD_CRITIC_BUDGET_MS;
+    process.env.LANGGRAPH_MDD_CRITIC_BUDGET_MS = "20000";
+    mock.timers.enable({ apis: ["setTimeout"] });
+    try {
+      let calls = 0;
+      const llm = {
+        invoke: (_m: unknown, opts: { signal: AbortSignal }) => {
+          calls += 1;
+          return new Promise((_resolve, reject) => {
+            opts.signal.addEventListener("abort", () => reject(new Error("llamada colgada")), { once: true });
+          });
+        },
+      };
+      const pending = createMddArchitectCriticNode(llm as never)(state as never);
+      mock.timers.tick(20_000);
+      const out = await pending;
+      assert.equal(calls, 1, "sin reparación tras agotar el presupuesto");
+      assert.equal(out.architectCriticFeedback, undefined);
+      assert.equal(out.architectCriticAttempts, 1);
+      assert.deepEqual(Object.keys(out).sort(), ["architectCriticAttempts", "architectCriticFeedback"]);
+    } finally {
+      mock.timers.reset();
+      if (prev === undefined) delete process.env.LANGGRAPH_MDD_CRITIC_BUDGET_MS;
+      else process.env.LANGGRAPH_MDD_CRITIC_BUDGET_MS = prev;
+    }
   });
 });

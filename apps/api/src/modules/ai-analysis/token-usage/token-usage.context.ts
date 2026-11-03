@@ -11,14 +11,55 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
+/** Resultado de una llamada LLM para la telemetría (`TokenUsage.outcome`). */
+export type TokenUsageOutcome = "ok" | "timeout" | "abort" | "error" | "invalid";
+
+/**
+ * Regla única para contar llamadas a partir de una fila de `TokenUsage` (la usan el eval y el resumen por
+ * documento/modelo):
+ * - `measured`: llamada con resultado. `ok`/`invalid`; sin `outcome` (filas antiguas) si `costKnown !== false`.
+ * - `failed`: `error`/`timeout`/`abort`.
+ * - `unknown`: sin `outcome` y con `costKnown === false`. No cuenta ni como medida ni como fallida.
+ */
+export function classifyTokenUsageOutcome(row: {
+  outcome?: string | null;
+  costKnown?: boolean | null;
+}): "measured" | "failed" | "unknown" {
+  const outcome = row.outcome ?? null;
+  if (outcome === "error" || outcome === "timeout" || outcome === "abort") return "failed";
+  if (outcome === "ok" || outcome === "invalid") return "measured";
+  return row.costKnown !== false ? "measured" : "unknown";
+}
+
 export interface TokenUsageContextPayload {
   projectId: string;
   stageId?: string | null;
   documentField: string;
   context: string;
   node?: string | null;
+  /**
+   * Capacidad/etiqueta lógica de la llamada (p. ej. "scoped_high"). No tiene columna propia:
+   * el servicio la usa como `node` cuando este no viene.
+   */
+  capability?: string | null;
+  /** Telemetría por llamada (la fijan `withTokenUsageContextPatch` o el helper que mide). */
+  latencyMs?: number | null;
+  attempts?: number | null;
+  outcome?: TokenUsageOutcome | null;
+  /** false cuando no hay tarifa y el coste es `unknown`. Si no viene, el servicio lo deduce del catálogo. */
+  costKnown?: boolean | null;
+  /** true cuando los tokens son una estimación chars/4. */
+  estimated?: boolean | null;
+  /** Modelo real que respondió, si difiere del configurado. */
+  modelActual?: string | null;
   jobId?: string | null;
 }
+
+/**
+ * Campos de telemetría por llamada que el patch del contexto puede fijar
+ * (subconjunto de `TokenUsageContextPayload`).
+ */
+export type TokenUsageContextPatch = Partial<TokenUsageContextPayload>;
 
 export interface TokenUsageContextValue {
   payload: TokenUsageContextPayload;
@@ -42,7 +83,7 @@ export function getActiveTokenUsageContext(): TokenUsageContextPayload | null {
  * que debemos atribuir a un nodo concreto). Si no hay contexto activo, es un no-op.
  */
 export function withTokenUsageContextPatch<T>(
-  patch: Partial<TokenUsageContextPayload>,
+  patch: TokenUsageContextPatch,
   fn: () => T | Promise<T>,
 ): T | Promise<T> {
   const current = storage.getStore();

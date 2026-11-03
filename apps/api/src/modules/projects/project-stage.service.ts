@@ -27,6 +27,7 @@ import {
 import { seedActiveStageDeliverables } from "./stage-deliverable-persist.util.js";
 import { resolveStageDeliverables } from "./stage-deliverables.util.js";
 import { pickPrimaryStage } from "./stage-helpers.js";
+import { omitMddLeaseFence } from "./project-api.util.js";
 import type { Estimation, Stage } from "@theforge/database";
 
 type StageWithEst = Stage & { estimation: Estimation | null };
@@ -171,7 +172,7 @@ export class ProjectStageService {
     });
     if (!out) throw new NotFoundException("Etapa no encontrada tras crear");
 
-    return { stage: out };
+    return { stage: omitMddLeaseFence(out) };
   }
 
   async patchStage(projectId: string, stageId: string, body: unknown) {
@@ -246,7 +247,7 @@ export class ProjectStageService {
       include: { estimation: true },
     });
     if (!out) throw new NotFoundException("Etapa no encontrada");
-    return { stage: out };
+    return { stage: omitMddLeaseFence(out) };
   }
 
   async transitionStage(projectId: string, stageId: string, body: unknown) {
@@ -298,7 +299,7 @@ export class ProjectStageService {
     if (!out) throw new NotFoundException("Etapa no encontrada");
 
     return {
-      stage: out,
+      stage: omitMddLeaseFence(out),
       transition: {
         action: dto.action,
         reason: dto.reason ?? null,
@@ -315,7 +316,7 @@ export class ProjectStageService {
       orderBy: { ordinal: "asc" },
       include: { estimation: true },
     });
-    return { stages };
+    return { stages: stages.map(omitMddLeaseFence) };
   }
 
   async getStageDeliverables(projectId: string, stageId: string) {

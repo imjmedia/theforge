@@ -31,7 +31,7 @@ El entrypoint estable para consumidores sigue siendo `../mdd-sanitize.ts` (re-ex
 
 **Exports de `persist-pipeline.ts`:** `sanitizeMddAtPersist`, `prepareMddMarkdownForPersist`, `storeMddMarkdownForPersist`, `sanitizeMddForExport`, `normalizeMddFormat`, `finalizeMddDeliverable`, `applyPreDeliveryGateFixes`, `repairGarbageHeadings`, `repairManifestJsonClosing`, `demoteProseHeadingsInSections`, `stripUiUxSectionForApiOnlyMvp`. `prepareMddMarkdownForPersist` deduplica §1–§7 vía `deduplicateMddDraftSections` y aplica `repairMddFormatIssues` (`@theforge/shared-types/repair-mdd-format`) antes del cierre. `normalizeMddFormat` deduplica al inicio con `deduplicateMddDraftSections` y formatea **todas** las ocurrencias de §4 con `formatAllContratosSectionsInDraft`.
 
-**Exports principales de `cross-consistency.ts`:** `applyDeterministicCrossConsistencyFixes`, `detectCrossConsistencyIssues`, `applyCrossConsistencyPatches`, `fixDeterministicMddCoherence`, `ensureSecurityLockoutInSection6`, `fixDualApprovalSchemaInDraft`, `detectDuplicateOutboxTables`, `draftUsesRs256Jwt`.
+**Exports principales de `cross-consistency.ts`:** `applyDeterministicCrossConsistencyFixes`, `detectCrossConsistencyIssues`, `applyCrossConsistencyPatches`, `fixDeterministicMddCoherence`, `ensureSecurityLockoutInSection6`, `detectDuplicateOutboxTables`, `draftUsesRs256Jwt`. La aprobación dual solo se detecta (`detectCrossConsistencyIssues` / `draftRequiresDualApproval`): `fixDualApprovalSchemaInDraft` se retiró y el borrador no se reescribe.
 
 **Exports de `contratos-format.ts`:** `repairNestedJsonFencesInDraft`, `repairDisplacedJsonBracesInContratos`, `formatContratosBody`, `formatAllContratosSectionsInDraft`, `normalizeContratosTableSummary`, `ensureContratosSection`, `isContratosSubstantial`, `isContratosPlaceholder`, `isContratosSectionRegression`, `countContratosEndpointRows`, `extractContratosSectionBody`, `MIN_CONTRATOS_LENGTH`.
 
@@ -40,3 +40,7 @@ El entrypoint estable para consumidores sigue siendo `../mdd-sanitize.ts` (re-ex
 **Exports de `infra-manifest.ts`:** `extractIdentifiedInfraFromText`, `extractAlreadyDocumentedTopics`, `buildManifestFromIdentifiedInfra`, `buildNewFormatManifestFromIdentifiedTerms`, `sanitizeManifestToMatchIdentifiedInfra`, `replaceAwsProseWithGenericWhenInfraNotAws`.
 
 **Exports de `section-structured.ts`:** `seguridadItemsToSection6Markdown`, `integracionToSection7Markdown`, `parseModeloDatosFromSection3Markdown`, `normalizeTablesToRecord`, `objectSectionToMarkdown`.
+
+## Foto del formateador (`format-snapshot.spec.ts`)
+
+Congela la salida de `formatDocumentMarkdown`, `repairPastedMarkdown` y `prepareMddMarkdownForPersist` sobre `eval/mdd/fixtures/*.md`, los campos `dbga`/`brd` de `eval/mdd/cases/*.json` y `__fixtures__/*.md` en `__snapshots__/<entrada>.<modo>.md`. Un cambio en el formateador falla con las primeras 40 líneas distintas; si es intencional, regenera con `UPDATE_SNAPSHOTS=1 node scripts/run-tests.mjs --test-path-pattern=format-snapshot` y revisa el diff de las fotos en el PR.

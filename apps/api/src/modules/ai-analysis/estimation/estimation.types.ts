@@ -35,10 +35,10 @@ export interface AuditorCriticalGap {
 }
 
 export interface AuditorGaps {
-  /** Puntuación 0-100 (coherente con auditorScore). */
-  score: number;
-  /** APROBADO si score >= 85 y sin gaps críticos bloqueantes; RECHAZADO en caso contrario. */
-  status: "APROBADO" | "RECHAZADO";
+  /** Puntuación 0-100 (coherente con auditorScore). Ausente/null = Auditor no disponible (sin nota). */
+  score?: number | null;
+  /** APROBADO si score >= 85 y sin gaps críticos bloqueantes; RECHAZADO en caso contrario; NO_EVALUADO si el Auditor no estuvo disponible. */
+  status: "APROBADO" | "RECHAZADO" | "NO_EVALUADO";
   /** Gaps críticos de consistencia/trazabilidad (secciones, problema, corrección). */
   critical_gaps: AuditorCriticalGap[];
   /** Errores de sintaxis o formato (ej. Mermaid, JSON). */
