@@ -1,4 +1,10 @@
 import type { ProjectArchitectureGraph } from "./project-architecture-graph.js";
+import {
+  buildOpenApiOperationId,
+  buildSeededResponseExample,
+  DEFAULT_PAG_FIXTURE_SEED,
+  pagHasTheforgeSources,
+} from "./design-first/pag-fixture-seed.js";
 
 /**
  * ═══════════════════════════════════════════════════════════
@@ -328,9 +334,14 @@ export function compilePagToInfraMarkdown(pag: ProjectArchitectureGraph): string
 /**
  * Exporta el ProjectArchitectureGraph (PAG) a una especificación OpenAPI 3.1.0 formal.
  */
-export function exportPagToOpenApiSpec(pag: ProjectArchitectureGraph): Record<string, any> {
+export function exportPagToOpenApiSpec(
+  pag: ProjectArchitectureGraph,
+  options?: { fixtureSeed?: string },
+): Record<string, any> {
   const paths: Record<string, any> = {};
   const schemas: Record<string, any> = {};
+  const extendDesignFirst = pagHasTheforgeSources(pag);
+  const fixtureSeed = options?.fixtureSeed ?? DEFAULT_PAG_FIXTURE_SEED;
 
   // 1. Schemas de componentes desde pag.entities
   for (const entity of pag.entities) {
@@ -378,16 +389,21 @@ export function exportPagToOpenApiSpec(pag: ProjectArchitectureGraph): Record<st
     const responses: Record<string, any> = {};
     const successCode = method === "post" ? "201" : "200";
 
+    const successJsonContent: Record<string, unknown> = {
+      schema:
+        ep.responseSchema ??
+        (ep.targetEntity && schemas[ep.targetEntity]
+          ? { $ref: `#/components/schemas/${ep.targetEntity}` }
+          : { type: "object" }),
+    };
+    if (extendDesignFirst) {
+      successJsonContent.example = buildSeededResponseExample(fixtureSeed, pag, ep, openApiPath);
+    }
+
     responses[successCode] = {
       description: "Operación completada con éxito",
       content: {
-        "application/json": {
-          schema:
-            ep.responseSchema ??
-            (ep.targetEntity && schemas[ep.targetEntity]
-              ? { $ref: `#/components/schemas/${ep.targetEntity}` }
-              : { type: "object" }),
-        },
+        "application/json": successJsonContent,
       },
     };
 
@@ -436,6 +452,13 @@ export function exportPagToOpenApiSpec(pag: ProjectArchitectureGraph): Record<st
           },
         },
       };
+    }
+
+    if (extendDesignFirst) {
+      operation.operationId = buildOpenApiOperationId(method, openApiPath);
+      if (ep.theforgeSources?.length) {
+        operation["x-theforge-sources"] = ep.theforgeSources;
+      }
     }
 
     paths[openApiPath][method] = operation;

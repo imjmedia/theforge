@@ -2,19 +2,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createProjectSchema } from "./project.js";
 
-describe("createProjectSchema (Design-First paso 5)", () => {
-  it("rechaza projectType DESIGN_FIRST hasta el paso 10", () => {
+describe("createProjectSchema (Design-First paso 5/10)", () => {
+  it("acepta projectType DESIGN_FIRST en el contrato zod (flag en API)", () => {
     const result = createProjectSchema.safeParse({
       name: "Demo",
       projectType: "DESIGN_FIRST",
     });
-    assert.equal(result.success, false);
-    if (result.success) return;
-    assert.ok(
-      result.error.issues.some(
-        (i) => i.path.join(".") === "projectType" && /DESIGN_FIRST/.test(i.message),
-      ),
-    );
+    assert.equal(result.success, true);
   });
 
   it("acepta NEW y LEGACY con reglas existentes", () => {

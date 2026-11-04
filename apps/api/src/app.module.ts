@@ -38,6 +38,7 @@ import { PluginModule } from "./plugins/plugin.module.js";
 import { PluginsApiModule } from "./modules/plugins/plugins.module.js";
 import { SystemConfigModule } from "./modules/system-config/system-config.module.js";
 import { MermaidOracleModule } from "./modules/mermaid-oracle/mermaid-oracle.module.js";
+import { DesignFirstModule } from "./modules/design-first/design-first.module.js";
 import pluginsConfig from "./config/plugins.config.js";
 import { validateEnv } from "./config/env.schema.js";
 
@@ -51,6 +52,7 @@ import { validateEnv } from "./config/env.schema.js";
       envFilePath: [join(__dirname, "../../.env"), join(__dirname, "../../../.env"), ".env"],
     }),
     MermaidOracleModule,
+    DesignFirstModule,
     SystemConfigModule,
     CryptoModule,
     AuthModule,

@@ -1,0 +1,104 @@
+import { http, HttpResponse } from "msw";
+
+export const handlers = [
+  http.delete(`/api/v1/customers/:id`, ({ request, params }) => {
+    const mockState = request.headers.get("x-mock-state");
+    if (mockState === "empty") {
+      return HttpResponse.json(null, { status: 204 });
+    }
+    if (mockState === "error") {
+      return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
+    }
+    return HttpResponse.json({ deleted: true, id: params.id ?? "unknown" });
+  }),
+  http.delete(`/api/v1/orders/:id`, ({ request, params }) => {
+    const mockState = request.headers.get("x-mock-state");
+    if (mockState === "empty") {
+      return HttpResponse.json(null, { status: 204 });
+    }
+    if (mockState === "error") {
+      return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
+    }
+    return HttpResponse.json({ deleted: true, id: params.id ?? "unknown" });
+  }),
+  http.get(`/api/v1/customers`, ({ request, params }) => {
+    const mockState = request.headers.get("x-mock-state");
+    if (mockState === "empty") {
+      return HttpResponse.json(null, { status: 204 });
+    }
+    if (mockState === "error") {
+      return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
+    }
+    return HttpResponse.json([{"id":"883b21a3-f649-41ed-8e09-88078dbd9765"}]);
+  }),
+  http.get(`/api/v1/customers/:id`, ({ request, params }) => {
+    const mockState = request.headers.get("x-mock-state");
+    if (mockState === "empty") {
+      return HttpResponse.json(null, { status: 204 });
+    }
+    if (mockState === "error") {
+      return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
+    }
+    return HttpResponse.json({"id":"0f4ba3c2-c9aa-465c-8f16-15b0cd6f819f"});
+  }),
+  http.get(`/api/v1/orders`, ({ request, params }) => {
+    const mockState = request.headers.get("x-mock-state");
+    if (mockState === "empty") {
+      return HttpResponse.json(null, { status: 204 });
+    }
+    if (mockState === "error") {
+      return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
+    }
+    return HttpResponse.json([{"id":"b7936bfc-66ef-4676-83cd-ed86e32426a6"}]);
+  }),
+  http.get(`/api/v1/orders/:id`, ({ request, params }) => {
+    const mockState = request.headers.get("x-mock-state");
+    if (mockState === "empty") {
+      return HttpResponse.json(null, { status: 204 });
+    }
+    if (mockState === "error") {
+      return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
+    }
+    return HttpResponse.json({"id":"58ddae4a-e60b-472f-8190-fb2fe4216a16"});
+  }),
+  http.patch(`/api/v1/customers/:id`, ({ request, params }) => {
+    const mockState = request.headers.get("x-mock-state");
+    if (mockState === "empty") {
+      return HttpResponse.json(null, { status: 204 });
+    }
+    if (mockState === "error") {
+      return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
+    }
+    return HttpResponse.json({"id":"0f4ba3c2-c9aa-465c-8f16-15b0cd6f819f"});
+  }),
+  http.patch(`/api/v1/orders/:id`, ({ request, params }) => {
+    const mockState = request.headers.get("x-mock-state");
+    if (mockState === "empty") {
+      return HttpResponse.json(null, { status: 204 });
+    }
+    if (mockState === "error") {
+      return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
+    }
+    return HttpResponse.json({"id":"58ddae4a-e60b-472f-8190-fb2fe4216a16"});
+  }),
+  http.post(`/api/v1/customers`, ({ request, params }) => {
+    const mockState = request.headers.get("x-mock-state");
+    if (mockState === "empty") {
+      return HttpResponse.json(null, { status: 204 });
+    }
+    if (mockState === "error") {
+      return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
+    }
+    return HttpResponse.json({"id":"527dc07c-216b-40f6-8505-67749ac07583"});
+  }),
+  http.post(`/api/v1/orders`, ({ request, params }) => {
+    const mockState = request.headers.get("x-mock-state");
+    if (mockState === "empty") {
+      return HttpResponse.json(null, { status: 204 });
+    }
+    if (mockState === "error") {
+      return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
+    }
+    return HttpResponse.json({"id":"2c073c5a-9f3c-4b54-803d-ff30a44989ff"});
+  })
+];

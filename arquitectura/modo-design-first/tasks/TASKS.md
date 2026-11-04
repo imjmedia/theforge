@@ -26,14 +26,14 @@ Convenciones de todas las fichas:
 - [x] Paso 4 — Helpers de ProjectType en shared-types y API (projects)
 - [x] Paso 4b — Helpers en el resto de la API y test anti-literal
 - [x] Paso 4c — Helpers en la web
-- [ ] Paso 5 [A] — Migraciones del enum DESIGN_FIRST, `designSpec` y `UserFigmaCredential`
-- [ ] Paso 6 — Contratos zod de `designSpec`
-- [ ] Paso 7 — Compilador DataNeeds → PAG y puertas de fase
-- [ ] Paso 8 — OpenAPI extendido, MSW, fixtures y markdown de diseño
-- [ ] Paso 9 — Validador OpenAPI 3.1 con ajv en la API
-- [ ] Paso 10 — DesignFirstModule: CRUD con CAS, compile-contract y creación detrás del flag
-- [ ] Paso 11 [A] — Semáforo por fases y `resolveScreenCount`
-- [ ] Paso 12 [A] — Gate de entregables, job MDD y claves dependientes por modo
+- [x] Paso 5 [A] — Migraciones del enum DESIGN_FIRST, `designSpec` y `UserFigmaCredential` *(PR #558; `db:migrate` local opcional)*
+- [x] Paso 6 — Contratos zod de `designSpec` *(PR #558)*
+- [x] Paso 7 — Compilador DataNeeds → PAG y puertas de fase *(PR #559)*
+- [x] Paso 8 — OpenAPI extendido, MSW, fixtures y markdown de diseño
+- [x] Paso 9 — Validador OpenAPI 3.1 con ajv en la API
+- [x] Paso 10 — DesignFirstModule: CRUD con CAS, compile-contract y creación detrás del flag
+- [x] Paso 11 [A] — Semáforo por fases y `resolveScreenCount`
+- [x] Paso 12 [A] — Gate de entregables, job MDD y claves dependientes por modo
 - [ ] Paso 13 [A] — Oleadas de cascada DESIGN_FIRST
 - [ ] Paso 14 — Compiladores §3/§4 en formato MDD
 - [ ] Paso 15 [A] — Grafo MDD en modo pinned
@@ -556,7 +556,8 @@ Resultado esperado: en verde.
 - Ensamblar el repo-handoff (paso 20).
 
 ### Notas de ejecución
-<!-- -->
+- **2026-11-04:** Goldens `three-screens.*` generados con semilla `theforge-design-first-fixture-v1`.
+- **Verificación:** `pnpm --filter @theforge/shared-types test` y `pnpm run typecheck`.
 
 ---
 
@@ -596,7 +597,7 @@ Resultado esperado: en verde.
 - Usarlo desde compile-contract (paso 10).
 
 ### Notas de ejecución
-<!-- versiones instaladas -->
+- **2026-11-04:** `ajv` + `ajv-formats` en `@theforge/api`; validador en `openapi-validate.util.ts`.
 
 ---
 
@@ -651,7 +652,7 @@ Resultado esperado: en verde.
 - Propuestas (pasos 16, 17), Figma (18), semáforo (11), cascada (13).
 
 ### Notas de ejecución
-<!-- -->
+- **2026-11-04:** Módulo registrado en `AppModule`; creación DESIGN_FIRST en `ProjectLifecycleService` con `EMPTY_DESIGN_SPEC`.
 
 ---
 
@@ -696,7 +697,7 @@ Resultado esperado: specs en verde y el `git diff` sin salida.
 - Puertas de la cascada (pasos 12-13).
 
 ### Notas de ejecución
-<!-- aprobación de Jorge (fecha) -->
+- **2026-11-04:** Aprobación Jorge (implementación pasos 8–12 en rama `feat/design-first-pasos-8-12`). Rama DESIGN_FIRST en `getLiveMetricsForProject` con tope AMARILLO sin MDD; `hasEvaluableInput` sustituye `content.trim().length > 0` para sync de `Stage.status`; conteo de pantallas vía `designScreenCount` en fase 3.
 
 ---
 
@@ -744,7 +745,7 @@ Resultado esperado: en verde.
 - Oleadas de cascada (paso 13) y modo pinned del grafo (paso 15).
 
 ### Notas de ejecución
-<!-- aprobación de Jorge (fecha), decisión sobre el ciclo de módulos -->
+- **2026-11-04:** Aprobación Jorge (misma sesión). Gates en `project-deliverable-gate.service.ts` y `POST /ai-analysis/mdd/jobs` vía `design-first-gate.util.ts` sin importar `DesignFirstModule` desde ai-analysis.
 
 ---
 
