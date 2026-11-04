@@ -52,6 +52,18 @@ table_column_exists() {
     2>/dev/null | grep -q 1
 }
 
+project_type_enum_has_value() {
+  label="$1"
+  host="$(db_host_from_url)"
+  user="$(db_user_from_url)"
+  pass="$(db_password_from_url)"
+  db="$(db_name_from_url)"
+  [ -n "$host" ] && [ -n "$user" ] && [ -n "$db" ] || return 1
+  PGPASSWORD="${pass}" psql -h "$host" -U "$user" -d "$db" -tAc \
+    "SELECT 1 FROM pg_enum e JOIN pg_type t ON e.enumtypid = t.oid WHERE t.typname = 'ProjectType' AND e.enumlabel = '${label}'" \
+    2>/dev/null | grep -q 1
+}
+
 resolve_applied_if_project_column() {
   mig="$1"
   col="$2"
@@ -238,6 +250,24 @@ run_migration_healing() {
   # ya crea la tabla idempotente si falta). Marcamos como applied para que
   # `migrate deploy` no falle al re-ejecutar la migración en BD ya sincronizada.
   resolve_applied_if_table "20260724_add_token_usage" "TokenUsage"
+  # Design-First (20261104*): safe-schema-sync puede adelantar DDL antes de migrate deploy
+  if npx prisma migrate resolve --rolled-back 20261104090000_stage_architecture_graph 2>/dev/null; then
+    echo "migrate resolve: cleared failed record for 20261104090000_stage_architecture_graph"
+  fi
+  if npx prisma migrate resolve --rolled-back 20261104100000_project_type_design_first 2>/dev/null; then
+    echo "migrate resolve: cleared failed record for 20261104100000_project_type_design_first"
+  fi
+  if npx prisma migrate resolve --rolled-back 20261104110000_design_first_spec_figma 2>/dev/null; then
+    echo "migrate resolve: cleared failed record for 20261104110000_design_first_spec_figma"
+  fi
+  resolve_applied_if_table_column "20261104090000_stage_architecture_graph" "Stage" "architectureGraph"
+  if project_type_enum_has_value "DESIGN_FIRST"; then
+    if npx prisma migrate resolve --applied "20261104100000_project_type_design_first" 2>/dev/null; then
+      echo "migrate resolve --applied 20261104100000_project_type_design_first (ProjectType.DESIGN_FIRST present)"
+    fi
+  fi
+  resolve_applied_if_table_column "20261104110000_design_first_spec_figma" "Stage" "designSpec"
+  resolve_applied_if_table "20261104110000_design_first_spec_figma" "UserFigmaCredential"
   # Checkpoints de LangGraph ahora viven en `langgraph.checkpoints` (no en `public`).
   # Si la tabla existe en el schema dedicado pero la migración está sin registrar,
   # la marcamos como aplicada para que un re-deploy no intente recrearla.

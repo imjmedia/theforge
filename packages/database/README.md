@@ -161,3 +161,27 @@ export DATABASE_URL="postgresql://theforge:theforge@theforge-db:5432/theforge"
 npx prisma migrate resolve --rolled-back 20260319130000_agent_checkpoint_mdd_stage
 npx prisma migrate deploy
 ```
+
+### Design-First (`20261104*`) — P3009 tras `safe-schema-sync`
+
+El entrypoint ejecuta `safe-schema-sync.sql` (incluye `architectureGraph`, `designSpec`, `UserFigmaCredential` y el enum `DESIGN_FIRST`) **antes** de `migrate deploy`. Si una migración queda en estado fallido o el DDL ya existe sin registro en `_prisma_migrations`, el API sale con código 1.
+
+**Redeploy:** el `docker-entrypoint.sh` intenta `resolve --rolled-back` y `--applied` para:
+
+- `20261104090000_stage_architecture_graph`
+- `20261104100000_project_type_design_first`
+- `20261104110000_design_first_spec_figma`
+
+**Manual** (misma `DATABASE_URL` del compose):
+
+```bash
+cd packages/database
+export DATABASE_URL="postgresql://..."
+npx prisma migrate resolve --rolled-back 20261104110000_design_first_spec_figma  # si aplica
+npx prisma migrate resolve --applied 20261104090000_stage_architecture_graph      # si Stage.architectureGraph existe
+npx prisma migrate resolve --applied 20261104100000_project_type_design_first     # si enum DESIGN_FIRST existe
+npx prisma migrate resolve --applied 20261104110000_design_first_spec_figma       # si designSpec / UserFigmaCredential existen
+npx prisma migrate deploy
+```
+
+Si el contenedor arranca pero Nest aborta, revisa `docker logs theforge-api`: variables `DESIGN_FIRST_*` / `FIGMA_API_BASE_URL` deben ser booleanos o https válido (ver `apps/api/src/config/README.md`).

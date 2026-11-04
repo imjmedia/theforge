@@ -37,6 +37,7 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 
 ### Fixed
 
+- **Deploy Dokploy / Design-First:** el entrypoint de la API marca como aplicadas (o desbloquea) las migraciones `20261104*` cuando `safe-schema-sync.sql` adelantó el DDL; evita `theforge-api` exit 1 en `migrate deploy`.
 - **Eval: llamadas fallidas no cuentan como medidas** (`apps/api/src/modules/ai-analysis/eval/mdd-eval-nest-deps.ts`, `mdd-eval-runner.ts`): `llmCalls` solo cuenta filas `ok`/`invalid`; las `error|timeout|abort` van a `failedLlmCalls`/`totalFailedLlmCalls` y un caso con solo fallos queda sin coste en vez de aparecer medido con $0.
 - **Fallback de modelo con latido** (`apps/api/src/modules/ai-analysis/llm/chained-fallback-chat-model.ts`): los chunks sin contenido se reenvían al instante (sirven de latido para el idle timeout de modelos con razonamiento) y el fallback solo se bloquea tras el primer chunk con contenido; el iterador abandonado se cierra.
 - **Lease: TTL numérico del ConfigService** (`apps/api/src/modules/ai-analysis/checkpoint/thread-run-lock.service.ts`): `THREAD_RUN_LOCK_TTL_MS` llega ya validado como número desde `config/env.schema.ts`; el servicio lo normaliza a string en vez de fallar en todos los turnos.
