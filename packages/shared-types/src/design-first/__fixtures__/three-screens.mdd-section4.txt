@@ -1,0 +1,12 @@
+| Método | Ruta | Descripción | Auth |
+|:---|:---|:---|:---|
+| GET | `/api/v1/customers` | List Customer | JWT |
+| POST | `/api/v1/customers` | Create Customer | JWT |
+| DELETE | `/api/v1/customers/{id}` | Delete Customer | JWT |
+| GET | `/api/v1/customers/{id}` | Get Customer by id | JWT |
+| PATCH | `/api/v1/customers/{id}` | Update Customer | JWT |
+| GET | `/api/v1/orders` | List Order | JWT |
+| POST | `/api/v1/orders` | Create Order | JWT |
+| DELETE | `/api/v1/orders/{id}` | Delete Order | JWT |
+| GET | `/api/v1/orders/{id}` | Get Order by id | JWT |
+| PATCH | `/api/v1/orders/{id}` | Update Order | JWT |

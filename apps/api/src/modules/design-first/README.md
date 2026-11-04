@@ -10,6 +10,10 @@ Expone el slice **Design-First** del Workshop: lectura del `designSpec`, actuali
 | `PUT` | `/projects/:id/design/screens` | `contribute` |
 | `PUT` | `/projects/:id/design/data-needs` | `contribute` |
 | `POST` | `/projects/:id/design/compile-contract` | `contribute` |
+| `POST` | `/projects/:id/design/data-needs/propose` | `spend` |
+| `POST` | `/projects/:id/design/import/images` | `spend` |
+| `POST` | `/projects/:id/design/proposals/:pid/accept` | `contribute` |
+| `POST` | `/projects/:id/design/proposals/:pid/reject` | `contribute` |
 
 ## Flags
 
@@ -18,8 +22,10 @@ Expone el slice **Design-First** del Workshop: lectura del `designSpec`, actuali
 
 ## Dependencias
 
-Importa **Prisma** vía `PrismaService`; **no** importa `ProjectsModule`. Exporta `DesignSpecReader` y servicios de spec/contrato para handoff y cascada (pasos posteriores).
+Importa **Prisma** vía `PrismaService` y **AiModule** (visión → `extractScreenSpecFromImages`; data needs → `proposeDataNeeds`). **No** importa `ProjectsModule`. Exporta `DesignSpecReader`, `DesignProposalService` y servicios de spec/contrato para handoff y cascada (pasos posteriores).
+
+Propuestas HITL: Redis clave `design-first:proposal:{projectId}:{proposalId}` con TTL **24 h** (`DESIGN_PROPOSAL_TTL_SECONDS`); en dev/test sin `REDIS_URL` usa memoria en proceso.
 
 ## Errores tipados
 
-Códigos principales: `ERR_DESIGN_FIRST_DISABLED`, `ERR_DESIGN_FIRST_NOT_ALLOWED`, `ERR_DESIGN_REVISION_CONFLICT`, `ERR_DESIGN_PHASE_GATE`, `ERR_DESIGN_INVARIANT`, `ERR_PAG_INVALID`, `ERR_OPENAPI_INVALID`.
+Códigos principales: `ERR_DESIGN_FIRST_DISABLED`, `ERR_DESIGN_FIRST_NOT_ALLOWED`, `ERR_DESIGN_REVISION_CONFLICT`, `ERR_DESIGN_PHASE_GATE`, `ERR_DESIGN_INVARIANT`, `ERR_PAG_INVALID`, `ERR_OPENAPI_INVALID`, `ERR_DESIGN_EXTRACT_INVALID`, `ERR_DESIGN_IMAGES_TOO_LARGE`, `ERR_DESIGN_PROPOSAL_EXPIRED`.

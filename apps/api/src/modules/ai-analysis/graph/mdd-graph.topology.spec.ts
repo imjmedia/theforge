@@ -102,6 +102,14 @@ describe("topología de los grafos MDD (H3: sin carrera sobre mddDraft)", () => 
     assert.deepEqual(parallelDraftWriterPairs(edges), []);
   });
 
+  it("one-shot: stack_architect tiene destinos pinned (section5, post_critic_parallel)", async () => {
+    const graph = await createMddGraph(STUB_FACTORY, "user-test", { preflightRuntime: STUB_RUNTIME });
+    const edges = edgesOf(graph);
+    const targets = [...new Set(targetsFrom(edges, "stack_architect", true))].sort();
+    assert.ok(targets.includes("section5"));
+    assert.ok(targets.includes("post_critic_parallel"));
+  });
+
   it("one-shot: format_after_redactor -> cross_consistency_checker -> diagram_injector en serie", async () => {
     const graph = await createMddGraph(STUB_FACTORY, "user-test", { preflightRuntime: STUB_RUNTIME });
     const edges = edgesOf(graph);

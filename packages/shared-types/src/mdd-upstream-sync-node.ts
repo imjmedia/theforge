@@ -61,6 +61,7 @@ export function buildMddUpstreamBaseline(input: {
   brdContent: string | null | undefined;
   benchmarkContent: string | null | undefined;
   mddContent: string | null | undefined;
+  designSpecHash?: string | null;
   capturedAt?: Date;
 }): MddUpstreamBaseline {
   const dbga = normalizeUpstreamDocumentBody(input.dbgaContent);
@@ -73,6 +74,9 @@ export function buildMddUpstreamBaseline(input: {
     brdContentHash: hashUpstreamSourceBody("brd", input.brdContent),
     benchmarkContentHash: hashUpstreamSourceBody("benchmark", input.benchmarkContent),
     mddContentHash: hashUpstreamDocumentBody(mdd),
+    ...(input.designSpecHash?.trim()
+      ? { designSpecHash: input.designSpecHash.trim() }
+      : {}),
     dbgaLength: dbga.length,
     brdLength: brd.length,
     benchmarkLength: benchmark.length,

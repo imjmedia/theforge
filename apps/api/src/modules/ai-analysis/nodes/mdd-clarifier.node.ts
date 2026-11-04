@@ -4,7 +4,8 @@
 
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage } from "@langchain/core/messages";
-import { CLARIFIER_MDD_PROMPT, CLARIFIER_QUESTIONS_ONLY_MDD_PROMPT } from "../prompts/load-prompts.js";
+import { CLARIFIER_MDD_PROMPT, CLARIFIER_QUESTIONS_ONLY_MDD_PROMPT, DESIGN_FIRST_CLARIFIER_MDD_APPEND } from "../prompts/load-prompts.js";
+import { isDesignFirstPinnedActive } from "../utils/design-first-pinned.util.js";
 import type { MDDStateType } from "../state/index.js";
 import { getMddTemplatePlaceholder } from "../state/mdd-structured.schema.js";
 import { mergeMddStructured } from "../utils/mdd-merge-structured.js";
@@ -198,6 +199,9 @@ export function createMddClarifierNode(llm: BaseChatModel) {
           ? `**Objetivo del documento (lo que el usuario pide):** ${brief}\n\n**Tu tarea:** Revisa y modifica el borrador existente del MDD según el objetivo. Preserva el contenido completo de todas las secciones (1-7) y solo aplica los cambios necesarios para cumplir el objetivo.\n\n---\n\n`
           : "";
       let prompt = `${CLARIFIER_MDD_PROMPT}${clarifierComplexityAppendix(state.mddComplexity)}\n\n---\n${briefBlock}**DBGA (entrada):**\n${dbgaBrief || "(vacío)"}`;
+      if (isDesignFirstPinnedActive(state)) {
+        prompt += `\n\n---\n${DESIGN_FIRST_CLARIFIER_MDD_APPEND}`;
+      }
       const stackBlock = buildUserDeclaredStackPromptBlock(
         state.userInputAccumulated,
         state.lastUserMessage,

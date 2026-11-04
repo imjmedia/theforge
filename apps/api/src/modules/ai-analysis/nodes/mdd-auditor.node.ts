@@ -48,6 +48,10 @@ import { buildMddAuditorDeepContext } from "../utils/mdd-auditor-context.util.js
 import type { AuditorGapsState } from "../state/mdd-state.schema.js";
 import { z } from "zod";
 import { draftIsSubstantialForScopedRepair } from "../utils/mdd-section-preserve.util.js";
+import {
+  evaluateDesignFirstPinnedSectionAuditorGaps,
+  isDesignFirstPinnedActive,
+} from "../utils/design-first-pinned.util.js";
 
 const AUDIT_PASS_THRESHOLD = MDD_AUDIT_PASS_THRESHOLD;
 
@@ -226,14 +230,17 @@ export function createMddAuditorNode(
   return async (state: MDDStateType): Promise<Partial<MDDStateType>> => {
     LOG("entry mddDraftLen=%s (lint determinista previo, sin tools)", (state.mddDraft ?? "").length);
     const draft = applyPreDeliveryGateFixes((state.mddDraft ?? "").trim());
+    const pinnedMode = isDesignFirstPinnedActive(state);
     const validation = validateMddStructure(draft);
     const lint = runDeterministicMddLint(draft, validation);
     const deterministicBase = synthesizeDeterministicAuditorGaps(
       draft,
       validation,
-      computeDeterministicAuditorScore(draft, validation),
+      computeDeterministicAuditorScore(draft, validation, { designFirstPinned: pinnedMode }),
       state.brdContent,
+      { designFirstPinned: pinnedMode },
     );
+    const pinnedSectionGaps = evaluateDesignFirstPinnedSectionAuditorGaps(draft, state);
     LOG(
       "lint: missingSections=%s payloads=%s sqlBlocks=%s sqlErrors=%s jsonBlocks=%s jsonErrors=%s",
       validation.missingSections.length,
@@ -260,6 +267,10 @@ export function createMddAuditorNode(
           "\n\n**Criterio domain-auth-only-skew:** Si el inventario tiene ≥3 capacidades de negocio y §3 solo lista tablas auth (users/roles/sessions/…), baja el score y registra critical_gap con fix: ampliar §3/§4 al dominio.";
       }
       prompt += formatDeterministicLintForPrompt(lint);
+      if (pinnedMode) {
+        prompt +=
+          "\n**Modo Design-First pinned:** §3 y §4 ya están selladas desde el PAG; puntúa solo §1, §2 y §5–§7 con el LLM. No penalices §3 por prosa mínima compilada.";
+      }
       prompt += "\n**Responde únicamente con el JSON de salida.**";
 
       const llmVerdict = await invokeLlmStructured({
@@ -330,6 +341,11 @@ export function createMddAuditorNode(
         score,
         validation.missingSections,
       );
+      if (pinnedSectionGaps.length > 0) {
+        auditorGaps.critical_gaps.unshift(...pinnedSectionGaps);
+        auditorGaps.status = "RECHAZADO";
+        score = Math.min(score, 70);
+      }
       if (!feedback && (auditorGaps.critical_gaps.length > 0 || auditorGaps.syntax_errors.length > 0)) {
         feedback = buildAuditorFeedbackFromGaps(auditorGaps);
       }
@@ -345,9 +361,11 @@ export function createMddAuditorNode(
 
       const rawDecision = hasConflict
         ? ("blackboard" as const)
-        : score >= AUDIT_PASS_THRESHOLD && validation.missingSections.length === 0
-          ? ("done" as const)
-          : ("clarifier" as const);
+        : pinnedSectionGaps.length > 0
+          ? ("clarifier" as const)
+          : score >= AUDIT_PASS_THRESHOLD && validation.missingSections.length === 0
+            ? ("done" as const)
+            : ("clarifier" as const);
       const decision = resolveAuditorDecisionForSubstantialDraft(draft, rawDecision, {
         hasBrdTraceGaps: hasBrdToMddTraceabilityBlockers(state.brdContent, draft),
       });

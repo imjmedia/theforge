@@ -16,6 +16,8 @@ export type MddUpstreamBaseline = {
   brdContentHash: string;
   benchmarkContentHash: string;
   mddContentHash: string;
+  /** Hash del designSpec al capturar baseline (Design-First / CL-16). */
+  designSpecHash?: string;
   dbgaLength: number;
   brdLength: number;
   benchmarkLength: number;

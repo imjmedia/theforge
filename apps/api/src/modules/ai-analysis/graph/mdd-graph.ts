@@ -63,6 +63,11 @@ import {
   crossConsistencyInput,
 } from "../checkpoint/node-input-hash.js";
 import { isHighSplitArchitectPipeline } from "../utils/mdd-architect-pipeline.util.js";
+import {
+  isDesignFirstPinnedActive,
+  pinnedStackArchitectRouteTarget,
+  redirectPinnedDeliveryGateFixTarget,
+} from "../utils/design-first-pinned.util.js";
 import { withTokenUsageContextPatch } from "../token-usage/token-usage.context.js";
 
 const MAX_MDD_ITERATIONS = 2;
@@ -484,13 +489,21 @@ export async function createMddGraph(
 
   function routeAfterPrepareOutput(state: MDDStateType): string {
     if (state.deliveryGateLoopActive === true) {
-      if (state.deliveryGateFixTarget === "integration") return "integration";
-      if (state.deliveryGateFixTarget === "clarifier") return "clarifier";
-      if (state.deliveryGateFixTarget === "section5") return "section5";
-      if (state.deliveryGateFixTarget === "stack_architect") return "stack_architect";
-      if (state.deliveryGateFixTarget === "data_model") return "data_model";
-      if (state.deliveryGateFixTarget === "api_contracts") return "api_contracts";
-      return "software_architect";
+      let target: string;
+      if (state.deliveryGateFixTarget === "integration") target = "integration";
+      else if (state.deliveryGateFixTarget === "clarifier") target = "clarifier";
+      else if (state.deliveryGateFixTarget === "section5") target = "section5";
+      else if (state.deliveryGateFixTarget === "stack_architect") target = "stack_architect";
+      else if (state.deliveryGateFixTarget === "data_model") target = "data_model";
+      else if (state.deliveryGateFixTarget === "api_contracts") target = "api_contracts";
+      else target = "software_architect";
+      if (isDesignFirstPinnedActive(state)) {
+        return redirectPinnedDeliveryGateFixTarget(
+          state.deliveryGateFixTarget ?? "software_architect",
+          state,
+        );
+      }
+      return target;
     }
     return "structured_hydrator";
   }
@@ -524,6 +537,7 @@ export async function createMddGraph(
   /** One-shot: critic when directive, SQL blockers, or BRD domain auth-skew. */
   function routeAfterSoftwareArchitectOneShot(state: MDDStateType): string {
     if (shouldShortCircuitGateLoopFix(state)) return "prepare_output";
+    if (isDesignFirstPinnedActive(state)) return "format_after_architect";
     const hasDirective = !!(state.acceptedProposalDirective?.trim());
     const draft = (state.mddDraft ?? "").trim();
     const hasSection3 = /##\s*3\.\s*Modelo\s+(?:de\s+)?datos/i.test(draft) && /\bCREATE\s+TABLE\b/i.test(draft);
@@ -541,6 +555,11 @@ export async function createMddGraph(
     const attempt = state.stackArchitectAttempt ?? 0;
     if (!draftHasSubstantialSection2(state.mddDraft ?? "") && attempt < 2) {
       return "stack_architect";
+    }
+    if (isDesignFirstPinnedActive(state)) {
+      return pinnedStackArchitectRouteTarget(state, {
+        usePostCriticParallel: shouldUsePostCriticParallel(state),
+      });
     }
     return "data_model";
   }
@@ -570,6 +589,13 @@ export async function createMddGraph(
 
   /** One-shot: critic entre §3 y §4 (HIGH) o revisión §3+§4 (monolítico). */
   function routeAfterArchitectCriticOneShot(state: MDDStateType): string {
+    if (isDesignFirstPinnedActive(state)) {
+      if (state.architectCriticPhase === "after_section3") {
+        if (shouldUsePostCriticParallel(state)) return "post_critic_parallel";
+        return "section5";
+      }
+      return "format_after_architect";
+    }
     const hasFeedback = !!(state.architectCriticFeedback?.trim());
     const attempts = state.architectCriticAttempts ?? 0;
     if (state.architectCriticPhase === "after_section3") {
@@ -618,6 +644,8 @@ export async function createMddGraph(
     })
     .addConditionalEdges("stack_architect", routeAfterStackArchitectOneShot, {
       data_model: "data_model",
+      section5: "section5",
+      post_critic_parallel: "post_critic_parallel",
       prepare_output: "prepare_output",
       stack_architect: "stack_architect",
     })
@@ -892,13 +920,21 @@ export async function createMddGraphWithManager(
   function routeAfterPrepareOutput(state: MDDStateType): string {
     if (state.executorControlled === true) return "executor";
     if (state.deliveryGateLoopActive === true) {
-      if (state.deliveryGateFixTarget === "integration") return "integration";
-      if (state.deliveryGateFixTarget === "clarifier") return "clarifier";
-      if (state.deliveryGateFixTarget === "section5") return "section5";
-      if (state.deliveryGateFixTarget === "stack_architect") return "stack_architect";
-      if (state.deliveryGateFixTarget === "data_model") return "data_model";
-      if (state.deliveryGateFixTarget === "api_contracts") return "api_contracts";
-      return "software_architect";
+      let target: string;
+      if (state.deliveryGateFixTarget === "integration") target = "integration";
+      else if (state.deliveryGateFixTarget === "clarifier") target = "clarifier";
+      else if (state.deliveryGateFixTarget === "section5") target = "section5";
+      else if (state.deliveryGateFixTarget === "stack_architect") target = "stack_architect";
+      else if (state.deliveryGateFixTarget === "data_model") target = "data_model";
+      else if (state.deliveryGateFixTarget === "api_contracts") target = "api_contracts";
+      else target = "software_architect";
+      if (isDesignFirstPinnedActive(state)) {
+        return redirectPinnedDeliveryGateFixTarget(
+          state.deliveryGateFixTarget ?? "software_architect",
+          state,
+        );
+      }
+      return target;
     }
     return "structured_hydrator";
   }
@@ -909,6 +945,7 @@ export async function createMddGraphWithManager(
     if (shouldShortCircuitGateLoopFix(state)) return "prepare_output";
     const next = nextInSections(state, "software_architect");
     if (next) return next;
+    if (isDesignFirstPinnedActive(state)) return "format_after_architect";
     const hasDirective = !!(state.acceptedProposalDirective?.trim());
     const draft = (state.mddDraft ?? "").trim();
     const hasSection3 = /##\s*3\.\s*Modelo\s+(?:de\s+)?datos/i.test(draft) && /\bCREATE\s+TABLE\b/i.test(draft);
@@ -924,6 +961,15 @@ export async function createMddGraphWithManager(
   /** Tras critic: retry §3 (HIGH) o SA monolítico; si ok tras §3 → post_critic_parallel o api_contracts. */
   function routeAfterArchitectCritic(state: MDDStateType): string {
     if (state.executorControlled === true) return "executor";
+    if (isDesignFirstPinnedActive(state)) {
+      if (state.architectCriticPhase === "after_section3") {
+        const next = nextInSections(state, "architect_critic");
+        if (next) return next;
+        if (shouldUsePostCriticParallelManager(state)) return "post_critic_parallel";
+        return "section5";
+      }
+      return "format_after_architect";
+    }
     const hasFeedback = !!(state.architectCriticFeedback?.trim());
     const attempts = state.architectCriticAttempts ?? 0;
     if (state.architectCriticPhase === "after_section3") {
@@ -948,6 +994,12 @@ export async function createMddGraphWithManager(
     const attempt = state.stackArchitectAttempt ?? 0;
     if (!draftHasSubstantialSection2(state.mddDraft ?? "") && attempt < 2) {
       return "stack_architect";
+    }
+    if (isDesignFirstPinnedActive(state)) {
+      const pinned = pinnedStackArchitectRouteTarget(state, {
+        usePostCriticParallel: shouldUsePostCriticParallelManager(state),
+      });
+      return nextInSections(state, "stack_architect") ?? pinned;
     }
     return nextInSections(state, "stack_architect") ?? "data_model";
   }
@@ -1155,6 +1207,8 @@ export async function createMddGraphWithManager(
     })
     .addConditionalEdges("stack_architect", routeAfterStackArchitect, {
       data_model: "data_model",
+      section5: "section5",
+      post_critic_parallel: "post_critic_parallel",
       prepare_output: "prepare_output",
       stack_architect: "stack_architect",
       executor: "executor",

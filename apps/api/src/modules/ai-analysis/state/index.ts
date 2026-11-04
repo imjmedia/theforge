@@ -24,12 +24,14 @@ export {
   mddComplexityLevelSchema,
   mddPlanStepSchema,
   mddStateSchema,
+  designFirstPinnedSchema,
   type AuditorGapsState,
   type AuditorOutcome,
   type MDDAuditorDecision,
   type MDDState,
   type MddComplexityLevel,
   type MddPlanStep,
+  type DesignFirstPinnedState,
 } from "./mdd-state.schema.js";
 
 export {

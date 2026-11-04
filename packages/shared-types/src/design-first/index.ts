@@ -6,3 +6,5 @@ export * from "./export-pag-to-msw.js";
 export * from "./build-pag-fixtures.js";
 export * from "./render-design-markdown.js";
 export * from "./design-first-api.js";
+export * from "./pag-entity-to-sql.js";
+export * from "./compile-pag-to-mdd-sections.js";
