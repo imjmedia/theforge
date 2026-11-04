@@ -265,3 +265,14 @@ ALTER TABLE "TokenUsage" ADD COLUMN IF NOT EXISTS "modelActual" TEXT;
 -- 11. Stage.mddLeaseFence: fencing token del lease MDD.
 -- ADR 0004 (migración 20261103120000_stage_mdd_lease_fence).
 ALTER TABLE "Stage" ADD COLUMN IF NOT EXISTS "mddLeaseFence" BIGINT;
+
+-- 12. Stage.architectureGraph: PAG (OpenAPI/endpoints) separado de documentAst (MDD AST).
+-- Design-First migración 20261104090000_stage_architecture_graph (CL-24).
+ALTER TABLE "Stage" ADD COLUMN IF NOT EXISTS "architectureGraph" JSONB;
+ALTER TABLE "Stage" ADD COLUMN IF NOT EXISTS "architectureGraphSourceHash" TEXT;
+
+UPDATE "Stage"
+SET "architectureGraph" = "documentAst"
+WHERE "architectureGraph" IS NULL
+  AND "documentAst" IS NOT NULL
+  AND "documentAst" ? 'endpoints';

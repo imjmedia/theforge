@@ -61,6 +61,70 @@ const threadRunLockTtlMs = z.preprocess(
 /** Mínimo de cada presupuesto wall-clock del pipeline MDD (ms): por debajo no cabe ni un intento. */
 export const MDD_NODE_BUDGET_MIN_MS = 15_000;
 
+/** Default del flag global Design-First (CL-21: apagado hasta release N+1). */
+export const DEFAULT_DESIGN_FIRST_ENABLED = false;
+
+export const DEFAULT_FIGMA_API_BASE_URL = "https://api.figma.com";
+
+/** Timeout HTTP hacia la API de Figma (ms); el plan no fija valor — 60 s por operación batch. */
+export const DEFAULT_DESIGN_FIRST_FIGMA_TIMEOUT_MS = 60_000;
+
+/** Presupuesto wall-clock por invocación de visión (ms); mínimo legal 15 000. */
+export const DEFAULT_DESIGN_FIRST_VISION_BUDGET_MS = 120_000;
+
+/** Presupuesto wall-clock por propuesta de necesidades de datos (ms); mínimo legal 15 000. */
+export const DEFAULT_DESIGN_FIRST_DATANEEDS_BUDGET_MS = 120_000;
+
+export const DEFAULT_DESIGN_FIRST_FIGMA_MAX_NODES = 5_000;
+export const DEFAULT_DESIGN_FIRST_MAX_IMAGES = 8;
+export const DEFAULT_DESIGN_FIRST_MAX_SPEC_BYTES = 524_288;
+
+const envBoolean = (defaultValue: boolean) =>
+  z.preprocess(
+    (value) => {
+      const v = emptyToUndefined(value);
+      if (v === undefined) return undefined;
+      if (typeof v === "boolean") return v;
+      if (typeof v === "string") {
+        const s = v.trim().toLowerCase();
+        if (s === "true" || s === "1") return true;
+        if (s === "false" || s === "0") return false;
+      }
+      return v;
+    },
+    z.boolean({ invalid_type_error: "debe ser true o false" }).default(defaultValue),
+  );
+
+const httpsUrl = (defaultUrl: string) =>
+  z.preprocess(
+    emptyToUndefined,
+    z
+      .string({ invalid_type_error: "debe ser una URL https válida" })
+      .url("debe ser una URL https válida")
+      .refine((url) => url.startsWith("https://"), "debe usar el esquema https")
+      .default(defaultUrl),
+  );
+
+const positiveInt = (defaultValue: number, label: string) =>
+  z.preprocess(
+    emptyToUndefined,
+    z.coerce
+      .number({ invalid_type_error: `debe ser un entero positivo (${label})` })
+      .int(`debe ser un entero positivo (${label})`)
+      .min(1, `debe ser un entero positivo (${label})`)
+      .default(defaultValue),
+  );
+
+const designFirstLlmBudgetMs = (defaultMs: number, name: string) =>
+  z.preprocess(
+    emptyToUndefined,
+    z.coerce
+      .number({ invalid_type_error: `debe ser un entero ≥ ${MDD_NODE_BUDGET_MIN_MS} ms` })
+      .int(`debe ser un entero ≥ ${MDD_NODE_BUDGET_MIN_MS} ms`)
+      .min(MDD_NODE_BUDGET_MIN_MS, `${name}: debe ser un entero ≥ ${MDD_NODE_BUDGET_MIN_MS} ms`)
+      .default(defaultMs),
+  );
+
 /** `LANGGRAPH_MDD_*_BUDGET_MS`: entero ≥ 15 000 ms (opcional; el default vive en `ai-analysis/utils/mdd-llm-timeout.util.ts`). */
 const mddNodeBudgetMs = z.preprocess(
   emptyToUndefined,
@@ -95,6 +159,33 @@ export const envSchema = z
         .min(1, "debe ser un entero mayor que 0 (ms)")
         .optional(),
     ),
+    DESIGN_FIRST_ENABLED: envBoolean(DEFAULT_DESIGN_FIRST_ENABLED),
+    FIGMA_API_BASE_URL: httpsUrl(DEFAULT_FIGMA_API_BASE_URL),
+    DESIGN_FIRST_FIGMA_TIMEOUT_MS: positiveInt(
+      DEFAULT_DESIGN_FIRST_FIGMA_TIMEOUT_MS,
+      "DESIGN_FIRST_FIGMA_TIMEOUT_MS",
+    ),
+    DESIGN_FIRST_FIGMA_MAX_NODES: positiveInt(
+      DEFAULT_DESIGN_FIRST_FIGMA_MAX_NODES,
+      "DESIGN_FIRST_FIGMA_MAX_NODES",
+    ),
+    DESIGN_FIRST_VISION_BUDGET_MS: designFirstLlmBudgetMs(
+      DEFAULT_DESIGN_FIRST_VISION_BUDGET_MS,
+      "DESIGN_FIRST_VISION_BUDGET_MS",
+    ),
+    DESIGN_FIRST_DATANEEDS_BUDGET_MS: designFirstLlmBudgetMs(
+      DEFAULT_DESIGN_FIRST_DATANEEDS_BUDGET_MS,
+      "DESIGN_FIRST_DATANEEDS_BUDGET_MS",
+    ),
+    DESIGN_FIRST_MAX_IMAGES: positiveInt(DEFAULT_DESIGN_FIRST_MAX_IMAGES, "DESIGN_FIRST_MAX_IMAGES"),
+    DESIGN_FIRST_MAX_SPEC_BYTES: positiveInt(
+      DEFAULT_DESIGN_FIRST_MAX_SPEC_BYTES,
+      "DESIGN_FIRST_MAX_SPEC_BYTES",
+    ),
+    COMPILER_FIRST_BLUEPRINT: envBoolean(false),
+    COMPILER_FIRST_API_CONTRACTS: envBoolean(true),
+    COMPILER_FIRST_LOGIC_FLOWS: envBoolean(true),
+    COMPILER_FIRST_INFRA: envBoolean(true),
   })
   .passthrough()
   .superRefine((env, ctx) => {

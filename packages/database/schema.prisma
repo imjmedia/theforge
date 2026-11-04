@@ -231,6 +231,10 @@ model Stage {
   /// Tasks estructurado v2 (JSON parseado desde tasksContent): dependencias, targetFiles, inferenceRules, etc.
   tasksJson            Json?
   documentAst          Json?
+  /// Project Architecture Graph (PAG): OpenAPI/endpoints separado del AST del MDD en `documentAst` (Design-First paso 2).
+  architectureGraph Json?
+  /// Hash de la fuente usada al persistir `architectureGraph` (idempotencia / stale).
+  architectureGraphSourceHash String?
   documentVersion      Int          @default(0)
   apiContractsContent  String? @db.Text
   logicFlowsContent    String? @db.Text
