@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { DEFAULT_TRUST_PROXY, KNOWN_INSECURE_JWT_SECRETS, validateEnv } from "./env.schema.js";
+import {
+  DEFAULT_DESIGN_FIRST_ENABLED,
+  DEFAULT_DESIGN_FIRST_FIGMA_MAX_NODES,
+  DEFAULT_DESIGN_FIRST_MAX_IMAGES,
+  DEFAULT_DESIGN_FIRST_MAX_SPEC_BYTES,
+  DEFAULT_DESIGN_FIRST_VISION_BUDGET_MS,
+  DEFAULT_FIGMA_API_BASE_URL,
+  DEFAULT_TRUST_PROXY,
+  KNOWN_INSECURE_JWT_SECRETS,
+  MDD_NODE_BUDGET_MIN_MS,
+  validateEnv,
+} from "./env.schema.js";
+import { readCompilerFirstConfigFromEnv } from "./compiler-first.config.js";
 
 const STRONG_SECRET = "s".repeat(16) + "T".repeat(16) + "9";
 
@@ -151,5 +163,72 @@ describe("validateEnv: presupuestos LANGGRAPH_MDD_*_BUDGET_MS", () => {
     assert.equal(env.LANGGRAPH_MDD_MANAGER_TURN_BUDGET_MS, 15000);
     assert.equal(env.LANGGRAPH_MDD_CRITIC_BUDGET_MS, undefined);
     assert.equal(env.LANGGRAPH_MDD_AUDITOR_NODE_BUDGET_MS, undefined);
+  });
+});
+
+describe("validateEnv: Design-First y COMPILER_FIRST", () => {
+  it("aplica defaults de límites y flag apagado (CL-21)", () => {
+    const env = validateEnv({});
+    assert.equal(env.DESIGN_FIRST_ENABLED, DEFAULT_DESIGN_FIRST_ENABLED);
+    assert.equal(env.FIGMA_API_BASE_URL, DEFAULT_FIGMA_API_BASE_URL);
+    assert.equal(env.DESIGN_FIRST_FIGMA_MAX_NODES, DEFAULT_DESIGN_FIRST_FIGMA_MAX_NODES);
+    assert.equal(env.DESIGN_FIRST_MAX_IMAGES, DEFAULT_DESIGN_FIRST_MAX_IMAGES);
+    assert.equal(env.DESIGN_FIRST_MAX_SPEC_BYTES, DEFAULT_DESIGN_FIRST_MAX_SPEC_BYTES);
+    assert.equal(env.DESIGN_FIRST_VISION_BUDGET_MS, DEFAULT_DESIGN_FIRST_VISION_BUDGET_MS);
+  });
+
+  it("rechaza presupuestos Design-First menores a 15000 ms", () => {
+    for (const name of ["DESIGN_FIRST_VISION_BUDGET_MS", "DESIGN_FIRST_DATANEEDS_BUDGET_MS"]) {
+      const msg = messageOf({ [name]: "14999" });
+      assert.match(msg, new RegExp(name));
+      assert.match(msg, /15000/);
+    }
+    const ok = validateEnv({
+      DESIGN_FIRST_VISION_BUDGET_MS: String(MDD_NODE_BUDGET_MIN_MS),
+      DESIGN_FIRST_DATANEEDS_BUDGET_MS: String(MDD_NODE_BUDGET_MIN_MS),
+    });
+    assert.equal(ok.DESIGN_FIRST_VISION_BUDGET_MS, MDD_NODE_BUDGET_MIN_MS);
+    assert.equal(ok.DESIGN_FIRST_DATANEEDS_BUDGET_MS, MDD_NODE_BUDGET_MIN_MS);
+  });
+
+  it("FIGMA_API_BASE_URL exige https", () => {
+    assert.match(messageOf({ FIGMA_API_BASE_URL: "http://api.figma.com/v1" }), /FIGMA_API_BASE_URL/);
+    assert.match(messageOf({ FIGMA_API_BASE_URL: "http://api.figma.com/v1" }), /https/);
+    assert.equal(
+      validateEnv({ FIGMA_API_BASE_URL: "https://api.figma.com/v1" }).FIGMA_API_BASE_URL,
+      "https://api.figma.com/v1",
+    );
+  });
+
+  it("rechaza enteros no positivos en límites Design-First", () => {
+    for (const name of [
+      "DESIGN_FIRST_FIGMA_MAX_NODES",
+      "DESIGN_FIRST_MAX_IMAGES",
+      "DESIGN_FIRST_MAX_SPEC_BYTES",
+      "DESIGN_FIRST_FIGMA_TIMEOUT_MS",
+    ]) {
+      assert.match(messageOf({ [name]: "0" }), new RegExp(name));
+    }
+  });
+
+  it("COMPILER_FIRST_* conserva la semántica heredada vía helper", () => {
+    const defaults = readCompilerFirstConfigFromEnv(validateEnv({}));
+    assert.equal(defaults.useCompilerFirstBlueprint, false);
+    assert.equal(defaults.useCompilerFirstApiContracts, true);
+    assert.equal(defaults.useCompilerFirstLogicFlows, true);
+    assert.equal(defaults.useCompilerFirstInfra, true);
+
+    const allOff = readCompilerFirstConfigFromEnv(
+      validateEnv({
+        COMPILER_FIRST_BLUEPRINT: "true",
+        COMPILER_FIRST_API_CONTRACTS: "false",
+        COMPILER_FIRST_LOGIC_FLOWS: "false",
+        COMPILER_FIRST_INFRA: "false",
+      }),
+    );
+    assert.equal(allOff.useCompilerFirstBlueprint, true);
+    assert.equal(allOff.useCompilerFirstApiContracts, false);
+    assert.equal(allOff.useCompilerFirstLogicFlows, false);
+    assert.equal(allOff.useCompilerFirstInfra, false);
   });
 });

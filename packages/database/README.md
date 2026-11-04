@@ -8,6 +8,8 @@ Prisma schema y client compartido.
 - **Migración `20260718100000_project_ariadne_links`:** tabla `project_ariadne_links` (enlace primario Forge ↔ Ariadne; upsert en alta brownfield / handoff).
 - **Client:** generado en `src/generated`; exportado por el package.
 
+- **Migración `20261104090000_stage_architecture_graph`:** columnas `Stage.architectureGraph` / `architectureGraphSourceHash` y backfill idempotente desde `documentAst` cuando contiene `endpoints` (CL-24); réplica en `scripts/safe-schema-sync.sql`. Spec estática: `scripts/stage-architecture-graph-migration.spec.ts`.
+
 Desde la **raíz** del monorepo: `pnpm run db:generate` (o el `build` del paquete) genera el client. `pnpm run db:push` aplica el schema a la DB. `pnpm run db:migrate` ejecuta migraciones en producción.
 
 **LangGraph (Paso 0 / DBGA):** las tablas `checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations` en `public` las crea la migración `20260513180000_langgraph_checkpoint_tables` (idempotente) y/o `ensureLangGraphCheckpointSchema` al arrancar la API (advisory lock, sin race multi-réplica). Si ves `relation "public.checkpoints" does not exist`, aplica migraciones pendientes y redeploy. Si ves `pg_type_typname_nsp_index`, redeploy con la versión que incluye el setup idempotente.

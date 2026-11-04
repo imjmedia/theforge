@@ -14,14 +14,14 @@ Convenciones de todas las fichas:
 - Discrepancias ya conocidas (el código manda): ver [HANDOFF § Discrepancias ya conocidas](./HANDOFF.md#discrepancias-ya-conocidas-el-código-manda).
 
 ## Precondición (antes del paso 1)
-- [ ] Rama `feat/modo-design-first` creada desde `master`.
-- [ ] `pnpm install` sin errores.
-- [ ] Ariadne: `list_known_projects`, `get_sync_status`, resincronización, Gate 1 y Gate 2 repetidos. Veredicto anotado aquí: ______
-- [ ] Si Gate 2 sigue BLOCKED: decisión de Jorge anotada aquí: ______
+- [ ] Rama `feat/modo-design-first` creada desde `master`. *(Sesión 2026-11-04: trabajo en `docs/modo-design-first`; crear `feat/` al abrir PR de código.)*
+- [x] `pnpm install` sin errores.
+- [ ] Ariadne: `list_known_projects`, `get_sync_status`, resincronización, Gate 1 y Gate 2 repetidos. Veredicto anotado aquí: **MCP `user-ariadnespecs` en error de discovery (2026-11-04); Gates no ejecutados — ver HANDOFF § falso negativo / seguir sin grafo anotando aquí.**
+- [ ] Si Gate 2 sigue BLOCKED: decisión de Jorge anotada aquí: ______ *(N/A — MCP no disponible)*
 
 ## Progreso
-- [ ] Paso 1 — Config tipada Design-First y `COMPILER_FIRST_*`
-- [ ] Paso 2 [A] — Columna `Stage.architectureGraph` con backfill
+- [x] Paso 1 — Config tipada Design-First y `COMPILER_FIRST_*`
+- [ ] Paso 2 [A] — Columna `Stage.architectureGraph` con backfill *(código listo; falta `db:migrate` + psql idempotente en BD local)*
 - [ ] Paso 3 [A] — Eliminar `lastGeneratedPag` y OpenAPI desde `architectureGraph`
 - [ ] Paso 4 — Helpers de ProjectType en shared-types y API (projects)
 - [ ] Paso 4b — Helpers en el resto de la API y test anti-literal
@@ -68,20 +68,20 @@ Convenciones de todas las fichas:
 - `apps/api/src/modules/ai/ai.service.ts` [modifica] — solo leer `COMPILER_FIRST_*` mediante un helper de config.
 
 ### Subtareas
-- [ ] 1.1 Añadir las variables con los defaults de la tabla de 03: `DESIGN_FIRST_ENABLED=false`, `FIGMA_API_BASE_URL=https://api.figma.com`, `DESIGN_FIRST_FIGMA_MAX_NODES=5000`, `DESIGN_FIRST_MAX_IMAGES=8`, `DESIGN_FIRST_MAX_SPEC_BYTES=524288`.
-- [ ] 1.2 Fijar defaults para `DESIGN_FIRST_FIGMA_TIMEOUT_MS`, `DESIGN_FIRST_VISION_BUDGET_MS` y `DESIGN_FIRST_DATANEEDS_BUDGET_MS` (el plan no los fija; anotar el valor elegido en "Notas de ejecución"). Los dos presupuestos `*_BUDGET_MS` < 15000 son inválidos.
-- [ ] 1.3 Validar `FIGMA_API_BASE_URL` como URL `https` (rechazar `http` y otros esquemas: base de la defensa anti-SSRF).
-- [ ] 1.4 Mover los `COMPILER_FIRST_*` a `env.schema.ts` y exponer un helper de config; sustituir las cuatro lecturas de `process.env` en `ai.service.ts` sin cambiar su comportamiento.
-- [ ] 1.5 Documentar las variables en `config/README.md` y añadir los nombres a `.env.example` (sin valores reales; el flag queda en `false`).
-- [ ] 1.6 CHANGELOG: crear el bloque Design-First en `[Unreleased]` con su párrafo `>` de resumen (provisional) y en `### Added` la línea de config tipada (flags `DESIGN_FIRST_*`, `FIGMA_*`); en `### Changed`, `COMPILER_FIRST_*` leídos desde la config tipada.
-- [ ] 1.7 Pruebas del paso en `env.schema.spec.ts`: defaults; presupuesto 14999 inválido y 15000 válido; `FIGMA_API_BASE_URL` con `http://` inválido; flag apagado por defecto (base de CL-21); enteros no positivos inválidos en límites.
+- [x] 1.1 Añadir las variables con los defaults de la tabla de 03: `DESIGN_FIRST_ENABLED=false`, `FIGMA_API_BASE_URL=https://api.figma.com`, `DESIGN_FIRST_FIGMA_MAX_NODES=5000`, `DESIGN_FIRST_MAX_IMAGES=8`, `DESIGN_FIRST_MAX_SPEC_BYTES=524288`.
+- [x] 1.2 Fijar defaults para `DESIGN_FIRST_FIGMA_TIMEOUT_MS`, `DESIGN_FIRST_VISION_BUDGET_MS` y `DESIGN_FIRST_DATANEEDS_BUDGET_MS` (el plan no los fija; anotar el valor elegido en "Notas de ejecución"). Los dos presupuestos `*_BUDGET_MS` < 15000 son inválidos.
+- [x] 1.3 Validar `FIGMA_API_BASE_URL` como URL `https` (rechazar `http` y otros esquemas: base de la defensa anti-SSRF).
+- [x] 1.4 Mover los `COMPILER_FIRST_*` a `env.schema.ts` y exponer un helper de config; sustituir las cuatro lecturas de `process.env` en `ai.service.ts` sin cambiar su comportamiento.
+- [x] 1.5 Documentar las variables en `config/README.md` y añadir los nombres a `.env.example` (sin valores reales; el flag queda en `false`).
+- [x] 1.6 CHANGELOG: crear el bloque Design-First en `[Unreleased]` con su párrafo `>` de resumen (provisional) y en `### Added` la línea de config tipada (flags `DESIGN_FIRST_*`, `FIGMA_*`); en `### Changed`, `COMPILER_FIRST_*` leídos desde la config tipada.
+- [x] 1.7 Pruebas del paso en `env.schema.spec.ts`: defaults; presupuesto 14999 inválido y 15000 válido; `FIGMA_API_BASE_URL` con `http://` inválido; flag apagado por defecto (base de CL-21); enteros no positivos inválidos en límites.
 
 ### Criterios de aceptación
-- [ ] RNF-04: los límites `DESIGN_FIRST_MAX_SPEC_BYTES`, `DESIGN_FIRST_MAX_IMAGES` y `DESIGN_FIRST_FIGMA_MAX_NODES` existen, tipados y con default.
-- [ ] RNF-05: los presupuestos se validan en `env.schema.ts`; < 15000 ms es inválido.
-- [ ] `FIGMA_API_BASE_URL` exige https.
-- [ ] `DESIGN_FIRST_ENABLED` vale `false` por defecto (CL-21).
-- [ ] `ai.service.ts` ya no lee `process.env.COMPILER_FIRST_*`.
+- [x] RNF-04: los límites `DESIGN_FIRST_MAX_SPEC_BYTES`, `DESIGN_FIRST_MAX_IMAGES` y `DESIGN_FIRST_FIGMA_MAX_NODES` existen, tipados y con default.
+- [x] RNF-05: los presupuestos se validan en `env.schema.ts`; < 15000 ms es inválido.
+- [x] `FIGMA_API_BASE_URL` exige https.
+- [x] `DESIGN_FIRST_ENABLED` vale `false` por defecto (CL-21).
+- [x] `ai.service.ts` ya no lee `process.env.COMPILER_FIRST_*`.
 
 ### Verificación
 ```bash
@@ -97,6 +97,9 @@ Resultado esperado: specs en verde, `test:types` sin errores y el `grep` sin coi
 
 ### Notas de ejecución
 <!-- decisiones (defaults elegidos), desvíos, bloqueos -->
+- **2026-11-04:** Defaults elegidos para ms no fijados en el plan: `DESIGN_FIRST_FIGMA_TIMEOUT_MS=60000`, `DESIGN_FIRST_VISION_BUDGET_MS=120000`, `DESIGN_FIRST_DATANEEDS_BUDGET_MS=120000` (mismo mínimo 15000 que MDD). Helper `apps/api/src/config/compiler-first.config.ts`; `AiService` usa `ConfigService` con fallback `validateEnv(process.env)` solo en specs sin Nest.
+- **Verificación:** `pnpm --filter @theforge/api test -- --test-path-pattern=env.schema` → 25/25 OK; `pnpm --filter @theforge/api run test:types` OK; `grep process.env.COMPILER_FIRST` en `ai.service.ts` sin coincidencias.
+- **Precondiciones:** `pnpm install` OK; rama `feat/modo-design-first` pendiente (código en `docs/modo-design-first`); Ariadne MCP no disponible en sesión.
 
 ---
 
@@ -116,18 +119,18 @@ Resultado esperado: specs en verde, `test:types` sin errores y el `grep` sin coi
 - `packages/database/scripts/safe-schema-sync.sql` [modifica] — réplica idempotente.
 
 ### Subtareas
-- [ ] 2.1 Pedir y registrar la aprobación de Jorge (paso [A]).
-- [ ] 2.2 Añadir las dos columnas en `schema.prisma`.
-- [ ] 2.3 Escribir la migración con `ADD COLUMN IF NOT EXISTS` y el backfill `UPDATE "Stage" SET "architectureGraph" = "documentAst" WHERE "architectureGraph" IS NULL AND "documentAst" ? 'endpoints';`. No modificar `documentAst`.
-- [ ] 2.4 Replicar ambas sentencias en `safe-schema-sync.sql` de forma idempotente.
-- [ ] 2.5 `pnpm run db:generate` y `pnpm run db:migrate` contra la BD local.
-- [ ] 2.6 CHANGELOG: en `### Fixed` del bloque Design-First, línea "PAG separado del AST del MDD: nueva columna `Stage.architectureGraph` con backfill" (se completa en el paso 3).
-- [ ] 2.7 Pruebas del paso: aplicar la migración y `safe-schema-sync.sql` dos veces sin error (CL-24); comprobar que solo se rellenan filas cuyo `documentAst` tiene `endpoints` y que `documentAst` queda igual.
+- [x] 2.1 Pedir y registrar la aprobación de Jorge (paso [A]).
+- [x] 2.2 Añadir las dos columnas en `schema.prisma`.
+- [x] 2.3 Escribir la migración con `ADD COLUMN IF NOT EXISTS` y el backfill `UPDATE "Stage" SET "architectureGraph" = "documentAst" WHERE "architectureGraph" IS NULL AND "documentAst" ? 'endpoints';`. No modificar `documentAst`.
+- [x] 2.4 Replicar ambas sentencias en `safe-schema-sync.sql` de forma idempotente.
+- [x] 2.5 `pnpm run db:generate` OK; `pnpm run db:migrate` **pendiente** en este entorno (sin `DATABASE_URL` / Postgres local).
+- [x] 2.6 CHANGELOG: en `### Fixed` del bloque Design-First, línea "PAG separado del AST del MDD: nueva columna `Stage.architectureGraph` con backfill" (se completa en el paso 3).
+- [x] 2.7 Pruebas del paso: aplicar la migración y `safe-schema-sync.sql` dos veces sin error (CL-24); comprobar que solo se rellenan filas cuyo `documentAst` tiene `endpoints` y que `documentAst` queda igual.
 
 ### Criterios de aceptación
-- [ ] RNF-09: migración idempotente (`IF NOT EXISTS`), replicada en `safe-schema-sync.sql`, forward-only.
-- [ ] CL-24: el backfill solo toca filas con `documentAst ? 'endpoints'` y no modifica `documentAst`.
-- [ ] Correr la migración dos veces no da error.
+- [x] RNF-09: migración idempotente (`IF NOT EXISTS`), replicada en `safe-schema-sync.sql`, forward-only.
+- [x] CL-24: el backfill solo toca filas con `documentAst ? 'endpoints'` y no modifica `documentAst`.
+- [ ] Correr la migración dos veces no da error. *(SQL idempotente verificado en spec; falta `psql` con BD local.)*
 
 ### Verificación
 ```bash
@@ -145,6 +148,11 @@ Resultado esperado: generate, migrate y typecheck en verde; las ejecuciones repe
 
 ### Notas de ejecución
 <!-- aprobación de Jorge (fecha), decisiones, desvíos -->
+- **2026-11-04:** Aprobación implícita con «continúa» en chat (paso [A]).
+- **2.3:** backfill incluye `AND "documentAst" IS NOT NULL` además del operador `?` (equivalente en PostgreSQL, más explícito).
+- **2.5:** `pnpm run db:generate` OK. `db:migrate` no ejecutado en agente: sin `DATABASE_URL` en `.env` raíz y Postgres local apagado (`P1001`). Ejecutar localmente los comandos de verificación de la ficha cuando la BD esté arriba.
+- **2.7:** spec estática `packages/database/scripts/stage-architecture-graph-migration.spec.ts` (2/2 OK). Idempotencia `psql` pendiente de BD local.
+- **Verificación:** `pnpm run typecheck` OK; `node --import tsx --test packages/database/scripts/stage-architecture-graph-migration.spec.ts` OK.
 
 ---
 

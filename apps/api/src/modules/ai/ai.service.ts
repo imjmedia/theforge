@@ -1,4 +1,5 @@
 import { Injectable, Logger, Optional } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import type {
   GenerateResponseOptions,
   ChatMessage as LlmChatMessage,
@@ -9,6 +10,11 @@ import type { ChatImagePart } from "@theforge/shared-types";
 import type { AemMarketScope, DomainInventory } from "@theforge/shared-types";
 import { stableCrudUserStoryId, stableJourneyUserStoryId } from "@theforge/shared-types";
 import { buildWorkshopSystemPrompt } from "./workshop-system-prompt.builder.js";
+import {
+  readCompilerFirstConfig,
+  readCompilerFirstConfigFromEnv,
+} from "../../config/compiler-first.config.js";
+import { validateEnv } from "../../config/env.schema.js";
 
 import { UX_UI_GUIDE_PROMPT } from "./prompts/ux-ui-guide-prompt.js";
 import { BLUEPRINT_PROMPT } from "./prompts/blueprint-prompt.js";
@@ -377,7 +383,13 @@ export class AiService {
     private readonly techDocsMcp: TechnologyDocsMcpClientService,
     @Optional() private readonly pluginPipeline: PluginDocumentPipelineService | null,
     private readonly mermaidRuntime: MermaidRuntimeService,
+    @Optional() private readonly config?: ConfigService,
   ) {}
+
+  private resolveCompilerFirstConfig() {
+    if (this.config) return readCompilerFirstConfig(this.config);
+    return readCompilerFirstConfigFromEnv(validateEnv({ ...process.env }));
+  }
 
   private async provider() {
     return this.aiFactory.createForUser(getRequestUserId());
@@ -1439,7 +1451,7 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
   async generateBlueprint(mddContent: string, gapsFeedback?: string | null, options?: LegacyGenerateOptions): Promise<string> {
     const mddRaw = mddContent?.trim() ?? "";
     const legacyAsIsBlueprint = options?.legacyBaselineStage === true && mddRaw.length > 0;
-    const useCompilerFirstBp = process.env.COMPILER_FIRST_BLUEPRINT === "true";
+    const useCompilerFirstBp = this.resolveCompilerFirstConfig().useCompilerFirstBlueprint;
     if (useCompilerFirstBp && mddRaw.length > 0 && !legacyAsIsBlueprint) {
       try {
         const abortSignal = this.resolveDeliverableLlmAbortSignal(this.resolveAbortSignal(options));
@@ -1497,7 +1509,7 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
   }
 
   async generateApiContracts(mddContent: string, blueprintContent?: string | null, gapsFeedback?: string | null, brdContent?: string | null, options?: LegacyGenerateOptions): Promise<string> {
-    const useCompilerFirst = process.env.COMPILER_FIRST_API_CONTRACTS !== "false";
+    const useCompilerFirst = this.resolveCompilerFirstConfig().useCompilerFirstApiContracts;
     if (useCompilerFirst && mddContent?.trim()) {
       try {
         this.logger.log(`[AiService] Generando Contratos de API via PAG + DocumentCompiler (Compiler-First)`);
@@ -1579,7 +1591,7 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
     const mddRaw = mddContent?.trim() ?? "";
     const legacyAsIsLogicFlows = options?.legacyBaselineStage === true && mddRaw.length > 0;
 
-    const useCompilerFirstLf = process.env.COMPILER_FIRST_LOGIC_FLOWS !== "false";
+    const useCompilerFirstLf = this.resolveCompilerFirstConfig().useCompilerFirstLogicFlows;
     if (useCompilerFirstLf && mddRaw.length > 0 && !legacyAsIsLogicFlows) {
       try {
         const abortSignal = this.resolveDeliverableLlmAbortSignal(this.resolveAbortSignal(options));
@@ -1758,7 +1770,7 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
   }
 
   async generateInfra(mddContent: string, blueprintContent?: string | null, gapsFeedback?: string | null, options?: LegacyGenerateOptions): Promise<string> {
-    const useCompilerFirstInfra = process.env.COMPILER_FIRST_INFRA !== "false";
+    const useCompilerFirstInfra = this.resolveCompilerFirstConfig().useCompilerFirstInfra;
     if (useCompilerFirstInfra && mddContent?.trim()) {
       try {
         const abortSignal = this.resolveDeliverableLlmAbortSignal(this.resolveAbortSignal(options));
