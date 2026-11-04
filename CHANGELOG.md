@@ -9,6 +9,7 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 ### Added
 - **Design-First paso 5:** valor `ProjectType.DESIGN_FIRST` en Prisma (detrás de flag en pasos posteriores), columnas `Stage.designSpec` / `designSpecRevision` y tabla `UserFigmaCredential` (token Figma BYOK cifrado).
 - **Contratos zod de `designSpec`** en `@theforge/shared-types/design-first` (invariantes I1–I3, hash canónico, adaptadores ScreenSpec v1).
+- **Compilador determinista DataNeeds → PAG y puertas de fase Design-First** (`compileDataNeedsToPag`, `evaluateDesignFirstPhaseGates`, golden `three-screens.pag.json`).
 - **`arquitectura/modo-design-first/`**: README con decisiones, `01-PRD.md` (RF-01…RF-19, RNF-01…RNF-10), `02-estructura-de-archivos.md`, `03-arquitectura-y-diseno.md`, `04-plan-de-pruebas.md`, `05-casos-limite.md` (CL-01…CL-31), `06-riesgos-y-decisiones.md` y `tasks/HANDOFF.md` + `tasks/TASKS.md` con 28 fichas ejecutables en orden. Registra el falso negativo de Ariadne (`validate_change_plan` BLOCKED con índice `up_to_date`) y el defecto actual de `AiService.lastGeneratedPag` / `Stage.documentAst` que los pasos 2-3 corrigen.
 - **Config tipada Design-First** (`apps/api/src/config/env.schema.ts`): flags `DESIGN_FIRST_*`, `FIGMA_API_BASE_URL` (solo https) y límites RNF-04/RNF-05; helper `compiler-first.config.ts` para entregables compilados.
 
