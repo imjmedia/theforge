@@ -20,7 +20,7 @@
                 },
                 "example": [
                   {
-                    "id": "883b21a3-f649-41ed-8e09-88078dbd9765"
+                    "id": "2b667c1a-da56-4773-8581-a748933ed281"
                   }
                 ]
               }
@@ -166,7 +166,7 @@
                   "$ref": "#/components/schemas/Customer"
                 },
                 "example": {
-                  "id": "883b21a3-f649-41ed-8e09-88078dbd9765"
+                  "id": "2b667c1a-da56-4773-8581-a748933ed281"
                 }
               }
             }
@@ -314,7 +314,7 @@
                 },
                 "example": {
                   "deleted": true,
-                  "id": "c530f58b-8c84-46b6-837b-4d0d59d3ff1f"
+                  "id": "33f0f143-3b4a-46a6-8d3f-7af1b12a971c"
                 }
               }
             }
@@ -470,7 +470,7 @@
                   "$ref": "#/components/schemas/Customer"
                 },
                 "example": {
-                  "id": "c530f58b-8c84-46b6-837b-4d0d59d3ff1f"
+                  "id": "33f0f143-3b4a-46a6-8d3f-7af1b12a971c"
                 }
               }
             }
@@ -626,7 +626,7 @@
                   "$ref": "#/components/schemas/Customer"
                 },
                 "example": {
-                  "id": "c530f58b-8c84-46b6-837b-4d0d59d3ff1f"
+                  "id": "33f0f143-3b4a-46a6-8d3f-7af1b12a971c"
                 }
               }
             }
@@ -785,7 +785,7 @@
                 },
                 "example": [
                   {
-                    "id": "b7936bfc-66ef-4676-83cd-ed86e32426a6"
+                    "id": "fce68110-3a67-49cb-8dd5-cc2ea7ebf069"
                   }
                 ]
               }
@@ -936,7 +936,7 @@
                   "$ref": "#/components/schemas/Order"
                 },
                 "example": {
-                  "id": "b7936bfc-66ef-4676-83cd-ed86e32426a6"
+                  "id": "fce68110-3a67-49cb-8dd5-cc2ea7ebf069"
                 }
               }
             }
@@ -1089,7 +1089,7 @@
                 },
                 "example": {
                   "deleted": true,
-                  "id": "c530f58b-8c84-46b6-837b-4d0d59d3ff1f"
+                  "id": "33f0f143-3b4a-46a6-8d3f-7af1b12a971c"
                 }
               }
             }
@@ -1250,7 +1250,7 @@
                   "$ref": "#/components/schemas/Order"
                 },
                 "example": {
-                  "id": "c530f58b-8c84-46b6-837b-4d0d59d3ff1f"
+                  "id": "33f0f143-3b4a-46a6-8d3f-7af1b12a971c"
                 }
               }
             }
@@ -1411,7 +1411,7 @@
                   "$ref": "#/components/schemas/Order"
                 },
                 "example": {
-                  "id": "c530f58b-8c84-46b6-837b-4d0d59d3ff1f"
+                  "id": "33f0f143-3b4a-46a6-8d3f-7af1b12a971c"
                 }
               }
             }

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { PagEntity, PagEndpoint, ProjectArchitectureGraph } from "../project-architecture-graph.js";
 
 /** Semilla fija para ejemplos OpenAPI y fixtures (I8, determinista). */
@@ -24,8 +23,21 @@ export function buildOpenApiOperationId(method: string, openApiPath: string): st
   return `${method.toLowerCase()}_${slug || "root"}`;
 }
 
-function seededHex(seed: string, key: string, bytes: number): string {
-  return createHash("sha256").update(`${seed}:${key}`, "utf8").digest("hex").slice(0, bytes);
+/** FNV-1a extendido (determinista, sin `node:crypto`; usable en web y API). */
+function seededHex(seed: string, key: string, hexChars: number): string {
+  const input = `${seed}:${key}`;
+  const chunks: string[] = [];
+  let round = 0;
+  while (chunks.join("").length < hexChars) {
+    let hash = 2166136261 ^ round;
+    for (let i = 0; i < input.length; i++) {
+      hash ^= input.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    chunks.push((hash >>> 0).toString(16).padStart(8, "0"));
+    round += 1;
+  }
+  return chunks.join("").slice(0, hexChars);
 }
 
 /** UUID v4 determinista (no criptográfico; solo mocks). */

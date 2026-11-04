@@ -29,7 +29,7 @@ export const handlers = [
     if (mockState === "error") {
       return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
     }
-    return HttpResponse.json([{"id":"883b21a3-f649-41ed-8e09-88078dbd9765"}]);
+    return HttpResponse.json([{"id":"2b667c1a-da56-4773-8581-a748933ed281"}]);
   }),
   http.get(`/api/v1/customers/:id`, ({ request, params }) => {
     const mockState = request.headers.get("x-mock-state");
@@ -39,7 +39,7 @@ export const handlers = [
     if (mockState === "error") {
       return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
     }
-    return HttpResponse.json({"id":"0f4ba3c2-c9aa-465c-8f16-15b0cd6f819f"});
+    return HttpResponse.json({"id":"417003a9-b3e9-483e-8bc2-2c37ab7e997c"});
   }),
   http.get(`/api/v1/orders`, ({ request, params }) => {
     const mockState = request.headers.get("x-mock-state");
@@ -49,7 +49,7 @@ export const handlers = [
     if (mockState === "error") {
       return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
     }
-    return HttpResponse.json([{"id":"b7936bfc-66ef-4676-83cd-ed86e32426a6"}]);
+    return HttpResponse.json([{"id":"fce68110-3a67-49cb-8dd5-cc2ea7ebf069"}]);
   }),
   http.get(`/api/v1/orders/:id`, ({ request, params }) => {
     const mockState = request.headers.get("x-mock-state");
@@ -59,7 +59,7 @@ export const handlers = [
     if (mockState === "error") {
       return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
     }
-    return HttpResponse.json({"id":"58ddae4a-e60b-472f-8190-fb2fe4216a16"});
+    return HttpResponse.json({"id":"8e84aa9f-8315-4aee-89ea-8fc5eeaf3214"});
   }),
   http.patch(`/api/v1/customers/:id`, ({ request, params }) => {
     const mockState = request.headers.get("x-mock-state");
@@ -69,7 +69,7 @@ export const handlers = [
     if (mockState === "error") {
       return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
     }
-    return HttpResponse.json({"id":"0f4ba3c2-c9aa-465c-8f16-15b0cd6f819f"});
+    return HttpResponse.json({"id":"417003a9-b3e9-483e-8bc2-2c37ab7e997c"});
   }),
   http.patch(`/api/v1/orders/:id`, ({ request, params }) => {
     const mockState = request.headers.get("x-mock-state");
@@ -79,7 +79,7 @@ export const handlers = [
     if (mockState === "error") {
       return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
     }
-    return HttpResponse.json({"id":"58ddae4a-e60b-472f-8190-fb2fe4216a16"});
+    return HttpResponse.json({"id":"8e84aa9f-8315-4aee-89ea-8fc5eeaf3214"});
   }),
   http.post(`/api/v1/customers`, ({ request, params }) => {
     const mockState = request.headers.get("x-mock-state");
@@ -89,7 +89,7 @@ export const handlers = [
     if (mockState === "error") {
       return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
     }
-    return HttpResponse.json({"id":"527dc07c-216b-40f6-8505-67749ac07583"});
+    return HttpResponse.json({"id":"70d05981-b247-4d6a-8c20-a797961658b0"});
   }),
   http.post(`/api/v1/orders`, ({ request, params }) => {
     const mockState = request.headers.get("x-mock-state");
@@ -99,6 +99,6 @@ export const handlers = [
     if (mockState === "error") {
       return HttpResponse.json({ "statusCode": 500, "message": "Error simulado", "error": "Internal Server Error" }, { status: 500 });
     }
-    return HttpResponse.json({"id":"2c073c5a-9f3c-4b54-803d-ff30a44989ff"});
+    return HttpResponse.json({"id":"de64468f-ba54-4d7a-8c99-092d5cab4d78"});
   })
 ];
