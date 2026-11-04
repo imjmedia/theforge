@@ -13,11 +13,16 @@ import { createMddSlice } from "./workshop/slice-mdd";
 import { createDeliverablesSlice } from "./workshop/slice-deliverables";
 import { createLegacyDebugSlice } from "./workshop/slice-legacy-debug";
 import { createClarifySlice } from "./workshop/slice-clarify";
+import { createDesignSlice } from "./workshop/slice-design";
 
 export {
   isMddEditorDirty,
   selectPersistedMddBaseline,
   selectWorkshopAgentsBusy,
+  selectDesignGates,
+  selectDesignPanelError,
+  selectDesignRevision,
+  selectDesignStale,
 } from "./workshop/selectors";
 export { sessionMessageBody } from "./workshop/helpers/session-message";
 export type {
@@ -52,4 +57,5 @@ export const useWorkshopStore = create<WorkshopState>((set, get, api) => ({
   ...createDeliverablesSlice(set, get, api),
   ...createLegacyDebugSlice(set, get, api),
   ...createClarifySlice(set, get, api),
+  ...createDesignSlice(set, get, api),
 }));

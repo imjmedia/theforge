@@ -9,6 +9,7 @@ import type { WorkshopUxGuidePanelProps } from "./workshopUxGuidePanel.types";
 
 export interface WorkshopDocPanelContentProps {
   centralPanel: string;
+  projectId: string;
   legacy: WorkshopLegacyPanelsProps;
   benchmark: WorkshopBenchmarkPanelProps;
   mdd: WorkshopMddPanelProps;

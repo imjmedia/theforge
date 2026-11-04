@@ -47,3 +47,9 @@ Tools opcionales del contrato nativo: `list_screens`, `get_design_tokens`.
 - **Formato accionable** — tablas por rol (Ruta, Página, US, Componentes UI, API, Estados); endpoints solo de api-contracts; sin MCP → shadcn/ui + design-system.
 
 Sin MCP compatible activo, **todo cae al comportamiento heurístico/Ariadne** actual.
+
+## Design-First (`ProjectType.DESIGN_FIRST`)
+
+- **`POST /api/projects/:id/ui-screens/sync`** (`UiScreensService.syncUiScreens`) responde **409** con código **`ERR_DESIGN_FIRST_SCREENS_OWNED`**: las pantallas del handoff las genera la cascada `design_screens_render` desde `Stage.designSpec`, no el sync MCP.
+- El MCP gráfico sigue siendo **opcional** para enriquecer componentes en propuestas de diseño u otros entregables; no sustituye credenciales Figma (módulo `figma/`).
+- Ver `apps/api/src/modules/design-first/README.md` y [docs/notebooklm/DESIGN-FIRST.md](../../../../docs/notebooklm/DESIGN-FIRST.md).

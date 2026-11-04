@@ -174,4 +174,63 @@ describe("design-proposal.service", () => {
     const method = Reflect.getMetadata(METHOD_METADATA, handler);
     assert.equal(method, 1);
   });
+
+  it("CL-30: import/figma exige nivel contribute", () => {
+    const handler = DesignFirstController.prototype.importFigma;
+    const level = Reflect.getMetadata(PROJECT_SCOPED_KEY, handler)?.[0]?.level;
+    assert.equal(level, "contribute");
+  });
+
+  it("CL-29: MCP caído → warning y diff intacto", async () => {
+    const uiMcp = {
+      isActive: async () => true,
+      resolveComponent: async () => {
+        throw new Error("down");
+      },
+    };
+    const svc = DesignProposalService.createForTest({
+      env: { NODE_ENV: "test", DESIGN_FIRST_ENABLED: "true" },
+    });
+    (svc as unknown as { uiMcp: typeof uiMcp }).uiMcp = uiMcp;
+    const issues: string[] = [];
+    const enriched = await svc.enrichScreenComponents(
+      [
+        {
+          id: "home",
+          name: "Home",
+          route: "/",
+          roles: [],
+          states: [],
+          origin: { kind: "manual" },
+          components: [{ id: "home-c1", component: "Button", label: "Go" }],
+        },
+      ],
+      issues,
+    );
+    assert.equal(enriched[0]?.components[0]?.package, undefined);
+    assert.ok(issues.some((i) => i.includes("MCP gráfico")));
+  });
+
+  it("CL-29: sin MCP configurado no llama resolve", async () => {
+    const svc = DesignProposalService.createForTest({
+      env: { NODE_ENV: "test", DESIGN_FIRST_ENABLED: "true" },
+    });
+    const issues: string[] = [];
+    const enriched = await svc.enrichScreenComponents(
+      [
+        {
+          id: "home",
+          name: "Home",
+          route: "/",
+          roles: [],
+          states: [],
+          origin: { kind: "manual" },
+          components: [{ id: "home-c1", component: "Button", label: "Go" }],
+        },
+      ],
+      issues,
+    );
+    assert.equal(enriched.length, 1);
+    assert.equal(issues.length, 0);
+  });
 });

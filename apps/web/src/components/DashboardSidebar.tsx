@@ -475,6 +475,7 @@ export function DashboardSidebar({
     if (!workshopProject || !storeProject || storeProject.id !== workshopProject.id) return [];
     const navCtx = {
       isLegacyProject: !!isLegacyProject,
+      projectType: storeProject?.projectType,
       legacyStageOrdinal: activeWorkshopStageForNav?.ordinal ?? 1,
       effectiveComplexityForTabs,
       activeLegacyState: activeLegacyStateForNav,

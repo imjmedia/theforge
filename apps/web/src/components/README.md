@@ -39,7 +39,8 @@
 | **ProviderInstancesCard** | CRUD/listado de instancias de proveedor IA; marca la instancia **Activa** (runtime del grafo MDD y chat). En el modal: **Modelo auditor / planner** (`auditorChatModel`); **Modelo top MDD HIGH** (`highComplexityChatModel`, §3 SQL+ER) con leyenda de coste de referencia en MXN. |
 | **SystemConfigCard** | Ajustes → **Sistema** (solo `super_admin`): edita configuración de plataforma (`GET/PATCH /admin/system-config`) — subpestañas por categoría con texto de impacto; incluye **Correo y acceso** (SMTP, dominio, ForgeOps) con URL/body del webhook provision-user bajo el token ForgeOps. |
 | **TasksQualityBadge** | Toolbar Tasks (Workshop): lee `Stage.shortTermContext.tasksQualitySnapshot` y muestra score del auditor LLM (umbral 92) con tooltip de métricas deterministas. Regenerar Tasks usa `requestGenerateTasks` (confirmación `acknowledgeGaps` si el gate MDD tiene blockers). |
-| **AccountConfigCard** | Ajustes → Cuenta: secret MCP rotable y preferencias del taller. |
+| **AccountConfigCard** | Ajustes → Cuenta: secret MCP rotable, preferencias del taller y **FigmaCredentialSettings** (token personal Design-First). |
+| **FigmaCredentialSettings** | BYOK Figma (`/me/integrations/figma` vía `design-first-api`); token solo en campo password y se limpia tras guardar. |
 | **McpSecretCard** | Re-export de `AccountConfigCard` (compat). |
 | **AriadneConfigCard** | URL/token MCP de Ariadne (base de conocimientos). |
 | **UiMcpInstancesCard** | Ajustes → **MCP gráfico**: CRUD team-wide de MCPs de componentes UI (`/api/ui-mcp`), activar/desactivar, **detectar compatibilidad** (badge compatible/no + librería/versión + contrato). Solo admin/super_admin. Habilita componentes reales en UI/UX del MDD/Blueprint y el deliverable «Pantallas». |

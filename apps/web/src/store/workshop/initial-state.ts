@@ -134,6 +134,17 @@ export const workshopInitialState = {
   phase0AssistedTemplateLabel: null as string | null,
   /** Respuesta del API si aún no se pudo persistir en sesión (sin session.id). */
   phase0AssistedBootstrapMessage: null as string | null,
+
+  designLoading: false,
+  designSaving: false,
+  designError: null as string | null,
+  designPanelError: null as string | null,
+  designSpec: null,
+  designRevision: null as number | null,
+  designGates: null,
+  designStale: false,
+  pendingDesignProposal: null,
+  designRevisionConflictNotice: null as string | null,
 };
 
 export type WorkshopInitialState = typeof workshopInitialState;

@@ -2,13 +2,10 @@
  * @fileoverview Folder tile with layered pocket, document peek on hover, and compact metadata.
  */
 import type { DragEvent } from "react";
-import { Check, GitBranch, Heart, Loader2, Palette, Pencil, Sparkles } from "lucide-react";
+import { Check, GitBranch, Heart, Loader2, MonitorSmartphone, Pencil, Palette, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  isGreenfield,
-  ProjectTypeEnum,
-  type ProjectType,
-} from "@theforge/shared-types";
+import type { ProjectType } from "@theforge/shared-types";
+import { getProjectModeBadge } from "@/utils/project-mode-labels";
 
 export type ProjectFolderStatus = "ROJO" | "AMARILLO" | "VERDE";
 
@@ -148,7 +145,7 @@ export function ProjectFolderTile({
   onDragStart,
   onDragEnd,
 }: ProjectFolderTileProps) {
-  const typeIsNew = isGreenfield(projectType ?? ProjectTypeEnum.enum.NEW);
+  const modeBadge = getProjectModeBadge(projectType, approach);
   const isShared = visibility === "SHARED";
   const selectId = `select-project-${id}`;
   const visibilityLabel = isShared ? "Compartido" : "Privado";
@@ -283,28 +280,24 @@ export function ProjectFolderTile({
               <span
                 className={cn(
                   "flex h-6 w-6 items-center justify-center rounded-full border-2 border-[var(--background)] shadow-md",
-                  typeIsNew
-                    ? approach === "UX_FIRST"
-                      ? "bg-pink-500 text-white"
-                      : "bg-emerald-500 text-white"
-                    : "bg-amber-500 text-white",
+                  modeBadge.tone === "legacy"
+                    ? "bg-amber-500 text-white"
+                    : modeBadge.tone === "design-first"
+                      ? "bg-violet-600 text-white"
+                      : modeBadge.tone === "ux-first"
+                        ? "bg-pink-500 text-white"
+                        : "bg-emerald-500 text-white",
                 )}
-                title={
-                  typeIsNew
-                    ? approach === "UX_FIRST"
-                      ? "Proyecto nuevo (UX-First)"
-                      : "Proyecto nuevo (Domain-First)"
-                    : "Legacy"
-                }
+                title={modeBadge.title}
               >
-                {typeIsNew ? (
-                  approach === "UX_FIRST" ? (
-                    <Palette className="h-3 w-3" strokeWidth={2.5} />
-                  ) : (
-                    <Sparkles className="h-3 w-3" strokeWidth={2.5} />
-                  )
-                ) : (
+                {modeBadge.tone === "legacy" ? (
                   <GitBranch className="h-3 w-3" strokeWidth={2.5} />
+                ) : modeBadge.tone === "design-first" ? (
+                  <MonitorSmartphone className="h-3 w-3" strokeWidth={2.5} />
+                ) : modeBadge.tone === "ux-first" ? (
+                  <Palette className="h-3 w-3" strokeWidth={2.5} />
+                ) : (
+                  <Sparkles className="h-3 w-3" strokeWidth={2.5} />
                 )}
               </span>
               <span

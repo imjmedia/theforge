@@ -7,6 +7,7 @@ import {
   HelpCircle,
   Layers,
   Lock,
+  MonitorSmartphone,
   MoreHorizontal,
   Palette,
   Pencil,
@@ -16,6 +17,7 @@ import { useMemo, useState } from "react";
 import type { StageDeliverablesResponse } from "@theforge/shared-types";
 import { getAllowedStageTransitions } from "@theforge/shared-types";
 import { cn } from "@/lib/utils";
+import { getProjectModeBadge } from "@/utils/project-mode-labels";
 import { WorkshopStageTransitionDialog } from "@/components/WorkshopStageTransitionDialog";
 import {
   WORKSHOP_HEADER_CTL,
@@ -206,31 +208,35 @@ export function WorkshopHeaderBar({
                 )}
               </button>
             ) : null}
-            {project ? (
+            {project ? (() => {
+              const mode = getProjectModeBadge(project.projectType, project.approach);
+              const toneClass =
+                mode.tone === "legacy"
+                  ? "border-[var(--border)] bg-[var(--muted)] text-[color-mix(in_oklch,var(--foreground)_88%,var(--muted-foreground))]"
+                  : mode.tone === "design-first"
+                    ? "border-violet-500/40 bg-violet-500/10 text-violet-300"
+                    : mode.tone === "ux-first"
+                      ? "border-pink-500/40 bg-pink-500/10 text-pink-400"
+                      : "border-blue-500/40 bg-blue-500/10 text-blue-400";
+              return (
               <span
                 className={cn(
                   "shrink-0 inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-medium",
-                  project.approach === "UX_FIRST"
-                    ? "border-pink-500/40 bg-pink-500/10 text-pink-400"
-                    : "border-blue-500/40 bg-blue-500/10 text-blue-400",
+                  toneClass,
                 )}
-                title={
-                  project.approach === "UX_FIRST"
-                    ? "Enfoque UX-First: Las pantallas dictan contratos OpenAPI, entidades y arquitectura NestJS."
-                    : "Enfoque Domain-First: Idea abstracta -> BD/API en MDD -> UI."
-                }
+                title={mode.title}
               >
-                {project.approach === "UX_FIRST" ? (
-                  <>
-                    <Palette className="h-3 w-3" aria-hidden /> UX-First
-                  </>
+                {mode.tone === "design-first" ? (
+                  <MonitorSmartphone className="h-3 w-3" aria-hidden />
+                ) : mode.tone === "ux-first" ? (
+                  <Palette className="h-3 w-3" aria-hidden />
                 ) : (
-                  <>
-                    <Layers className="h-3 w-3" aria-hidden /> Domain-First
-                  </>
+                  <Layers className="h-3 w-3" aria-hidden />
                 )}
+                {mode.label}
               </span>
-            ) : null}
+              );
+            })() : null}
             <span
               role="status"
               aria-live="polite"

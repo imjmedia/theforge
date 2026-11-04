@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
+import { Injectable, Logger, OnModuleDestroy, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { ChatImagePart } from "@theforge/shared-types";
 import {
@@ -33,10 +33,14 @@ import {
 } from "./design-first.errors.js";
 import { DesignSpecReader, DesignSpecService } from "./design-spec.service.js";
 import type { AuthRedisClient } from "../auth/auth-redis.store.js";
+import { UiMcpClientService } from "../ui-mcp/ui-mcp-client.service.js";
 
 type ProposalRedisClient = AuthRedisClient & {
   get: (key: string) => Promise<string | null>;
 };
+
+/** Timeout por componente al enriquecer con MCP gráfico (paso 19). */
+export const DESIGN_MCP_ENRICH_TIMEOUT_MS = 4_000;
 
 /** TTL de propuestas HITL en Redis (24 h). */
 export const DESIGN_PROPOSAL_TTL_SECONDS = 86_400;
@@ -97,6 +101,7 @@ export class DesignProposalService implements OnModuleDestroy {
     private readonly ai: AiService,
     private readonly reader: DesignSpecReader,
     private readonly designSpec: DesignSpecService,
+    @Optional() private readonly uiMcp?: UiMcpClientService,
   ) {}
 
   static createForTest(options: StoreOptions = {}): DesignProposalService {
@@ -260,6 +265,216 @@ export class DesignProposalService implements OnModuleDestroy {
     };
   }
 
+  private figmaOriginKey(origin: DesignSpecScreen["origin"]): string | null {
+    if (origin.kind !== "figma" || !origin.fileKey?.trim() || !origin.nodeId?.trim()) return null;
+    return `${origin.fileKey}:${origin.nodeId}`;
+  }
+
+  private screenContentKey(screen: DesignSpecScreen): string {
+    return JSON.stringify({
+      name: screen.name,
+      route: screen.route,
+      origin: screen.origin,
+      components: screen.components,
+      static: screen.static,
+      purpose: screen.purpose,
+      states: screen.states,
+    });
+  }
+
+  buildFigmaDiffAgainstSpec(
+    current: DesignSpec,
+    extracted: { screens: DesignSpecScreen[]; navigation: DesignSpecNavigation[] },
+  ): DesignProposalDiff {
+    const existingByNode = new Map<string, DesignSpecScreen>();
+    for (const screen of current.screens) {
+      const key = this.figmaOriginKey(screen.origin);
+      if (key) existingByNode.set(key, screen);
+    }
+
+    const usedIds = new Set(current.screens.map((s) => s.id));
+    const usedRoutes = new Set(current.screens.map((s) => s.route));
+    const addScreens: DesignSpecScreen[] = [];
+    const updateScreens: DesignSpecScreen[] = [];
+    const idMap = new Map<string, string>();
+
+    for (const screen of extracted.screens) {
+      const nodeKey = this.figmaOriginKey(screen.origin);
+      const existing = nodeKey ? existingByNode.get(nodeKey) : undefined;
+      if (existing) {
+        idMap.set(screen.id, existing.id);
+        const merged: DesignSpecScreen = {
+          ...screen,
+          id: existing.id,
+          route: existing.route,
+          components: screen.components.map((c, i) => ({
+            ...c,
+            id: `${existing.id}-c${i + 1}`,
+          })),
+        };
+        if (this.screenContentKey(merged) !== this.screenContentKey(existing)) {
+          updateScreens.push(merged);
+        }
+        continue;
+      }
+      const resolved = resolveImportScreenIdAndRoute(screen.id, screen.route, usedIds, usedRoutes);
+      idMap.set(screen.id, resolved.id);
+      usedIds.add(resolved.id);
+      usedRoutes.add(resolved.route);
+      addScreens.push({
+        ...screen,
+        id: resolved.id,
+        route: resolved.route,
+        components: screen.components.map((c, i) => ({
+          ...c,
+          id: `${resolved.id}-c${i + 1}`,
+        })),
+      });
+    }
+
+    const navKey = (edge: DesignSpecNavigation) =>
+      `${edge.from}:${edge.to}:${edge.trigger.event}:${edge.trigger.componentId ?? ""}`;
+    const currentNav = new Set(current.navigation.map(navKey));
+    const addNavigation: DesignSpecNavigation[] = [];
+    for (const edge of extracted.navigation) {
+      const from = idMap.get(edge.from) ?? edge.from;
+      const to = idMap.get(edge.to) ?? edge.to;
+      const normalized = { ...edge, from, to };
+      if (!currentNav.has(navKey(normalized))) addNavigation.push(normalized);
+    }
+
+    return {
+      add: { screens: addScreens, navigation: addNavigation },
+      update: { screens: updateScreens, navigation: [] },
+      remove: { screenIds: [], navigationIds: [] },
+    };
+  }
+
+  async enrichScreenComponents(
+    screens: DesignSpecScreen[],
+    issues: string[],
+  ): Promise<DesignSpecScreen[]> {
+    if (!this.uiMcp) return screens;
+    let active = false;
+    try {
+      active = await this.uiMcp.isActive();
+    } catch {
+      issues.push("MCP gráfico no disponible; componentes sin enriquecer");
+      return screens;
+    }
+    if (!active) return screens;
+
+    const out: DesignSpecScreen[] = [];
+    for (const screen of screens) {
+      const components = await Promise.all(
+        screen.components.map(async (component) => {
+          if (component.package?.trim() && component.version?.trim()) return component;
+          try {
+            const resolved = await Promise.race([
+              this.uiMcp!.resolveComponent({
+                entityName: component.component,
+                uiHint: component.component,
+                context: component.label,
+              }),
+              new Promise<null>((_, reject) =>
+                setTimeout(() => reject(new Error("timeout")), DESIGN_MCP_ENRICH_TIMEOUT_MS),
+              ),
+            ]);
+            if (!resolved) {
+              issues.push(`No se pudo resolver el componente «${component.component}»`);
+              return component;
+            }
+            return { ...component, package: resolved.package, version: resolved.version };
+          } catch {
+            issues.push(`MCP gráfico no respondió al resolver «${component.component}»`);
+            return component;
+          }
+        }),
+      );
+      out.push({ ...screen, components });
+    }
+    return out;
+  }
+
+  private async enrichDiffComponents(
+    diff: DesignProposalDiff,
+    issues: string[],
+  ): Promise<DesignProposalDiff> {
+    return {
+      ...diff,
+      add: {
+        screens: await this.enrichScreenComponents(diff.add.screens, issues),
+        navigation: diff.add.navigation,
+      },
+      update: {
+        screens: await this.enrichScreenComponents(diff.update.screens, issues),
+        navigation: diff.update.navigation,
+      },
+    };
+  }
+
+  private async persistScreensProposal(
+    projectId: string,
+    stage: { id: string; designSpecRevision: number },
+    diff: DesignProposalDiff,
+    issues: string[],
+  ): Promise<{
+    proposalId: string;
+    revision: number;
+    expiresAt: string;
+    diff: DesignProposalDiff;
+    issues: string[];
+  }> {
+    const enrichedIssues = [...issues];
+    const enrichedDiff = await this.enrichDiffComponents(diff, enrichedIssues);
+    const proposalId = randomUUID();
+    const expiresAt = new Date(this.now() + DESIGN_PROPOSAL_TTL_SECONDS * 1000).toISOString();
+    const stored: StoredDesignProposal = {
+      proposalId,
+      projectId,
+      stageId: stage.id,
+      baseRevision: stage.designSpecRevision,
+      kind: "screens",
+      createdAt: new Date(this.now()).toISOString(),
+      expiresAt,
+      diff: enrichedDiff,
+      issues: enrichedIssues,
+    };
+    await this.redisSet(proposalKey(projectId, proposalId), JSON.stringify(stored), DESIGN_PROPOSAL_TTL_SECONDS);
+    return {
+      proposalId,
+      revision: stage.designSpecRevision,
+      expiresAt,
+      diff: enrichedDiff,
+      issues: enrichedIssues,
+    };
+  }
+
+  async importFromFigmaExtract(
+    projectId: string,
+    extracted: {
+      fileKey: string;
+      screens: DesignSpecScreen[];
+      navigation: DesignSpecNavigation[];
+      issues: string[];
+    },
+    stageId?: string | null,
+  ): Promise<{
+    proposalId: string;
+    revision: number;
+    expiresAt: string;
+    diff: DesignProposalDiff;
+    issues: string[];
+  }> {
+    this.assertWritesAllowed();
+    const { stage } = await this.reader.loadPrimaryStage(projectId, stageId);
+    const current = parseDesignSpec(
+      stage.designSpec ?? { schemaVersion: 1, entities: [], screens: [], navigation: [], dataNeeds: [] },
+    );
+    const diff = this.buildFigmaDiffAgainstSpec(current, extracted);
+    return this.persistScreensProposal(projectId, stage, diff, extracted.issues);
+  }
+
   async importFromImages(
     projectId: string,
     body: unknown,
@@ -297,31 +512,7 @@ export class DesignProposalService implements OnModuleDestroy {
 
     const current = parseDesignSpec(stage.designSpec ?? { schemaVersion: 1, entities: [], screens: [], navigation: [], dataNeeds: [] });
     const diff = this.buildDiffAgainstSpec(current, extract);
-
-    const proposalId = randomUUID();
-    const createdAt = new Date(this.now()).toISOString();
-    const expiresAt = new Date(this.now() + DESIGN_PROPOSAL_TTL_SECONDS * 1000).toISOString();
-    const stored: StoredDesignProposal = {
-      proposalId,
-      projectId,
-      stageId: stage.id,
-      baseRevision: stage.designSpecRevision,
-      kind: "screens",
-      createdAt,
-      expiresAt,
-      diff,
-      issues: extract.issues,
-    };
-
-    await this.redisSet(proposalKey(projectId, proposalId), JSON.stringify(stored), DESIGN_PROPOSAL_TTL_SECONDS);
-
-    return {
-      proposalId,
-      revision: stage.designSpecRevision,
-      expiresAt,
-      diff,
-      issues: extract.issues,
-    };
+    return this.persistScreensProposal(projectId, stage, diff, extract.issues);
   }
 
   async proposeDataNeeds(

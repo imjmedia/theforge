@@ -55,6 +55,18 @@ export interface WorkshopState {
   agentGovernanceContent: string | null;
   /** Fechas Creado/Última regeneración por campo (desde stamp API, no del editor). */
   documentTimestamps: Record<string, WorkshopDocumentTimestamps>;
+
+  designLoading: boolean;
+  designSaving: boolean;
+  designError: string | null;
+  designPanelError: string | null;
+  designSpec: import("@theforge/shared-types").DesignSpec | null;
+  designRevision: number | null;
+  designGates: import("@theforge/shared-types").DesignFirstPhaseGates | null;
+  designStale: boolean;
+  pendingDesignProposal: import("@/lib/design-first-api").DesignProposalResponse | null;
+  designRevisionConflictNotice: string | null;
+
   conformance: {
     blueprint: ConformanceResult;
     blueprintDataModel: ConformanceResult;
@@ -484,5 +496,43 @@ export interface WorkshopState {
     clarificationMarkerCount: number;
     persisted: boolean;
   } | null>;
+
+  fetchDesign: (projectId: string) => Promise<import("@theforge/shared-types").DesignReadResponse | null>;
+  resetDesignState: () => void;
+  clearDesignPanelError: () => void;
+  clearDesignRevisionConflictNotice: () => void;
+  saveDesignScreens: (
+    projectId: string,
+    body: import("@theforge/shared-types").PutDesignScreensBody,
+  ) => Promise<import("@theforge/shared-types").DesignReadResponse | null>;
+  saveDesignDataNeeds: (
+    projectId: string,
+    body: import("@theforge/shared-types").PutDesignDataNeedsBody,
+  ) => Promise<import("@theforge/shared-types").DesignReadResponse | null>;
+  compileDesignContractAction: (
+    projectId: string,
+    body: import("@theforge/shared-types").CompileDesignContractBody,
+  ) => Promise<import("@theforge/shared-types").DesignReadResponse | null>;
+  proposeDesignDataNeedsAction: (
+    projectId: string,
+  ) => Promise<import("@/lib/design-first-api").DesignProposalResponse | null>;
+  importDesignImagesAction: (
+    projectId: string,
+    body: { images: ChatImagePart[]; hint?: string },
+  ) => Promise<import("@/lib/design-first-api").DesignProposalResponse | null>;
+  importDesignFigmaAction: (
+    projectId: string,
+    body: { fileUrl: string; nodeIds?: string[] },
+  ) => Promise<import("@/lib/design-first-api").DesignProposalResponse | null>;
+  acceptDesignProposalAction: (
+    projectId: string,
+    proposalId: string,
+    revision: number,
+  ) => Promise<import("@theforge/shared-types").DesignReadResponse | null>;
+  rejectDesignProposalAction: (projectId: string, proposalId: string) => Promise<boolean>;
+  setPendingDesignProposal: (
+    proposal: import("@/lib/design-first-api").DesignProposalResponse | null,
+  ) => void;
+
   reset: () => void;
 }

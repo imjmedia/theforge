@@ -1,7 +1,14 @@
 /**
  * @fileoverview Tipos compartidos del store Workshop: {@link Status} (semáforo), {@link ChatMessage}, tipos de agentes, etc.
  */
-import type { ChatImagePart, MddDeliveryGateResult, ProjectType } from "@theforge/shared-types";
+import type {
+  ChatImagePart,
+  DesignFirstPhaseGates,
+  DesignSpec,
+  MddDeliveryGateResult,
+  ProjectType,
+} from "@theforge/shared-types";
+import type { DesignProposalResponse } from "@/lib/design-first-api";
 
 export type Status = "ROJO" | "AMARILLO" | "VERDE";
 
@@ -310,6 +317,21 @@ export interface Project {
   /** Presente en respuesta API completa; el front usa `activeStageId` para foco MDD. */
   stages?: WorkshopStage[];
 }
+
+/** Estado del slice Design-First (spec + revisión CAS). */
+export interface DesignWorkshopSliceState {
+  designLoading: boolean;
+  designSaving: boolean;
+  designError: string | null;
+  designPanelError: string | null;
+  designSpec: DesignSpec | null;
+  designRevision: number | null;
+  designGates: DesignFirstPhaseGates | null;
+  designStale: boolean;
+  pendingDesignProposal: DesignProposalResponse | null;
+  designRevisionConflictNotice: string | null;
+}
+
 /** Trazas MCP (Ariadne) devueltas cuando el API tiene `LEGACY_CODEBASE_DOC_MCP_DEBUG_UI=1`. */
 export interface LegacyMcpDebugEntry {
   at: string;

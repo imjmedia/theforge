@@ -13,6 +13,7 @@ import { Button, Input } from "./ui";
 import { ListRowIconButton } from "@/components/ListRowIconButton";
 import { api, setAccessToken } from "@/utils/apiClient";
 import { cn } from "@/lib/utils";
+import { FigmaCredentialSettings } from "@/components/FigmaCredentialSettings";
 
 const ACCOUNT_FEATURES = [
   {
@@ -295,6 +296,8 @@ export function AccountConfigCard({ showIaCost, onToggleIaCost }: AccountConfigC
           </button>
         </div>
       </article>
+
+      <FigmaCredentialSettings />
 
       <div className="rounded-2xl border border-[var(--border)] bg-[color-mix(in_oklch,var(--muted)_18%,var(--card))] px-4 py-3.5 sm:px-5">
         <p className="text-xs leading-relaxed text-[var(--foreground-muted)]">

@@ -17,11 +17,12 @@ Extracción incremental de `workshopStore.ts` (Fase 5a del [GOD-REFACTOR](../../
 | **slice-deliverables.ts** | `createDeliverablesSlice` — entregables (UX, Blueprint, API, …), cascada, conformance, Phase 0, **modo asistido** (`startPhase0Assisted` / `stopPhase0Assisted`), estimación. |
 | **slice-legacy-debug.ts** | `createLegacyDebugSlice` — generation-status (reconcilia jobs ya terminados para evitar banner colgado), plan validation, flujos legacy MCP y cascada legacy. |
 | **slice-clarify.ts** | `createClarifySlice` — ADRs, governance, traceability, clarify/resolve, converge/tasks, `reset`. |
+| **slice-design.ts** | `createDesignSlice` — Design-First: `designSpec` + `designSpecRevision`, propuestas HITL, puertas, compile-contract vía `@/lib/design-first-api`; 409 `ERR_DESIGN_REVISION_CONFLICT` recarga y avisa (CL-19). |
 | **helpers/persist-field.ts** | `persistField` — PATCH genérico de entregables (usado por chat y store). |
 | **helpers/agent-progress-patch.ts** | `patchAgentProgressFromMddEvent` — progreso MDD en stream. |
 | **helpers/** | Funciones puras sin Zustand (ver tabla abajo). |
 
-`workshopStore.ts` compone todos los slices y re-exporta tipos/selectores para no romper `@/store/workshopStore`. Fase 5a completada.
+`workshopStore.ts` compone todos los slices (incl. `slice-design`) y re-exporta tipos/selectores para no romper `@/store/workshopStore`. Fase 5a completada; Design-First: [DESIGN-FIRST.md](../../../../docs/notebooklm/DESIGN-FIRST.md).
 
 ## helpers/
 

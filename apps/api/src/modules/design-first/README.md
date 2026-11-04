@@ -22,7 +22,7 @@ Expone el slice **Design-First** del Workshop: lectura del `designSpec`, actuali
 
 ## Dependencias
 
-Importa **Prisma** vía `PrismaService` y **AiModule** (visión → `extractScreenSpecFromImages`; data needs → `proposeDataNeeds`). **No** importa `ProjectsModule`. Exporta `DesignSpecReader`, `DesignProposalService` y servicios de spec/contrato para handoff y cascada (pasos posteriores).
+Exporta `DesignSpecReader`, `DesignProposalService`, `DesignArtifactsService` y servicios de spec/contrato para handoff y cascada (pasos 18–20).
 
 Propuestas HITL: Redis clave `design-first:proposal:{projectId}:{proposalId}` con TTL **24 h** (`DESIGN_PROPOSAL_TTL_SECONDS`); en dev/test sin `REDIS_URL` usa memoria en proceso.
 

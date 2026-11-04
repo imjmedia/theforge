@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { serializeAgentGovernanceScaffold } from "../ai/utils/agent-governance.util.js";
 import { appendArchitectureDecisionToScaffold, buildArchitectureDecisionFromSddConflict } from "../documentation-gap/architecture-decision.util.js";
@@ -7,6 +10,7 @@ import {
   buildProjectDeliverableExportInput,
   buildSpecKitFilesForProject,
   buildUnifiedHandoff,
+  designFirstRepoHandoffFiles,
   enrichSpecKitFilesForHandoff,
   hashHandoffContent,
   reconcileExportScaffold,
@@ -395,5 +399,51 @@ rounded:
     assert.equal(specDesignSystem!.content, mirrorUx!.content);
     assert.match(specDesignSystem!.content, /```yaml[\s\S]*typography:[\s\S]*label-sm/);
     assert.doesNotMatch(specDesignSystem!.content, /```dockerfile/);
+  });
+
+  it("DESIGN_FIRST handoff incluye openapi.yaml y mocks MSW", () => {
+    const pagFixture = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../../../../packages/shared-types/src/design-first/__fixtures__/three-screens.pag.json",
+    );
+    const pag = JSON.parse(readFileSync(pagFixture, "utf8"));
+    const designSpec = {
+      schemaVersion: 1,
+      entities: [],
+      screens: [
+        {
+          id: "home",
+          name: "Home",
+          route: "/",
+          roles: [],
+          states: [],
+          origin: { kind: "manual" },
+          components: [],
+        },
+      ],
+      navigation: [],
+      dataNeeds: [],
+    };
+    const project = {
+      ...baseProject,
+      projectType: "DESIGN_FIRST" as const,
+      stages: [
+        {
+          ...baseProject.stages[0],
+          designSpec,
+          architectureGraph: pag,
+        },
+      ],
+    };
+    const files = designFirstRepoHandoffFiles(project as never, project.stages[0] as never);
+    const paths = files.map((f) => f.path);
+    assert.ok(paths.includes("openapi.yaml"));
+    assert.ok(paths.includes("mocks/handlers.ts"));
+    assert.ok(paths.includes("docs/sdd/pantallas.md"));
+    assert.ok(paths.includes("docs/sdd/datos.md"));
+
+    const deliverables = buildProjectDeliverableExportInput(project as never, project.stages[0] as never);
+    const enriched = enrichSpecKitFilesForHandoff([], deliverables, files);
+    assert.ok(enriched.some((f) => f.path === "openapi.yaml"));
   });
 });

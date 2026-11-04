@@ -35,11 +35,12 @@ import { TraceabilityGapList } from "@/components/TraceabilityGapList";
 import { AnalyzeDashboard } from "@/components/AnalyzeDashboard";
 import { TokenUsageCard } from "@/components/TokenUsageCard";
 import type { SddAnalyzeReport, MddDeliveryGateResult } from "@theforge/shared-types";
-import { agentGovernanceScaffoldHasContent } from "@theforge/shared-types";
+import { agentGovernanceScaffoldHasContent, isDesignFirst } from "@theforge/shared-types";
 import { useWorkshopStore, type Status } from "../store/workshopStore";
 import { isDeliverablesCascadeUiActive } from "../utils/deliverablesCascadeUi";
 import { calculateCostFromMdd } from "../utils/costCalculator";
 import { apiFetch, API_BASE } from "@/utils/apiClient";
+import { summarizeDesignPhaseGate } from "@/views/workshop/design/design-panels.util";
 
 /** Flat cards: border + bg only — avoids muddy stacked shadows next to the metrics flyout in light mode */
 const WORKSHOP_METRICS_CARD =
@@ -142,6 +143,9 @@ export function WorkshopMetricsColumnInner({
     [mddContent, project?.mddContent],
   );
   const projectStatus: Status = project?.status ?? "ROJO";
+  const designGates = useWorkshopStore((s) => s.designGates);
+  const designStale = useWorkshopStore((s) => s.designStale);
+  const isDesignFirstProject = isDesignFirst(project?.projectType ?? "NEW");
   const semaphoreGreen = isWorkshopSemaphoreGreen(liveMetrics, projectStatus);
   const hasSpec = (specContent ?? "").trim().length > 0;
   const complexity = project?.complexity ?? "HIGH";
@@ -565,6 +569,33 @@ export function WorkshopMetricsColumnInner({
                 ) : null}
               </div>
             </div>
+            {isDesignFirstProject ? (
+              <div className={cn(WORKSHOP_METRICS_CARD, "space-y-2 p-2.5")}>
+                <p className="text-xs font-semibold text-[var(--foreground)]">Puertas Design-First</p>
+                {designStale ? (
+                  <p className="text-[10px] text-[color-mix(in_oklch,var(--warning)_85%,var(--foreground))]">
+                    Contrato desactualizado — recompila en la pestaña Contrato.
+                  </p>
+                ) : null}
+                <ul className="space-y-1.5">
+                  {(["phase1", "phase2", "phase3"] as const).map((key) => {
+                    const gate = summarizeDesignPhaseGate(key, designGates);
+                    return (
+                      <li key={key} className="flex items-start justify-between gap-2 text-[11px]">
+                        <span className="text-[var(--foreground-muted)]">{gate.label}</span>
+                        <span
+                          className={
+                            gate.ok ? WORKSHOP_METRICS_BADGE_OK : WORKSHOP_METRICS_BADGE_WARN
+                          }
+                        >
+                          {gate.ok ? "OK" : gate.detail}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : null}
             {deliveryGate && !mddEmpty && !deliveryGate.ok ? (
               <div
                 role="status"

@@ -2,6 +2,14 @@
 
 CRUD de proyectos, actualización de MDD y entregables (Blueprint, API, etc.).
 
+## Design-First (`ProjectType.DESIGN_FIRST`)
+
+- **`Stage.designSpec` / `designSpecRevision`:** documento único de pantallas, navegación, entidades y `dataNeeds`; escrituras con CAS (no fence MDD). API HTTP en `DesignFirstModule` (`/projects/:id/design*`) — ver `apps/api/src/modules/design-first/README.md` y [docs/notebooklm/DESIGN-FIRST.md](../../../docs/notebooklm/DESIGN-FIRST.md).
+- **`Stage.architectureGraph`:** PAG determinista; lectura preferente para `openapi.json` / `openapi.yaml` y generadores compiler-first (ADR [0006](../../../docs/adr/0006-architecture-graph-separado.md)).
+- **Cascada:** oleadas `DELIVERABLE_WAVES_DESIGN_FIRST_BY_COMPLEXITY`; `api_contracts` sin LLM desde PAG; `design_screens_render` desde `designSpec`; puertas `ERR_DESIGN_PHASE_GATE` / `ERR_DESIGN_STALE`.
+- **Creación:** solo con `DESIGN_FIRST_ENABLED=true`. Merge de proyectos DESIGN_FIRST → 409 en v1.
+- **`uiScreensContent`:** columna de **`Project`** (no Stage); en DESIGN_FIRST la rellena `design_screens_render`, no `UiScreensService.syncUiScreens` (409 `ERR_DESIGN_FIRST_SCREENS_OWNED`).
+
 - **Stage (Prisma):** `mddContent`, semáforo SDD (`status` ROJO/AMARILLO/VERDE), `precisionScore`, `estimation` y `workflowStatus` (DRAFT/ACTIVE/…) viven por etapa. `PATCH /projects/:id` puede llevar `stageId` para apuntar a una etapa concreta; si no, se usa la etapa activa (`workflowStatus === ACTIVE`) o la de menor `ordinal`.
 - **Rutas etapas:** `GET /projects/:projectId/stages` (lista ordenada por `ordinal`, incluye `estimation`); `POST /projects/:projectId/stages` (respuesta **`{ stage }`**, no proyecto completo; opcional `copyMddFromStageId`, `activate`); `PATCH /projects/:projectId/stages/:stageId` (respuesta **`{ stage }`**; nombre/clave/ordinal, `activate: true` para exclusividad ACTIVE).
 - **Contratos API:** `POST …/generate-api-contracts` y su **preview** exigen que el Blueprint cubra el **§3 Modelo de datos** del MDD (`ConformanceService.checkBlueprintDataModel`); si hay gaps → **400** con `code: BLUEPRINT_DATA_MODEL_GAPS` y `gaps[]`.

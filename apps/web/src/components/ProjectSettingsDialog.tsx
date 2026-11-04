@@ -3,7 +3,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { ChevronDown, Layers, Loader2, Palette, Plus } from "lucide-react";
-import type { ProjectApproach } from "@theforge/shared-types";
+import type { ProjectApproach, ProjectType } from "@theforge/shared-types";
 import {
   Button,
   Dialog,
@@ -15,6 +15,7 @@ import {
   Input,
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { getProjectModeBadge, isProjectApproachEditable } from "@/utils/project-mode-labels";
 
 export interface ProjectGroupOption {
   id: string;
@@ -29,6 +30,7 @@ export interface ProjectSettingsDialogProps {
   currentName: string;
   currentGroupId: string | null;
   currentApproach?: ProjectApproach;
+  currentProjectType?: ProjectType;
   currentUxDesignSource?: string | null;
   groups: ProjectGroupOption[];
   canEditName: boolean;
@@ -54,6 +56,7 @@ export function ProjectSettingsDialog({
   currentName,
   currentGroupId,
   currentApproach = "DOMAIN_FIRST",
+  currentProjectType = "NEW",
   currentUxDesignSource = "",
   groups,
   canEditName,
@@ -100,7 +103,7 @@ export function ProjectSettingsDialog({
     if (canEditGroup && groupId && groupId !== currentGroupId) {
       payload.groupId = groupId;
     }
-    if (canEditName && approach !== currentApproach) {
+    if (canEditName && isProjectApproachEditable(currentProjectType) && approach !== currentApproach) {
       payload.approach = approach;
     }
     if (canEditName && uxDesignSource.trim() !== (currentUxDesignSource ?? "").trim()) {
@@ -166,7 +169,16 @@ export function ProjectSettingsDialog({
           </div>
 
           <div className="space-y-2">
-            <span className="text-sm font-medium text-[var(--foreground)]">Enfoque metodológico</span>
+            <span className="text-sm font-medium text-[var(--foreground)]">Modo del proyecto</span>
+            {!isProjectApproachEditable(currentProjectType) ? (
+              <p className="rounded-md border border-[var(--border)] bg-[var(--muted)]/30 px-3 py-2 text-sm">
+                {getProjectModeBadge(currentProjectType, currentApproach).label} —{" "}
+                <span className="text-[var(--foreground-muted)]">
+                  {getProjectModeBadge(currentProjectType, currentApproach).title}
+                </span>
+              </p>
+            ) : (
+              <>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <button
                 type="button"
@@ -226,6 +238,8 @@ export function ProjectSettingsDialog({
                 />
               </div>
             ) : null}
+              </>
+            )}
           </div>
 
           {showGroupField ? (

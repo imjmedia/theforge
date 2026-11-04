@@ -55,6 +55,8 @@ import {
   ProjectTypeEnum,
   type ProjectType,
 } from "@theforge/shared-types";
+import { parseApiErrorPayloadFromResponse } from "./utils/httpError";
+import { DESIGN_FIRST_DISABLED_USER_MESSAGE } from "./utils/project-mode-labels";
 import { useDashboardGenerationSummary } from "./hooks/useDashboardGenerationSummary";
 import {
   Button,
@@ -361,6 +363,7 @@ export default function App() {
       groupId: string,
       approach?: "DOMAIN_FIRST" | "UX_FIRST",
       uxDesignSource?: string,
+      projectType: ProjectType = ProjectTypeEnum.enum.NEW,
     ) => {
       const trimmed = name.trim();
       if (!trimmed) throw new Error("Nombre vacío");
@@ -375,11 +378,17 @@ export default function App() {
             approach: effectiveApproach,
             uxDesignSource: uxDesignSource || null,
             hasUxTeam: effectiveApproach === "UX_FIRST",
-            projectType: ProjectTypeEnum.enum.NEW,
+            projectType,
             groupId,
           }),
         });
-        if (!r.ok) throw new Error("Error al crear proyecto");
+        if (!r.ok) {
+          const payload = await parseApiErrorPayloadFromResponse(r, "Error al crear proyecto");
+          if (payload.code === "ERR_DESIGN_FIRST_DISABLED") {
+            throw new Error(DESIGN_FIRST_DISABLED_USER_MESSAGE);
+          }
+          throw new Error(payload.message);
+        }
         const created = (await r.json()) as Project;
         await refreshDashboard();
         setWorkshopProject(created);
@@ -949,6 +958,7 @@ export default function App() {
         currentName={settingsTarget?.name ?? ""}
         currentGroupId={settingsTarget?.groupId ?? null}
         currentApproach={settingsTarget?.approach ?? "DOMAIN_FIRST"}
+        currentProjectType={settingsTarget?.projectType ?? "NEW"}
         currentUxDesignSource={settingsTarget?.uxDesignSource ?? ""}
         groups={projectGroups.map((g) => ({ id: g.id, name: g.name, isDefault: g.isDefault }))}
         canEditName={settingsTarget ? canRenameProject(settingsTarget) : false}

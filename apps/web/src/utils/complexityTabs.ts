@@ -1,5 +1,6 @@
 /** Pestañas de documentos en Workshop (alineado con `DocPanel` en WorkshopView). */
 import {
+  isDesignFirst,
   isLegacy,
   ProjectTypeEnum,
   type ProjectType,
@@ -27,7 +28,10 @@ export type WorkshopDocTab =
   | "integration"
   | "handoff-spec"
   | "ui-screens"
-;
+  | "design-screens"
+  | "design-data-needs"
+  | "design-contract"
+  ;
 
 /** Alias web del tipo de proyecto (SSOT: `@theforge/shared-types`). */
 export type ProjectTypeForTabs = ProjectType;
@@ -58,6 +62,21 @@ export function isTabVisibleForComplexity(
   const c = complexity ?? "HIGH";
   const pt: ProjectTypeForTabs = opts?.projectType ?? ProjectTypeEnum.enum.NEW;
   const legacyModification = isLegacyModificationStage(pt, opts?.legacyStageOrdinal);
+
+  if (isDesignFirst(pt)) {
+    if (tab === "design-screens" || tab === "design-data-needs" || tab === "design-contract") {
+      return true;
+    }
+    if (tab === "benchmark" || tab === "mdd" || tab === "ui-screens") {
+      return false;
+    }
+  } else if (
+    tab === "design-screens" ||
+    tab === "design-data-needs" ||
+    tab === "design-contract"
+  ) {
+    return false;
+  }
 
   // En etapas de modificación (ordinal ≥ 2) no se generan MDD Inicial ni BRD.
   if (legacyModification && (tab === "mdd-inicial" || tab === "brd")) return false;

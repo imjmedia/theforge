@@ -7,9 +7,11 @@ import { WorkshopSpecBrdAemPanels } from "./WorkshopSpecBrdAemPanels";
 import { WorkshopStandardDocPanels } from "./WorkshopStandardDocPanels";
 import { WorkshopUxGuidePanel } from "./WorkshopUxGuidePanel";
 import type { WorkshopDocPanelContentProps } from "./workshopDocPanelContent.types";
+import { WorkshopDesignPanels } from "./design/WorkshopDesignPanels";
 
 export function WorkshopDocPanelContent({
   centralPanel,
+  projectId,
   legacy,
   benchmark,
   mdd,
@@ -22,6 +24,7 @@ export function WorkshopDocPanelContent({
   return (
     <>
       <WorkshopLegacyPanels {...legacy} />
+      <WorkshopDesignPanels centralPanel={centralPanel} projectId={projectId} />
       {centralPanel === "benchmark" && <WorkshopBenchmarkPanel {...benchmark} />}
       {centralPanel === "mdd" && <WorkshopMddPanel {...mdd} />}
       <WorkshopStandardDocPanels {...standard} />

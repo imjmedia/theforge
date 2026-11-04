@@ -17,3 +17,8 @@ export function isMddEditorDirty(s: WorkshopState): boolean {
     !workshopDocumentBodiesEqual(s.mddContent, s.mddPersistedBaseline)
   );
 }
+
+export const selectDesignRevision = (s: WorkshopState) => s.designRevision;
+export const selectDesignGates = (s: WorkshopState) => s.designGates;
+export const selectDesignStale = (s: WorkshopState) => s.designStale;
+export const selectDesignPanelError = (s: WorkshopState) => s.designPanelError;

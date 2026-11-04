@@ -144,4 +144,26 @@ describe("buildNotionExportEntries", () => {
     assert.ok(paths.some((p) => p.includes("Pantallas") && p.endsWith(".md")));
     assert.ok(paths.some((p) => p.endsWith("_assets/ui-project.json")));
   });
+
+  it("exporta designSpec y architectureGraph en _assets", () => {
+    const entries = buildNotionExportEntries({
+      ...minimalProject({ projectType: "DESIGN_FIRST" }),
+      stages: [
+        {
+          ...minimalStage(),
+          designSpec: { schemaVersion: 1, entities: [], screens: [], navigation: [], dataNeeds: [] },
+          designSpecRevision: 1,
+          architectureGraph: { version: "1.0.0", entities: [], endpoints: [] },
+          architectureGraphSourceHash: "abc",
+          estimation: null,
+        },
+      ],
+      integrationTracesAsNew: [],
+      integrationTracesAsLegacy: [],
+    });
+    const paths = entries.map((e) => e.path);
+    assert.ok(paths.some((p) => p.endsWith("_assets/design-spec.json")));
+    assert.ok(paths.some((p) => p.endsWith("_assets/architecture-graph.json")));
+    assert.ok(paths.some((p) => p.endsWith("_assets/design-spec-revision.json")));
+  });
 });

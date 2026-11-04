@@ -129,15 +129,16 @@ Volver al [README](./README.md). Diseño en [03](./03-arquitectura-y-diseno.md).
 
 ## Discrepancias doc ↔ código
 
-Manda el código. Se corrigen en el paso 25.
+Manda el código. Corregidas en el **paso 25** (salvo nota histórica).
 
-| Documento | Dice | Código real |
-|---|---|---|
-| `CHANGELOG.md` | `methodologicalApproach` | El campo es `approach` |
-| `docs/MCP_GRAFICO.md` | `Stage.uiScreensContent` | El campo solo existe en `Project` |
-| `docs/notebooklm/THEFORGE-INDEX.md` §4 | Menciona integración con Figma | No hay integración (la agrega este paquete) |
-| `docs/notebooklm/ENTREGABLES-SDD-VALIDACION.md` §3 | La Guía UX/UI no está en la cascada | Sí está |
-| `apps/api/src/modules/crypto/README.md` | `MASTER_ENCRYPTION_KEY` | `TOKEN_MASTER_KEYS` y `TOKEN_ACTIVE_KEY_VERSION` (`crypto.config.ts:1-30`) |
+| Documento | Decía | Código real | Estado paso 25 |
+|---|---|---|---|
+| `CHANGELOG.md` `[Unreleased]` | — | Campo Prisma `Project.approach` | Entradas nuevas usan `approach`. |
+| `CHANGELOG.md` (versión publicada) | `methodologicalApproach` | El campo es `approach` | **Pendiente:** entrada histórica (~compiler-first); corregir retroactivamente solo con acuerdo de Jorge. |
+| `docs/MCP_GRAFICO.md` | `Stage.uiScreensContent` | Solo `Project.uiScreensContent` | Corregido. |
+| `docs/notebooklm/THEFORGE-INDEX.md` §4 | Integración Figma implícita en semáforo | Semáforo = heurística; Figma API = Design-First | §4.3 añadido. |
+| `docs/notebooklm/ENTREGABLES-SDD-VALIDACION.md` §3 | Guía UX/UI fuera de cascada | `ux_ui_guide` en oleadas | Corregido. |
+| `apps/api/src/modules/crypto/README.md` | `MASTER_ENCRYPTION_KEY` | `TOKEN_MASTER_KEYS` + `TOKEN_ACTIVE_KEY_VERSION` | Corregido. |
 
 Detectada al redactar este paquete: el plan ubica el cliente web en `apps/web/src/api/design-first.api.ts`, pero esa carpeta no existe; los clientes viven en `apps/web/src/lib/*-api.ts`, así que el cliente se crea como `apps/web/src/lib/design-first-api.ts` (ver [02](./02-estructura-de-archivos.md#archivos-no-verificados-uno-por-uno)).
 

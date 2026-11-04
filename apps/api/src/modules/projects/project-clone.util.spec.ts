@@ -81,6 +81,10 @@ describe("project-clone.util", () => {
         isLegacy: false,
         theforgeProjectId: null,
         shortTermContext: { scratch: true },
+        designSpec: { schemaVersion: 1, entities: [], screens: [], navigation: [], dataNeeds: [] },
+        designSpecRevision: 2,
+        architectureGraph: { version: "1.0.0", entities: [], endpoints: [] },
+        architectureGraphSourceHash: "hash-1",
         createdAt: new Date("2026-01-01"),
         updatedAt: new Date("2026-01-01"),
         estimation: {
@@ -125,6 +129,8 @@ describe("project-clone.util", () => {
     assert.equal(stageCreate!.length, 1);
     const stage = stageCreate![0] as Record<string, unknown>;
     assert.equal(stage.mddContent, "# MDD");
+    assert.equal(stage.designSpecRevision, 2);
+    assert.equal(stage.architectureGraphSourceHash, "hash-1");
     assert.equal(stage.linkedNewProjectId, undefined);
     assert.deepEqual(stage.estimation, {
       create: {

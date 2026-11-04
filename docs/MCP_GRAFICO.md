@@ -182,7 +182,7 @@ Genera markdown de texto (sin TSX, sin preview, sin iframe).
 2. Cruza con **Historias de Usuario** (`userStoriesContent`): vincula HU por nombre de entidad, enriquece nombre/propósito/`uiHint`/clasificación y añade pantallas para HU sin tabla (p. ej. dashboard).
 3. Intenta `list_screens` si el MCP lo soporta nativamente.
 4. Si no, **fallback:** `resolve_component` por cada ítem del plan (Kreo recibe `ui_hint` y `context` de la HU).
-5. Persiste en `Project.uiScreensContent` (y `Stage.uiScreensContent` cuando aplica).
+5. Persiste en **`Project.uiScreensContent`** (Prisma no define este campo en `Stage`; ver `projects/README.md` y export Notion).
 
 En Workshop: acción de generar/sincronizar pantallas (requiere MCP activo y entidades en §3).
 

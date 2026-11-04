@@ -28,4 +28,13 @@ describe("complexityTabs / projectType helpers", () => {
       true,
     );
   });
+
+  it("DESIGN_FIRST muestra pestañas de diseño y oculta benchmark", () => {
+    const df = ProjectTypeEnum.enum.DESIGN_FIRST;
+    assert.equal(isTabVisibleForComplexity("design-screens", "HIGH", { projectType: df }), true);
+    assert.equal(isTabVisibleForComplexity("design-data-needs", "HIGH", { projectType: df }), true);
+    assert.equal(isTabVisibleForComplexity("design-contract", "HIGH", { projectType: df }), true);
+    assert.equal(isTabVisibleForComplexity("benchmark", "HIGH", { projectType: df }), false);
+    assert.equal(isTabVisibleForComplexity("design-screens", "HIGH", { projectType: ProjectTypeEnum.enum.NEW }), false);
+  });
 });
