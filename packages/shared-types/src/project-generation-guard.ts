@@ -3,7 +3,9 @@ import type { MddJobProgressStep } from "./mdd-job-progress.js";
 import type { MddUpstreamSyncAnalysis } from "./mdd-upstream-sync.js";
 import type { SddGraphSyncStatus } from "./sdd-graph-sync.js";
 import {
+  DELIVERABLE_DESIGN_SCREENS_RENDER_STEP,
   DELIVERABLE_PROJECT_CONTENT_FIELD,
+  DELIVERABLE_UI_SCREENS_SYNC_STEP,
   DELIVERABLE_WAVES_BY_COMPLEXITY,
   type DeliverableKind,
   type DeliverableWaveStep,
@@ -233,7 +235,7 @@ function substantial(content: string | null | undefined): boolean {
 }
 
 function isDeliverableKind(step: DeliverableWaveStep): step is DeliverableKind {
-  return step !== "ui_screens_sync";
+  return step !== DELIVERABLE_UI_SCREENS_SYNC_STEP && step !== DELIVERABLE_DESIGN_SCREENS_RENDER_STEP;
 }
 
 /** Entregables de oleadas anteriores que deben estar persistidos antes de generar `target`. */

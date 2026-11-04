@@ -20,6 +20,8 @@ import {
   type TasksPipelineProgress,
   type TasksPipelineQualitySnapshot,
   detectWebSurfaces,
+  compilePagToApiContractsMarkdown,
+  renderDesignPantallasMarkdown,
 } from "@theforge/shared-types";
 import { loadProjectBorrador, hasBorradorContent } from "../ai-analysis/phase0/phase0-load-borrador.util.js";
 import { phase0ToMarkdown } from "../ai-analysis/phase0/phase0-to-markdown.js";
@@ -102,6 +104,8 @@ import {
   persistStageArchitectureGraph,
   resolveStageProjectArchitectureGraph,
 } from "./stage-architecture-graph.util.js";
+import { loadDesignFirstStageContext } from "../design-first/design-first-gate.util.js";
+import { prependDocumentTimestamps } from "../engine/document-date-header.util.js";
 import { ProjectsService } from "./projects.service.js";
 
 type StageWithEst = StageWithEstimation;
@@ -264,10 +268,14 @@ export class ProjectDeliverableGeneratorsService {
     case "blueprint":
       await this.generateBlueprint(projectId, gaps, signal);
       return;
-    case "api_contracts":
-      await this.ensureBlueprintForApi(projectId);
+    case "api_contracts": {
+      const projectForApi = await loadAccessibleProjectWithStages(this.prisma, projectId);
+      if (projectForApi.projectType !== "DESIGN_FIRST") {
+        await this.ensureBlueprintForApi(projectId);
+      }
       await this.generateApiContracts(projectId, gaps, signal);
       return;
+    }
     case "logic_flows":
       await this.generateLogicFlows(projectId, gaps, signal);
       return;
@@ -1110,6 +1118,14 @@ export class ProjectDeliverableGeneratorsService {
 
   async generateApiContractsPreview(projectId: string, gapsFeedback?: string | null): Promise<{ content: string }> {
   const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
+  if (project.projectType === "DESIGN_FIRST") {
+    const stage = pickPrimaryStage(project.stages ?? []);
+    const pag = resolveStageProjectArchitectureGraph(stage);
+    if (!pag) {
+      throw new BadRequestException("No hay PAG compilado para previsualizar contratos API");
+    }
+    return { content: cleanDocumentContent(compilePagToApiContractsMarkdown(pag)) };
+  }
   this.assertBlueprintCoversMddDataModel(project);
 
   const mainStage = project.stages?.[0];
@@ -1147,9 +1163,59 @@ export class ProjectDeliverableGeneratorsService {
   return { content: cleanDocumentContent(content) };
   }
 
+  /** Design-First: contratos API deterministas desde `Stage.architectureGraph` (sin LLM). */
+  private async generateApiContractsFromPag(
+    project: Project & { stages: StageWithEst[] },
+    signal?: AbortSignal,
+  ) {
+    this.throwIfAborted(signal);
+    const stage = pickPrimaryStage(project.stages ?? []);
+    const pag = resolveStageProjectArchitectureGraph(stage);
+    if (!pag) {
+      throw new BadRequestException(
+        "No hay PAG compilado; compila el contrato en Design-First antes de generar contratos API",
+      );
+    }
+    const apiContent = cleanDocumentContent(compilePagToApiContractsMarkdown(pag));
+    if (apiContent.length < 80) {
+      throw new BadRequestException("No se pudo compilar Contratos API desde el PAG");
+    }
+    const updated = await this.projects.update(project.id, {
+      apiContractsContent: apiContent,
+    });
+    this.logger.log(`[API] Contratos API Design-First desde PAG (${apiContent.length} chars)`);
+    this.notifyPluginAfterDocumentPersist(
+      "api-contracts",
+      project.id,
+      updated.apiContractsContent ?? apiContent,
+    );
+    return updated;
+  }
+
+  /** Design-First: persiste `uiScreensContent` desde `designSpec` (falla cerrado si no hay diseño). */
+  async renderDesignScreensFromSpec(projectId: string): Promise<{ content: string }> {
+    const ctx = await loadDesignFirstStageContext(this.prisma, projectId);
+    if (!ctx) {
+      throw new BadRequestException("El proyecto no está en modo Design-First");
+    }
+    const body = renderDesignPantallasMarkdown(ctx.designSpec);
+    if (!body.trim()) {
+      throw new BadRequestException("No se pudo renderizar pantallas desde designSpec");
+    }
+    const content = prependDocumentTimestamps(body);
+    await this.prisma.project.update({
+      where: { id: projectId },
+      data: { uiScreensContent: content },
+    });
+    return { content };
+  }
+
   async generateApiContracts(projectId: string, gapsFeedback?: string | null, signal?: AbortSignal) {
   this.throwIfAborted(signal);
   const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
+  if (project.projectType === "DESIGN_FIRST") {
+    return this.generateApiContractsFromPag(project, signal);
+  }
   this.assertBlueprintCoversMddDataModel(project);
 
   const mainStage = project.stages?.[0];

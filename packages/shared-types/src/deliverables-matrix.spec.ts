@@ -98,5 +98,29 @@ describe("DELIVERABLE_WAVES_BY_COMPLEXITY", () => {
     assert.ok(flatMed.indexOf("ui_screens_sync") < flatMed.indexOf("api_contracts"));
     assert.ok(flatMed.indexOf("api_contracts") < flatMed.indexOf("tasks"));
   });
+
+  it("DESIGN_FIRST HIGH incluye design_screens_render y api_contracts sin ui_screens_sync", () => {
+    const waves = resolveDeliverableWaves("HIGH", { projectType: "DESIGN_FIRST" });
+    const flat = flattenDeliverableWaves("HIGH", { projectType: "DESIGN_FIRST" });
+    assert.deepEqual(waves[0], ["mdd_canonical"]);
+    assert.deepEqual(waves[1], ["spec", "architecture"]);
+    assert.ok(waves.some((w) => w.includes("design_screens_render")));
+    assert.ok(flat.includes("api_contracts"));
+    assert.ok(!flat.includes("ui_screens_sync"));
+    assert.ok(flat.indexOf("design_screens_render") < flat.indexOf("tasks"));
+  });
+
+  it("DESIGN_FIRST MEDIUM omite mdd_canonical y architecture", () => {
+    const flat = flattenDeliverableWaves("MEDIUM", { projectType: "DESIGN_FIRST" });
+    assert.ok(!flat.includes("mdd_canonical"));
+    assert.ok(!flat.includes("architecture"));
+    assert.ok(flat.includes("design_screens_render"));
+  });
+
+  it("NEW HIGH sin projectType sigue igual (regresión RNF-03)", () => {
+    const flat = flattenDeliverableWaves("HIGH");
+    assert.ok(flat.includes("ui_screens_sync"));
+    assert.ok(!flat.includes("design_screens_render"));
+  });
 });
 

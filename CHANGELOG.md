@@ -15,6 +15,7 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 - **DesignFirstModule:** `GET/PUT /projects/:id/design*` con CAS por revisión y `compile-contract` determinista; creación de proyectos `DESIGN_FIRST` detrás de `DESIGN_FIRST_ENABLED`.
 - **Semáforo por fases para DESIGN_FIRST** (tope AMARILLO sin MDD) y utilidades de completitud en estimación.
 - **Puertas Design-First en el job MDD y en los entregables** (`ERR_DESIGN_PHASE_GATE`, `ERR_DESIGN_STALE`); `getMddDependentKeys(projectType)` al limpiar dependientes del MDD.
+- **Cascada DESIGN_FIRST** con oleadas propias: `api_contracts` desde el PAG sin LLM, `design_screens_render` desde `designSpec` (falla cerrado); `syncUiScreens` → 409 `ERR_DESIGN_FIRST_SCREENS_OWNED`.
 - **`arquitectura/modo-design-first/`**: README con decisiones, `01-PRD.md` (RF-01…RF-19, RNF-01…RNF-10), `02-estructura-de-archivos.md`, `03-arquitectura-y-diseno.md`, `04-plan-de-pruebas.md`, `05-casos-limite.md` (CL-01…CL-31), `06-riesgos-y-decisiones.md` y `tasks/HANDOFF.md` + `tasks/TASKS.md` con 28 fichas ejecutables en orden. Registra el falso negativo de Ariadne (`validate_change_plan` BLOCKED con índice `up_to_date`) y el defecto actual de `AiService.lastGeneratedPag` / `Stage.documentAst` que los pasos 2-3 corrigen.
 - **Config tipada Design-First** (`apps/api/src/config/env.schema.ts`): flags `DESIGN_FIRST_*`, `FIGMA_API_BASE_URL` (solo https) y límites RNF-04/RNF-05; helper `compiler-first.config.ts` para entregables compilados.
 

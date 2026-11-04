@@ -13,6 +13,7 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import type { ListScreensEntity, ScreenSpec } from "@theforge/shared-types";
 import { PrismaService } from "../../prisma/prisma.service.js";
+import { throwDesignFirstScreensOwned } from "../design-first/design-first.errors.js";
 import { UiMcpClientService } from "./ui-mcp-client.service.js";
 import { UiMcpService } from "./ui-mcp.service.js";
 import { buildUiScreensMarkdown } from "./ui-screens-markdown.util.js";
@@ -45,6 +46,7 @@ export class UiScreensService {
       where: { id: projectId },
       select: {
         id: true,
+        projectType: true,
         complexity: true,
         dbgaContent: true,
         phase0SummaryContent: true,
@@ -60,6 +62,9 @@ export class UiScreensService {
       },
     });
     if (!project) throw new NotFoundException("Proyecto no encontrado");
+    if (project.projectType === "DESIGN_FIRST") {
+      throwDesignFirstScreensOwned();
+    }
 
     const mdd = resolveConstitutionMarkdown(project);
     const stackHint = resolveUiStackHint(mdd, project.blueprintContent);

@@ -83,7 +83,7 @@ export function buildExistingConformanceGapsMap(
   const source = projectAsDeliverableSource(projectFresh);
 
   for (const step of steps) {
-    if (step === "ui_screens_sync") continue;
+    if (step === "ui_screens_sync" || step === "design_screens_render") continue;
     const stepKey = step as string;
 
     if (useLowMedium) {
