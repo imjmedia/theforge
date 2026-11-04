@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ProjectType } from "./project.js";
 
 /** Versión del bundle Markdown & CSV (compatible con convenciones Notion). */
 export const NOTION_PORTABILITY_VERSION = "1.0.0";
@@ -36,7 +37,7 @@ export interface NotionPortabilityManifest {
   exportedAt: string;
   projectName: string;
   projectExportId: string;
-  projectType: "NEW" | "LEGACY";
+  projectType: ProjectType;
   options: NotionExportOptions;
 }
 

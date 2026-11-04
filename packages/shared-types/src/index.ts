@@ -106,6 +106,7 @@ export * from "./forgeops-provision.js";
 export * from "./web-surfaces.util.js";
 export * from "./design-system-defaults.js";
 export * from "./project-architecture-graph.js";
+export * from "./design-first/index.js";
 export * from "./document-compiler.js";
 
 export * from "./mdd-eval-api.js";

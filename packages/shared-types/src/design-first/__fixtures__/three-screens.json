@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 1,
+  "entities": [
+    {
+      "id": "order",
+      "name": "Order",
+      "classification": "WorkflowProcess",
+      "keyFields": ["id"],
+      "restEndpoint": "/api/v1/orders"
+    },
+    {
+      "id": "customer",
+      "name": "Customer",
+      "classification": "DataRegistry",
+      "keyFields": ["id"],
+      "restEndpoint": "/api/v1/customers"
+    }
+  ],
+  "screens": [
+    {
+      "id": "order-list",
+      "name": "Order list",
+      "route": "/orders",
+      "roles": ["operator"],
+      "purpose": "Browse and filter orders",
+      "states": ["empty", "error", "loading"],
+      "origin": { "kind": "manual" },
+      "components": [
+        {
+          "id": "orders-table",
+          "component": "DataGrid",
+          "label": "Orders",
+          "props": { "sortable": "true" }
+        },
+        {
+          "id": "btn-new-order",
+          "component": "Button",
+          "label": "New order"
+        }
+      ]
+    },
+    {
+      "id": "order-detail",
+      "name": "Order detail",
+      "route": "/orders/:id",
+      "roles": ["operator"],
+      "purpose": "View and edit a single order",
+      "states": ["empty", "error", "loading"],
+      "origin": { "kind": "manual" },
+      "components": [
+        {
+          "id": "order-form",
+          "component": "Form",
+          "label": "Order form"
+        }
+      ]
+    },
+    {
+      "id": "home",
+      "name": "Home dashboard",
+      "route": "/",
+      "roles": ["operator"],
+      "static": true,
+      "origin": { "kind": "manual" },
+      "components": []
+    }
+  ],
+  "navigation": [
+    {
+      "id": "nav-list-to-detail",
+      "from": "order-list",
+      "to": "order-detail",
+      "trigger": { "componentId": "orders-table", "event": "rowActivate" }
+    },
+    {
+      "id": "nav-home-to-list",
+      "from": "home",
+      "to": "order-list",
+      "trigger": { "event": "linkClick" }
+    }
+  ],
+  "dataNeeds": [
+    {
+      "screenId": "order-list",
+      "components": [
+        {
+          "componentId": "orders-table",
+          "needs": [
+            {
+              "id": "need-orders-rows",
+              "name": "rows",
+              "type": "Order[]",
+              "origin": "entity",
+              "action": "order",
+              "required": true,
+              "many": true,
+              "provenance": "user"
+            }
+          ]
+        }
+      ],
+      "states": ["empty", "error", "loading"]
+    },
+    {
+      "screenId": "order-detail",
+      "components": [
+        {
+          "componentId": "order-form",
+          "needs": [
+            {
+              "id": "need-order-record",
+              "name": "record",
+              "type": "Order",
+              "origin": "entity",
+              "action": "order",
+              "required": true,
+              "provenance": "user"
+            },
+            {
+              "id": "need-customer-label",
+              "name": "customerName",
+              "type": "string",
+              "origin": "derived",
+              "action": "customer",
+              "required": false,
+              "provenance": "heuristic"
+            }
+          ]
+        }
+      ],
+      "states": ["empty", "error", "loading"]
+    }
+  ]
+}

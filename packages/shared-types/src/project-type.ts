@@ -1,10 +1,7 @@
 import type { ProjectType } from "./project.js";
 
-/**
- * Valores de enrutamiento por tipo de proyecto.
- * `DESIGN_FIRST` se añade al enum Zod/Prisma en el paso 5; hasta entonces solo afecta helpers preparados.
- */
-export type ProjectTypeRouting = ProjectType | "DESIGN_FIRST";
+/** Tipos de proyecto usados en enrutamiento (alineado con Prisma `ProjectType`). */
+export type ProjectTypeRouting = ProjectType;
 
 export function isGreenfield(projectType: ProjectTypeRouting): boolean {
   if (projectType === "DESIGN_FIRST") return true;
@@ -18,6 +15,14 @@ export function isLegacy(projectType: ProjectTypeRouting): boolean {
 export function isDesignFirst(projectType: ProjectTypeRouting): boolean {
   return projectType === "DESIGN_FIRST";
 }
+
+/** CL-26: merge de proyectos con DESIGN_FIRST no soportado en v1. */
+export function isMergeBlockedByDesignFirst(types: readonly ProjectTypeRouting[]): boolean {
+  return types.some(isDesignFirst);
+}
+
+export const MERGE_DESIGN_FIRST_CONFLICT_MESSAGE =
+  "La fusión de proyectos Design-First no está soportada en esta versión.";
 
 /** Rama imposible en switches exhaustivos sobre `ProjectTypeRouting`. */
 export function assertNever(value: never): never {

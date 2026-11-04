@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ProjectType } from "./project.js";
 
 /** Parte de imagen en base64 (sin prefijo `data:`); el API valida MIME y tamaño. */
 export const chatImagePartSchema = z.object({
@@ -91,7 +92,7 @@ export type WorkshopChatScope = "stage" | "global";
 
 /** Por defecto filtra por etapa en brownfield (LEGACY) con más de una etapa. */
 export function shouldDefaultWorkshopChatScopeByStage(
-  projectType: "NEW" | "LEGACY" | undefined,
+  projectType: ProjectType | undefined,
   stageCount: number,
 ): boolean {
   return stageCount > 1 && projectType === "LEGACY";
@@ -99,7 +100,7 @@ export function shouldDefaultWorkshopChatScopeByStage(
 
 /** Resuelve alcance del chat (explícito del usuario o default por tipo de proyecto). */
 export function resolveWorkshopChatScope(
-  projectType: "NEW" | "LEGACY" | undefined,
+  projectType: ProjectType | undefined,
   stageCount: number,
   explicit?: WorkshopChatScope | null,
 ): WorkshopChatScope {

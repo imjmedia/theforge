@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ProjectType } from "./project.js";
 
 export const integrationHandoffItemStatusSchema = z.enum([
   "draft",
@@ -101,7 +102,7 @@ export const integrationProjectPickerQuerySchema = z.object({
 export interface IntegrationLinkedProjectSummary {
   id: string;
   name: string;
-  projectType: "NEW" | "LEGACY";
+  projectType: ProjectType;
   hasBaselineMdd: boolean;
 }
 
