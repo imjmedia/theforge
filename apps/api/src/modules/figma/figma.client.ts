@@ -56,26 +56,30 @@ function sleep(ms: number): Promise<void> {
 @Injectable()
 export class FigmaClient {
   private readonly logger = new Logger(FigmaClient.name);
-  private readonly fetchImpl: FigmaHttpClient;
+  /** Sustituible en tests vía {@link FigmaClient.createForTest}. */
+  private fetchImpl: FigmaHttpClient;
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
-  private readonly maxRetries: number;
+  /** Sustituible en tests vía {@link FigmaClient.createForTest}. */
+  private maxRetries: number;
 
-  constructor(
-    private readonly config: ConfigService,
-    options: FigmaClientOptions = {},
-  ) {
-    this.fetchImpl = options.fetchImpl ?? ((url, init) => fetch(url, init));
-    this.baseUrl = (options.baseUrl ?? this.config.get<string>("FIGMA_API_BASE_URL", DEFAULT_FIGMA_API_BASE_URL)).replace(
-      /\/+$/,
-      "",
+  constructor(private readonly config: ConfigService) {
+    this.fetchImpl = (url, init) => fetch(url, init);
+    this.baseUrl = this.config
+      .get<string>("FIGMA_API_BASE_URL", DEFAULT_FIGMA_API_BASE_URL)
+      .replace(/\/+$/, "");
+    this.timeoutMs = this.config.get<number>(
+      "DESIGN_FIRST_FIGMA_TIMEOUT_MS",
+      DEFAULT_DESIGN_FIRST_FIGMA_TIMEOUT_MS,
     );
-    this.timeoutMs = options.timeoutMs ?? this.config.get<number>("DESIGN_FIRST_FIGMA_TIMEOUT_MS", DEFAULT_DESIGN_FIRST_FIGMA_TIMEOUT_MS);
-    this.maxRetries = options.maxRetries ?? 2;
+    this.maxRetries = 2;
   }
 
   static createForTest(config: ConfigService, options: FigmaClientOptions = {}): FigmaClient {
-    return new FigmaClient(config, options);
+    const client = new FigmaClient(config);
+    if (options.fetchImpl) client.fetchImpl = options.fetchImpl;
+    if (options.maxRetries !== undefined) client.maxRetries = options.maxRetries;
+    return client;
   }
 
   assertFileKey(fileKey: string): void {
