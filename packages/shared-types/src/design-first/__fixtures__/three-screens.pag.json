@@ -1,0 +1,337 @@
+{
+  "version": "1.0.0",
+  "projectName": "ThreeScreensGolden",
+  "description": "Compilado desde designSpec (Design-First)",
+  "stack": {
+    "runtime": "Node.js 20",
+    "backendFramework": "NestJS",
+    "frontendFramework": "React",
+    "database": "PostgreSQL",
+    "orm": "Prisma"
+  },
+  "entities": [
+    {
+      "name": "Customer",
+      "tableName": "customer",
+      "description": "DataRegistry",
+      "fields": [
+        {
+          "name": "id",
+          "type": "UUID",
+          "required": true,
+          "constraints": [
+            {
+              "type": "unique"
+            }
+          ]
+        }
+      ],
+      "primaryKey": "id",
+      "indexes": [],
+      "theforgeSources": [
+        {
+          "screenId": "order-detail",
+          "needId": "need-customer-label",
+          "componentId": "order-form"
+        }
+      ]
+    },
+    {
+      "name": "Order",
+      "tableName": "order",
+      "description": "WorkflowProcess",
+      "fields": [
+        {
+          "name": "id",
+          "type": "UUID",
+          "required": true,
+          "constraints": [
+            {
+              "type": "unique"
+            }
+          ]
+        }
+      ],
+      "primaryKey": "id",
+      "indexes": [],
+      "theforgeSources": [
+        {
+          "screenId": "order-detail",
+          "needId": "need-order-record",
+          "componentId": "order-form"
+        },
+        {
+          "screenId": "order-list",
+          "needId": "need-orders-rows",
+          "componentId": "orders-table"
+        }
+      ]
+    }
+  ],
+  "endpoints": [
+    {
+      "path": "/api/v1/customers",
+      "method": "GET",
+      "description": "List Customer",
+      "authRequired": true,
+      "rolesAllowed": [],
+      "targetEntity": "Customer",
+      "errorCodes": [
+        400,
+        401,
+        403,
+        404,
+        500
+      ],
+      "theforgeSources": [
+        {
+          "screenId": "order-detail",
+          "needId": "need-customer-label",
+          "componentId": "order-form"
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/customers",
+      "method": "POST",
+      "description": "Create Customer",
+      "authRequired": true,
+      "rolesAllowed": [],
+      "targetEntity": "Customer",
+      "errorCodes": [
+        400,
+        401,
+        403,
+        404,
+        500
+      ],
+      "theforgeSources": [
+        {
+          "screenId": "order-detail",
+          "needId": "need-customer-label",
+          "componentId": "order-form"
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/customers/{id}",
+      "method": "DELETE",
+      "description": "Delete Customer",
+      "authRequired": true,
+      "rolesAllowed": [],
+      "targetEntity": "Customer",
+      "errorCodes": [
+        400,
+        401,
+        403,
+        404,
+        500
+      ],
+      "theforgeSources": [
+        {
+          "screenId": "order-detail",
+          "needId": "need-customer-label",
+          "componentId": "order-form"
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/customers/{id}",
+      "method": "GET",
+      "description": "Get Customer by id",
+      "authRequired": true,
+      "rolesAllowed": [],
+      "targetEntity": "Customer",
+      "errorCodes": [
+        400,
+        401,
+        403,
+        404,
+        500
+      ],
+      "theforgeSources": [
+        {
+          "screenId": "order-detail",
+          "needId": "need-customer-label",
+          "componentId": "order-form"
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/customers/{id}",
+      "method": "PATCH",
+      "description": "Update Customer",
+      "authRequired": true,
+      "rolesAllowed": [],
+      "targetEntity": "Customer",
+      "errorCodes": [
+        400,
+        401,
+        403,
+        404,
+        500
+      ],
+      "theforgeSources": [
+        {
+          "screenId": "order-detail",
+          "needId": "need-customer-label",
+          "componentId": "order-form"
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/orders",
+      "method": "GET",
+      "description": "List Order",
+      "authRequired": true,
+      "rolesAllowed": [],
+      "targetEntity": "Order",
+      "errorCodes": [
+        400,
+        401,
+        403,
+        404,
+        500
+      ],
+      "theforgeSources": [
+        {
+          "screenId": "order-detail",
+          "needId": "need-order-record",
+          "componentId": "order-form"
+        },
+        {
+          "screenId": "order-list",
+          "needId": "need-orders-rows",
+          "componentId": "orders-table"
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/orders",
+      "method": "POST",
+      "description": "Create Order",
+      "authRequired": true,
+      "rolesAllowed": [],
+      "targetEntity": "Order",
+      "errorCodes": [
+        400,
+        401,
+        403,
+        404,
+        500
+      ],
+      "theforgeSources": [
+        {
+          "screenId": "order-detail",
+          "needId": "need-order-record",
+          "componentId": "order-form"
+        },
+        {
+          "screenId": "order-list",
+          "needId": "need-orders-rows",
+          "componentId": "orders-table"
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/orders/{id}",
+      "method": "DELETE",
+      "description": "Delete Order",
+      "authRequired": true,
+      "rolesAllowed": [],
+      "targetEntity": "Order",
+      "errorCodes": [
+        400,
+        401,
+        403,
+        404,
+        500
+      ],
+      "theforgeSources": [
+        {
+          "screenId": "order-detail",
+          "needId": "need-order-record",
+          "componentId": "order-form"
+        },
+        {
+          "screenId": "order-list",
+          "needId": "need-orders-rows",
+          "componentId": "orders-table"
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/orders/{id}",
+      "method": "GET",
+      "description": "Get Order by id",
+      "authRequired": true,
+      "rolesAllowed": [],
+      "targetEntity": "Order",
+      "errorCodes": [
+        400,
+        401,
+        403,
+        404,
+        500
+      ],
+      "theforgeSources": [
+        {
+          "screenId": "order-detail",
+          "needId": "need-order-record",
+          "componentId": "order-form"
+        },
+        {
+          "screenId": "order-list",
+          "needId": "need-orders-rows",
+          "componentId": "orders-table"
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/orders/{id}",
+      "method": "PATCH",
+      "description": "Update Order",
+      "authRequired": true,
+      "rolesAllowed": [],
+      "targetEntity": "Order",
+      "errorCodes": [
+        400,
+        401,
+        403,
+        404,
+        500
+      ],
+      "theforgeSources": [
+        {
+          "screenId": "order-detail",
+          "needId": "need-order-record",
+          "componentId": "order-form"
+        },
+        {
+          "screenId": "order-list",
+          "needId": "need-orders-rows",
+          "componentId": "orders-table"
+        }
+      ]
+    }
+  ],
+  "services": [
+    {
+      "name": "DesignFirstApi",
+      "layer": "backend_module",
+      "handledEndpoints": [
+        "/api/v1/customers",
+        "/api/v1/customers",
+        "/api/v1/customers/{id}",
+        "/api/v1/customers/{id}",
+        "/api/v1/customers/{id}",
+        "/api/v1/orders",
+        "/api/v1/orders",
+        "/api/v1/orders/{id}",
+        "/api/v1/orders/{id}",
+        "/api/v1/orders/{id}"
+      ],
+      "dependencies": []
+    }
+  ]
+}

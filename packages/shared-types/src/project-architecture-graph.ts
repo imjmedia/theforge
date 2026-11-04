@@ -30,6 +30,14 @@ export const pagFieldSchema = z.object({
 });
 export type PagField = z.infer<typeof pagFieldSchema>;
 
+/** Trazabilidad Design-First (I5): pantalla / need de origen. */
+export const pagTheforgeSourceSchema = z.object({
+  screenId: z.string().min(1),
+  needId: z.string().optional(),
+  componentId: z.string().optional(),
+});
+export type PagTheforgeSource = z.infer<typeof pagTheforgeSourceSchema>;
+
 export const pagEntitySchema = z.object({
   name: z.string().min(1), // e.g. "User", "Project", "Invoice"
   tableName: z.string().optional(),
@@ -37,6 +45,7 @@ export const pagEntitySchema = z.object({
   fields: z.array(pagFieldSchema).min(1),
   primaryKey: z.string().default("id"),
   indexes: z.array(z.string()).default([]),
+  theforgeSources: z.array(pagTheforgeSourceSchema).optional(),
 });
 export type PagEntity = z.infer<typeof pagEntitySchema>;
 
@@ -74,6 +83,7 @@ export const pagEndpointSchema = z.object({
   requestSchema: openApiJsonSchema.optional(), // JSON Schema OpenAPI 3.1 del request
   responseSchema: openApiJsonSchema.optional(), // JSON Schema OpenAPI 3.1 del response (200/201)
   errorCodes: z.array(z.number()).default([400, 401, 403, 404, 500]),
+  theforgeSources: z.array(pagTheforgeSourceSchema).optional(),
 });
 export type PagEndpoint = z.infer<typeof pagEndpointSchema>;
 

@@ -481,18 +481,18 @@ Resultado esperado: en verde.
 - `packages/shared-types/src/design-first/index.ts` [modifica] — exports.
 
 ### Subtareas
-- [ ] 7.1 `compileDataNeedsToPag`: entidades desde `entities`, endpoints por recurso; `GET /views/{screenId}` solo si el need trae `endpointHint` (Q5); fuentes (pantalla/need de origen) en cada endpoint y entidad (I5); orden estable y sin dependencias de reloj o azar (I4).
-- [ ] 7.2 Validar el PAG con `validateProjectArchitectureGraph`; si hay issues, devolverlos sin reparar (falla cerrado, I6).
-- [ ] 7.3 `evaluateDesignFirstPhaseGates(designSpec, pag?, hashes?)`: `phase1` (≥ 1 pantalla, I1, rutas únicas, cada pantalla con ≥ 1 componente o `static`); `phase2` (I2, I3, todo need con tipo, toda acción con entidad, pantallas con datos remotos con estados `empty`/`error`/`loading`; pantalla sin datos → issue salvo `static: true`); `phase3` (PAG válido, hash de origen igual al hash actual). Cada puerta con `ok` e `issues[]`.
-- [ ] 7.4 Golden `three-screens.pag.json` generado y revisado a mano.
-- [ ] 7.5 CHANGELOG: en `### Added`, "Compilador determinista DataNeeds → PAG y puertas de fase Design-First".
-- [ ] 7.6 Pruebas del paso: golden byte a byte en dos corridas (I4); trazabilidad de fuentes (I5); PAG inválido → issues sin reparación (CL-17); spec vacío → `phase1` en rojo (CL-11); pantalla sin datos → issue en `phase2` salvo `static` (CL-13); dashboard sin `endpointHint` → sin `/views/...`.
+- [x] 7.1 `compileDataNeedsToPag`: entidades desde `entities`, endpoints por recurso; `GET /views/{screenId}` solo si el need trae `endpointHint` (Q5); fuentes (pantalla/need de origen) en cada endpoint y entidad (I5); orden estable y sin dependencias de reloj o azar (I4).
+- [x] 7.2 Validar el PAG con `validateProjectArchitectureGraph`; si hay issues, devolverlos sin reparar (falla cerrado, I6).
+- [x] 7.3 `evaluateDesignFirstPhaseGates(designSpec, pag?, hashes?)`: `phase1` (≥ 1 pantalla, I1, rutas únicas, cada pantalla con ≥ 1 componente o `static`); `phase2` (I2, I3, todo need con tipo, toda acción con entidad, pantallas con datos remotos con estados `empty`/`error`/`loading`; pantalla sin datos → issue salvo `static: true`); `phase3` (PAG válido, hash de origen igual al hash actual). Cada puerta con `ok` e `issues[]`.
+- [x] 7.4 Golden `three-screens.pag.json` generado y revisado a mano.
+- [x] 7.5 CHANGELOG: en `### Added`, "Compilador determinista DataNeeds → PAG y puertas de fase Design-First".
+- [x] 7.6 Pruebas del paso: golden byte a byte en dos corridas (I4); trazabilidad de fuentes (I5); PAG inválido → issues sin reparación (CL-17); spec vacío → `phase1` en rojo (CL-11); pantalla sin datos → issue en `phase2` salvo `static` (CL-13); dashboard sin `endpointHint` → sin `/views/...`.
 
 ### Criterios de aceptación
-- [ ] RF-09: las tres puertas devuelven `ok` e `issues[]` deterministas.
-- [ ] RF-10 (parte PAG): misma entrada → mismos bytes del PAG.
-- [ ] I4, I5, I6 e I9 cubiertos por specs.
-- [ ] CL-11, CL-13 y CL-17 cubiertos.
+- [x] RF-09: las tres puertas devuelven `ok` e `issues[]` deterministas.
+- [x] RF-10 (parte PAG): misma entrada → mismos bytes del PAG.
+- [x] I4, I5, I6 e I9 cubiertos por specs.
+- [x] CL-11, CL-13 y CL-17 cubiertos.
 
 ### Verificación
 ```bash
@@ -505,7 +505,8 @@ Resultado esperado: en verde, con el golden comparado byte a byte.
 - OpenAPI y mocks (paso 8); persistencia (paso 10).
 
 ### Notas de ejecución
-<!-- reparto final I4/I5/I6 -->
+- I4/I5/I6: compilador en `compile-data-needs-to-pag.ts`; fuentes en `theforgeSources` del PAG; I6 vía `validateProjectArchitectureGraph` sin reparación.
+- Rama `feat/design-first-paso-7`.
 
 ---
 
