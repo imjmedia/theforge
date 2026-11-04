@@ -29,6 +29,9 @@ import {
   hasValidTasksJson,
   mergeTasksJsonIdempotent,
   type StoredTasksJsonV2,
+  type ProjectType,
+  isGreenfield,
+  isLegacy,
 } from "@theforge/shared-types";
 import { StageStatus, Prisma } from "@theforge/database";
 import { PrismaService } from "../../../prisma/prisma.service.js";
@@ -75,7 +78,7 @@ import {
 type ProjectRow = {
   id: string;
   name: string;
-  projectType: "NEW" | "LEGACY";
+  projectType: ProjectType;
   userId: string;
   visibility: string;
   linkedLegacyProjectId: string | null;
@@ -136,10 +139,10 @@ export class ProjectIntegrationService {
     const handoff = this.handoffFromProject(project);
     const stage2 = project.stages.find((s) => s.ordinal >= 2);
     const linkedNewHandoff =
-      project.projectType === "LEGACY" && project.linkedNewProjectId
+      isLegacy(project.projectType) && project.linkedNewProjectId
         ? this.handoffFromProject(await this.assertAccess(project.linkedNewProjectId))
         : handoff;
-    const traceHandoff = project.projectType === "LEGACY" ? linkedNewHandoff : handoff;
+    const traceHandoff = isLegacy(project.projectType) ? linkedNewHandoff : handoff;
     const tracesForProject = await this.listTraceRows(projectId, traceHandoff);
     return {
       linkedLegacyProject: await this.summarizeLinked(project.linkedLegacyProjectId),
@@ -148,25 +151,24 @@ export class ProjectIntegrationService {
       traces: tracesForProject,
       warnings,
       handoffImportedAt: stage2?.handoffImportedAt?.toISOString() ?? null,
-      promotableItemIds:
-        project.projectType === "LEGACY"
+      promotableItemIds: isLegacy(project.projectType)
           ? selectPromotableHandoffItemIds(tracesForProject)
           : undefined,
-      linkedNewHandoff: project.projectType === "LEGACY" ? linkedNewHandoff : undefined,
+      linkedNewHandoff: isLegacy(project.projectType) ? linkedNewHandoff : undefined,
     };
   }
 
   private buildWarnings(project: ProjectRow): string[] {
     const warnings: string[] = [];
     const handoff = this.handoffFromProject(project);
-    if (project.projectType === "NEW" && !project.linkedLegacyProjectId) {
+    if (isGreenfield(project.projectType) && !project.linkedLegacyProjectId) {
       warnings.push("Vincula un proyecto LEGACY para declarar dependencia AS-IS.");
     }
-    if (project.projectType === "NEW" && handoff.items.length === 0) {
+    if (isGreenfield(project.projectType) && handoff.items.length === 0) {
       warnings.push("Añade ítems handoff NEW-LEG antes de enviar al equipo legacy.");
     }
     const sent = handoff.items.filter((i) => i.status === "sent" || i.status === "accepted");
-    if (project.projectType === "LEGACY" && project.linkedNewProjectId && sent.length > 0) {
+    if (isLegacy(project.projectType) && project.linkedNewProjectId && sent.length > 0) {
       const stage2plus = project.stages.filter((s) => s.ordinal >= 2);
       const imported = stage2plus.some((s) => s.handoffImportedAt);
       if (!imported) {
@@ -186,16 +188,16 @@ export class ProjectIntegrationService {
     return {
       id: p.id,
       name: p.name,
-      projectType: p.projectType as "NEW" | "LEGACY",
+      projectType: p.projectType as ProjectType,
       hasBaselineMdd: !!(p.stages[0]?.mddContent ?? "").trim(),
     };
   }
 
-  async listPickerProjects(targetType: "NEW" | "LEGACY", q?: string) {
+  async listPickerProjects(targetType: ProjectType, q?: string) {
     const userId = getRequestUserId();
     const where = {
       archivedAt: null,
-      projectType: targetType as "NEW" | "LEGACY",
+      projectType: targetType,
       OR: [{ userId }, { visibility: "SHARED" as const }],
       ...(q?.trim()
         ? { name: { contains: q.trim(), mode: "insensitive" as const } }
@@ -220,13 +222,13 @@ export class ProjectIntegrationService {
     const project = await this.assertAccess(projectId);
 
     if (dto.linkedLegacyProjectId !== undefined) {
-      if (project.projectType !== "NEW") {
+      if (!isGreenfield(project.projectType)) {
         throw new BadRequestException("linkedLegacyProjectId solo aplica a proyectos NEW");
       }
       const legacyId = dto.linkedLegacyProjectId;
       if (legacyId) {
         const legacy = await this.assertAccess(legacyId);
-        if (legacy.projectType !== "LEGACY") {
+        if (!isLegacy(legacy.projectType)) {
           throw new BadRequestException("El proyecto enlazado debe ser LEGACY");
         }
         await this.prisma.project.update({
@@ -253,13 +255,13 @@ export class ProjectIntegrationService {
     }
 
     if (dto.linkedNewProjectId !== undefined) {
-      if (project.projectType !== "LEGACY") {
+      if (!isLegacy(project.projectType)) {
         throw new BadRequestException("linkedNewProjectId solo aplica a proyectos LEGACY");
       }
       const newId = dto.linkedNewProjectId;
       if (newId) {
         const np = await this.assertAccess(newId);
-        if (np.projectType !== "NEW") {
+        if (!isGreenfield(np.projectType)) {
           throw new BadRequestException("El proyecto enlazado debe ser NEW");
         }
         await this.prisma.project.update({
@@ -290,7 +292,7 @@ export class ProjectIntegrationService {
 
   async getLegacyContextForNew(projectId: string): Promise<IntegrationContextResponse | null> {
     const project = await this.assertAccess(projectId);
-    if (project.projectType !== "NEW" || !project.linkedLegacyProjectId) return null;
+    if (!isGreenfield(project.projectType) || !project.linkedLegacyProjectId) return null;
     const legacy = await this.assertAccess(project.linkedLegacyProjectId);
     const baseline = this.baselineStage(legacy);
     const mdd = baseline?.mddContent?.trim() ?? "";
@@ -309,7 +311,7 @@ export class ProjectIntegrationService {
   async createHandoffItem(projectId: string, body: unknown) {
     const dto = createHandoffItemBodySchema.parse(body);
     const project = await this.assertAccess(projectId);
-    if (project.projectType !== "NEW") {
+    if (!isGreenfield(project.projectType)) {
       throw new BadRequestException("Handoff solo en proyectos NEW");
     }
     const handoff = this.handoffFromProject(project);
@@ -353,7 +355,7 @@ export class ProjectIntegrationService {
 
   async sendHandoff(projectId: string) {
     const project = await this.assertAccess(projectId);
-    if (project.projectType !== "NEW") {
+    if (!isGreenfield(project.projectType)) {
       throw new BadRequestException("sendHandoff solo en proyectos NEW");
     }
     if (!project.linkedLegacyProjectId) {
@@ -375,7 +377,7 @@ export class ProjectIntegrationService {
 
   async importHandoffToStage(projectId: string, stageId: string) {
     const project = await this.assertAccess(projectId);
-    if (project.projectType !== "LEGACY") {
+    if (!isLegacy(project.projectType)) {
       throw new BadRequestException("importHandoff solo en proyectos LEGACY");
     }
     const stage = project.stages.find((s) => s.id === stageId);
@@ -427,7 +429,7 @@ export class ProjectIntegrationService {
     }
     const dto = createStageFromAriadneChangePackInputSchema.parse(bodyForParse);
     const project = await this.assertAccess(dto.forgeProjectId);
-    if (project.projectType !== "LEGACY") {
+    if (!isLegacy(project.projectType)) {
       throw new BadRequestException("create_stage_from_ariadne_change_pack solo en proyectos LEGACY");
     }
 
@@ -648,7 +650,7 @@ export class ProjectIntegrationService {
   ): Promise<ReconcileHandoffStageResponse> {
     const dto = reconcileHandoffStageBodySchema.parse(body ?? {});
     const project = await this.assertAccess(projectId);
-    if (project.projectType !== "LEGACY") {
+    if (!isLegacy(project.projectType)) {
       throw new BadRequestException("reconcile-handoff solo en proyectos LEGACY");
     }
     const stage = project.stages.find((s) => s.id === stageId);
@@ -741,7 +743,7 @@ export class ProjectIntegrationService {
   ): Promise<AbandonIntegrationHandoffResponse> {
     const dto = abandonIntegrationHandoffBodySchema.parse(body ?? {});
     const project = await this.assertAccess(projectId);
-    if (project.projectType !== "LEGACY") {
+    if (!isLegacy(project.projectType)) {
       throw new BadRequestException("abandon-handoff solo en proyectos LEGACY");
     }
     const stageRow = await this.prisma.stage.findFirst({
@@ -860,7 +862,7 @@ export class ProjectIntegrationService {
   ): Promise<PromoteHandoffToStageResponse> {
     const dto = promoteHandoffToStageBodySchema.parse(body ?? {});
     const project = await this.assertAccess(projectId);
-    if (project.projectType !== "LEGACY") {
+    if (!isLegacy(project.projectType)) {
       throw new BadRequestException("promote-to-stage solo en proyectos LEGACY");
     }
     const newProjectId = project.linkedNewProjectId;
@@ -1232,7 +1234,7 @@ export class ProjectIntegrationService {
   async resolvePromptContext(projectId: string, stageId?: string | null) {
     const project = await this.assertAccess(projectId);
     const externalLegacy =
-      project.projectType === "NEW" && project.linkedLegacyProjectId
+      isGreenfield(project.projectType) && project.linkedLegacyProjectId
         ? await this.getLegacyContextForNew(projectId)
         : null;
     const externalBlock = externalLegacy
@@ -1246,7 +1248,7 @@ export class ProjectIntegrationService {
 
     let handoffItems: IntegrationHandoffItem[] = [];
     let newProjectMeta: { id: string; name: string } | undefined;
-    if (project.projectType === "LEGACY") {
+    if (isLegacy(project.projectType)) {
       // Preferred (closed scope): the promoted stage's handoff snapshot (stage 2+).
       const stage = stageId ? project.stages.find((s) => s.id === stageId) : undefined;
       if (stage && stage.ordinal >= 2) {
@@ -1270,11 +1272,11 @@ export class ProjectIntegrationService {
         newProjectMeta = { id: np.id, name: np.name };
       }
     }
-    if (project.projectType === "NEW") {
+    if (isGreenfield(project.projectType)) {
       handoffItems = this.handoffFromProject(project).items;
     }
 
-    return { externalBlock, handoffItems, newProjectMeta, handoffForNew: project.projectType === "NEW" ? handoffItems : [] };
+    return { externalBlock, handoffItems, newProjectMeta, handoffForNew: isGreenfield(project.projectType) ? handoffItems : [] };
   }
 
   assertHandoffGateForLegacyMdd(project: ProjectRow, stage: { ordinal: number; handoffImportedAt: Date | null }) {

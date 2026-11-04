@@ -1,4 +1,4 @@
-import type { ChecklistResult, ChatImagePart } from "@theforge/shared-types";
+import type { ChecklistResult, ChatImagePart, ProjectType } from "@theforge/shared-types";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -53,7 +53,7 @@ export interface GenerateResponseOptions {
    * - NEW: el documento debe incluir ese prompt para el **producto del MDD** (no The Forge).
    * - LEGACY: prohibido incluir sección Stitch.
    */
-  projectTypeForUxGuide?: "NEW" | "LEGACY";
+  projectTypeForUxGuide?: ProjectType;
   /** Fragmentos SDD para alinear guía + Stitch (típico en proyectos NEW). */
   uxGuideAdditionalDocs?: Partial<
     Record<

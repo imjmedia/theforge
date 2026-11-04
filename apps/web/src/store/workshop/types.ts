@@ -1,7 +1,7 @@
 /**
  * @fileoverview Tipos compartidos del store Workshop: {@link Status} (semáforo), {@link ChatMessage}, tipos de agentes, etc.
  */
-import type { ChatImagePart, MddDeliveryGateResult } from "@theforge/shared-types";
+import type { ChatImagePart, MddDeliveryGateResult, ProjectType } from "@theforge/shared-types";
 
 export type Status = "ROJO" | "AMARILLO" | "VERDE";
 
@@ -268,7 +268,7 @@ export interface Project {
   complexity?: "LOW" | "MEDIUM" | "HIGH";
   /** Inferencia / plan propuesto; no aplica a `complexity` hasta confirmación explícita. */
   complexityPending?: ComplexityPending | null;
-  projectType?: "NEW" | "LEGACY";
+  projectType?: ProjectType;
   /** Enfoque metodológico: DOMAIN_FIRST (default) o UX_FIRST (traducción técnica). */
   approach?: "DOMAIN_FIRST" | "UX_FIRST";
   /** Insumo visual para proyectos UX-First (Figma URL, especificación de pantallas, etc.). */

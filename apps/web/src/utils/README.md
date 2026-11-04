@@ -8,7 +8,7 @@ Utilidades del Workshop y plugins.
 | `http-stream.ts` | Lectores compartidos de streams HTTP: `readNdjsonStream`, `readSseStream`, `withSyntheticSseTerminal`. |
 | `workshop-document-content.util.ts` | Normaliza markdown del editor Workshop: quita stamp API, limpia residuos (`cleanDocForWorkshop`) y aplica **`formatDocumentMarkdown`** (misma SSOT que `MddViewer` y persist API). `workshopDocumentBodiesEqual` compara cuerpos ya formateados. |
 | `workshop-mdd-sync.util.ts` | **`resolveMddFetchMerge`**: decide servidor vs local en `fetchProject` (refresh, cambio de proyecto, fetch obsoleto post-grabar, cambios sin guardar). Con **`preferServerMdd`** (job MDD en background) aplica el markdown del servidor aunque local === baseline. Tests en `workshop-mdd-sync.util.spec.ts`. |
-| `workshopAgentsBusy.ts` | **`isWorkshopAgentsBusy`**: bloquea salir del Workshop solo con trabajo en primer plano (chat streaming, benchmark). Jobs encolados en servidor (`isServerSideQueuedWork`, `generationStatus.busy`) no bloquean navegación. |
+| `complexityTabs.ts` | Visibilidad de pestañas del Workshop por `complexity` y **`ProjectType`** (`@theforge/shared-types`; `ProjectTypeForTabs` es alias). Spec: `complexityTabs.spec.ts`. |
 | `tasksGenerationPrerequisites.ts` | Prerrequisitos UI para **Generar Tasks** (MDD, Spec, Blueprint, API si §4, Pantallas si `hasUxTeam`; legacy relaja Spec). Alineado con `runTasksPreflightStrict`. |
 | `pluginApi.ts` | HTTP: artifacts, plugin-data, generación encolada, polling |
 | `pluginArtifactContent.ts` | Serialización editor ↔ payload según `contentType` |

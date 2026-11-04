@@ -4,6 +4,11 @@
 import type { DragEvent } from "react";
 import { Check, GitBranch, Heart, Loader2, Palette, Pencil, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  isGreenfield,
+  ProjectTypeEnum,
+  type ProjectType,
+} from "@theforge/shared-types";
 
 export type ProjectFolderStatus = "ROJO" | "AMARILLO" | "VERDE";
 
@@ -13,7 +18,7 @@ export interface ProjectFolderTileProps {
   status: ProjectFolderStatus;
   precisionScore: number;
   approach?: "DOMAIN_FIRST" | "UX_FIRST";
-  projectType?: "NEW" | "LEGACY";
+  projectType?: ProjectType;
   visibility?: "PRIVATE" | "SHARED";
   selected: boolean;
   selectable: boolean;
@@ -143,7 +148,7 @@ export function ProjectFolderTile({
   onDragStart,
   onDragEnd,
 }: ProjectFolderTileProps) {
-  const typeIsNew = (projectType ?? "NEW") === "NEW";
+  const typeIsNew = isGreenfield(projectType ?? ProjectTypeEnum.enum.NEW);
   const isShared = visibility === "SHARED";
   const selectId = `select-project-${id}`;
   const visibilityLabel = isShared ? "Compartido" : "Privado";

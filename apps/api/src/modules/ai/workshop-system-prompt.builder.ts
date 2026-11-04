@@ -10,6 +10,8 @@ import {
   WORKSHOP_DBGA_EDIT_COVENANT,
   workshopFinDelimiterCovenant,
   isExplicitContext7ChatRequest,
+  isGreenfield,
+  isLegacy,
 } from "@theforge/shared-types";
 import { appendTechDocsToSystemPrompt } from "../technology-docs-mcp/tech-docs-context.util.js";
 import { frozenTabSystemPromptBlock } from "../sessions/workshop-document-turn.util.js";
@@ -58,13 +60,13 @@ export function appendUxGuideStitchPolicy(
   if (!pt) return systemPrompt;
   if (options?.activeTab?.trim() !== "ux-ui-guide") return systemPrompt;
   let s = systemPrompt;
-  if (pt === "LEGACY") {
+  if (isLegacy(pt)) {
     return (
       s +
       "\n\n**[Tipo de proyecto: LEGACY]** Cambio sobre sistema existente. **Prohibido** incluir en la Guía UX/UI ninguna sección titulada **«Prompt para Google Stitch»** ni brief para herramientas de diseño generativo (p. ej. Google Stitch) orientado a un producto greenfield desde cero. La guía debe alinearse con lo ya existente descrito en el MDD y el contexto del proyecto."
     );
   }
-  if (pt === "NEW") {
+  if (isGreenfield(pt)) {
     s +=
       "\n\n**[Tipo de proyecto: NEW]** Al generar o actualizar la **Guía UX/UI completa**, **incluye obligatoriamente** al final del documento markdown (antes de la línea `---FIN_UX_UI---`) la sección **## Prompt para Google Stitch (producto)** con **un único bloque de texto** listo para copiar y pegar en Google Stitch. Ese prompt debe describir **el producto que estamos especificando en este proyecto** (el sistema del cliente según el MDD y los documentos del contexto), **no** la aplicación interna The Forge ni su Workshop. Incluye: (1) nombre provisional del producto y propuesta de valor en una frase; (2) usuarios objetivo y contexto de uso; (3) inventario de **pantallas, vistas o flujos** inferidos de MDD, Blueprint, Spec, casos de uso, historias, flujos de lógica y arquitectura que recibes en el contexto; (4) dirección visual, stack de UI (p. ej. React, Tailwind, shadcn) y criterios de accesibilidad alineados a las secciones anteriores de esta guía; (5) si el producto es web, pedir **variantes desktop y móvil**; (6) estados vacío, carga y error en flujos críticos. Si faltan datos, **infórelos** y declara **supuestos explícitos** dentro del bloque Stitch.";
     const docs = options.uxGuideAdditionalDocs;

@@ -1,5 +1,5 @@
 import type { ComplexityLevel, ProjectApproach, ProjectType } from "@theforge/shared-types";
-import { GOVERNANCE_DOCS_PREFIX, detectWebSurfaces } from "@theforge/shared-types";
+import { GOVERNANCE_DOCS_PREFIX, ProjectTypeEnum, detectWebSurfaces } from "@theforge/shared-types";
 import { selectedPatternIdsFromMdd } from "@theforge/shared-types/mdd-governance-patterns";
 import {
   complexityAtLeast,
@@ -1449,7 +1449,7 @@ export function suggestAgentGovernanceArtifacts(
 ): AgentGovernanceSuggestions {
   const text = corpus(input);
   const authoritativeUiText = [input.mddMarkdown, input.specMarkdown].filter(Boolean).join("\n\n");
-  const projectType = input.projectType ?? "NEW";
+  const projectType = input.projectType ?? ProjectTypeEnum.enum.NEW;
   const archetypes = detectArchetypes(
     text,
     input.complexity,

@@ -31,8 +31,14 @@ describe("AiService — Structured Output & ProjectArchitectureGraph (PAG)", () 
     buildContextFromText: async () => null,
   } as any;
 
+  const dummyMermaid = { normalizeMermaid: async (s: string) => s } as any;
+
+  function newService(): AiService {
+    return new AiService(dummyFactory, dummyTechDocs, null, dummyMermaid);
+  }
+
   it("generateObject desempaqueta JSON envuelto en bloques markdown", async () => {
-    const service = new AiService(dummyFactory, dummyTechDocs, null);
+    const service = newService();
     const mockJson = JSON.stringify({ name: "AuthModule", active: true });
     (service as any).generateResponse = async () => `\`\`\`json\n${mockJson}\n\`\`\``;
 
@@ -51,7 +57,7 @@ describe("AiService — Structured Output & ProjectArchitectureGraph (PAG)", () 
   });
 
   it("generateProjectArchitectureGraph retorna un PAG válido y validado", async () => {
-    const service = new AiService(dummyFactory, dummyTechDocs, null);
+    const service = newService();
     const mockPag: ProjectArchitectureGraph = {
       version: "1.0.0",
       projectName: "InvoiceForge",
@@ -125,7 +131,7 @@ describe("AiService — Structured Output & ProjectArchitectureGraph (PAG)", () 
   });
 
   it("generateApiContracts genera tablas Markdown compiladas sin prosa libre", async () => {
-    const service = new AiService(dummyFactory, dummyTechDocs, null);
+    const service = newService();
     const mockPag: ProjectArchitectureGraph = {
       version: "1.0.0",
       projectName: "OrderService",
@@ -170,18 +176,17 @@ describe("AiService — Structured Output & ProjectArchitectureGraph (PAG)", () 
 
     (service as any).generateResponse = async () => JSON.stringify(mockPag);
 
-    const contractsMarkdown = await service.generateApiContracts("# MDD OrderService");
+    const { content: contractsMarkdown, pag: savedPag } = await service.generateApiContracts("# MDD OrderService");
     assert.match(contractsMarkdown, /## 1\. Catálogo de Endpoints/);
     assert.match(contractsMarkdown, /\|\s+\*\*GET\*\*\s+\|\s+`\/api\/v1\/orders`\s+\|/);
     assert.match(contractsMarkdown, /## 3\. Códigos de Estado y Manejo de Errores/);
 
-    const savedPag = service.getLastGeneratedPag();
     assert.ok(savedPag);
     assert.equal(savedPag?.projectName, "OrderService");
   });
 
   it("generateLogicFlows genera diagramas de secuencia Mermaid sin prosa libre", async () => {
-    const service = new AiService(dummyFactory, dummyTechDocs, null);
+    const service = newService();
     const mockPag: ProjectArchitectureGraph = {
       version: "1.0.0",
       projectName: "OrderService",
@@ -231,7 +236,7 @@ describe("AiService — Structured Output & ProjectArchitectureGraph (PAG)", () 
   });
 
   it("generateInfra genera topología Mermaid y docker-compose.yml determinista", async () => {
-    const service = new AiService(dummyFactory, dummyTechDocs, null);
+    const service = newService();
     const mockPag: ProjectArchitectureGraph = {
       version: "1.0.0",
       projectName: "OrderService",
@@ -260,7 +265,7 @@ describe("AiService — Structured Output & ProjectArchitectureGraph (PAG)", () 
   });
 
   it("ejecuta Self-Healing Semántico guiado por el Compiler si el PAG inicial tiene errores", async () => {
-    const service = new AiService(dummyFactory, dummyTechDocs, null);
+    const service = newService();
     let callCount = 0;
 
     // Primer PAG con error: path no empieza con '/' y targetEntity inexistente

@@ -98,6 +98,10 @@ import {
 } from "./tasks-coordinates-context.util.js";
 import { resolveLegacyBaselineStageFlag } from "../ai/utils/legacy-as-is-spec.util.js";
 import { pickPrimaryStage, type StageWithEstimation } from "./stage-helpers.js";
+import {
+  persistStageArchitectureGraph,
+  resolveStageProjectArchitectureGraph,
+} from "./stage-architecture-graph.util.js";
 import { ProjectsService } from "./projects.service.js";
 
 type StageWithEst = StageWithEstimation;
@@ -1119,7 +1123,7 @@ export class ProjectDeliverableGeneratorsService {
     ? `${project.blueprintContent}${uiScreensPromptContext}`
     : uiScreensPromptContext || undefined;
 
-  const content = await this.ai.generateApiContracts(
+  const { content } = await this.ai.generateApiContracts(
     this.enrichMddWithApiEndpoints(buildConstitutionMarkdown(project)),
     effectiveBlueprint,
     gapsFeedback,
@@ -1132,11 +1136,13 @@ export class ProjectDeliverableGeneratorsService {
   async generateInfraPreview(projectId: string, gapsFeedback?: string | null): Promise<{ content: string }> {
   const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
   const legacyOpts = await this.resolveLegacyGenerateOptions(project);
+  const stagePag = resolveStageProjectArchitectureGraph(pickPrimaryStage(project.stages ?? []));
   const content = await this.ai.generateInfra(
     buildConstitutionMarkdown(project),
     project.blueprintContent,
     gapsFeedback,
     legacyOpts,
+    stagePag,
   );
   return { content: cleanDocumentContent(content) };
   }
@@ -1167,29 +1173,31 @@ export class ProjectDeliverableGeneratorsService {
     ? `${project.blueprintContent}${uiScreensPromptContext}`
     : uiScreensPromptContext || undefined;
 
-  let apiContent = await this.ai.generateApiContracts(
-    enrichedMdd,
-    effectiveBlueprint,
-    gapsFeedback,
-    brdContent,
-    legacyOpts,
-  );
-  apiContent = cleanDocumentContent(apiContent);
+  let generatedPag: import("@theforge/shared-types").ProjectArchitectureGraph | null = null;
+  const invokeApiContracts = async (
+    enrichedMdd: string,
+    blueprint: string | undefined,
+    feedback: string | null | undefined,
+  ) => {
+    const result = await this.ai.generateApiContracts(
+      enrichedMdd,
+      blueprint,
+      feedback,
+      brdContent,
+      legacyOpts,
+    );
+    if (result.pag) generatedPag = result.pag;
+    return cleanDocumentContent(result.content);
+  };
+
+  let apiContent = await invokeApiContracts(enrichedMdd, effectiveBlueprint, gapsFeedback);
 
   if (gapsFeedback && apiContent.length < 80) {
     this.throwIfAborted(signal);
     this.logger.warn(
       `[API] Resultado vacío/corto (${apiContent.length} chars) con gapsFeedback — reintentando sin gaps`,
     );
-    apiContent = cleanDocumentContent(
-      await this.ai.generateApiContracts(
-        enrichedMdd,
-        effectiveBlueprint,
-        null,
-        brdContent,
-        legacyOpts,
-      ),
-    );
+    apiContent = await invokeApiContracts(enrichedMdd, effectiveBlueprint, null);
   }
 
   if (apiContent.length < 80) {
@@ -1210,15 +1218,7 @@ export class ProjectDeliverableGeneratorsService {
     this.logger.warn(
       `[API] Conformidad insuficiente (${apiCheck.missingInApi.length} faltantes, ${apiCheck.extraInApi.length} extra) — reintento ${qualityRetries}/${MAX_API_QUALITY_RETRIES}`,
     );
-    apiContent = cleanDocumentContent(
-      await this.ai.generateApiContracts(
-        enrichedMdd,
-        project.blueprintContent,
-        combinedFeedback,
-        brdContent,
-        legacyOpts,
-      ),
-    );
+    apiContent = await invokeApiContracts(enrichedMdd, project.blueprintContent ?? undefined, combinedFeedback);
     apiContent = repairApiProgrammaticGaps(mddContent, apiContent);
     apiCheck = runApiConformanceCheck(mddContent, apiContent);
   }
@@ -1254,10 +1254,14 @@ export class ProjectDeliverableGeneratorsService {
       .catch(() => {});
   }
 
-  const pag = this.ai.getLastGeneratedPag();
+  const targetStage = pickPrimaryStage(project.stages ?? []);
+  if (generatedPag && targetStage?.id) {
+    await persistStageArchitectureGraph(this.prisma, targetStage.id, generatedPag);
+  }
+
   const updated = await this.projects.update(projectId, {
     apiContractsContent: apiContent,
-    ...(pag ? { documentAst: pag as any } : {}),
+    ...(generatedPag ? { documentAst: generatedPag as any } : {}),
   });
   this.logger.log(
     `[API] Contratos API completados (${apiContent.length} chars, conformidad=${postCheck.ok})`,
@@ -1279,7 +1283,8 @@ export class ProjectDeliverableGeneratorsService {
     signal,
   );
   const mdd = buildConstitutionMarkdown(project);
-  let content = await this.ai.generateLogicFlows(mdd, gapsFeedback, legacyOpts);
+  const stagePag = resolveStageProjectArchitectureGraph(pickPrimaryStage(project.stages ?? []));
+  let content = await this.ai.generateLogicFlows(mdd, gapsFeedback, legacyOpts, stagePag);
   let cleaned = cleanDocumentContent(this.ai.resolveLogicFlowsLlmFallback(mdd, content, legacyOpts));
 
   const deterministicBaseline =
@@ -1303,7 +1308,7 @@ export class ProjectDeliverableGeneratorsService {
     this.logger.warn(
       `[Flujos] Conformidad insuficiente — reintento ${qualityRetries}/${MAX_LOGIC_FLOWS_QUALITY_RETRIES}: ${internalFeedback.slice(0, 200)}`,
     );
-    content = await this.ai.generateLogicFlows(mdd, combinedFeedback, legacyOpts);
+    content = await this.ai.generateLogicFlows(mdd, combinedFeedback, legacyOpts, stagePag);
     cleaned = cleanDocumentContent(this.ai.resolveLogicFlowsLlmFallback(mdd, content, legacyOpts));
     cleaned = repairLogicFlowsProgrammaticGaps(mdd, cleaned);
     lfCheck = this.conformance.checkLogicFlows(mdd, cleaned);
@@ -1390,11 +1395,13 @@ export class ProjectDeliverableGeneratorsService {
     signal,
   );
   const mdd = buildConstitutionMarkdown(project);
+  const stagePag = resolveStageProjectArchitectureGraph(pickPrimaryStage(project.stages ?? []));
   let content = await this.ai.generateInfra(
     mdd,
     project.blueprintContent,
     gapsFeedback,
     legacyOpts,
+    stagePag,
   );
   let cleaned = cleanDocumentContent(content);
 

@@ -1,4 +1,10 @@
 /** Pestañas de documentos en Workshop (alineado con `DocPanel` en WorkshopView). */
+import {
+  isLegacy,
+  ProjectTypeEnum,
+  type ProjectType,
+} from "@theforge/shared-types";
+
 export type WorkshopDocTab =
   | "benchmark"
   | "legacy"
@@ -23,14 +29,16 @@ export type WorkshopDocTab =
   | "ui-screens"
 ;
 
-export type ProjectTypeForTabs = "NEW" | "LEGACY";
+/** Alias web del tipo de proyecto (SSOT: `@theforge/shared-types`). */
+export type ProjectTypeForTabs = ProjectType;
 
 /** Etapa 1 = AS-IS/baseline; etapa 2+ = modificación (solo MDD de cambio). */
 export function isLegacyModificationStage(
   projectType: ProjectTypeForTabs | undefined,
   stageOrdinal: number | undefined,
 ): boolean {
-  return projectType === "LEGACY" && (stageOrdinal ?? 1) >= 2;
+  const pt = projectType ?? ProjectTypeEnum.enum.NEW;
+  return isLegacy(pt) && (stageOrdinal ?? 1) >= 2;
 }
 
 /**
@@ -48,7 +56,7 @@ export function isTabVisibleForComplexity(
   opts?: { projectType?: ProjectTypeForTabs; legacyStageOrdinal?: number },
 ): boolean {
   const c = complexity ?? "HIGH";
-  const pt: ProjectTypeForTabs = opts?.projectType ?? "NEW";
+  const pt: ProjectTypeForTabs = opts?.projectType ?? ProjectTypeEnum.enum.NEW;
   const legacyModification = isLegacyModificationStage(pt, opts?.legacyStageOrdinal);
 
   // En etapas de modificación (ordinal ≥ 2) no se generan MDD Inicial ni BRD.
@@ -77,7 +85,7 @@ export function isTabVisibleForComplexity(
   }
 
   if (c === "MEDIUM") {
-    if (pt === "LEGACY") {
+    if (isLegacy(pt)) {
       const allow: WorkshopDocTab[] = [
         "legacy",
         "mdd-inicial",

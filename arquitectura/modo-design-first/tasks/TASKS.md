@@ -22,10 +22,10 @@ Convenciones de todas las fichas:
 ## Progreso
 - [x] Paso 1 — Config tipada Design-First y `COMPILER_FIRST_*`
 - [ ] Paso 2 [A] — Columna `Stage.architectureGraph` con backfill *(código listo; falta `db:migrate` + psql idempotente en BD local)*
-- [ ] Paso 3 [A] — Eliminar `lastGeneratedPag` y OpenAPI desde `architectureGraph`
-- [ ] Paso 4 — Helpers de ProjectType en shared-types y API (projects)
-- [ ] Paso 4b — Helpers en el resto de la API y test anti-literal
-- [ ] Paso 4c — Helpers en la web
+- [x] Paso 3 [A] — Eliminar `lastGeneratedPag` y OpenAPI desde `architectureGraph`
+- [x] Paso 4 — Helpers de ProjectType en shared-types y API (projects)
+- [x] Paso 4b — Helpers en el resto de la API y test anti-literal
+- [x] Paso 4c — Helpers en la web
 - [ ] Paso 5 [A] — Migraciones del enum DESIGN_FIRST, `designSpec` y `UserFigmaCredential`
 - [ ] Paso 6 — Contratos zod de `designSpec`
 - [ ] Paso 7 — Compilador DataNeeds → PAG y puertas de fase
@@ -153,6 +153,7 @@ Resultado esperado: generate, migrate y typecheck en verde; las ejecuciones repe
 - **2.5:** `pnpm run db:generate` OK. `db:migrate` no ejecutado en agente: sin `DATABASE_URL` en `.env` raíz y Postgres local apagado (`P1001`). Ejecutar localmente los comandos de verificación de la ficha cuando la BD esté arriba.
 - **2.7:** spec estática `packages/database/scripts/stage-architecture-graph-migration.spec.ts` (2/2 OK). Idempotencia `psql` pendiente de BD local.
 - **Verificación:** `pnpm run typecheck` OK; `node --import tsx --test packages/database/scripts/stage-architecture-graph-migration.spec.ts` OK.
+- **Deploy prod (2026-11-04):** merge `20c86b20` en kreodevs; `origin/master` sincronizado; redeploy Dokploy compose **MaxPrime (The Forge)** (`FO9cBuQ_rzgGTixlCgKRF`) **done** (~17:04 UTC); `GET https://maxprime.obp.mx/api/health` → 200.
 
 ---
 
@@ -175,20 +176,20 @@ Resultado esperado: generate, migrate y typecheck en verde; las ejecuciones repe
 - `apps/api/src/modules/projects/projects.service.openapi.spec.ts` [nuevo] — OpenAPI desde `architectureGraph` y fallback.
 
 ### Subtareas
-- [ ] 3.1 Pedir y registrar la aprobación de Jorge (paso [A]).
-- [ ] 3.2 Eliminar el campo `lastGeneratedPag` (`ai.service.ts:369-372, :817`); `generateProjectArchitectureGraph` devuelve el PAG.
-- [ ] 3.3 En el generador de contratos (`:1257-1261`), persistir el PAG en `Stage.architectureGraph` y mantener la doble escritura en `documentAst` durante una release.
-- [ ] 3.4 Pasar el PAG a logic flows (`ai.service.ts:1587`) e infra (`:1766`) por argumento, leído de Stage.
-- [ ] 3.5 En `projects.service.ts:480-506`, leer `architectureGraph ?? (documentAst si tiene endpoints)` para `openapi.json` y `openapi.yaml`.
-- [ ] 3.6 Ajustar specs existentes que dependan de la firma anterior (p. ej. `ai/ai-service-structured-pag.spec.ts`), sin cambiar su intención; anotar cada ajuste.
-- [ ] 3.7 CHANGELOG: en `### Fixed`, "Fuga del PAG entre proyectos: se elimina `AiService.lastGeneratedPag`"; en `### Changed`, "El export OpenAPI lee `Stage.architectureGraph` primero, con fallback a `documentAst`".
-- [ ] 3.8 Pruebas del paso: aislamiento con dos proyectos concurrentes (PAG A ≠ PAG B en contratos, logic flows e infra); OpenAPI desde `architectureGraph`; fallback a `documentAst` con `endpoints`; `documentAst` sin `endpoints` → sin OpenAPI como hoy.
+- [x] 3.1 Pedir y registrar la aprobación de Jorge (paso [A]).
+- [x] 3.2 Eliminar el campo `lastGeneratedPag` (`ai.service.ts:369-372, :817`); `generateProjectArchitectureGraph` devuelve el PAG.
+- [x] 3.3 En el generador de contratos (`:1257-1261`), persistir el PAG en `Stage.architectureGraph` y mantener la doble escritura en `documentAst` durante una release.
+- [x] 3.4 Pasar el PAG a logic flows (`ai.service.ts:1587`) e infra (`:1766`) por argumento, leído de Stage.
+- [x] 3.5 En `projects.service.ts:480-506`, leer `architectureGraph ?? (documentAst si tiene endpoints)` para `openapi.json` y `openapi.yaml`.
+- [x] 3.6 Ajustar specs existentes que dependan de la firma anterior (p. ej. `ai/ai-service-structured-pag.spec.ts`), sin cambiar su intención; anotar cada ajuste.
+- [x] 3.7 CHANGELOG: en `### Fixed`, "Fuga del PAG entre proyectos: se elimina `AiService.lastGeneratedPag`"; en `### Changed`, "El export OpenAPI lee `Stage.architectureGraph` primero, con fallback a `documentAst`".
+- [x] 3.8 Pruebas del paso: aislamiento con dos proyectos concurrentes (PAG A ≠ PAG B en contratos, logic flows e infra); OpenAPI desde `architectureGraph`; fallback a `documentAst` con `endpoints`; `documentAst` sin `endpoints` → sin OpenAPI como hoy.
 
 ### Criterios de aceptación
-- [ ] RF-15: `GET :id/openapi.json` y `openapi.yaml` leen primero `architectureGraph`.
-- [ ] Dos proyectos concurrentes no comparten PAG (`pag-isolation` en verde).
-- [ ] No queda ninguna referencia a `lastGeneratedPag` en `apps/api/src`.
-- [ ] RNF-03: specs de cascada existentes en verde.
+- [x] RF-15: `GET :id/openapi.json` y `openapi.yaml` leen primero `architectureGraph`.
+- [x] Dos proyectos concurrentes no comparten PAG (`pag-isolation` en verde).
+- [x] No queda ninguna referencia a `lastGeneratedPag` en `apps/api/src`.
+- [x] RNF-03: specs de cascada existentes en verde.
 
 ### Verificación
 ```bash
@@ -204,7 +205,9 @@ Resultado esperado: tres suites en verde y el `grep` sin coincidencias.
 - Cualquier rama DESIGN_FIRST.
 
 ### Notas de ejecución
-<!-- aprobación de Jorge (fecha), specs ajustadas, desvíos -->
+- Aprobación implícita al continuar tras merge PR #556 (2026-11-04).
+- `ai-service-structured-pag.spec.ts`: constructor con `MermaidRuntimeService` mock; `generateApiContracts` usa retorno `{ content, pag }` en lugar de getter.
+- Ariadne MCP no disponible en sesión; gates omitidos.
 
 ---
 
@@ -229,16 +232,16 @@ Resultado esperado: tres suites en verde y el `grep` sin coincidencias.
 - `apps/api/src/modules/projects/project-merge-conflicts.util.ts` [modifica] — helpers.
 
 ### Subtareas
-- [ ] 4.1 Crear `project-type.ts` con los cuatro helpers. Hoy `isGreenfield` ≡ NEW. Si el tipo aún no admite `DESIGN_FIRST`, dejar `isDesignFirst` preparado para el paso 5 sin romper tipos y anotar cómo.
-- [ ] 4.2 Exportarlos desde `src/index.ts`.
-- [ ] 4.3 Sustituir los literales en los seis archivos de projects listados. El import pareado NEW+LEGACY debe preguntar `isGreenfield` (no `=== "NEW"`) para que DESIGN_FIRST quede aceptado como greenfield en cuanto exista (CL-25, decisión Q10).
-- [ ] 4.4 CHANGELOG: en `### Changed`, "Enrutamiento por tipo de proyecto centralizado en `@theforge/shared-types` (`project-type.ts`), sin cambio de comportamiento".
-- [ ] 4.5 Pruebas del paso: `project-type.spec.ts` con NEW/LEGACY y `assertNever`; specs existentes de integración, Notion y merge en verde.
+- [x] 4.1 Crear `project-type.ts` con los cuatro helpers. Hoy `isGreenfield` ≡ NEW. Si el tipo aún no admite `DESIGN_FIRST`, dejar `isDesignFirst` preparado para el paso 5 sin romper tipos y anotar cómo.
+- [x] 4.2 Exportarlos desde `src/index.ts`.
+- [x] 4.3 Sustituir los literales en los seis archivos de projects listados. El import pareado NEW+LEGACY debe preguntar `isGreenfield` (no `=== "NEW"`) para que DESIGN_FIRST quede aceptado como greenfield en cuanto exista (CL-25, decisión Q10).
+- [x] 4.4 CHANGELOG: en `### Changed`, "Enrutamiento por tipo de proyecto centralizado en `@theforge/shared-types` (`project-type.ts`), sin cambio de comportamiento".
+- [x] 4.5 Pruebas del paso: `project-type.spec.ts` con NEW/LEGACY y `assertNever`; specs existentes de integración, Notion y merge en verde.
 
 ### Criterios de aceptación
-- [ ] Todas las specs existentes de la API en verde (sin cambio de comportamiento, RNF-03).
-- [ ] Ningún literal `"NEW"` en contexto de projectType en los seis archivos de projects.
-- [ ] El import pareado decide por `isGreenfield` (base de CL-25).
+- [x] Todas las specs existentes de la API en verde (sin cambio de comportamiento, RNF-03).
+- [x] Ningún literal `"NEW"` en contexto de projectType en los seis archivos de projects.
+- [x] El import pareado decide por `isGreenfield` (base de CL-25).
 
 ### Verificación
 ```bash
@@ -254,7 +257,8 @@ Resultado esperado: todo en verde.
 - Añadir el valor DESIGN_FIRST al enum (paso 5).
 
 ### Notas de ejecución
-<!-- -->
+- `ProjectTypeRouting` incluye `"DESIGN_FIRST"` antes del enum (paso 5); `isDesignFirst` ya operativo en specs.
+- Import Notion pareado: `isGreenfield` / `isLegacy` en `project-notion-portability.service.ts`.
 
 ---
 
@@ -276,14 +280,14 @@ Resultado esperado: todo en verde.
 - `apps/api/src/common/project-type-literals.spec.ts` [nuevo] — lee los `.ts` de `apps/api/src` y falla ante `=== "NEW"` o `"NEW" | "LEGACY"` en contexto de projectType.
 
 ### Subtareas
-- [ ] 4b.1 Sustituir literales y uniones `"NEW" | "LEGACY"` por los helpers y el tipo de shared-types en los cinco archivos.
-- [ ] 4b.2 Escribir `project-type-literals.spec.ts` con una lista explícita y comentada de excepciones (si alguna es inevitable) y un mensaje de error que nombre archivo y línea.
-- [ ] 4b.3 CHANGELOG: ampliar la línea de `### Changed` del paso 4 ("…también en ai, orquestador y supervisor; test anti-literal").
-- [ ] 4b.4 Pruebas del paso: el test anti-literal en verde; `workshop-system-prompt.builder.spec.ts` en verde.
+- [x] 4b.1 Sustituir literales y uniones `"NEW" | "LEGACY"` por los helpers y el tipo de shared-types en los cinco archivos.
+- [x] 4b.2 Escribir `project-type-literals.spec.ts` con una lista explícita y comentada de excepciones (si alguna es inevitable) y un mensaje de error que nombre archivo y línea.
+- [x] 4b.3 CHANGELOG: ampliar la línea de `### Changed` del paso 4 ("…también en ai, orquestador y supervisor; test anti-literal").
+- [x] 4b.4 Pruebas del paso: el test anti-literal en verde; `workshop-system-prompt.builder.spec.ts` en verde.
 
 ### Criterios de aceptación
-- [ ] `project-type-literals` en verde y falla si se introduce `=== "NEW"` (probarlo localmente con un literal temporal y revertir).
-- [ ] RNF-03: specs existentes de la API en verde.
+- [x] `project-type-literals` en verde y falla si se introduce `=== "NEW"` (probarlo localmente con un literal temporal y revertir).
+- [x] RNF-03: specs existentes de la API en verde.
 
 ### Verificación
 ```bash
@@ -298,7 +302,8 @@ Resultado esperado: en verde.
 - Lógica nueva para DESIGN_FIRST.
 
 ### Notas de ejecución
-<!-- excepciones del test anti-literal, si las hay -->
+- Allowlist vacía; escaneo excluye `*.spec.ts` y `__tests__/`.
+- Ajustes adicionales para guard en verde: `ux-guide-llm-context.ts`, `agent-supervisor.service.ts` (misma sesión, misma rama).
 
 ---
 
@@ -319,14 +324,14 @@ Resultado esperado: en verde.
 - `apps/web/src/store/workshop/helpers/chat-scope.ts` [modifica] — helpers.
 
 ### Subtareas
-- [ ] 4c.1 Importar `ProjectType` y los helpers de `@theforge/shared-types` y borrar las uniones locales en `App.tsx`, `ProjectFolderTile.tsx` y `store/workshop/types.ts`.
-- [ ] 4c.2 Sustituir comparaciones con literales en los seis archivos.
-- [ ] 4c.3 CHANGELOG: ampliar la línea de `### Changed` ("…y en la web, que deja de duplicar el tipo").
-- [ ] 4c.4 Pruebas del paso: specs web existentes de `complexityTabs` y del store en verde.
+- [x] 4c.1 Importar `ProjectType` y los helpers de `@theforge/shared-types` y borrar las uniones locales en `App.tsx`, `ProjectFolderTile.tsx` y `store/workshop/types.ts`.
+- [x] 4c.2 Sustituir comparaciones con literales en los seis archivos.
+- [x] 4c.3 CHANGELOG: ampliar la línea de `### Changed` ("…y en la web, que deja de duplicar el tipo").
+- [x] 4c.4 Pruebas del paso: specs web existentes de `complexityTabs` y del store en verde.
 
 ### Criterios de aceptación
-- [ ] Sin uniones `"NEW" | "LEGACY"` locales en los archivos listados.
-- [ ] Sin cambio visible de comportamiento (RNF-03).
+- [x] Sin uniones `"NEW" | "LEGACY"` locales en los archivos listados.
+- [x] Sin cambio visible de comportamiento (RNF-03).
 
 ### Verificación
 ```bash
@@ -339,7 +344,7 @@ Resultado esperado: en verde.
 - Wizard, badges y pestañas Design-First (pasos 21-23).
 
 ### Notas de ejecución
-<!-- -->
+- Añadidos `complexityTabs.spec.ts` y `chat-scope.spec.ts` (no existían; cubren 4c.4).
 
 ---
 

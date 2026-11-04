@@ -463,7 +463,13 @@ export class LegacyDeliverablesOrchestratorService {
             p = await load();
             return;
           }
-          const apiContractsContent = await this.ai.generateApiContracts(mddForLlm, bp, undefined, undefined, legacyOpts);
+          const { content: apiContractsContent } = await this.ai.generateApiContracts(
+            mddForLlm,
+            bp,
+            undefined,
+            undefined,
+            legacyOpts,
+          );
           await update({ apiContractsContent: cleanDocumentContent(apiContractsContent) });
           p = await load();
           return;

@@ -24,8 +24,15 @@ import type {
   IntegrationHandoffItem,
   IntegrationStatusResponse,
   IntegrationTraceRow,
+  ProjectType,
 } from "@theforge/shared-types";
-import { buildHandoffImportDescription, formatIntegrationHandoffPreviewStory } from "@theforge/shared-types";
+import {
+  buildHandoffImportDescription,
+  formatIntegrationHandoffPreviewStory,
+  isGreenfield,
+  isLegacy,
+  ProjectTypeEnum,
+} from "@theforge/shared-types";
 import {
   HandoffImportedItemsPreview,
   HandoffKindBadge,
@@ -52,6 +59,10 @@ import { WorkshopPanelButton } from "@/components/WorkshopButtons";
 import { cn } from "@/lib/utils";
 import { apiFetch, API_BASE } from "@/utils/apiClient";
 
+function oppositeProjectType(pt: ProjectType): ProjectType {
+  return isGreenfield(pt) ? ProjectTypeEnum.enum.LEGACY : ProjectTypeEnum.enum.NEW;
+}
+
 interface PickerProject {
   id: string;
   name: string;
@@ -62,7 +73,7 @@ interface PickerProject {
 export interface IntegrationPanelProps {
   projectId: string;
   projectName: string;
-  projectType: "NEW" | "LEGACY";
+  projectType: ProjectType;
   activeStageId: string | null;
   activeStageOrdinal: number;
   convergeWebhookUrl?: string | null;
@@ -153,7 +164,7 @@ export function IntegrationPanel({
   }, [initialConvergeWebhookUrl, projectId]);
 
   useEffect(() => {
-    if (projectType !== "NEW" || !status?.linkedLegacyProject) {
+    if (!isGreenfield(projectType) || !status?.linkedLegacyProject) {
       setLegacyContextPreview(null);
       return;
     }
@@ -174,7 +185,7 @@ export function IntegrationPanel({
     setPickerOpen(true);
     setPickerLoading(true);
     try {
-      const target = projectType === "NEW" ? "LEGACY" : "NEW";
+      const target = oppositeProjectType(projectType);
       const r = await apiFetch(`${API_BASE}/projects/${projectId}/integration/picker?targetType=${target}`);
       const data = (await r.json()) as PickerProject[];
       setPickerProjects(Array.isArray(data) ? data : []);
@@ -186,7 +197,7 @@ export function IntegrationPanel({
   const linkProject = useCallback(
     async (targetId: string) => {
       const body =
-        projectType === "NEW"
+        isGreenfield(projectType)
           ? { linkedLegacyProjectId: targetId }
           : { linkedNewProjectId: targetId };
       const r = await apiFetch(`${API_BASE}/projects/${projectId}/integration/link`, {
@@ -204,7 +215,7 @@ export function IntegrationPanel({
 
   const unlink = useCallback(async () => {
     const body =
-      projectType === "NEW" ? { linkedLegacyProjectId: null } : { linkedNewProjectId: null };
+      isGreenfield(projectType) ? { linkedLegacyProjectId: null } : { linkedNewProjectId: null };
     await apiFetch(`${API_BASE}/projects/${projectId}/integration/link`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -492,7 +503,7 @@ export function IntegrationPanel({
   }
 
   const linked =
-    projectType === "NEW" ? status?.linkedLegacyProject : status?.linkedNewProject;
+    isGreenfield(projectType) ? status?.linkedLegacyProject : status?.linkedNewProject;
   const handoffItems = status?.handoff.items ?? [];
   const linkStepStatus: StepStatus = linked ? "done" : "active";
   const contextStepStatus: StepStatus = !linked
@@ -530,7 +541,7 @@ export function IntegrationPanel({
           status={linkStepStatus}
           title="Enlazar proyectos"
           description={
-            projectType === "NEW"
+            isGreenfield(projectType)
               ? "Conecta este módulo nuevo con el proyecto legacy que documenta el sistema actual."
               : "Conecta el sistema legacy con el proyecto nuevo que solicitará cambios o compartirá contexto."
           }
@@ -539,13 +550,13 @@ export function IntegrationPanel({
             <LinkedProjectCard linked={linked} onUnlink={() => void unlink()} />
           ) : (
             <UnlinkedProjectCard
-              targetLabel={projectType === "NEW" ? "proyecto LEGACY" : "proyecto NEW"}
+              targetLabel={isGreenfield(projectType) ? "proyecto LEGACY" : "proyecto NEW"}
               onLink={() => void openPicker()}
             />
           )}
         </IntegrationStep>
 
-        {projectType === "NEW" ? (
+        {isGreenfield(projectType) ? (
           <IntegrationStep
             step={2}
             status={contextStepStatus}
@@ -571,9 +582,9 @@ export function IntegrationPanel({
           </IntegrationStep>
         ) : null}
 
-        {projectType === "NEW" ? (
+        {isGreenfield(projectType) ? (
           <IntegrationStep
-            step={projectType === "NEW" ? 3 : 2}
+            step={isGreenfield(projectType) ? 3 : 2}
             status={handoffStepStatus}
             title="Handoff al legacy"
             description="Define qué debe cambiar el sistema legacy para soportar este módulo nuevo. Cada ítem se rastrea como NEW-LEG."
@@ -596,7 +607,7 @@ export function IntegrationPanel({
           </IntegrationStep>
         ) : null}
 
-        {projectType === "LEGACY" && promotableIds.length > 0 ? (
+        {isLegacy(projectType) && promotableIds.length > 0 ? (
           <IntegrationStep
             step={2}
             status={linked ? "active" : "pending"}
@@ -615,7 +626,7 @@ export function IntegrationPanel({
           </IntegrationStep>
         ) : null}
 
-        {projectType === "LEGACY" && activeStageOrdinal >= 2 ? (
+        {isLegacy(projectType) && activeStageOrdinal >= 2 ? (
           <IntegrationStep
             step={promotableIds.length > 0 ? 3 : 2}
             status={
@@ -937,10 +948,10 @@ export function IntegrationPanel({
         <DialogContent size="md" className="gap-0 p-0">
           <DialogHeader className="border-b border-[var(--border)] px-4 py-3 text-left">
             <DialogTitle>
-              {projectType === "NEW" ? "Enlazar proyecto legacy" : "Enlazar proyecto nuevo"}
+              {isGreenfield(projectType) ? "Enlazar proyecto legacy" : "Enlazar proyecto nuevo"}
             </DialogTitle>
             <DialogDescription>
-              {projectType === "NEW"
+              {isGreenfield(projectType)
                 ? "Elige el sistema existente cuya documentación AS-IS alimentará este módulo."
                 : "Elige el proyecto nuevo que gestionará cambios sobre este legacy."}
             </DialogDescription>
@@ -956,7 +967,7 @@ export function IntegrationPanel({
                 className="min-h-[220px] border-none bg-transparent"
                 title="Sin proyectos disponibles"
                 description={
-                  projectType === "NEW"
+                  isGreenfield(projectType)
                     ? "Crea primero un proyecto LEGACY con documentación de etapa 1."
                     : "No hay proyectos NEW compatibles para enlazar."
                 }
@@ -1005,13 +1016,12 @@ function IntegrationOverview({
   linked,
   warnings,
 }: {
-  projectType: "NEW" | "LEGACY";
+  projectType: ProjectType;
   projectName: string;
   linked: { name: string; projectType: string } | null;
   warnings: string[];
 }) {
-  const purposeCopy =
-    projectType === "NEW"
+  const purposeCopy = isGreenfield(projectType)
       ? "Gestiona este módulo como proyecto independiente, conectado al legacy para heredar contexto AS-IS y coordinar cambios."
       : "Recibe solicitudes de proyectos nuevos enlazados y mantén trazabilidad entre lo existente y lo que se construye.";
 
@@ -1024,7 +1034,7 @@ function IntegrationOverview({
           currentName={projectName}
           currentType={projectType}
           linkedName={linked?.name ?? null}
-          linkedType={linked?.projectType ?? (projectType === "NEW" ? "LEGACY" : "NEW")}
+          linkedType={linked?.projectType ?? oppositeProjectType(projectType)}
           isLinked={!!linked}
         />
 
@@ -1104,7 +1114,7 @@ function ProjectNode({
   emphasis?: boolean;
   muted?: boolean;
 }) {
-  const isNew = type === "NEW";
+  const isNew = isGreenfield(type as ProjectType);
   const Icon = isNew ? Sparkles : GitBranch;
 
   return (

@@ -8,6 +8,7 @@ import {
   type Stage,
 } from "@theforge/database";
 import { PrismaService } from "../../prisma/prisma.service.js";
+import { isLegacy, ProjectTypeEnum, type ProjectType } from "@theforge/shared-types";
 import { pickPrimaryStage } from "../projects/stage-helpers.js";
 import type {
   AgentDelegate,
@@ -66,7 +67,9 @@ export class AgentSupervisorService {
     const isLegacy = stage.isLegacy;
     const theforgeProjectId = stage.theforgeProjectId ?? project.theforgeProjectId ?? null;
 
-    const flow: SupervisorFlow = isLegacy ? "LEGACY" : "NEW";
+    const flow: SupervisorFlow = isLegacy
+      ? ProjectTypeEnum.enum.LEGACY
+      : ProjectTypeEnum.enum.NEW;
     const delegate: AgentDelegate = isLegacy ? "legacy_coordinator" : "software_architect";
     const toolsProfile: AgentToolsProfile = isLegacy ? "sdd_and_theforge" : "sdd_only";
 
@@ -92,7 +95,7 @@ export class AgentSupervisorService {
         key: DEFAULT_STAGE_KEY,
         name: "Etapa principal",
         workflowStatus: StageStatus.ACTIVE,
-        isLegacy: project.projectType === "LEGACY",
+        isLegacy: isLegacy(project.projectType as ProjectType),
         theforgeProjectId: project.theforgeProjectId,
       },
     });

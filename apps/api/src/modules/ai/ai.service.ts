@@ -372,11 +372,6 @@ function cleanJsonOutput(raw: string): string {
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
-  private lastGeneratedPag: ProjectArchitectureGraph | null = null;
-
-  getLastGeneratedPag(): ProjectArchitectureGraph | null {
-    return this.lastGeneratedPag;
-  }
 
   constructor(
     private readonly aiFactory: AIFactory,
@@ -826,7 +821,6 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
       }
     }
 
-    this.lastGeneratedPag = finalPag;
     return finalPag;
   }
 
@@ -1508,7 +1502,13 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
     return this.finishDocumentGeneration("blueprint", options, prompt, systemPrompt);
   }
 
-  async generateApiContracts(mddContent: string, blueprintContent?: string | null, gapsFeedback?: string | null, brdContent?: string | null, options?: LegacyGenerateOptions): Promise<string> {
+  async generateApiContracts(
+    mddContent: string,
+    blueprintContent?: string | null,
+    gapsFeedback?: string | null,
+    brdContent?: string | null,
+    options?: LegacyGenerateOptions,
+  ): Promise<{ content: string; pag: ProjectArchitectureGraph | null }> {
     const useCompilerFirst = this.resolveCompilerFirstConfig().useCompilerFirstApiContracts;
     if (useCompilerFirst && mddContent?.trim()) {
       try {
@@ -1530,8 +1530,9 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
         });
         const compiled = compilePagToApiContractsMarkdown(pag);
         if (compiled && compiled.trim().length > 100) {
-          return compiled;
+          return { content: compiled, pag };
         }
+        return { content: compiled ?? "", pag };
       } catch (err) {
         this.logger.warn(
           `[AiService] Fallback a generador de prosa tras error en Compiler-First: ${err instanceof Error ? err.message : String(err)}`,
@@ -1579,15 +1580,21 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
     }
     if (mdd.length > 0) prompt = appendMddGovernancePatternsToPrompt(prompt, mdd);
     prompt = appendLegacyBaselineDetailPrompt(prompt, options?.legacyBaselineStage);
-    return this.finishDocumentGeneration(
+    const content = await this.finishDocumentGeneration(
       "api-contracts",
       options,
       prompt,
       API_CONTRACTS_PROMPT + NO_MILITAR_INSTRUCTION,
     );
+    return { content, pag: null };
   }
 
-  async generateLogicFlows(mddContent: string, gapsFeedback?: string | null, options?: LegacyGenerateOptions): Promise<string> {
+  async generateLogicFlows(
+    mddContent: string,
+    gapsFeedback?: string | null,
+    options?: LegacyGenerateOptions,
+    pagFromStage?: ProjectArchitectureGraph | null,
+  ): Promise<string> {
     const mddRaw = mddContent?.trim() ?? "";
     const legacyAsIsLogicFlows = options?.legacyBaselineStage === true && mddRaw.length > 0;
 
@@ -1596,7 +1603,7 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
       try {
         const abortSignal = this.resolveDeliverableLlmAbortSignal(this.resolveAbortSignal(options));
         const pag =
-          this.lastGeneratedPag ??
+          pagFromStage ??
           (await this.generateProjectArchitectureGraph(mddRaw, {
             gapsFeedback,
             abortSignal,
@@ -1769,13 +1776,19 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
     return this.finishDocumentGeneration("logic-flows", options, prompt, systemPrompt);
   }
 
-  async generateInfra(mddContent: string, blueprintContent?: string | null, gapsFeedback?: string | null, options?: LegacyGenerateOptions): Promise<string> {
+  async generateInfra(
+    mddContent: string,
+    blueprintContent?: string | null,
+    gapsFeedback?: string | null,
+    options?: LegacyGenerateOptions,
+    pagFromStage?: ProjectArchitectureGraph | null,
+  ): Promise<string> {
     const useCompilerFirstInfra = this.resolveCompilerFirstConfig().useCompilerFirstInfra;
     if (useCompilerFirstInfra && mddContent?.trim()) {
       try {
         const abortSignal = this.resolveDeliverableLlmAbortSignal(this.resolveAbortSignal(options));
         const pag =
-          this.lastGeneratedPag ??
+          pagFromStage ??
           (await this.generateProjectArchitectureGraph(mddContent, {
             blueprintContent,
             gapsFeedback,
