@@ -93,6 +93,12 @@ importers:
       '@theforge/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
+      ajv-formats:
+        specifier: ^3.0.1
+        version: 3.0.1(ajv@8.20.0)
       bullmq:
         specifier: ^5.71.1
         version: 5.77.0(redis@5.12.1)

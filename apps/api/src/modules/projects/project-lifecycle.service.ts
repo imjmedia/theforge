@@ -1,6 +1,8 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, BadRequestException, NotFoundException } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { ComplexityLevel, StageStatus } from "@theforge/database";
 import type { Estimation, Project, Stage } from "@theforge/database";
+import { EMPTY_DESIGN_SPEC } from "@theforge/shared-types";
 import { getRequestUserId } from "../../common/request-user.store.js";
 import {
   cloneProjectBodySchema,
@@ -18,6 +20,7 @@ import {
 } from "./project-clone.util.js";
 import { ProjectGroupsService } from "../project-groups/project-groups.service.js";
 import { toApiProject } from "./project-api.util.js";
+import { isDesignFirstEnabled } from "../design-first/design-first.config.js";
 
 type StageWithEst = Stage & { estimation: Estimation | null };
 
@@ -28,11 +31,24 @@ export class ProjectLifecycleService {
     private readonly theforge: TheForgeService,
     private readonly pluginPipeline: PluginDocumentPipelineService,
     private readonly projectGroups: ProjectGroupsService,
+    private readonly config: ConfigService,
   ) {}
 
   async create(data: CreateProjectDto) {
     const parsed = createProjectSchema.parse(data);
+    if (parsed.projectType === "DESIGN_FIRST" && !isDesignFirstEnabled(this.config)) {
+      throw new BadRequestException({
+        code: "ERR_DESIGN_FIRST_DISABLED",
+        message: "Design-First no está habilitado en este entorno",
+      });
+    }
+    if (parsed.projectType === "LEGACY" && parsed.approach === "UX_FIRST") {
+      throw new BadRequestException({
+        message: "Los proyectos LEGACY no pueden crearse con enfoque UX_FIRST",
+      });
+    }
     const isLegacy = parsed.projectType === "LEGACY";
+    const isDesignFirst = parsed.projectType === "DESIGN_FIRST";
     const userId = getRequestUserId();
     const defaultGroupId = await this.projectGroups.getDefaultGroupId();
     let groupId = defaultGroupId;
@@ -64,6 +80,9 @@ export class ProjectLifecycleService {
             workflowStatus: StageStatus.ACTIVE,
             isLegacy,
             theforgeProjectId: parsed.theforgeProjectId ?? null,
+            ...(isDesignFirst
+              ? { designSpec: EMPTY_DESIGN_SPEC as object, designSpecRevision: 0 }
+              : {}),
           },
         },
       },

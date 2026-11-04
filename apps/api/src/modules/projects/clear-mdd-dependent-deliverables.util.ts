@@ -2,17 +2,21 @@ import { Prisma } from "@theforge/database";
 import {
   buildClearMddDependentDeliverablesPayload,
   buildClearStageMddDependentDeliverablesPayload,
+  type ProjectType,
 } from "@theforge/shared-types";
 
-export function buildProjectClearMddDependentDeliverablesUpdate(): Prisma.ProjectUpdateInput {
+export function buildProjectClearMddDependentDeliverablesUpdate(
+  projectType?: ProjectType,
+): Prisma.ProjectUpdateInput {
   return {
-    ...buildClearMddDependentDeliverablesPayload(),
+    ...buildClearMddDependentDeliverablesPayload(projectType),
     tasksJson: Prisma.JsonNull,
   };
 }
 
 export function buildStageClearMddDependentDeliverablesUpdate(
   shortTermContext: unknown,
+  projectType?: ProjectType,
 ): Prisma.StageUpdateInput {
   const prevCtx =
     shortTermContext &&
@@ -22,7 +26,7 @@ export function buildStageClearMddDependentDeliverablesUpdate(
       : {};
 
   return {
-    ...buildClearStageMddDependentDeliverablesPayload(),
+    ...buildClearStageMddDependentDeliverablesPayload(projectType),
     tasksJson: Prisma.JsonNull,
     changeSpecContent: null,
     deliverableSnapshot: Prisma.JsonNull,

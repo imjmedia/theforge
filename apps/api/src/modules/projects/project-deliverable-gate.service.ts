@@ -15,6 +15,10 @@ import { ProjectEstimationRecalcService } from "./project-estimation-recalc.serv
 import { ProjectMddPersistService } from "./project-mdd-persist.service.js";
 import { syncDomainInventoryForStage as persistDomainInventoryForStage } from "./sync-domain-inventory-stage.util.js";
 import { pickPrimaryStage } from "./stage-helpers.js";
+import {
+  assertDesignFirstDeliverableGate,
+  loadDesignFirstStageContext,
+} from "../design-first/design-first-gate.util.js";
 
 type StageWithEst = Stage & { estimation: Estimation | null };
 
@@ -66,6 +70,11 @@ export class ProjectDeliverableGateService {
     options?: { acknowledgeGaps?: boolean },
   ): Promise<void> {
     const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
+    if (project.projectType === "DESIGN_FIRST") {
+      const ctx = await loadDesignFirstStageContext(this.prisma, projectId);
+      if (ctx) assertDesignFirstDeliverableGate(ctx);
+      return;
+    }
     if (project.projectType === "LEGACY") return;
     await this.assertDeliverablesMddGate(project, options?.acknowledgeGaps === true);
   }

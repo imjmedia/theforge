@@ -40,6 +40,10 @@ import {
   ProjectAccessService,
   ProjectScoped,
 } from "../../common/access/index.js";
+import {
+  assertDesignFirstMddJobGate,
+  loadDesignFirstStageContext,
+} from "../design-first/design-first-gate.util.js";
 
 /**
  * Autorización por proyecto (`@ProjectScoped`): este controller recibe el proyecto por body o query.
@@ -483,6 +487,12 @@ export class AiAnalysisController {
     const project = await this.prisma.project.findUnique({ where: { id: projectId } });
     if (project && (project as { projectType?: string }).projectType === "LEGACY") {
       throw new BadRequestException("Usa POST …/legacy/generate-mdd para proyectos LEGACY.");
+    }
+    if (project?.projectType === "DESIGN_FIRST") {
+      const stageIdForGate =
+        typeof body?.stageId === "string" ? body.stageId.trim() || undefined : undefined;
+      const dfCtx = await loadDesignFirstStageContext(this.prisma, projectId, stageIdForGate);
+      if (dfCtx) assertDesignFirstMddJobGate(dfCtx);
     }
     const isChat = isMddChatJobMode(mode);
     const data: MddJobData = {

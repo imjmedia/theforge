@@ -10,6 +10,11 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 - **Design-First paso 5:** valor `ProjectType.DESIGN_FIRST` en Prisma (detrás de flag en pasos posteriores), columnas `Stage.designSpec` / `designSpecRevision` y tabla `UserFigmaCredential` (token Figma BYOK cifrado).
 - **Contratos zod de `designSpec`** en `@theforge/shared-types/design-first` (invariantes I1–I3, hash canónico, adaptadores ScreenSpec v1).
 - **Compilador determinista DataNeeds → PAG y puertas de fase Design-First** (`compileDataNeedsToPag`, `evaluateDesignFirstPhaseGates`, golden `three-screens.pag.json`).
+- **Export de mocks MSW v2, fixtures y markdown de diseño** (`exportPagToMswHandlers`, `buildPagFixtures`, `renderDesignMarkdown`, goldens `three-screens.*`).
+- **Validación OpenAPI 3.1** (esquema propio + `ajv` 2020-12) en la API (`openapi-validate.util.ts`).
+- **DesignFirstModule:** `GET/PUT /projects/:id/design*` con CAS por revisión y `compile-contract` determinista; creación de proyectos `DESIGN_FIRST` detrás de `DESIGN_FIRST_ENABLED`.
+- **Semáforo por fases para DESIGN_FIRST** (tope AMARILLO sin MDD) y utilidades de completitud en estimación.
+- **Puertas Design-First en el job MDD y en los entregables** (`ERR_DESIGN_PHASE_GATE`, `ERR_DESIGN_STALE`); `getMddDependentKeys(projectType)` al limpiar dependientes del MDD.
 - **`arquitectura/modo-design-first/`**: README con decisiones, `01-PRD.md` (RF-01…RF-19, RNF-01…RNF-10), `02-estructura-de-archivos.md`, `03-arquitectura-y-diseno.md`, `04-plan-de-pruebas.md`, `05-casos-limite.md` (CL-01…CL-31), `06-riesgos-y-decisiones.md` y `tasks/HANDOFF.md` + `tasks/TASKS.md` con 28 fichas ejecutables en orden. Registra el falso negativo de Ariadne (`validate_change_plan` BLOCKED con índice `up_to_date`) y el defecto actual de `AiService.lastGeneratedPag` / `Stage.documentAst` que los pasos 2-3 corrigen.
 - **Config tipada Design-First** (`apps/api/src/config/env.schema.ts`): flags `DESIGN_FIRST_*`, `FIGMA_API_BASE_URL` (solo https) y límites RNF-04/RNF-05; helper `compiler-first.config.ts` para entregables compilados.
 
@@ -18,6 +23,7 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 - **Export OpenAPI:** `GET :id/openapi.json` y `openapi.yaml` leen `Stage.architectureGraph` primero, con fallback a `documentAst` cuando incluye `endpoints`.
 - **Enrutamiento por tipo de proyecto** centralizado en `@theforge/shared-types` (`project-type.ts`: `isGreenfield`, `isLegacy`, `isDesignFirst`, `assertNever`); módulo `projects` de la API deja de comparar literales `"NEW"`, sin cambio de comportamiento; también en `ai`, orquestador y supervisor, con test anti-literal `project-type-literals.spec.ts`; y en la web (`App`, integración, tiles, `complexityTabs`, store Workshop), que deja de duplicar el tipo.
 - **`COMPILER_FIRST_*`**: dejan de leerse con `process.env` en `AiService` y pasan por la config tipada y `ConfigService`.
+- **`exportPagToOpenApiSpec`** añade `operationId`, `example` con semilla y `x-theforge-sources` cuando el PAG trae fuentes (`theforgeSources`); sin cambio para PAG NEW sin fuentes (golden de regresión).
 
 > **Calidad del MDD (lote 2): reparaciones que no inventan contenido, Auditor sin nota, lease por hilo que falla cerrado y telemetría por llamada** — Segundo lote de la auditoría global del 2026-11-02 (`docs/handoffs/2026-11-02-auditoria-global.md` §3: H1–H6, B8, O5, O10, O14), antes de la tercera corrida del eval. Deja de sustituir flowcharts válidos por un webhook inventado, deja de puntuar 0 cuando el Auditor no responde, evita que un turno se pierda en silencio al persistir y registra latencia, intentos, coste y modelo real por llamada. Cambia contratos de stream y de eval, y exige la migración de `TokenUsage` y un Redis disponible antes del deploy (ver `docs/handoffs/2026-11-03-calidad-mdd-lote2-handoff.md`).
 

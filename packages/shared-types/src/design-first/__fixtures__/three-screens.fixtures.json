@@ -1,0 +1,18 @@
+{
+  "customer.json": [
+    {
+      "id": "b2f8db11-abc5-460e-8eed-b20311ac9dc0"
+    },
+    {
+      "id": "b1f8d97e-acc5-47a1-8ded-b07012ac9f53"
+    }
+  ],
+  "order.json": [
+    {
+      "id": "00664bab-949a-4546-8d99-5b5de3d10568"
+    },
+    {
+      "id": "ff664a18-959a-46d9-8c99-59cae4d106fb"
+    }
+  ]
+}

@@ -51,6 +51,13 @@ import {
   validateMddForDelivery,
 } from "../utils/mdd-delivery-gate.util.js";
 import {
+  designFirstCompletenessScore,
+  designFirstPhaseSemaphore,
+  hasEvaluableInput,
+  loadDesignFirstGatesFromStage,
+  minSemaphoreStatus,
+} from "./estimation-design-first.util.js";
+import {
   draftMeetsSection1Quality,
   minSection1BodyLength,
 } from "../utils/mdd-section1-quality.util.js";
@@ -1045,9 +1052,22 @@ export class EstimationService {
     const auditorGaps = await this.resolveAuditorGapsForContent(projectId, stageId, content, hasOverride);
     const proj = await this.prisma.project.findUnique({
       where: { id: projectId.trim() },
-      select: { complexity: true },
+      select: { complexity: true, projectType: true },
     });
     const cx = (proj?.complexity as EstimationComplexity) ?? "HIGH";
+    if (proj?.projectType === "DESIGN_FIRST") {
+      return this.getLiveMetricsForDesignFirstProject(
+        projectId,
+        mddContentOverride,
+        stageId,
+        cx,
+        options,
+        hasLiveDraft,
+        hasOverride,
+        content,
+        auditorGaps,
+      );
+    }
     this.cacheProjectComplexity(projectId, stageId, cx);
 
     // Cargar documentos de etapa + proyecto para métrica integral
@@ -1191,15 +1211,162 @@ export class EstimationService {
       ...(conformanceSummary ? { conformanceSummary } : {}),
     };
 
+    let stageDesignSpecForSync: unknown = null;
+    const syncStageId = await this.resolveStageId(projectId, stageId);
+    if (syncStageId) {
+      const stageRow = await this.prisma.stage.findUnique({
+        where: { id: syncStageId },
+        select: { designSpec: true },
+      });
+      stageDesignSpecForSync = stageRow?.designSpec ?? null;
+    }
+
     // Sincroniza Stage aunque venga override del editor: el listado debe reflejar el
     // semáforo del panel. Solo se omite con borrador en streaming (live draft).
-    const shouldSyncStage = options?.syncStage !== false && !hasLiveDraft && content.trim().length > 0;
-    if (shouldSyncStage) {
-      const sid = await this.resolveStageId(projectId, stageId);
-      if (sid) {
+    const shouldSyncStage =
+      options?.syncStage !== false &&
+      !hasLiveDraft &&
+      hasEvaluableInput(proj?.projectType ?? "NEW", content, stageDesignSpecForSync);
+    if (shouldSyncStage && syncStageId) {
         // Titular persistido = titular del panel (nota del Auditor cuando está vigente, si no la integral).
-        await this.syncStageSemaphoreFromLiveMetrics(sid, result.status, result.auditorScore ?? result.precision);
+        await this.syncStageSemaphoreFromLiveMetrics(syncStageId, result.status, result.auditorScore ?? result.precision);
+    }
+
+    return result;
+  }
+
+  private async getLiveMetricsForDesignFirstProject(
+    projectId: string,
+    _mddContentOverride: string | undefined,
+    stageId: string | null | undefined,
+    cx: EstimationComplexity,
+    options: { syncStage?: boolean } | undefined,
+    hasLiveDraft: boolean,
+    _hasOverride: boolean,
+    content: string,
+    auditorGaps: AuditorGaps | undefined,
+  ): Promise<LiveMetricsResult> {
+    const syncStageId = await this.resolveStageId(projectId, stageId);
+    const stage = syncStageId
+      ? await this.prisma.stage.findUnique({
+          where: { id: syncStageId },
+          select: {
+            designSpec: true,
+            architectureGraph: true,
+            architectureGraphSourceHash: true,
+            mddContent: true,
+            brdContent: true,
+          },
+        })
+      : null;
+
+    const { designSpec, gates } = loadDesignFirstGatesFromStage(
+      stage ?? { designSpec: null, architectureGraph: null, architectureGraphSourceHash: null },
+    );
+    const hasMdd = content.trim().length > 0;
+    const phaseStatus = designFirstPhaseSemaphore(gates, hasMdd);
+    let precision = designFirstCompletenessScore(gates);
+    let status: SemaphoreStatusLive = phaseStatus;
+
+    const emptyMetrics: LiveMetricsResult = {
+      precision,
+      totalMXN: 0,
+      totalMXNMarket: 0,
+      totalHours: 0,
+      roles: {},
+      rolesHours: {},
+      status,
+      totalMXNIA: 0,
+      readinessHints: [],
+      mddReadinessHints: [],
+      traceabilityHints: [],
+    };
+
+    if (!hasMdd) {
+      const shouldSync =
+        options?.syncStage !== false &&
+        !hasLiveDraft &&
+        hasEvaluableInput("DESIGN_FIRST", content, designSpec);
+      if (shouldSync && syncStageId) {
+        await this.syncStageSemaphoreFromLiveMetrics(syncStageId, status, precision);
       }
+      return emptyMetrics;
+    }
+
+    let documents: PlanningDocumentFields = { brdContent: stage?.brdContent ?? undefined };
+    const projectRec = await this.prisma.project.findUnique({
+      where: { id: projectId.trim() },
+      select: {
+        specContent: true,
+        dbgaContent: true,
+        architectureContent: true,
+        useCasesContent: true,
+        userStoriesContent: true,
+        blueprintContent: true,
+        apiContractsContent: true,
+        logicFlowsContent: true,
+        infraContent: true,
+        tasksContent: true,
+      },
+    });
+    if (projectRec) {
+      documents = {
+        ...documents,
+        mddContent: content,
+        specContent: projectRec.specContent ?? undefined,
+        architectureContent: projectRec.architectureContent ?? undefined,
+        useCasesContent: projectRec.useCasesContent ?? undefined,
+        userStoriesContent: projectRec.userStoriesContent ?? undefined,
+        blueprintContent: projectRec.blueprintContent ?? undefined,
+        apiContractsContent: projectRec.apiContractsContent ?? undefined,
+        logicFlowsContent: projectRec.logicFlowsContent ?? undefined,
+        infraContent: projectRec.infraContent ?? undefined,
+        tasksContent: projectRec.tasksContent ?? undefined,
+      };
+    }
+
+    const mddMetrics = this.calculateLiveMetrics(content, {
+      auditorGaps,
+      complexity: cx,
+      projectId: projectId.trim(),
+      stageId: stageId ?? null,
+      documents,
+      designScreenCount: designSpec.screens.length,
+    });
+
+    status = minSemaphoreStatus(phaseStatus, mddMetrics.status);
+    if (!gates.phase3.ok || !gates.phase2.ok) {
+      status = minSemaphoreStatus(status, "yellow");
+    }
+    if (!hasMdd || !gates.phase3.ok) {
+      status = status === "green" ? "yellow" : status;
+    }
+
+    if (gates.phase3.ok && gates.phase2.ok) {
+      precision = mddMetrics.precision;
+    } else {
+      precision = Math.min(40, precision);
+    }
+
+    const result: LiveMetricsResult = {
+      ...mddMetrics,
+      precision,
+      status,
+      totalHours: gates.phase3.ok ? mddMetrics.totalHours : 0,
+      totalMXN: gates.phase3.ok ? mddMetrics.totalMXN : 0,
+      totalMXNMarket: gates.phase3.ok ? mddMetrics.totalMXNMarket : 0,
+    };
+
+    const shouldSync =
+      options?.syncStage !== false &&
+      !hasLiveDraft &&
+      hasEvaluableInput("DESIGN_FIRST", content, designSpec);
+    if (shouldSync && syncStageId) {
+      await this.syncStageSemaphoreFromLiveMetrics(
+        syncStageId,
+        result.status,
+        result.auditorScore ?? result.precision,
+      );
     }
 
     return result;
@@ -1258,6 +1425,7 @@ export class EstimationService {
       projectId?: string;
       stageId?: string | null;
       documents?: PlanningDocumentFields;
+      designScreenCount?: number;
     },
   ): LiveMetricsResult {
     const raw =
@@ -1440,7 +1608,8 @@ export class EstimationService {
 
     const readinessHints = mddReadinessHints;
 
-    const { entityCount, screenCount, extraEndpointCount } = parseCountsFromMarkdown(md);
+    const { entityCount, screenCount: parsedScreens, extraEndpointCount } = parseCountsFromMarkdown(md);
+    const screenCount = options?.designScreenCount ?? parsedScreens;
     const metaTags = extractTechnicalMetadataTags(md);
     const baseTotalHours =
       entityCount * HOURS_PER_ENTITY +

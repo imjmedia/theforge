@@ -391,8 +391,11 @@ export class ProjectUpdateService {
       pickPrimaryStage(existing.stages);
     if (!targetStage) throw new BadRequestException("El proyecto no tiene etapas");
 
-    const projectClear = buildProjectClearMddDependentDeliverablesUpdate();
-    const stageClear = buildStageClearMddDependentDeliverablesUpdate(targetStage.shortTermContext);
+    const projectClear = buildProjectClearMddDependentDeliverablesUpdate(existing.projectType);
+    const stageClear = buildStageClearMddDependentDeliverablesUpdate(
+      targetStage.shortTermContext,
+      existing.projectType,
+    );
 
     await this.prisma.$transaction([
       this.prisma.project.update({

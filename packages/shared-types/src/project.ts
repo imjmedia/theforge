@@ -47,9 +47,9 @@ export const createProjectSchema = z
     },
     { message: "theforgeProjectId es obligatorio cuando projectType es LEGACY", path: ["theforgeProjectId"] },
   )
-  .refine((data) => data.projectType !== "DESIGN_FIRST", {
-    message: "projectType DESIGN_FIRST aún no está disponible al crear proyectos",
-    path: ["projectType"],
+  .refine((data) => !(data.projectType === "LEGACY" && data.approach === "UX_FIRST"), {
+    message: "Los proyectos LEGACY no pueden usar enfoque UX_FIRST",
+    path: ["approach"],
   });
 
 export const updateProjectSchema = z.object({
