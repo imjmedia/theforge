@@ -4,6 +4,11 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 
 ## [Unreleased]
 
+> **Paquete de diseño del modo Design-First** — Documentación de planificación (sin código) para el nuevo `ProjectType.DESIGN_FIRST`: pantallas y flujos primero, necesidades de datos por pantalla, PAG determinista, OpenAPI 3.1, MDD de 7 secciones con §3/§4 compiladas y repo-handoff con mocks MSW. Generado con `/flujo-cursor` el 2026-11-03; aprobado, sin ejecutar.
+
+### Added
+- **`arquitectura/modo-design-first/`**: README con decisiones, `01-PRD.md` (RF-01…RF-19, RNF-01…RNF-10), `02-estructura-de-archivos.md`, `03-arquitectura-y-diseno.md`, `04-plan-de-pruebas.md`, `05-casos-limite.md` (CL-01…CL-31), `06-riesgos-y-decisiones.md` y `tasks/HANDOFF.md` + `tasks/TASKS.md` con 28 fichas ejecutables en orden. Registra el falso negativo de Ariadne (`validate_change_plan` BLOCKED con índice `up_to_date`) y el defecto actual de `AiService.lastGeneratedPag` / `Stage.documentAst` que los pasos 2-3 corrigen.
+
 > **Calidad del MDD (lote 2): reparaciones que no inventan contenido, Auditor sin nota, lease por hilo que falla cerrado y telemetría por llamada** — Segundo lote de la auditoría global del 2026-11-02 (`docs/handoffs/2026-11-02-auditoria-global.md` §3: H1–H6, B8, O5, O10, O14), antes de la tercera corrida del eval. Deja de sustituir flowcharts válidos por un webhook inventado, deja de puntuar 0 cuando el Auditor no responde, evita que un turno se pierda en silencio al persistir y registra latencia, intentos, coste y modelo real por llamada. Cambia contratos de stream y de eval, y exige la migración de `TokenUsage` y un Redis disponible antes del deploy (ver `docs/handoffs/2026-11-03-calidad-mdd-lote2-handoff.md`).
 
 ### Fixed
