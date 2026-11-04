@@ -9,6 +9,7 @@ import { ComplexityLevel } from "@theforge/database";
 import { Prisma } from "@theforge/database";
 import {
   TASKS_PREFLIGHT_DOC_ACCURACY_BLOCK_THRESHOLD,
+  DELIVERABLE_DESIGN_SCREENS_RENDER_STEP,
   flattenDeliverableWaves,
   resolveDeliverableWaves,
   type DeliverableKind,
@@ -259,6 +260,7 @@ export class DeliverablesCascadeService {
     const mddForWaves = buildConstitutionMarkdown(project);
     const waveOpts = {
       approach: project.approach,
+      projectType: project.projectType,
       mddMarkdown: mddForWaves,
       blueprintMarkdown: project.blueprintContent,
     };
@@ -277,7 +279,12 @@ export class DeliverablesCascadeService {
       return progressChain;
     };
     const reportStepActive = (step: DeliverableWaveStep) => {
-      const progressKey = step === "ui_screens_sync" ? "ui_screens_sync" : step;
+      const progressKey =
+        step === "ui_screens_sync"
+          ? "ui_screens_sync"
+          : step === DELIVERABLE_DESIGN_SCREENS_RENDER_STEP
+            ? "design_screens_render"
+            : step;
       return emitProgress({
         step: progressKey,
         completedSteps: [...completedSteps],
@@ -286,7 +293,12 @@ export class DeliverablesCascadeService {
       });
     };
     const reportProgress = (step: DeliverableWaveStep) => {
-      const progressKey = step === "ui_screens_sync" ? "ui_screens_sync" : step;
+      const progressKey =
+        step === "ui_screens_sync"
+          ? "ui_screens_sync"
+          : step === DELIVERABLE_DESIGN_SCREENS_RENDER_STEP
+            ? "design_screens_render"
+            : step;
       completedSteps.push(progressKey);
       completedCount++;
       this.logger.log(
@@ -317,7 +329,10 @@ export class DeliverablesCascadeService {
           try {
             throwIfAborted();
             await reportStepActive(step);
-            const stepGaps = step !== "ui_screens_sync" ? gapsMap.get(step) : undefined;
+            const stepGaps =
+              step !== "ui_screens_sync" && step !== DELIVERABLE_DESIGN_SCREENS_RENDER_STEP
+                ? gapsMap.get(step)
+                : undefined;
             await this.runDeliverableWaveStep(
               step,
               projectId,
@@ -327,6 +342,7 @@ export class DeliverablesCascadeService {
             );
           } catch (e) {
             if (e instanceof Error && e.message.includes("Cancelado por el usuario")) return;
+            if (step === DELIVERABLE_DESIGN_SCREENS_RENDER_STEP) throw e;
             const message = e instanceof Error ? e.message : "Error desconocido";
             this.logger.warn(`[Cascade] Paso ${step} saltado: ${message}.`);
             errors.push({ step, error: message });
@@ -433,6 +449,10 @@ export class DeliverablesCascadeService {
       await this.syncUiScreens(projectId);
       return;
     }
+    if (step === DELIVERABLE_DESIGN_SCREENS_RENDER_STEP) {
+      await this.projects.renderDesignScreensFromSpec(projectId);
+      return;
+    }
     await this.projects.generateDocument(step as DeliverableKind, projectId, {
       gapsFeedback: gapsFeedback ?? undefined,
       acknowledgeGaps,
@@ -493,6 +513,7 @@ export class DeliverablesCascadeService {
   ): Promise<boolean> {
     if (signal?.aborted) throw new Error("Cancelado por el usuario");
     const project = await this.projects.findOne(projectId);
+    const skipDesignFirstApiLlm = project.projectType === "DESIGN_FIRST";
     const mdd = buildConstitutionMarkdown(project);
     const stage = pickPrimaryStage(project.stages ?? []);
     const precisionGaps = collectSddPrecisionGaps({
@@ -641,7 +662,7 @@ export class DeliverablesCascadeService {
         this.logger.warn(`[Cascade] W4: Circuit breaker alcanzado antes de architecture retry`);
       }
     }
-    if (flags.retryApiContracts) {
+    if (flags.retryApiContracts && !skipDesignFirstApiLlm) {
       if (circuitBreaker.consumeRetry(1)) {
         upstreamRetries.push(
           this.projects.generateApiContracts(projectId, feedback, signal).catch((e) =>
@@ -727,6 +748,7 @@ export class DeliverablesCascadeService {
       await this.runCascadeDeterministicConformancePass(projectId);
 
       const project = await this.projects.findOne(projectId);
+      const skipDesignFirstApiLlm = project.projectType === "DESIGN_FIRST";
       const mdd = buildConstitutionMarkdown(project);
       if (!mdd.trim()) return;
 
@@ -748,7 +770,11 @@ export class DeliverablesCascadeService {
       );
 
       const retries: Promise<unknown>[] = [];
-      if (!apiCheck.ok && (project.apiContractsContent ?? "").trim().length >= 80) {
+      if (
+        !skipDesignFirstApiLlm &&
+        !apiCheck.ok &&
+        (project.apiContractsContent ?? "").trim().length >= 80
+      ) {
         if (circuitBreaker.consumeRetry(1)) {
           retries.push(
             this.projects.generateApiContracts(projectId, buildApiRetryFeedback(apiCheck), signal).catch((e) =>
@@ -756,7 +782,7 @@ export class DeliverablesCascadeService {
             ),
           );
         }
-      } else if (!apiCheck.ok) {
+      } else if (!skipDesignFirstApiLlm && !apiCheck.ok) {
         if (circuitBreaker.consumeRetry(1)) {
           retries.push(
             this.projects.generateApiContracts(projectId).catch((e) =>
@@ -894,7 +920,10 @@ export class DeliverablesCascadeService {
 
       const regenSteps = orderConvergenceDeliverables(
         [...new Set(plan.deliverables)].filter(
-          (s) => s !== "mdd_canonical" && s !== "ui_screens_sync",
+          (s) =>
+            s !== "mdd_canonical" &&
+            s !== "ui_screens_sync" &&
+            s !== DELIVERABLE_DESIGN_SCREENS_RENDER_STEP,
         ),
       );
 

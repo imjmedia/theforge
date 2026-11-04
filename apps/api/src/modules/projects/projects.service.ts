@@ -383,6 +383,10 @@ export class ProjectsService implements IOrchestratorProjectsPort {
     return this.deliverableGenerators.generateApiContracts(projectId, gapsFeedback, signal);
   }
 
+  async renderDesignScreensFromSpec(projectId: string) {
+    return this.deliverableGenerators.renderDesignScreensFromSpec(projectId);
+  }
+
   async generateLogicFlows(projectId: string, gapsFeedback?: string | null, signal?: AbortSignal) {
     return this.deliverableGenerators.generateLogicFlows(projectId, gapsFeedback, signal);
   }

@@ -34,7 +34,7 @@ Convenciones de todas las fichas:
 - [x] Paso 10 — DesignFirstModule: CRUD con CAS, compile-contract y creación detrás del flag
 - [x] Paso 11 [A] — Semáforo por fases y `resolveScreenCount`
 - [x] Paso 12 [A] — Gate de entregables, job MDD y claves dependientes por modo
-- [ ] Paso 13 [A] — Oleadas de cascada DESIGN_FIRST
+- [x] Paso 13 [A] — Oleadas de cascada DESIGN_FIRST
 - [ ] Paso 14 — Compiladores §3/§4 en formato MDD
 - [ ] Paso 15 [A] — Grafo MDD en modo pinned
 - [ ] Paso 16 — Visión → ScreenSpec con propuestas HITL
@@ -795,7 +795,7 @@ Resultado esperado: en verde.
 - MDD pinned (pasos 14-15); handoff (paso 20).
 
 ### Notas de ejecución
-<!-- aprobación de Jorge (fecha), ¿se tocó projects.module.ts? -->
+- **2026-11-04:** Aprobación Jorge (implementación paso 13). Oleadas `DELIVERABLE_WAVES_DESIGN_FIRST_BY_COMPLEXITY`, `design_screens_render` falla cerrado, `api_contracts` desde PAG; `syncUiScreens` → 409. No se importó `DesignFirstModule` en `ProjectsModule` (se usa `design-first-gate.util` + shared-types).
 
 ---
 

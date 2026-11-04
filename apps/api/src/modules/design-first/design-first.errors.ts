@@ -104,6 +104,14 @@ export function throwPagCompileInvalid(
   });
 }
 
+export function throwDesignFirstScreensOwned(): never {
+  throw new ConflictException({
+    code: "ERR_DESIGN_FIRST_SCREENS_OWNED",
+    message:
+      "Las pantallas de este proyecto se gestionan desde Design-First; no uses la sincronización UI MCP",
+  });
+}
+
 export function isDesignRevisionConflict(err: unknown): err is HttpException {
   if (!(err instanceof ConflictException)) return false;
   const body = err.getResponse();
