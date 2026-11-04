@@ -11,11 +11,14 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 - **Config tipada Design-First** (`apps/api/src/config/env.schema.ts`): flags `DESIGN_FIRST_*`, `FIGMA_API_BASE_URL` (solo https) y límites RNF-04/RNF-05; helper `compiler-first.config.ts` para entregables compilados.
 
 ### Changed
+- **Export OpenAPI:** `GET :id/openapi.json` y `openapi.yaml` leen `Stage.architectureGraph` primero, con fallback a `documentAst` cuando incluye `endpoints`.
+- **Enrutamiento por tipo de proyecto** centralizado en `@theforge/shared-types` (`project-type.ts`: `isGreenfield`, `isLegacy`, `isDesignFirst`, `assertNever`); módulo `projects` de la API deja de comparar literales `"NEW"`, sin cambio de comportamiento; también en `ai`, orquestador y supervisor, con test anti-literal `project-type-literals.spec.ts`; y en la web (`App`, integración, tiles, `complexityTabs`, store Workshop), que deja de duplicar el tipo.
 - **`COMPILER_FIRST_*`**: dejan de leerse con `process.env` en `AiService` y pasan por la config tipada y `ConfigService`.
 
 > **Calidad del MDD (lote 2): reparaciones que no inventan contenido, Auditor sin nota, lease por hilo que falla cerrado y telemetría por llamada** — Segundo lote de la auditoría global del 2026-11-02 (`docs/handoffs/2026-11-02-auditoria-global.md` §3: H1–H6, B8, O5, O10, O14), antes de la tercera corrida del eval. Deja de sustituir flowcharts válidos por un webhook inventado, deja de puntuar 0 cuando el Auditor no responde, evita que un turno se pierda en silencio al persistir y registra latencia, intentos, coste y modelo real por llamada. Cambia contratos de stream y de eval, y exige la migración de `TokenUsage` y un Redis disponible antes del deploy (ver `docs/handoffs/2026-11-03-calidad-mdd-lote2-handoff.md`).
 
 ### Fixed
+- **Design-First / PAG:** fuga del PAG entre proyectos: se elimina `AiService.lastGeneratedPag`; el grafo viaja en el retorno de `generateApiContracts`, se persiste en `Stage.architectureGraph` y logic flows / infra reciben el PAG por argumento desde la etapa.
 - **Design-First / PAG:** nueva columna `Stage.architectureGraph` con backfill idempotente desde `documentAst` cuando incluye `endpoints` (migración `20261104090000`; lectores en paso 3).
 - **Eval: llamadas fallidas no cuentan como medidas** (`apps/api/src/modules/ai-analysis/eval/mdd-eval-nest-deps.ts`, `mdd-eval-runner.ts`): `llmCalls` solo cuenta filas `ok`/`invalid`; las `error|timeout|abort` van a `failedLlmCalls`/`totalFailedLlmCalls` y un caso con solo fallos queda sin coste en vez de aparecer medido con $0.
 - **Fallback de modelo con latido** (`apps/api/src/modules/ai-analysis/llm/chained-fallback-chat-model.ts`): los chunks sin contenido se reenvían al instante (sirven de latido para el idle timeout de modelos con razonamiento) y el fallback solo se bloquea tras el primer chunk con contenido; el iterador abandonado se cierra.

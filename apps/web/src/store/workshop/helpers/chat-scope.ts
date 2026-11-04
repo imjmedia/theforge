@@ -1,5 +1,6 @@
 import {
   resolveWorkshopChatScope,
+  type ProjectType,
   type WorkshopChatScope,
 } from "@theforge/shared-types";
 
@@ -25,7 +26,7 @@ export function saveWorkshopChatScopePreference(projectId: string, scope: Worksh
 }
 
 export function resolveWorkshopChatScopeForProject(
-  projectType: "NEW" | "LEGACY" | undefined,
+  projectType: ProjectType | undefined,
   stageCount: number,
   projectId: string | null | undefined,
 ): WorkshopChatScope {

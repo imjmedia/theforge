@@ -1,4 +1,5 @@
 import type { GenerateResponseOptions } from "./interfaces/llm-provider.interface.js";
+import { isLegacy, ProjectTypeEnum, type ProjectType } from "@theforge/shared-types";
 import { buildUxGuideDesignRefOptions } from "../design-ref/build-ux-guide-design-ref-options.util.js";
 import { buildMddContextForUxGuide } from "./utils/mdd-ux-guide-brief.util.js";
 
@@ -64,14 +65,16 @@ export function uxGuideLlmOptions(
     | "uxGuideDesignRefEffectiveSlug"
     | "uxGuideDesignRefMode"
   > = {
-    projectTypeForUxGuide: project.projectType === "LEGACY" ? "LEGACY" : "NEW",
+    projectTypeForUxGuide: isLegacy(project.projectType as ProjectType)
+      ? ProjectTypeEnum.enum.LEGACY
+      : ProjectTypeEnum.enum.NEW,
   };
 
   const mddFull = (mddContext ?? "").trim();
   const mddBrief = mddFull ? buildMddContextForUxGuide(mddFull) : "";
   Object.assign(base, buildUxGuideDesignRefOptions(project, mddBrief || mddFull));
 
-  if (project.projectType !== "LEGACY") {
+  if (!isLegacy(project.projectType as ProjectType)) {
     base.uxGuideAdditionalDocs = {
       spec: sliceDoc(project.specContent, 3_000),
       useCases: sliceDoc(project.useCasesContent, 2_500),

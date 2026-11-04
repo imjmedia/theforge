@@ -2,7 +2,10 @@ import { HttpException, HttpStatus, Inject, Injectable, NotFoundException } from
 import type { ChatImagePart, ChatMessage, WorkshopChatScope } from "@theforge/shared-types";
 import {
   filterChatForWorkshopView,
+  ProjectTypeEnum,
   resolveWorkshopChatScope,
+  isLegacy,
+  type ProjectType,
 } from "@theforge/shared-types";
 import {
   PROJECTS_ORCHESTRATOR_PORT,
@@ -70,7 +73,9 @@ function resolveOrchestratorChatScope(
   project: { projectType?: string; stages?: unknown[] },
   chatScopeFromClient?: WorkshopChatScope,
 ): WorkshopChatScope {
-  const projectType = project.projectType === "LEGACY" ? "LEGACY" : "NEW";
+  const projectType: ProjectType = isLegacy(project.projectType as ProjectType)
+    ? ProjectTypeEnum.enum.LEGACY
+    : ProjectTypeEnum.enum.NEW;
   return resolveWorkshopChatScope(projectType, project.stages?.length ?? 0, chatScopeFromClient);
 }
 

@@ -9,6 +9,8 @@ import {
   notionExportOptionsSchema,
   notionImportBodySchema,
   notionImportPairBodySchema,
+  isGreenfield,
+  isLegacy,
   type NotionImportBody,
 } from "@theforge/shared-types";
 import { canAccessProject } from "../../common/access/project-access.policy.js";
@@ -138,10 +140,10 @@ export class ProjectNotionPortabilityService {
     const newBundle = await parseNotionImportZip(newZip);
     const legacyBundle = await parseNotionImportZip(legacyZip);
 
-    if (newBundle.manifest.projectType !== "NEW") {
+    if (!isGreenfield(newBundle.manifest.projectType)) {
       throw new BadRequestException("El ZIP newProject debe ser projectType NEW");
     }
-    if (legacyBundle.manifest.projectType !== "LEGACY") {
+    if (!isLegacy(legacyBundle.manifest.projectType)) {
       throw new BadRequestException("El ZIP legacyProject debe ser projectType LEGACY");
     }
 

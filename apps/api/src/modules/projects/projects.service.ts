@@ -10,11 +10,11 @@ import {
   type TasksPipelineProgress,
   exportPagToOpenApiSpec,
   exportPagToOpenApiYaml,
-  type ProjectArchitectureGraph,
 } from "@theforge/shared-types";
 
 import { pickPrimaryStage } from "./stage-helpers.js";
 import { loadAccessibleProjectWithStages } from "./project-access.util.js";
+import { resolveProjectOpenApiPag } from "./stage-architecture-graph.util.js";
 import { ProjectMddPersistService } from "./project-mdd-persist.service.js";
 import { DeliverablesCascadeService } from "./deliverables-cascade.service.js";
 import { ProjectStageService } from "./project-stage.service.js";
@@ -479,30 +479,28 @@ export class ProjectsService implements IOrchestratorProjectsPort {
 
   async getOpenApiSpec(projectId: string): Promise<Record<string, any>> {
     const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
-    const activeStage = pickPrimaryStage(project.stages ?? []);
-    const ast = activeStage?.documentAst ?? project.stages?.find((s) => s.documentAst)?.documentAst;
+    const pag = resolveProjectOpenApiPag(project.stages ?? []);
 
-    if (!ast || typeof ast !== "object" || !("endpoints" in ast)) {
+    if (!pag) {
       throw new NotFoundException(
         "No se encontró un Project Architecture Graph (PAG) estructurado en las etapas del proyecto. Ejecuta la generación de entregables o regenera contratos de API para generar la especificación OpenAPI 3.1.",
       );
     }
 
-    return exportPagToOpenApiSpec(ast as unknown as ProjectArchitectureGraph);
+    return exportPagToOpenApiSpec(pag);
   }
 
   async getOpenApiYaml(projectId: string): Promise<string> {
     const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
-    const activeStage = pickPrimaryStage(project.stages ?? []);
-    const ast = activeStage?.documentAst ?? project.stages?.find((s) => s.documentAst)?.documentAst;
+    const pag = resolveProjectOpenApiPag(project.stages ?? []);
 
-    if (!ast || typeof ast !== "object" || !("endpoints" in ast)) {
+    if (!pag) {
       throw new NotFoundException(
         "No se encontró un Project Architecture Graph (PAG) estructurado en las etapas del proyecto. Ejecuta la generación de entregables o regenera contratos de API para generar la especificación OpenAPI 3.1.",
       );
     }
 
-    return exportPagToOpenApiYaml(ast as unknown as ProjectArchitectureGraph);
+    return exportPagToOpenApiYaml(pag);
   }
 }
 

@@ -9,12 +9,14 @@ import { ComplexityLevel, Prisma, StageStatus, Status } from "@theforge/database
 import type { Project } from "@theforge/database";
 import {
   projectMergeBodySchema,
+  ProjectTypeEnum,
   type MergeConflict,
   type MergeLineageEntry,
   type MergeSourceOptions,
   type ProjectMergeBody,
   type ProjectMergePreview,
   type ProjectMergeResult,
+  type ProjectType,
 } from "@theforge/shared-types";
 import { getRequestUserId } from "../../common/request-user.store.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
@@ -166,7 +168,7 @@ export class ProjectMergeService {
       return {
         projectId: row.id,
         name: row.name,
-        projectType: row.projectType as "NEW" | "LEGACY",
+        projectType: row.projectType as ProjectType,
         borrador,
         dbgaMarkdown: opts.includeDbga ? (row.dbgaContent?.trim() ?? "") : "",
         benchmarkMarkdown:
@@ -307,7 +309,7 @@ export class ProjectMergeService {
           userId,
           groupId: defaultGroupId,
           name: parsed.name!.trim(),
-          projectType: "NEW",
+          projectType: ProjectTypeEnum.enum.NEW,
           visibility: "PRIVATE",
           complexity: ComplexityLevel.HIGH,
           dbgaContent: preview.markdown,

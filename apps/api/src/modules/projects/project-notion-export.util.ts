@@ -13,6 +13,8 @@ import {
   NOTION_PROJECT_DOC_ENTRIES,
   NOTION_STAGE_DOC_ENTRIES,
   parseIntegrationHandoff,
+  isGreenfield,
+  isLegacy,
   serializeCsv,
   type NotionExportOptions,
   type NotionIntegrationLinkFile,
@@ -286,14 +288,14 @@ export function buildNotionExportEntries(
   push("_theforge/manifest.json", JSON.stringify(manifest, null, 2));
   push("_theforge/id-map.json", JSON.stringify(idMap, null, 2));
 
-  if (project.projectType === "NEW" && project.linkedLegacyProjectId) {
+  if (isGreenfield(project.projectType) && project.linkedLegacyProjectId) {
     const link: NotionIntegrationLinkFile = {
       version: NOTION_PORTABILITY_VERSION,
       newProjectExportId: projectExportId,
       legacyProjectExportId: notionExportId(project.linkedLegacyProjectId),
     };
     push("_theforge/integration-link.json", JSON.stringify(link, null, 2));
-  } else if (project.projectType === "LEGACY" && project.linkedNewProjectId) {
+  } else if (isLegacy(project.projectType) && project.linkedNewProjectId) {
     const link: NotionIntegrationLinkFile = {
       version: NOTION_PORTABILITY_VERSION,
       newProjectExportId: notionExportId(project.linkedNewProjectId),

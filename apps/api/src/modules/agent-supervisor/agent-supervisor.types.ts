@@ -1,3 +1,5 @@
+import type { ProjectType } from "@theforge/shared-types";
+
 /**
  * Perfil de herramientas que el orquestador inyecta al grafo ReAct / LLM.
  * - sdd: Coherencia §3/§4 inferida del markdown MDD (patch/enmienda).
@@ -8,7 +10,7 @@ export type AgentToolsProfile = "sdd_only" | "sdd_and_theforge";
 /** Destino delegado tras el Supervisor (siguiente capa: LangGraph / prompts). */
 export type AgentDelegate = "software_architect" | "legacy_coordinator";
 
-export type SupervisorFlow = "NEW" | "LEGACY";
+export type SupervisorFlow = ProjectType;
 
 export interface SupervisorRouteResult {
   projectId: string;

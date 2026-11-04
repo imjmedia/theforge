@@ -1,11 +1,11 @@
-import type { MergeConflict } from "@theforge/shared-types";
+import type { MergeConflict, ProjectType } from "@theforge/shared-types";
 import type { Phase0Document } from "../ai-analysis/phase0/phase0.types.js";
 import { normalizePhase0Document } from "../ai-analysis/phase0/phase0-normalize.util.js";
 
 export interface MergeSourceSnapshot {
   projectId: string;
   name: string;
-  projectType: "NEW" | "LEGACY";
+  projectType: ProjectType;
   borrador: Phase0Document;
   dbgaMarkdown?: string;
   benchmarkMarkdown?: string;
@@ -119,7 +119,7 @@ export function mergeLlmConflicts(
 export function snapshotFromRaw(
   projectId: string,
   name: string,
-  projectType: "NEW" | "LEGACY",
+  projectType: ProjectType,
   borrador: unknown,
 ): MergeSourceSnapshot {
   return {

@@ -8,6 +8,7 @@
 export * from "./status.js";
 export * from "./checklist.js";
 export * from "./project.js";
+export * from "./project-type.js";
 export * from "./project-group.js";
 export * from "./project-merge.js";
 export * from "./deliverables-matrix.js";

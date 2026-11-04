@@ -49,6 +49,12 @@ import {
   refreshStoredUserFromApi,
 } from "./utils/apiClient";
 import { cn } from "./lib/utils";
+import {
+  isGreenfield,
+  isLegacy,
+  ProjectTypeEnum,
+  type ProjectType,
+} from "@theforge/shared-types";
 import { useDashboardGenerationSummary } from "./hooks/useDashboardGenerationSummary";
 import {
   Button,
@@ -78,6 +84,8 @@ import {
 } from "./components/ui";
 type Status = "ROJO" | "AMARILLO" | "VERDE";
 
+type ProjectListFilter = "all" | "favorites" | ProjectType;
+
 interface Project {
   id: string;
   name: string;
@@ -89,7 +97,7 @@ interface Project {
   approach?: "DOMAIN_FIRST" | "UX_FIRST";
   uxDesignSource?: string | null;
   hasUxTeam: boolean;
-  projectType?: "NEW" | "LEGACY";
+  projectType?: ProjectType;
   visibility?: "PRIVATE" | "SHARED";
   theforgeProjectId?: string | null;
   createdAt: string;
@@ -207,9 +215,7 @@ export default function App() {
   const [theforgeProjects, setTheForgeProjects] = useState<TheForgeProject[]>([]);
   const [theforgeAvailable, setTheForgeAvailable] = useState(false);
   const [theforgeLoading, setTheForgeLoading] = useState(false);
-  const [projectTypeFilter, setProjectTypeFilter] = useState<
-    "all" | "NEW" | "LEGACY" | "favorites"
-  >("all");
+  const [projectTypeFilter, setProjectTypeFilter] = useState<ProjectListFilter>("all");
   const [projectSearchQuery, setProjectSearchQuery] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
 
@@ -255,7 +261,11 @@ export default function App() {
     if (projectTypeFilter === "favorites") {
       return projectList.filter((p) => p.isFavorite);
     }
-    return projectList.filter((p) => (p.projectType ?? "NEW") === projectTypeFilter);
+    return projectList.filter((p) => {
+      const pt = p.projectType ?? ProjectTypeEnum.enum.NEW;
+      if (projectTypeFilter === ProjectTypeEnum.enum.NEW) return isGreenfield(pt);
+      return isLegacy(pt);
+    });
   }, [projectList, projectTypeFilter]);
 
   const displayedProjects = useMemo(() => {
@@ -365,7 +375,7 @@ export default function App() {
             approach: effectiveApproach,
             uxDesignSource: uxDesignSource || null,
             hasUxTeam: effectiveApproach === "UX_FIRST",
-            projectType: "NEW",
+            projectType: ProjectTypeEnum.enum.NEW,
             groupId,
           }),
         });
@@ -407,7 +417,7 @@ export default function App() {
         body: JSON.stringify({
           name: source.name,
           hasUxTeam: false,
-          projectType: "LEGACY",
+          projectType: ProjectTypeEnum.enum.LEGACY,
           theforgeProjectId: source.id,
         }),
       });
@@ -1408,30 +1418,30 @@ export default function App() {
               <button
                 type="button"
                 role="tab"
-                aria-selected={projectTypeFilter === "NEW"}
-                onClick={() => setProjectTypeFilter("NEW")}
+                aria-selected={projectTypeFilter === ProjectTypeEnum.enum.NEW}
+                onClick={() => setProjectTypeFilter(ProjectTypeEnum.enum.NEW)}
                 className={`shrink-0 touch-manipulation whitespace-nowrap rounded-full border px-3 py-2 text-xs font-medium transition-colors min-h-[44px] sm:min-h-9 sm:py-1.5 ${
-                  projectTypeFilter === "NEW"
+                  projectTypeFilter === ProjectTypeEnum.enum.NEW
                     ? "border-emerald-500 bg-emerald-500/20 text-emerald-700 dark:text-emerald-300"
                     : "border-[var(--border)] bg-transparent text-[var(--foreground-muted)] hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
                 }`}
               >
                 <Sparkles className="mr-1 inline h-3 w-3 align-text-bottom" aria-hidden />
-                Nuevos ({projectList.filter((q) => (q.projectType ?? "NEW") === "NEW").length})
+                Nuevos ({projectList.filter((q) => isGreenfield(q.projectType ?? ProjectTypeEnum.enum.NEW)).length})
               </button>
               <button
                 type="button"
                 role="tab"
-                aria-selected={projectTypeFilter === "LEGACY"}
-                onClick={() => setProjectTypeFilter("LEGACY")}
+                aria-selected={projectTypeFilter === ProjectTypeEnum.enum.LEGACY}
+                onClick={() => setProjectTypeFilter(ProjectTypeEnum.enum.LEGACY)}
                 className={`shrink-0 touch-manipulation whitespace-nowrap rounded-full border px-3 py-2 text-xs font-medium transition-colors min-h-[44px] sm:min-h-9 sm:py-1.5 ${
-                  projectTypeFilter === "LEGACY"
+                  projectTypeFilter === ProjectTypeEnum.enum.LEGACY
                     ? "border-amber-500 bg-amber-500/20 text-amber-800 dark:text-amber-300"
                     : "border-[var(--border)] bg-transparent text-[var(--foreground-muted)] hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
                 }`}
               >
                 <GitBranch className="mr-1 inline h-3 w-3 align-text-bottom" aria-hidden />
-                Legacy ({projectList.filter((q) => q.projectType === "LEGACY").length})
+                Legacy ({projectList.filter((q) => isLegacy(q.projectType as ProjectType)).length})
               </button>
             </div>
           </CardHeader>

@@ -17,6 +17,7 @@ import {
   getNextOpenTask,
   parseIntegrationHandoff,
   parseTasksMarkdown,
+  isGreenfield,
   readStageDeliverableSnapshot,
   getLegacyChangeState,
   sectionToIssueLabel,
@@ -290,7 +291,7 @@ export class SddIntegrationService {
     if (!stage || stage.ordinal < 2) return [];
     const snap = stage.handoffSnapshot as { items?: IntegrationHandoffItem[] } | null;
     if (snap?.items?.length) return snap.items;
-    if (project.projectType === "NEW") {
+    if (isGreenfield(project.projectType)) {
       return parseIntegrationHandoff(project.integrationHandoff).items;
     }
     return [];
