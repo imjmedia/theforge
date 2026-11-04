@@ -323,6 +323,20 @@ export class ProjectNotionPortabilityService {
                 deliverableSnapshot: jsonValue(stage.assets["deliverable-snapshot.json"]),
                 shortTermContext: jsonValue(stage.assets["short-term-context.json"]),
                 mddUpstreamBaseline: jsonValue(stage.assets["mdd-upstream-baseline.json"]),
+                designSpec: jsonValue(stage.assets["design-spec.json"]),
+                architectureGraph: jsonValue(stage.assets["architecture-graph.json"]),
+                architectureGraphSourceHash:
+                  typeof stage.assets["architecture-graph-source-hash.json"] === "string"
+                    ? (stage.assets["architecture-graph-source-hash.json"] as string)
+                    : stage.assets["architecture-graph-source-hash.json"] === null
+                      ? null
+                      : undefined,
+                designSpecRevision:
+                  typeof stage.assets["design-spec-revision.json"] === "number"
+                    ? (stage.assets["design-spec-revision.json"] as number)
+                    : stage.assets["design-spec.json"]
+                      ? 0
+                      : undefined,
                 mddContent: stage.docs.mddContent ?? null,
                 brdContent: stage.docs.brdContent ?? null,
                 specContent: stage.docs.specContent ?? null,

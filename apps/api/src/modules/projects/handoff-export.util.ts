@@ -51,9 +51,11 @@ import {
   type SddAgentGovernanceAnalyzeSlice,
   type SpecKitBundleFile,
   type TheforgeProjectJson,
+  isDesignFirst,
 } from "@theforge/shared-types";
 import { pickPrimaryStage } from "./stage-helpers.js";
 import { resolveProjectTasksSsot } from "./tasks-ssot-resolve.util.js";
+import { buildDesignFirstHandoffArtifactsFromStage } from "../design-first/design-artifacts.service.js";
 
 type ProjectWithStages = Project & { stages: Stage[] };
 
@@ -193,6 +195,15 @@ export function enrichSpecKitFilesForHandoff(
   return [...map.entries()]
     .map(([path, content]) => ({ path, content }))
     .sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/** Artefactos Design-First para repo-handoff (OpenAPI, MSW, fixtures, pantallas/datos). */
+export function designFirstRepoHandoffFiles(
+  project: ProjectWithStages,
+  stage: Stage | null | undefined,
+): SpecKitBundleFile[] {
+  if (!isDesignFirst(project.projectType)) return [];
+  return buildDesignFirstHandoffArtifactsFromStage(stage);
 }
 
 /**

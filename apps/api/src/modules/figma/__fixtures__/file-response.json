@@ -1,0 +1,60 @@
+{
+  "name": "Design First Demo",
+  "document": {
+    "id": "0:0",
+    "name": "Document",
+    "type": "DOCUMENT",
+    "children": [
+      {
+        "id": "0:1",
+        "name": "Flows",
+        "type": "CANVAS",
+        "children": [
+          {
+            "id": "1:10",
+            "name": "Order List",
+            "type": "FRAME",
+            "transitionNodeID": "1:20",
+            "children": [
+              {
+                "id": "1:11",
+                "name": "Orders title",
+                "type": "TEXT"
+              },
+              {
+                "id": "1:12",
+                "name": "Open detail",
+                "type": "TEXT"
+              }
+            ]
+          },
+          {
+            "id": "1:20",
+            "name": "Order Detail",
+            "type": "FRAME",
+            "transitionNodeID": "9:99",
+            "children": [
+              {
+                "id": "1:21",
+                "name": "Detail title",
+                "type": "TEXT"
+              }
+            ]
+          },
+          {
+            "id": "1:30",
+            "name": "Home Dashboard",
+            "type": "FRAME",
+            "children": [
+              {
+                "id": "1:31",
+                "name": "Welcome",
+                "type": "TEXT"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

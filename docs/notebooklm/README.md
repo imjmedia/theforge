@@ -26,7 +26,8 @@ Docker multi-stage: `corepack enable` + `pnpm install --frozen-lockfile` + `pnpm
 ## Orden sugerido al crear el cuaderno
 
 1. **THEFORGE-INDEX.md** — visión única: flujo, IA agnóstica, semáforo, estimación MXN, Docker, Prisma.
-2. **STAGE-SDD.md** — etapa vs proyecto, API aplanada, Falkor SDD.
+2. **[DESIGN-FIRST.md](DESIGN-FIRST.md)** — modo `DESIGN_FIRST` (fases, API, flags, handoff; complementa el índice).
+3. **STAGE-SDD.md** — etapa vs proyecto, API aplanada, Falkor SDD.
 3. **THEFORGE-QUE-HACE-EL-PROYECTO.md** — módulos API y flujos NEW vs LEGACY.
 4. **LEGACY-FLOW-AS-IS-MDD.md** — flujo legacy etapa 1 (MDD Inicial vs MDD, inyección §3–§5, entregables, troubleshooting).
 5. **ENTREGABLES-SDD-VALIDACION.md** — MDD canónico y validación.

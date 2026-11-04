@@ -73,8 +73,8 @@ El cuaderno recomienda:
 ## 3. Orden de generación y dependencias
 
 - **Recomendado (SDD + Architecting):** Plan primero (Blueprint), luego contratos (API), luego flujos e infra.
-- **Implementación actual:** En "Generar Entregables" se ejecuta en orden: `generateBlueprint` → `generateApiContracts` → `generateLogicFlows` → `generateInfra`. API e Infra reciben el MDD de la **etapa activa** (`Stage`) y `blueprintContent` del proyecto (mismo contrato que antes; el backend resuelve la etapa). **Enmiendas constitucionales:** la tool `propose_mdd_amendment` (agentes) puede alinear §3/§4 del MDD con deltas detectados en Blueprint/API.
-- **Guía UX/UI:** Se construye por **chat** (entrevista) con MDD y Blueprint como contexto; no es parte del flujo automático "Generar Entregables". Correcto (design system/handoff es iterativo).
+- **Implementación actual:** La cascada **no** es un único waterfall fijo para todos los tipos. `DeliverablesCascadeService` resuelve oleadas con `DELIVERABLE_WAVES_BY_COMPLEXITY` (NEW/HIGH) o `DELIVERABLE_WAVES_DESIGN_FIRST_BY_COMPLEXITY` (`projectType === DESIGN_FIRST`). Dentro de cada oleada, los pasos respetan dependencias (p. ej. W2 en HIGH: spec/architecture → UC/HU/API/flujos/**Guía UX/UI**/blueprint en paralelo controlado → pantallas → tasks/infra). API e Infra reciben el MDD de la **etapa activa** y `blueprintContent` cuando aplica. **Enmiendas constitucionales:** la tool `propose_mdd_amendment` (agentes) puede alinear §3/§4 del MDD con deltas detectados en Blueprint/API.
+- **Guía UX/UI:** El paso `ux_ui_guide` **sí está en la matriz de cascada** (`deliverables-matrix.ts`: oleadas W2 para HIGH/MEDIUM y oleadas Design-First). Además existe flujo **por chat** (`generateUxUiGuide` / entrevista) para iterar design system y handoff con MDD + Blueprint; no sustituye al paso de cascada cuando el usuario ejecuta «Generar entregables» completo.
 
 ---
 

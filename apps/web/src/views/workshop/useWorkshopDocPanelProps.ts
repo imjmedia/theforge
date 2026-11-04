@@ -888,6 +888,7 @@ const workshopMddPanelProps = useMemo(
 
   return {
     centralPanel,
+    projectId,
     legacy: workshopLegacyPanelsProps,
     benchmark: workshopBenchmarkPanelProps,
     mdd: workshopMddPanelProps,

@@ -23,9 +23,10 @@ import {
   ScrollText,
   Server,
   Target,
+  Database,
 } from "lucide-react";
 import type { ArtifactTypeDefinition } from "@theforge/shared-types";
-import { agentGovernanceScaffoldHasContent, detectWebSurfaces } from "@theforge/shared-types";
+import { agentGovernanceScaffoldHasContent, detectWebSurfaces, isDesignFirst } from "@theforge/shared-types";
 import { isTabVisibleForComplexity, type ProjectTypeForTabs, type WorkshopDocTab } from "./complexityTabs";
 
 /** Greenfield (NEW) steps required before generating downstream deliverables. */
@@ -148,6 +149,8 @@ export interface WorkshopDocNavItem {
 
 export interface WorkshopDocNavBuildContext {
   isLegacyProject: boolean;
+  /** Tipo real del proyecto (NEW, LEGACY, DESIGN_FIRST). */
+  projectType?: ProjectTypeForTabs;
   /** Etapa activa (1 = AS-IS, ≥2 = modificación). */
   legacyStageOrdinal?: number;
   effectiveComplexityForTabs: "LOW" | "MEDIUM" | "HIGH";
@@ -203,11 +206,38 @@ function agentGovernanceNavItem(ctx: WorkshopDocNavBuildContext): WorkshopDocNav
 }
 
 export function buildWorkshopDocNavItems(ctx: WorkshopDocNavBuildContext): WorkshopDocNavItem[] {
-  const tabPt: ProjectTypeForTabs = ctx.isLegacyProject ? "LEGACY" : "NEW";
+  const tabPt: ProjectTypeForTabs =
+    ctx.projectType ?? (ctx.isLegacyProject ? "LEGACY" : "NEW");
   const tabOpts = { projectType: tabPt, legacyStageOrdinal: ctx.legacyStageOrdinal };
   const visible = (id: WorkshopDocTab) =>
     isTabVisibleForComplexity(id, ctx.effectiveComplexityForTabs, tabOpts);
   const items: WorkshopDocNavItem[] = [];
+
+  if (isDesignFirst(tabPt)) {
+    items.push(
+      {
+        id: "design-screens",
+        label: "Pantallas",
+        title: "Fase 1 — pantallas y navegación del designSpec",
+        Icon: MonitorSmartphone,
+        content: "design-screens-panel",
+      },
+      {
+        id: "design-data-needs",
+        label: "Datos",
+        title: "Fase 2 — necesidades de datos con procedencia",
+        Icon: Database,
+        content: "design-data-needs-panel",
+      },
+      {
+        id: "design-contract",
+        label: "Contrato",
+        title: "Fase 3 — compilar PAG/OpenAPI y lanzar MDD",
+        Icon: FileCode,
+        content: "design-contract-panel",
+      },
+    );
+  }
 
   if (ctx.isLegacyProject) {
     items.push({
@@ -226,7 +256,7 @@ export function buildWorkshopDocNavItems(ctx: WorkshopDocNavBuildContext): Works
         content: ctx.activeLegacyState?.codebaseDoc ?? "",
       });
     }
-  } else {
+  } else if (!isDesignFirst(tabPt)) {
     items.push({
       id: "benchmark",
       label: "Paso 0",
@@ -481,6 +511,21 @@ export function getWorkshopDocPanelHeader(
       title: "Pantallas / UI Screens Spec",
       subtitle: "Pantallas con componentes reales del MCP gráfico conectado",
       Icon: MonitorSmartphone,
+    },
+    "design-screens": {
+      title: "Pantallas (Design-First)",
+      subtitle: "Fase 1 — edición, importación y propuestas diff",
+      Icon: MonitorSmartphone,
+    },
+    "design-data-needs": {
+      title: "Datos (Design-First)",
+      subtitle: "Fase 2 — necesidades de datos y procedencia",
+      Icon: Database,
+    },
+    "design-contract": {
+      title: "Contrato (Design-First)",
+      subtitle: "Fase 3 — PAG, OpenAPI y job MDD",
+      Icon: FileCode,
     },
     aem: {
       title: "Análisis y Estudio de Mercado",

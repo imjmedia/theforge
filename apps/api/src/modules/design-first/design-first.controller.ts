@@ -8,6 +8,7 @@ import { ProjectScoped } from "../../common/access/project-scoped.decorator.js";
 import { DesignContractService } from "./design-contract.service.js";
 import { DesignProposalService } from "./design-proposal.service.js";
 import { DesignSpecService } from "./design-spec.service.js";
+import { FigmaImportService } from "../figma/figma-import.service.js";
 
 @Controller("projects/:id/design")
 export class DesignFirstController {
@@ -15,6 +16,7 @@ export class DesignFirstController {
     private readonly designSpec: DesignSpecService,
     private readonly designContract: DesignContractService,
     private readonly designProposal: DesignProposalService,
+    private readonly figmaImport: FigmaImportService,
   ) {}
 
   @ProjectScoped("read")
@@ -48,6 +50,12 @@ export class DesignFirstController {
   @Post("data-needs/propose")
   proposeDataNeeds(@Param("id") projectId: string) {
     return this.designProposal.proposeDataNeeds(projectId);
+  }
+
+  @ProjectScoped("contribute")
+  @Post("import/figma")
+  importFigma(@Param("id") projectId: string, @Body() body: unknown) {
+    return this.figmaImport.importForProject(projectId, body as { fileUrl?: unknown; nodeIds?: unknown });
   }
 
   @ProjectScoped("spend")

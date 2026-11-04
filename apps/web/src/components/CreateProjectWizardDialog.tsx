@@ -3,8 +3,8 @@
  * then name for new projects or hand off to the TheForge picker for legacy paths.
  */
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, ChevronDown, FolderGit2, GitBranch, Layers, Loader2, Palette, Plus, Sparkles } from "lucide-react";
-import type { ProjectApproach } from "@theforge/shared-types";
+import { ArrowLeft, ChevronDown, FolderGit2, GitBranch, Layers, Loader2, MonitorSmartphone, Plus, Sparkles } from "lucide-react";
+import type { ProjectApproach, ProjectType } from "@theforge/shared-types";
 import {
   Button,
   Dialog,
@@ -17,8 +17,11 @@ import {
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import type { ProjectGroupOption } from "./ProjectSettingsDialog";
+import {
+  DESIGN_FIRST_DISABLED_USER_MESSAGE,
+} from "@/utils/project-mode-labels";
 
-export type CreateProjectOrigin = "NEW" | "LEGACY_PROJECT" | "LEGACY_REPO";
+export type CreateProjectOrigin = "NEW" | "DESIGN_FIRST" | "LEGACY_PROJECT" | "LEGACY_REPO";
 
 export interface CreateProjectWizardDialogProps {
   open: boolean;
@@ -34,6 +37,7 @@ export interface CreateProjectWizardDialogProps {
     groupId: string,
     approach?: ProjectApproach,
     uxDesignSource?: string,
+    projectType?: ProjectType,
   ) => Promise<void>;
   onContinueLegacy: (tab: "projects" | "repos") => void;
 }
@@ -49,6 +53,12 @@ const ORIGINS: {
     title: "Proyecto nuevo",
     description: "Desde cero en TheForge (tipo Nuevo).",
     icon: Sparkles,
+  },
+  {
+    id: "DESIGN_FIRST",
+    title: "Design-First",
+    description: "Pantallas → datos → contrato antes del MDD compilado.",
+    icon: MonitorSmartphone,
   },
   {
     id: "LEGACY_PROJECT",
@@ -85,6 +95,7 @@ export function CreateProjectWizardDialog({
   const [name, setName] = useState("");
   const [groupId, setGroupId] = useState("");
   const [approach, setApproach] = useState<ProjectApproach>("DOMAIN_FIRST");
+  const [newProjectOrigin, setNewProjectOrigin] = useState<"NEW" | "DESIGN_FIRST">("NEW");
   const [uxDesignSource, setUxDesignSource] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
 
@@ -93,6 +104,7 @@ export function CreateProjectWizardDialog({
     setName("");
     setGroupId("");
     setApproach("DOMAIN_FIRST");
+    setNewProjectOrigin("NEW");
     setUxDesignSource("");
     setLocalError(null);
   }, []);
@@ -119,11 +131,13 @@ export function CreateProjectWizardDialog({
 
   const handleSelectOrigin = useCallback((o: CreateProjectOrigin) => {
     setLocalError(null);
-    if (o === "NEW") setStep(2);
-    else {
-      onContinueLegacy(o === "LEGACY_PROJECT" ? "projects" : "repos");
-      handleClose();
+    if (o === "NEW" || o === "DESIGN_FIRST") {
+      setNewProjectOrigin(o);
+      setStep(2);
+      return;
     }
+    onContinueLegacy(o === "LEGACY_PROJECT" ? "projects" : "repos");
+    handleClose();
   }, [onContinueLegacy, handleClose]);
 
   const handleBack = useCallback(() => {
@@ -132,6 +146,7 @@ export function CreateProjectWizardDialog({
     setName("");
     setGroupId("");
     setApproach("DOMAIN_FIRST");
+    setNewProjectOrigin("NEW");
     setUxDesignSource("");
   }, []);
 
@@ -151,13 +166,22 @@ export function CreateProjectWizardDialog({
         trimmed,
         groupId,
         approach,
-        uxDesignSource.trim() || undefined,
+        approach === "UX_FIRST" ? uxDesignSource.trim() || undefined : undefined,
+        newProjectOrigin === "DESIGN_FIRST" ? "DESIGN_FIRST" : "NEW",
       );
       handleClose();
-    } catch {
-      setLocalError("No se pudo crear el proyecto. Revisa la consola o inténtalo de nuevo.");
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : "No se pudo crear el proyecto. Revisa la consola o inténtalo de nuevo.";
+      setLocalError(
+        msg.includes("ERR_DESIGN_FIRST_DISABLED") || msg.includes("no está habilitado")
+          ? DESIGN_FIRST_DISABLED_USER_MESSAGE
+          : msg,
+      );
     }
-  }, [name, groupId, approach, uxDesignSource, onCreateNew, handleClose]);
+  }, [name, groupId, approach, uxDesignSource, newProjectOrigin, onCreateNew, handleClose]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -262,22 +286,15 @@ export function CreateProjectWizardDialog({
                 />
               </div>
 
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-[var(--foreground)]">
-                  Enfoque metodológico
-                </label>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    onClick={() => setApproach("DOMAIN_FIRST")}
-                    disabled={loading}
-                    className={cn(
-                      "flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors",
-                      approach === "DOMAIN_FIRST"
-                        ? "border-[var(--primary)] bg-[color-mix(in_oklch,var(--primary)_10%,var(--card))] ring-1 ring-[var(--primary)]"
-                        : "border-[var(--border)] bg-[var(--card)] hover:bg-[var(--muted)]/40",
-                    )}
-                  >
+              {newProjectOrigin === "DESIGN_FIRST" ? (
+                <div className="rounded-lg border border-[color-mix(in_oklch,var(--primary)_30%,var(--border))] bg-[color-mix(in_oklch,var(--primary)_8%,var(--card))] p-3 text-xs text-[var(--foreground-muted)]">
+                  Modo <strong className="text-[var(--foreground)]">Design-First</strong>: empezarás en las
+                  pestañas Pantallas, Datos y Contrato del taller.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-[var(--foreground)]">Enfoque metodológico</label>
+                  <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-3">
                     <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--foreground)]">
                       <Layers className="h-3.5 w-3.5 text-[var(--primary)]" />
                       Domain-First (Clásico)
@@ -285,48 +302,10 @@ export function CreateProjectWizardDialog({
                     <span className="text-[11px] leading-tight text-[var(--foreground-muted)]">
                       Idea → BD y endpoints en MDD → UI y tareas
                     </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setApproach("UX_FIRST")}
-                    disabled={loading}
-                    className={cn(
-                      "flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors",
-                      approach === "UX_FIRST"
-                        ? "border-[var(--primary)] bg-[color-mix(in_oklch,var(--primary)_10%,var(--card))] ring-1 ring-[var(--primary)]"
-                        : "border-[var(--border)] bg-[var(--card)] hover:bg-[var(--muted)]/40",
-                    )}
-                  >
-                    <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--foreground)]">
-                      <Palette className="h-3.5 w-3.5 text-pink-500" />
-                      UX-First (Traducción)
-                    </div>
-                    <span className="text-[11px] leading-tight text-[var(--foreground-muted)]">
-                      Pantallas → Contratos OpenAPI → Entidades → NestJS
-                    </span>
-                  </button>
+                  </div>
                 </div>
-              </div>
+              )}
 
-              {approach === "UX_FIRST" ? (
-                <div className="space-y-1.5 rounded-lg border border-pink-500/20 bg-pink-500/5 p-3">
-                  <label htmlFor="create-project-ux-source" className="block text-xs font-medium text-[var(--foreground)]">
-                    Enlace de Figma o spec visual inicial (opcional)
-                  </label>
-                  <Input
-                    id="create-project-ux-source"
-                    value={uxDesignSource}
-                    onChange={(e) => setUxDesignSource(e.target.value)}
-                    placeholder="https://figma.com/file/... o wireframes"
-                    className="h-9 text-xs"
-                    disabled={loading}
-                  />
-                  <p className="text-[11px] text-[var(--foreground-muted)]">
-                    TheForge priorizará la traducción técnica: las pantallas dictarán los contratos OpenAPI antes de codificar la lógica.
-                  </p>
-                </div>
-              ) : null}
               {groups.length > 0 ? (
                 <div className="space-y-2">
                   <label htmlFor="create-project-group" className="text-sm font-medium text-[var(--foreground)]">

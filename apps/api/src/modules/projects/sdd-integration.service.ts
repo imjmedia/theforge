@@ -71,6 +71,7 @@ import {
   enrichSpecKitFilesForHandoff,
   scaffoldToRepoHandoffGovernance,
   synthesizeExportGovernanceScaffold,
+  designFirstRepoHandoffFiles,
 } from "./handoff-export.util.js";
 import { parseTasksV2 } from "../engine/task-v2/tasks-parser-v2.js";
 import { resolveProjectTasksSsot, type ProjectTasksSsot } from "./tasks-ssot-resolve.util.js";
@@ -274,6 +275,7 @@ export class SddIntegrationService {
     const specKitFiles = enrichSpecKitFilesForHandoff(unified.specKitFiles, deliverables, [
       ...openSpecFiles,
       ...microSpecs,
+      ...designFirstRepoHandoffFiles(project, stage),
     ]);
 
     return {

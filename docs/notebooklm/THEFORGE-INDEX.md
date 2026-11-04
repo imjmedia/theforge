@@ -127,6 +127,14 @@ Las puertas de constitución **no** sustituyen ROJO por entidades vacías; puede
 
 El agente debe comprobar estado VERDE antes de generar código (architect-behavior).
 
+### 4.3 Figma: semáforo vs Design-First
+
+| Contexto | Qué significa «Figma» en docs/código |
+| -------- | ------------------------------------- |
+| **Semáforo §4.1–4.2** | Señal heurística en el JSON normalizado del MDD (`hasUxTeam`, referencia de diseño en metadatos UX). **No** implica llamadas a la API de Figma ni import automático de archivos. |
+| **Design-First** | Import opcional de frames vía **API Figma** con token **personal** del usuario (`UserFigmaCredential`, rutas `/me/integrations/figma` y `POST /projects/:id/design/import/figma`). Produce propuestas diff HITL sobre `Stage.designSpec`. Guía: [DESIGN-FIRST.md](DESIGN-FIRST.md). |
+| **MCP gráfico** | Catálogo de componentes UI (team-wide); distinto de credenciales Figma. En DESIGN_FIRST, el deliverable «Pantallas» lo escribe la cascada `design_screens_render`, no `ui-mcp` sync. |
+
 ---
 
 ## 5. Motor de estimación (MXN, México 2026)

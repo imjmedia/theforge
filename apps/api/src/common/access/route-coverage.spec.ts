@@ -39,6 +39,7 @@ const NON_PROJECT_ID_PREFIXES: readonly string[] = [
   "ai-analysis/eval",
   "auth",
   "design-refs",
+  "me",
   "project-groups",
   "provider-instances",
   "ui-mcp",

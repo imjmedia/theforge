@@ -165,6 +165,10 @@ export function buildNotionExportEntries(
       ["deliverable-snapshot.json", stage.deliverableSnapshot],
       ["short-term-context.json", stage.shortTermContext],
       ["mdd-upstream-baseline.json", stage.mddUpstreamBaseline],
+      ["design-spec.json", stage.designSpec],
+      ["design-spec-revision.json", stage.designSpecRevision],
+      ["architecture-graph.json", stage.architectureGraph],
+      ["architecture-graph-source-hash.json", stage.architectureGraphSourceHash],
     ];
     for (const [filename, value] of assetPairs) {
       const serialized = jsonAsset(value);

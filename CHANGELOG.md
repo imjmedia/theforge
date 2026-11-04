@@ -4,38 +4,38 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 
 ## [Unreleased]
 
-> **Paquete Design-First (implementación en curso)** — Modo `ProjectType.DESIGN_FIRST`: pantallas y flujos primero, necesidades de datos, PAG determinista, OpenAPI 3.1, MDD con §3/§4 compiladas y repo-handoff MSW. Documentación de planificación en `arquitectura/modo-design-first/`; el código avanza por fichas en `tasks/TASKS.md`.
+> **Paquete Design-First** — Modo `ProjectType.DESIGN_FIRST`: pantallas y flujos primero, necesidades de datos, PAG determinista, OpenAPI 3.1, MDD con §3/§4 compiladas y repo-handoff MSW. Guía operativa: [`docs/notebooklm/DESIGN-FIRST.md`](docs/notebooklm/DESIGN-FIRST.md). Planificación: `arquitectura/modo-design-first/`; fichas en `arquitectura/modo-design-first/tasks/TASKS.md`. ADR: [`0005`](docs/adr/0005-mdd-compilado-desde-pantallas.md) (MDD pinned), [`0006`](docs/adr/0006-architecture-graph-separado.md) (`architectureGraph`). Despliegue en dos releases (`DESIGN_FIRST_ENABLED`; ver guía).
 
 ### Added
-- **Design-First paso 5:** valor `ProjectType.DESIGN_FIRST` en Prisma (detrás de flag en pasos posteriores), columnas `Stage.designSpec` / `designSpecRevision` y tabla `UserFigmaCredential` (token Figma BYOK cifrado).
-- **Contratos zod de `designSpec`** en `@theforge/shared-types/design-first` (invariantes I1–I3, hash canónico, adaptadores ScreenSpec v1).
-- **Compilador determinista DataNeeds → PAG y puertas de fase Design-First** (`compileDataNeedsToPag`, `evaluateDesignFirstPhaseGates`, golden `three-screens.pag.json`).
-- **Export de mocks MSW v2, fixtures y markdown de diseño** (`exportPagToMswHandlers`, `buildPagFixtures`, `renderDesignMarkdown`, goldens `three-screens.*`).
-- **Validación OpenAPI 3.1** (esquema propio + `ajv` 2020-12) en la API (`openapi-validate.util.ts`).
-- **DesignFirstModule:** `GET/PUT /projects/:id/design*` con CAS por revisión y `compile-contract` determinista; creación de proyectos `DESIGN_FIRST` detrás de `DESIGN_FIRST_ENABLED`.
-- **Semáforo por fases para DESIGN_FIRST** (tope AMARILLO sin MDD) y utilidades de completitud en estimación.
-- **Puertas Design-First en el job MDD y en los entregables** (`ERR_DESIGN_PHASE_GATE`, `ERR_DESIGN_STALE`); `getMddDependentKeys(projectType)` al limpiar dependientes del MDD.
-- **Cascada DESIGN_FIRST** con oleadas propias: `api_contracts` desde el PAG sin LLM, `design_screens_render` desde `designSpec` (falla cerrado); `syncUiScreens` → 409 `ERR_DESIGN_FIRST_SCREENS_OWNED`.
-- **Compiladores `compilePagToMddSection3/4`** en formato MDD (goldens `three-screens.mdd-section3/4`, ER sellado en API opción 14.1a).
-- **`arquitectura/modo-design-first/`**: README con decisiones, `01-PRD.md` (RF-01…RF-19, RNF-01…RNF-10), `02-estructura-de-archivos.md`, `03-arquitectura-y-diseno.md`, `04-plan-de-pruebas.md`, `05-casos-limite.md` (CL-01…CL-31), `06-riesgos-y-decisiones.md` y `tasks/HANDOFF.md` + `tasks/TASKS.md` con 28 fichas ejecutables en orden. Registra el falso negativo de Ariadne (`validate_change_plan` BLOCKED con índice `up_to_date`) y el defecto actual de `AiService.lastGeneratedPag` / `Stage.documentAst` que los pasos 2-3 corrigen.
-- **Config tipada Design-First** (`apps/api/src/config/env.schema.ts`): flags `DESIGN_FIRST_*`, `FIGMA_API_BASE_URL` (solo https) y límites RNF-04/RNF-05; helper `compiler-first.config.ts` para entregables compilados.
-- **MDD Design-First en modo pinned:** §3/§4 selladas desde el PAG en el mismo `mdd-graph.ts`, métrica `pinned_section_drift` y prompt `design-first-clarifier.md`.
-- **Importación de pantallas desde imágenes** como propuesta diff (HITL) guardada en Redis con TTL (`POST design/import/images`, `accept`/`reject` con CAS).
-- **Propuesta de necesidades de datos** (heurística + LLM con procedencia marcada) vía `POST design/data-needs/propose` y aceptación por propuesta HITL.
+
+- **Design-First — modelo y tipos:** `ProjectType.DESIGN_FIRST`; `Stage.designSpec` / `designSpecRevision`; `UserFigmaCredential`; contratos zod en `@theforge/shared-types/design-first` (I1–I3, hash canónico, ScreenSpec v1).
+- **Design-First — compiladores y export:** `compileDataNeedsToPag`, puertas `evaluateDesignFirstPhaseGates`, MSW v2/fixtures/markdown (`exportPagToMswHandlers`, `buildPagFixtures`, `renderDesignMarkdown`), `compilePagToMddSection3/4`, validación OpenAPI 3.1 (`openapi-validate.util.ts` + `ajv` 2020-12).
+- **Design-First — API:** `DesignFirstModule` (`GET/PUT /projects/:id/design*`, `compile-contract`, imports imágenes/Figma, propuestas HITL); `FigmaModule` (`/me/integrations/figma`); creación `DESIGN_FIRST` detrás de `DESIGN_FIRST_ENABLED`.
+- **Design-First — cascada y MDD:** oleadas `DELIVERABLE_WAVES_DESIGN_FIRST_BY_COMPLEXITY`; `api_contracts` desde PAG sin LLM; `design_screens_render` desde `designSpec`; grafo MDD `designFirstPinned` (`pinned_section_drift`, `design-first-clarifier.md`); puertas `ERR_DESIGN_PHASE_GATE` / `ERR_DESIGN_STALE`; repo-handoff con `openapi.yaml`, MSW y `docs/sdd/pantallas.md` / `datos.md`.
+- **Design-First — operación:** semáforo por fases (tope AMARILLO sin MDD); config tipada `DESIGN_FIRST_*` y `FIGMA_API_BASE_URL`; enriquecimiento opcional vía MCP gráfico en propuestas; planificación en `arquitectura/modo-design-first/` (PRD, pruebas, CL-01…CL-31, HANDOFF/TASKS).
+- **Design-First — web (pasos 21–24):** wizard con origen Design-First (`project-mode-labels.ts`); `design-first-api` + `slice-design` (CAS / 409 CL-19); paneles Workshop Pantallas/Datos/Contrato; `FigmaCredentialSettings` en Ajustes → Cuenta (`AccountConfigCard`).
+- **Design-First paso 25 — documentación:** guía [`DESIGN-FIRST.md`](docs/notebooklm/DESIGN-FIRST.md); ADR [`0005`](docs/adr/0005-mdd-compilado-desde-pantallas.md) / [`0006`](docs/adr/0006-architecture-graph-separado.md); corrección de discrepancias doc↔código (THEFORGE-INDEX §4.3 Figma, ENTREGABLES §3, `MCP_GRAFICO.md`, README crypto/projects/ui-mcp/workshop).
 
 ### Changed
-- **`ProjectApproach.UX_FIRST`** marcado `@deprecated` en Prisma y shared-types (sustituido por Design-First).
-- **Export OpenAPI:** `GET :id/openapi.json` y `openapi.yaml` leen `Stage.architectureGraph` primero, con fallback a `documentAst` cuando incluye `endpoints`.
-- **Enrutamiento por tipo de proyecto** centralizado en `@theforge/shared-types` (`project-type.ts`: `isGreenfield`, `isLegacy`, `isDesignFirst`, `assertNever`); módulo `projects` de la API deja de comparar literales `"NEW"`, sin cambio de comportamiento; también en `ai`, orquestador y supervisor, con test anti-literal `project-type-literals.spec.ts`; y en la web (`App`, integración, tiles, `complexityTabs`, store Workshop), que deja de duplicar el tipo.
-- **`COMPILER_FIRST_*`**: dejan de leerse con `process.env` en `AiService` y pasan por la config tipada y `ConfigService`.
-- **`exportPagToOpenApiSpec`** añade `operationId`, `example` con semilla y `x-theforge-sources` cuando el PAG trae fuentes (`theforgeSources`); sin cambio para PAG NEW sin fuentes (golden de regresión).
+
+- **`ProjectApproach.UX_FIRST`** `@deprecated` (sustituido por Design-First). En Prisma el enfoque metodológico es **`Project.approach`** (no usar el nombre histórico `methodologicalApproach` en entradas nuevas; la sección publicada antigua del CHANGELOG aún lo menciona).
+- **OpenAPI export:** `GET :id/openapi.json` / `openapi.yaml` leen `Stage.architectureGraph` primero; fallback temporal a `documentAst` con `endpoints`.
+- **Enrutamiento por tipo:** helpers `project-type.ts` (`isGreenfield`, `isLegacy`, `isDesignFirst`); anti-literal en API y web.
+- **Portabilidad:** clone/Notion preservan `projectType`, `designSpec`, `architectureGraph`.
+- **`COMPILER_FIRST_*`:** config tipada vía `ConfigService` (no `process.env` directo en `AiService`).
+- **`exportPagToOpenApiSpec`:** `operationId`, `example` con semilla, `x-theforge-sources` cuando aplica.
+- **UX_FIRST oculto en el wizard** de creación (proyectos UX_FIRST existentes sin cambios).
+
+### Fixed
+
+- **Cifrado BYOK:** `rotate-master-key.ts` rota también `UserFigmaCredential` y `UiMcpInstance`.
+- **Design-First / PAG:** eliminado `AiService.lastGeneratedPag`; PAG en retorno de `generateApiContracts` y en `Stage.architectureGraph`; logic flows / infra reciben PAG por argumento.
+- **Design-First / esquema:** columna `Stage.architectureGraph` + backfill desde `documentAst` (`20261104090000`).
 
 > **Calidad del MDD (lote 2): reparaciones que no inventan contenido, Auditor sin nota, lease por hilo que falla cerrado y telemetría por llamada** — Segundo lote de la auditoría global del 2026-11-02 (`docs/handoffs/2026-11-02-auditoria-global.md` §3: H1–H6, B8, O5, O10, O14), antes de la tercera corrida del eval. Deja de sustituir flowcharts válidos por un webhook inventado, deja de puntuar 0 cuando el Auditor no responde, evita que un turno se pierda en silencio al persistir y registra latencia, intentos, coste y modelo real por llamada. Cambia contratos de stream y de eval, y exige la migración de `TokenUsage` y un Redis disponible antes del deploy (ver `docs/handoffs/2026-11-03-calidad-mdd-lote2-handoff.md`).
 
 ### Fixed
-- **`rotate-master-key.ts`** ahora rota también `UserFigmaCredential` y `UiMcpInstance` (deuda de cifrado BYOK).
-- **Design-First / PAG:** fuga del PAG entre proyectos: se elimina `AiService.lastGeneratedPag`; el grafo viaja en el retorno de `generateApiContracts`, se persiste en `Stage.architectureGraph` y logic flows / infra reciben el PAG por argumento desde la etapa.
-- **Design-First / PAG:** nueva columna `Stage.architectureGraph` con backfill idempotente desde `documentAst` cuando incluye `endpoints` (migración `20261104090000`; lectores en paso 3).
+
 - **Eval: llamadas fallidas no cuentan como medidas** (`apps/api/src/modules/ai-analysis/eval/mdd-eval-nest-deps.ts`, `mdd-eval-runner.ts`): `llmCalls` solo cuenta filas `ok`/`invalid`; las `error|timeout|abort` van a `failedLlmCalls`/`totalFailedLlmCalls` y un caso con solo fallos queda sin coste en vez de aparecer medido con $0.
 - **Fallback de modelo con latido** (`apps/api/src/modules/ai-analysis/llm/chained-fallback-chat-model.ts`): los chunks sin contenido se reenvían al instante (sirven de latido para el idle timeout de modelos con razonamiento) y el fallback solo se bloquea tras el primer chunk con contenido; el iterador abandonado se cierra.
 - **Lease: TTL numérico del ConfigService** (`apps/api/src/modules/ai-analysis/checkpoint/thread-run-lock.service.ts`): `THREAD_RUN_LOCK_TTL_MS` llega ya validado como número desde `config/env.schema.ts`; el servicio lo normaliza a string en vez de fallar en todos los turnos.

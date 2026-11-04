@@ -19,7 +19,7 @@ import {
 import { shouldApplyWorkshopUpdate, workshopScopeProjectId } from "./helpers/workshop-scope";
 import { resetWorkshopSemaphoreSnapshot } from "./helpers/semaphore-snapshot";
 import { selectPersistedMddBaseline } from "./selectors";
-import type { StageTransitionAction, WorkshopChatScope } from "@theforge/shared-types";
+import { isDesignFirst, type StageTransitionAction, type WorkshopChatScope } from "@theforge/shared-types";
 import type { Project, Session, WorkshopStage } from "./types";
 import type { WorkshopState } from "./workshop-state.types";
 
@@ -333,6 +333,16 @@ export const createProjectSlice: StateCreator<WorkshopState, [], [], ProjectSlic
               loadingReason: null,
               pendingPlanApproval: null,
               evaluatorCritique: null,
+              designLoading: false,
+              designSaving: false,
+              designError: null,
+              designPanelError: null,
+              designSpec: null,
+              designRevision: null,
+              designGates: null,
+              designStale: false,
+              pendingDesignProposal: null,
+              designRevisionConflictNotice: null,
             }
           : {}),
       });
@@ -445,6 +455,9 @@ export const createProjectSlice: StateCreator<WorkshopState, [], [], ProjectSlic
         get().fetchAdrs(requestedId).catch(() => {});
         get().fetchGenerationStatus(requestedId, sid ?? undefined).catch(() => {});
         get().fetchPlanValidation(requestedId).catch(() => {});
+        if (isDesignFirst(data.projectType ?? "NEW")) {
+          get().fetchDesign(requestedId).catch(() => {});
+        }
       }, 0);
       return data;
     } catch (e) {
