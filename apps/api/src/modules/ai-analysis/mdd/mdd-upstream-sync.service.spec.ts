@@ -24,7 +24,11 @@ describe("MddUpstreamSyncService.acceptBaseline", () => {
     const mddContent = MDD;
 
     const prisma = {
+      project: {
+        findUnique: mock.fn(async () => ({ projectType: "NEW" as const })),
+      },
       stage: {
+        findUnique: mock.fn(async () => ({ designSpec: null })),
         update: mock.fn(async ({ data }: { data: { mddUpstreamBaseline: unknown } }) => {
           storedBaseline = data.mddUpstreamBaseline;
           return { id: stageId };
@@ -71,7 +75,10 @@ describe("MddUpstreamSyncService.acceptBaseline", () => {
   it("rechaza accept sin MDD suficiente", async () => {
     const stageId = "stage-1";
     const projectId = "proj-1";
-    const prisma = { stage: { update: mock.fn(async () => ({})) } };
+    const prisma = {
+      project: { findUnique: mock.fn(async () => ({ projectType: "NEW" as const })) },
+      stage: { update: mock.fn(async () => ({})) },
+    };
     const projects = {
       findOne: mock.fn(async () => ({
         id: projectId,
