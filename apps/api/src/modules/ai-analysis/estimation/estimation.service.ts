@@ -36,6 +36,7 @@ import {
   allocateDeliveryRoleHours,
   buildDeliveryTeamStructure,
 } from "@theforge/business-rules";
+import { ProjectTypeEnum } from "@theforge/shared-types";
 import { extractTechnicalMetadataTags } from "../../engine/mdd-markdown-parser.js";
 import {
   computeContractGaps,
@@ -1226,7 +1227,7 @@ export class EstimationService {
     const shouldSyncStage =
       options?.syncStage !== false &&
       !hasLiveDraft &&
-      hasEvaluableInput(proj?.projectType ?? "NEW", content, stageDesignSpecForSync);
+      hasEvaluableInput(proj?.projectType ?? ProjectTypeEnum.enum.NEW, content, stageDesignSpecForSync);
     if (shouldSyncStage && syncStageId) {
         // Titular persistido = titular del panel (nota del Auditor cuando está vigente, si no la integral).
         await this.syncStageSemaphoreFromLiveMetrics(syncStageId, result.status, result.auditorScore ?? result.precision);

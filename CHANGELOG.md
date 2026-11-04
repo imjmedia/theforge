@@ -15,6 +15,7 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 - **Design-First — operación:** semáforo por fases (tope AMARILLO sin MDD); config tipada `DESIGN_FIRST_*` y `FIGMA_API_BASE_URL`; enriquecimiento opcional vía MCP gráfico en propuestas; planificación en `arquitectura/modo-design-first/` (PRD, pruebas, CL-01…CL-31, HANDOFF/TASKS).
 - **Design-First — web (pasos 21–24):** wizard con origen Design-First (`project-mode-labels.ts`); `design-first-api` + `slice-design` (CAS / 409 CL-19); paneles Workshop Pantallas/Datos/Contrato; `FigmaCredentialSettings` en Ajustes → Cuenta (`AccountConfigCard`).
 - **Design-First paso 25 — documentación:** guía [`DESIGN-FIRST.md`](docs/notebooklm/DESIGN-FIRST.md); ADR [`0005`](docs/adr/0005-mdd-compilado-desde-pantallas.md) / [`0006`](docs/adr/0006-architecture-graph-separado.md); corrección de discrepancias doc↔código (THEFORGE-INDEX §4.3 Figma, ENTREGABLES §3, `MCP_GRAFICO.md`, README crypto/projects/ui-mcp/workshop).
+- **Design-First paso 26 — smoke e2e:** `apps/api/src/smoke/design-first.smoke.spec.ts` (fixture `three-screens` → compile-contract → MDD simulado → cascada determinista → handoff; `openapi.yaml` validado con `validateOpenApi31` y fixtures JSON parseables).
 
 ### Changed
 

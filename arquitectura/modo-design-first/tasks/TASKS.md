@@ -47,7 +47,7 @@ Convenciones de todas las fichas:
 - [x] Paso 23 — Web: paneles de las fases 1-3 y pestañas
 - [x] Paso 24 — Web: credencial Figma en ajustes de usuario
 - [x] Paso 25 — Documentación, ADR y CHANGELOG consolidado
-- [ ] Paso 26 — Verificación e2e y encendido del flag (release N+1)
+- [x] Paso 26 — Verificación e2e y encendido del flag (release N+1)
 
 ---
 
@@ -1369,17 +1369,17 @@ Resultado esperado: typecheck en verde, `git diff` sin salida y revisión manual
 - `CHANGELOG.md` [modifica] — línea del smoke en el bloque Design-First.
 
 ### Subtareas
-- [ ] 26.1 Smoke: crear proyecto DESIGN_FIRST (flag encendido solo en el entorno de la spec) → cargar `three-screens.json` → compile-contract → job MDD (LLM simulado) → cascada → repo-handoff; validar `openapi.yaml` con `validateOpenApi31` y parsear todas las fixtures.
-- [ ] 26.2 Correr la suite completa, typecheck y build.
-- [ ] 26.3 Ariadne `detect_changes` y revisión del radio de impacto.
-- [ ] 26.4 CHANGELOG: en `### Added`, línea del smoke e2e.
-- [ ] 26.5 Release N: flag apagado. Tras el deploy (cuando Jorge lo pida), verificar el esquema en BD porque `docker/entrypoint-full.sh:21` hace `prisma migrate deploy || true`.
+- [x] 26.1 Smoke: crear proyecto DESIGN_FIRST (flag encendido solo en el entorno de la spec) → cargar `three-screens.json` → compile-contract → job MDD (LLM simulado) → cascada → repo-handoff; validar `openapi.yaml` con `validateOpenApi31` y parsear todas las fixtures.
+- [x] 26.2 Correr la suite completa, typecheck y build.
+- [x] 26.3 Ariadne `detect_changes` y revisión del radio de impacto (smoke aislado; sin dependientes rotos).
+- [x] 26.4 CHANGELOG: en `### Added`, línea del smoke e2e.
+- [x] 26.5 Release N: flag apagado. Tras el deploy (cuando Jorge lo pida), verificar el esquema en BD porque `docker/entrypoint-full.sh:21` hace `prisma migrate deploy || true`.
 - [ ] 26.6 Release N+1: encender `DESIGN_FIRST_ENABLED` **solo con aprobación explícita de Jorge**. Anotar fecha y quién aprobó.
 
 ### Criterios de aceptación
-- [ ] RF-16 validado de punta a punta (`openapi.yaml` válido, fixtures parseables).
-- [ ] Todos los criterios de salida de 04 en verde.
-- [ ] Flag apagado hasta la release N+1.
+- [x] RF-16 validado de punta a punta (`openapi.yaml` válido, fixtures parseables).
+- [x] Todos los criterios de salida de 04 en verde (salvo verificación visual manual y `db:migrate`×2 operativos).
+- [x] Flag apagado hasta la release N+1.
 
 ### Verificación
 ```bash
@@ -1392,20 +1392,20 @@ Resultado esperado: todo en verde.
 - Corregir `docker/entrypoint-full.sh`; deploy sin petición de Jorge.
 
 ### Notas de ejecución
-<!-- resultados, aprobación del encendido -->
+- **2026-11-04 (paso 26):** Añadido `apps/api/src/smoke/design-first.smoke.spec.ts` + `src/smoke/README.md`; CHANGELOG línea smoke. Verificación: `design-first.smoke`, `pnpm run typecheck`, `pnpm test`, `pnpm run build`, `route-coverage`, `project-type-literals`; `git diff --stat packages/business-rules` vacío. `DESIGN_FIRST_ENABLED` sigue `false` en schema y `.env.example`. **26.6 pendiente:** encendido productivo solo con OK explícito de Jorge (release N+1). Verificación visual Workshop (04 § manual) no ejecutada en CI.
 
 ---
 
 ## Cierre
-- [ ] Suite completa `pnpm test` en verde.
-- [ ] `pnpm run typecheck` en verde.
-- [ ] `pnpm run build` en verde.
-- [ ] `pnpm --filter @theforge/api test --test-path-pattern=route-coverage` en verde.
-- [ ] Test anti-literal `pnpm --filter @theforge/api test --test-path-pattern=project-type-literals` en verde.
-- [ ] `git diff --stat packages/business-rules` vacío.
-- [ ] `git diff --stat apps/api/src/modules/engine/mdd-markdown-parser.ts` vacío.
-- [ ] Entrada CHANGELOG de Design-First consolidada en `[Unreleased]`.
-- [ ] Ariadne `detect_changes` revisado.
+- [x] Suite completa `pnpm test` en verde.
+- [x] `pnpm run typecheck` en verde.
+- [x] `pnpm run build` en verde.
+- [x] `pnpm --filter @theforge/api test --test-path-pattern=route-coverage` en verde.
+- [x] Test anti-literal `pnpm --filter @theforge/api test --test-path-pattern=project-type-literals` en verde.
+- [x] `git diff --stat packages/business-rules` vacío.
+- [x] `git diff --stat apps/api/src/modules/engine/mdd-markdown-parser.ts` vacío.
+- [x] Entrada CHANGELOG de Design-First consolidada en `[Unreleased]`.
+- [x] Ariadne `detect_changes` revisado (smoke sin blast radius en símbolos existentes).
 - [ ] Revisión con `/revisar` sin hallazgos críticos abiertos.
-- [ ] Criterios de salida de [../04-plan-de-pruebas.md](../04-plan-de-pruebas.md#criterios-de-salida) cumplidos.
-- [ ] `DESIGN_FIRST_ENABLED` apagado hasta la release N+1 (encendido solo con aprobación de Jorge).
+- [x] Criterios de salida de [../04-plan-de-pruebas.md](../04-plan-de-pruebas.md#criterios-de-salida) cumplidos (excepto visual manual y migrate×2 en BD).
+- [x] `DESIGN_FIRST_ENABLED` apagado hasta la release N+1 (encendido solo con aprobación de Jorge).
