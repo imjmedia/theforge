@@ -166,6 +166,16 @@ export const MDDStateAnnotation = Annotation.Root({
   auditorOutcome: Annotation<AuditorOutcome | undefined>(),
   /** Motivo de `auditorOutcome: "unavailable"` (`invalid` no cuenta como caída de infraestructura en el eval). */
   auditorUnavailableReason: Annotation<AuditorUnavailableReason | undefined>(),
+  /** Design-First pinned: §3/§4 selladas desde PAG. */
+  designFirstPinned: Annotation<
+    | {
+        s3: string;
+        s4: string;
+        pagHash: string;
+        pinnedSections?: (3 | 4)[];
+      }
+    | undefined
+  >({ reducer: reducePreferDefined }),
 });
 
 export type MDDStateType = typeof MDDStateAnnotation.State;

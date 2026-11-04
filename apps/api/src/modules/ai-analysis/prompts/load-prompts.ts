@@ -72,6 +72,13 @@ export const CLARIFIER_QUESTIONS_ONLY_MDD_PROMPT = loadPrompt(
   "Genera exactamente 2 preguntas para el usuario para mejorar el MDD según el feedback del Auditor. Responde solo con JSON: { questions: [\"...\", \"...\"] }.",
 );
 
+/** Anexo Design-First: pantallas, flujos y PAG como datos de solo lectura (modo pinned). */
+export const DESIGN_FIRST_CLARIFIER_MDD_APPEND = loadPrompt(
+  "",
+  "design-first-clarifier.md",
+  "Modo Design-First: §3/§4 vienen del PAG sellado; no reescribas entidades ni endpoints.",
+);
+
 /** Regenerar solo §1: sintetizar Contexto y alcance desde §2–§7. Salida: solo el cuerpo de §1 (sin título). */
 export const CONTEXT_SYNTHESIZER_PROMPT = loadPrompt(
   "mdd",

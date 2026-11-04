@@ -1,0 +1,17 @@
+```sql
+CREATE TABLE customer (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid()
+);
+
+CREATE TABLE order (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid()
+);
+```
+
+### Customer
+
+DataRegistry: persistencia de **Customer** en la tabla `customer` (PostgreSQL).
+
+### Order
+
+WorkflowProcess: persistencia de **Order** en la tabla `order` (PostgreSQL).

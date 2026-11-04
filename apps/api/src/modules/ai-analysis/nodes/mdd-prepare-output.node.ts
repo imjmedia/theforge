@@ -20,6 +20,11 @@ import {
 } from "../utils/mdd-delivery-gate-loop.util.js";
 import { isHighSplitArchitectPipeline } from "../utils/mdd-architect-pipeline.util.js";
 import { resolveBrdFromMddState } from "../utils/mdd-domain-prompt.util.js";
+import {
+  logPinnedSectionDriftMetric,
+  reimposeDesignFirstPinnedSections,
+  redirectPinnedDeliveryGateFixTarget,
+} from "../utils/design-first-pinned.util.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:PrepareOutput] ${msg}`, ...args);
 
@@ -33,7 +38,7 @@ export function createMddPrepareOutputNode(options?: { uiMcpLibraryLabel?: strin
     const brdMarkdown = resolveBrdFromMddState(state) || null;
     const dbgaMarkdown = (state.dbgaContent ?? "").trim() || null;
     const baselineDraft = (state.mddDraft ?? "").trim() || null;
-    const prepared = await prepareMddForOutput(
+    const preparedRaw = await prepareMddForOutput(
       { mddDraft: state.mddDraft, mddStructured: state.mddStructured },
       {
         deliveryGateRef: gateRef,
@@ -46,6 +51,9 @@ export function createMddPrepareOutputNode(options?: { uiMcpLibraryLabel?: strin
         tailSnapshotSource: state,
       },
     );
+    const pinnedRestore = reimposeDesignFirstPinnedSections(preparedRaw, state);
+    logPinnedSectionDriftMetric(pinnedRestore.drifts);
+    const prepared = pinnedRestore.draft;
     const gate =
       gateRef.current ??
       validateMddForDelivery(prepared, {
@@ -61,7 +69,7 @@ export function createMddPrepareOutputNode(options?: { uiMcpLibraryLabel?: strin
 
     // fixTarget solo se resuelve si el loop seguiría; luego shouldStopDeliveryGateLoop corta los
     // loops sin progreso (sentinel "stop", integration sin referencias §6/§7, mismos blockers).
-    const fixTarget = wantsLoop
+    const fixTargetRaw = wantsLoop
       ? resolveDeliveryGateFixTargetFromGate(gate.blockers, gate.warnings, {
           splitArchitectPipeline: isHighSplitArchitectPipeline(state),
           previousPlaceholderFingerprint: state.deliveryGatePlaceholderFingerprint,
@@ -74,6 +82,10 @@ export function createMddPrepareOutputNode(options?: { uiMcpLibraryLabel?: strin
           },
         })
       : undefined;
+    const fixTarget =
+      fixTargetRaw !== undefined && fixTargetRaw !== "stop"
+        ? redirectPinnedDeliveryGateFixTarget(fixTargetRaw, state)
+        : fixTargetRaw;
     const stopped =
       wantsLoop &&
       shouldStopDeliveryGateLoop(gate, fixTarget, attempt, state.deliveryGateBlockersFingerprint);

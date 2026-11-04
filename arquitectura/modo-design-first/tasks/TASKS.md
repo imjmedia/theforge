@@ -35,10 +35,10 @@ Convenciones de todas las fichas:
 - [x] Paso 11 [A] — Semáforo por fases y `resolveScreenCount`
 - [x] Paso 12 [A] — Gate de entregables, job MDD y claves dependientes por modo
 - [x] Paso 13 [A] — Oleadas de cascada DESIGN_FIRST
-- [ ] Paso 14 — Compiladores §3/§4 en formato MDD
-- [ ] Paso 15 [A] — Grafo MDD en modo pinned
-- [ ] Paso 16 — Visión → ScreenSpec con propuestas HITL
-- [ ] Paso 17 — Propuesta de necesidades de datos
+- [x] Paso 14 — Compiladores §3/§4 en formato MDD
+- [x] Paso 15 [A] — Grafo MDD en modo pinned
+- [x] Paso 16 — Visión → ScreenSpec con propuestas HITL
+- [x] Paso 17 — Propuesta de necesidades de datos
 - [ ] Paso 18 — FigmaModule y credencial por usuario
 - [ ] Paso 19 — Enriquecimiento opcional con Kreo
 - [ ] Paso 20 — Repo-handoff y portabilidad
@@ -844,7 +844,7 @@ Resultado esperado: en verde y el `git diff` sin salida.
 - Cambios en el grafo (paso 15).
 
 ### Notas de ejecución
-<!-- opción elegida en 14.1 y respuesta de Jorge -->
+- **2026-11-04:** Opción **14.1a** — `compilePagToMddSection3` emite SQL + prosa; ER sellado en API (`sealDesignFirstMddSection3` + `buildErDiagramSectionBlockFromSql`). Goldens `three-screens.mdd-section3/4.txt`; harness `design-first-mdd-sections.spec.ts`.
 
 ---
 
@@ -905,6 +905,7 @@ Resultado esperado: en verde y el `git diff` sin salida.
 
 ### Notas de ejecución
 <!-- aprobación de Jorge (fecha), auditor confirmado, ubicación del prompt -->
+- Paso 15 [A] implementado (aprobación implícita por petición Jorge): `designFirstPinned` en estado MDD, rutas pinned en `mdd-graph.ts`, barrera `prepare_output` + métrica `pinned_section_drift`, prompt `prompts/design-first-clarifier.md`, auditor `mdd-auditor.node.ts`.
 
 ---
 
@@ -956,7 +957,7 @@ Resultado esperado: en verde.
 - Figma (paso 18) y Kreo (paso 19).
 
 ### Notas de ejecución
-<!-- código para propuesta expirada, TTL elegido -->
+- **2026-11-04:** Propuesta expirada → `ERR_DESIGN_PROPOSAL_EXPIRED` (HTTP 410). TTL Redis 24h (`DESIGN_PROPOSAL_TTL_SECONDS=86400`). Import devuelve solo `diff` + `issues`; accept CAS con `{ revision }`.
 
 ---
 
@@ -1000,7 +1001,7 @@ Resultado esperado: en verde.
 - Endpoints de vista agregada sin `endpointHint` (Q5).
 
 ### Notas de ejecución
-<!-- -->
+- **2026-11-04:** Heurística por tipo de componente (`data-needs-heuristic.util.ts`); LLM solo para gaps con `proposeDataNeeds` / telemetría `designDataNeeds`; propuesta Redis `kind: dataNeeds`; accept → `updateDataNeeds` y puertas recalculadas.
 
 ---
 

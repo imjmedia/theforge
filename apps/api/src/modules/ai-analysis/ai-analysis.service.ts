@@ -62,6 +62,7 @@ import {
 } from "./utils/mdd-sanitize.js";
 import { evaluateMddPersistTailGuard } from "./utils/mdd-persist-tail-guard.util.js";
 import { evaluateMddDraftPersistFloor } from "./utils/mdd-draft-persist-floor.util.js";
+import { resolveDesignFirstPinnedMddState } from "./utils/design-first-mdd-job.util.js";
 import { logMddPersistFenceDiag } from "./utils/mdd-persist-fence-diag.util.js";
 import { MddWriteFencedError, pickPrimaryStage, ProjectsService } from "../projects/index.js";
 import { TheForgeService } from "../theforge/theforge.service.js";
@@ -1311,12 +1312,17 @@ export class AiAnalysisService {
       "(Sin Benchmark. El usuario no tiene un documento de Benchmark; genera un MDD base con contexto, alcance y requisitos que el usuario podrá refinar.)";
     const brdPreamble = composeBrdPreamble(brdContent);
     if (brdPreamble) dbgaEffective = brdPreamble + dbgaEffective;
+    const designFirstPinned =
+      projectId?.trim()
+        ? await resolveDesignFirstPinnedMddState(this.prisma, projectId.trim(), stageId)
+        : null;
     const initialState: MDDState = {
       ...defaultMDDState,
       dbgaContent: dbgaEffective,
       brdContent: (brdContent ?? "").trim() || undefined,
       projectId: projectId?.trim(),
       ...agentCtx,
+      ...designFirstPinned,
       ...(preservedGovernance
         ? {
             mddDraft: mddHasSubstantialBody(existingStageMdd)
@@ -1614,6 +1620,11 @@ export class AiAnalysisService {
       || "(Sin Benchmark. El usuario no tiene un documento de Benchmark; genera un MDD base.)";
     const brdPreamble = composeBrdPreamble(brdContent);
     if (brdPreamble) dbgaEffective = brdPreamble + dbgaEffective;
+    const designFirstPinned = await resolveDesignFirstPinnedMddState(
+      this.prisma,
+      projectId.trim(),
+      stageIdFromClient,
+    );
     const initialState: MDDState = {
       ...defaultMDDState,
       dbgaContent: dbgaEffective,
@@ -1622,6 +1633,7 @@ export class AiAnalysisService {
       mddDraft: existingMdd || defaultMDDState.mddDraft,
       projectId: projectId?.trim(),
       ...agentCtx,
+      ...designFirstPinned,
     };
     const config = this.mddLangGraphConfig(threadId, mddStageKey);
 

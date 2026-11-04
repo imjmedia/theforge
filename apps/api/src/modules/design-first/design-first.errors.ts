@@ -1,7 +1,10 @@
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
+  GoneException,
   HttpException,
+  NotFoundException,
   PayloadTooLargeException,
   ServiceUnavailableException,
   UnprocessableEntityException,
@@ -109,6 +112,27 @@ export function throwDesignFirstScreensOwned(): never {
     code: "ERR_DESIGN_FIRST_SCREENS_OWNED",
     message:
       "Las pantallas de este proyecto se gestionan desde Design-First; no uses la sincronización UI MCP",
+  });
+}
+
+export function throwDesignExtractInvalid(detail?: string): never {
+  throw new BadGatewayException({
+    code: "ERR_DESIGN_EXTRACT_INVALID",
+    message: detail ?? "No se pudo extraer pantallas válidas de las imágenes",
+  });
+}
+
+export function throwDesignProposalExpired(): never {
+  throw new GoneException({
+    code: "ERR_DESIGN_PROPOSAL_EXPIRED",
+    message: "La propuesta expiró; vuelve a importar las imágenes",
+  });
+}
+
+export function throwDesignProposalNotFound(): never {
+  throw new NotFoundException({
+    code: "ERR_DESIGN_PROPOSAL_NOT_FOUND",
+    message: "Propuesta no encontrada o ya procesada",
   });
 }
 

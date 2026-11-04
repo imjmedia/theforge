@@ -19,6 +19,7 @@ import { createLlmAbortError } from "../utils/mdd-llm-stream-invoke.util.js";
 import { z } from "zod";
 import { logMddNodeOutput } from "../utils/mdd-sanitize.js";
 import { preserveTailSectionsIfSubstantial, preserveTailSectionsFromSnapshots } from "../utils/mdd-section-preserve.util.js";
+import { filterCrossConsistencyPatchesForPinned } from "../utils/design-first-pinned.util.js";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log(`[MDD:CrossConsistency] ${msg}`, ...args);
 
@@ -134,7 +135,13 @@ export function createMddCrossConsistencyNode(llm: BaseChatModel) {
         return current !== draft ? { mddDraft: current } : {};
       }
 
-      const patches = output;
+      const patches = filterCrossConsistencyPatchesForPinned(output, state);
+      if (patches.length === 0 && Array.isArray(output) && output.length > 0) {
+        LOG("parches §3/§4 descartados (Design-First pinned)");
+        current = preserveTailAfterCrossConsistency(state, baselineDraft, current);
+        return current !== draft ? { mddDraft: current } : {};
+      }
+
       if (patches.length === 0) {
         LOG("LLM devolvió 0 parches, conservando paso determinista");
         current = preserveTailAfterCrossConsistency(state, baselineDraft, current);

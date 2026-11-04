@@ -30,6 +30,7 @@ export function buildAuditorFeedbackFromGaps(gaps: AuditorGapsState): string {
 export function computeDeterministicAuditorScore(
   draft: string,
   validation: ValidateMddStructureResult,
+  options?: { designFirstPinned?: boolean },
 ): number {
   let score = 80;
   if (
@@ -55,7 +56,7 @@ export function computeDeterministicAuditorScore(
   if (contract.securityEdgeCaseGap) score -= 5;
   if (trace.inconsistentSections.length > 0) score -= 15;
   if (mddHasDuplicateSectionHeadings(draft)) score -= 12;
-  if (collectMddQualityIssues(draft).length > 0) score -= 8;
+  if (!options?.designFirstPinned && collectMddQualityIssues(draft).length > 0) score -= 8;
 
   return Math.max(0, Math.min(100, score));
 }
@@ -110,6 +111,7 @@ export function synthesizeDeterministicAuditorGaps(
   validation: ValidateMddStructureResult,
   score: number,
   brdMarkdown?: string | null,
+  options?: { designFirstPinned?: boolean },
 ): AuditorGapsState {
   const repairedDraft = applyPreDeliveryGateFixes((draft ?? "").trim());
   const critical_gaps: AuditorGapsState["critical_gaps"] = [];
@@ -125,7 +127,7 @@ export function synthesizeDeterministicAuditorGaps(
     });
   }
 
-  if (!validation.section3HasPayloads) {
+  if (!options?.designFirstPinned && !validation.section3HasPayloads) {
     critical_gaps.push({
       sections: ["Sección 4"],
       issue: "Contratos de API sin payloads JSON ni endpoints documentados",
@@ -133,7 +135,7 @@ export function synthesizeDeterministicAuditorGaps(
     });
   }
 
-  if (!validation.hasTechnicalMetadata) {
+  if (!options?.designFirstPinned && !validation.hasTechnicalMetadata) {
     critical_gaps.push({
       sections: ["Sección 3"],
       issue: "Falta bloque TechnicalMetadata con etiquetas de coste",

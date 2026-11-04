@@ -134,6 +134,20 @@ import { repairMermaidBlockBody, stripMermaidFenceWrappers } from "@theforge/sha
 import { resolveMermaidWithOracle } from "@theforge/shared-types/mermaid-oracle";
 import { PluginDocumentPipelineService } from "../../plugins/plugin-document-pipeline.service.js";
 import type { BeforeDocumentRenderPayload } from "../../plugins/types/plugin-payloads.js";
+import {
+  buildDelimitedImageHint,
+  designScreenExtractLlmOutputSchema,
+  DESIGN_SCREEN_EXTRACT_SYSTEM_PROMPT,
+  mapLlmOutputToDesignScreens,
+  type DesignScreenExtractResult,
+} from "./utils/design-screen-extract.util.js";
+import { throwDesignExtractInvalid } from "../design-first/design-first.errors.js";
+import {
+  buildDelimitedDataNeedsPrompt,
+  designDataNeedsLlmOutputSchema,
+  DESIGN_DATA_NEEDS_SYSTEM_PROMPT,
+  filterLlmDataNeedsAgainstSpec,
+} from "./utils/design-data-needs.util.js";
 
 function mddDeliverableCtx(options?: LegacyGenerateOptions): MddDeliverableContextOptions | undefined {
   return options?.legacyBaselineStage ? { legacyBaselineStage: true } : undefined;
@@ -913,6 +927,201 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
   /** Alias del pipeline MDD (Manager LangGraph). */
   async describeImagesForMddPipeline(userText: string, images: ChatImagePart[]): Promise<string> {
     return this.describeImagesForChat(userText, images, "mdd");
+  }
+
+  /**
+   * Visión Design-First → pantallas estructuradas (zod, una reparación, deadlineMs, telemetría designScreenSpec).
+   */
+  async extractScreenSpecFromImages(input: {
+    projectId: string;
+    stageId: string | null;
+    images: ChatImagePart[];
+    hint?: string;
+    abortSignal?: AbortSignal;
+    deadlineMs: number;
+  }): Promise<DesignScreenExtractResult> {
+    if (!input.images.length) {
+      return { issues: ["No se enviaron imágenes"], screens: [], navigation: [] };
+    }
+    if (input.deadlineMs < 1) {
+      throw new Error("deadlineMs inválido");
+    }
+
+    const deadlineController = new AbortController();
+    const onParentAbort = () => deadlineController.abort();
+    input.abortSignal?.addEventListener("abort", onParentAbort, { once: true });
+    const timer = setTimeout(() => deadlineController.abort(), input.deadlineMs);
+
+    const telemetryContext = {
+      projectId: input.projectId,
+      stageId: input.stageId,
+      documentField: "designScreenSpec",
+      context: "design_first",
+      node: "design_screen_extract",
+    };
+
+    try {
+      const userId = getRequestUserId();
+      const visionProvider = await this.aiFactory.createForVisionUser(userId);
+      const prompt = buildDelimitedImageHint(input.hint, input.images.length);
+      const maxRetries = 1;
+      let lastError: Error | null = null;
+      let currentPrompt = prompt;
+
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        if (deadlineController.signal.aborted) {
+          const abortErr = new Error("Visión abortada o fuera de plazo");
+          abortErr.name = "AbortError";
+          throw abortErr;
+        }
+
+        const systemPrompt =
+          DESIGN_SCREEN_EXTRACT_SYSTEM_PROMPT +
+          "\n\nIMPORTANTE: Responde ÚNICAMENTE con un objeto JSON válido. Sin markdown ni comentarios.";
+
+        const invoke = async (): Promise<DesignScreenExtractResult> => {
+          const raw = await visionProvider.generateResponse(currentPrompt, [], {
+            systemPrompt,
+            userMessageImages: input.images,
+            jsonObjectMode: true,
+            abortSignal: deadlineController.signal,
+          });
+          const cleaned = cleanJsonOutput(raw);
+          const parsedJson = JSON.parse(cleaned);
+          const validated = designScreenExtractLlmOutputSchema.parse(parsedJson);
+          const mapped = mapLlmOutputToDesignScreens(validated);
+          return { issues: validated.issues, ...mapped };
+        };
+
+        try {
+          return await this.withTelemetryContext({ telemetryContext }, invoke);
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error(String(err));
+          if (deadlineController.signal.aborted || lastError.name === "AbortError") {
+            throw lastError;
+          }
+          const isZodOrJson =
+            lastError.name === "ZodError" ||
+            lastError.message.includes("JSON") ||
+            lastError.message.includes("Unexpected token");
+          if (attempt < maxRetries && isZodOrJson) {
+            this.logger.warn(
+              `[AiService] extractScreenSpecFromImages validación fallida (intento ${attempt + 1}): ${lastError.message}`,
+            );
+            currentPrompt = `${prompt}\n\n[ERROR DE VALIDACIÓN PREVIO]:\n${lastError.message}\nCorrige el JSON.`;
+            continue;
+          }
+          if (isZodOrJson) {
+            throwDesignExtractInvalid(lastError.message);
+          }
+          throw lastError;
+        }
+      }
+      throwDesignExtractInvalid(lastError?.message);
+    } finally {
+      clearTimeout(timer);
+      input.abortSignal?.removeEventListener("abort", onParentAbort);
+    }
+    throwDesignExtractInvalid("Estado inesperado en extractScreenSpecFromImages");
+  }
+
+  /**
+   * Design-First: relleno LLM de dataNeeds para componentes sin heurística (zod, una reparación, telemetría designDataNeeds).
+   */
+  async proposeDataNeeds(input: {
+    projectId: string;
+    stageId: string | null;
+    spec: import("@theforge/shared-types").DesignSpec;
+    gaps: import("../design-first/data-needs-heuristic.util.js").DataNeedsComponentGap[];
+    abortSignal?: AbortSignal;
+    deadlineMs: number;
+  }): Promise<{ issues: string[]; entries: import("@theforge/shared-types").DesignSpecDataNeedsEntry[] }> {
+    if (input.gaps.length === 0) {
+      return { issues: [], entries: [] };
+    }
+    if (input.deadlineMs < 1) {
+      throw new Error("deadlineMs inválido");
+    }
+
+    const deadlineController = new AbortController();
+    const onParentAbort = () => deadlineController.abort();
+    input.abortSignal?.addEventListener("abort", onParentAbort, { once: true });
+    const timer = setTimeout(() => deadlineController.abort(), input.deadlineMs);
+
+    const telemetryContext = {
+      projectId: input.projectId,
+      stageId: input.stageId,
+      documentField: "designDataNeeds",
+      context: "design_first",
+      node: "design_data_needs_propose",
+    };
+
+    try {
+      const userId = getRequestUserId();
+      const provider = await this.aiFactory.createForUser(userId);
+      const prompt = buildDelimitedDataNeedsPrompt(input.spec, input.gaps);
+      const maxRetries = 1;
+      let lastError: Error | null = null;
+      let currentPrompt = prompt;
+
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        if (deadlineController.signal.aborted) {
+          const abortErr = new Error("Propuesta de dataNeeds abortada o fuera de plazo");
+          abortErr.name = "AbortError";
+          throw abortErr;
+        }
+
+        const systemPrompt =
+          DESIGN_DATA_NEEDS_SYSTEM_PROMPT +
+          "\n\nIMPORTANTE: Responde ÚNICAMENTE con un objeto JSON válido. Sin markdown ni comentarios.";
+
+        const invoke = async () => {
+          const raw = await provider.generateResponse(currentPrompt, [], {
+            systemPrompt,
+            jsonObjectMode: true,
+            abortSignal: deadlineController.signal,
+            telemetryContext,
+          });
+          const cleaned = cleanJsonOutput(raw);
+          const parsedJson = JSON.parse(cleaned);
+          const validated = designDataNeedsLlmOutputSchema.parse(parsedJson);
+          const filtered = filterLlmDataNeedsAgainstSpec(input.spec, validated);
+          return {
+            issues: [...validated.issues, ...filtered.dropped],
+            entries: filtered.entries,
+          };
+        };
+
+        try {
+          return await this.withTelemetryContext({ telemetryContext }, invoke);
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error(String(err));
+          if (deadlineController.signal.aborted || lastError.name === "AbortError") {
+            throw lastError;
+          }
+          const isZodOrJson =
+            lastError.name === "ZodError" ||
+            lastError.message.includes("JSON") ||
+            lastError.message.includes("Unexpected token");
+          if (attempt < maxRetries && isZodOrJson) {
+            this.logger.warn(
+              `[AiService] proposeDataNeeds validación fallida (intento ${attempt + 1}): ${lastError.message}`,
+            );
+            currentPrompt = `${prompt}\n\n[ERROR DE VALIDACIÓN PREVIO]:\n${lastError.message}\nCorrige el JSON.`;
+            continue;
+          }
+          if (isZodOrJson) {
+            throwDesignExtractInvalid(lastError.message);
+          }
+          throw lastError;
+        }
+      }
+      throwDesignExtractInvalid(lastError?.message);
+    } finally {
+      clearTimeout(timer);
+      input.abortSignal?.removeEventListener("abort", onParentAbort);
+    }
+    throwDesignExtractInvalid("Estado inesperado en proposeDataNeeds");
   }
 
   async parseChecklist(text: string) {

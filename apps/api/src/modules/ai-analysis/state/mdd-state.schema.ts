@@ -55,6 +55,15 @@ export const mddPlanStepSchema = z.object({
 });
 export type MddPlanStep = z.infer<typeof mddPlanStepSchema>;
 
+/** §3/§4 selladas desde PAG en modo Design-First pinned (paso 15). */
+export const designFirstPinnedSchema = z.object({
+  s3: z.string(),
+  s4: z.string(),
+  pagHash: z.string(),
+  pinnedSections: z.array(z.union([z.literal(3), z.literal(4)])).optional(),
+});
+export type DesignFirstPinnedState = z.infer<typeof designFirstPinnedSchema>;
+
 /**
  * Shared state for the MDD (Master Design Document) agent pipeline.
  * Input: dbgaContent (Benchmark & Gap Analysis). Output: mddDraft.
@@ -226,6 +235,8 @@ export const mddStateSchema = z.object({
   auditorOutcome: auditorOutcomeSchema.optional(),
   /** Motivo de `auditorOutcome: "unavailable"`. Opcional: ausente en `scored` y en checkpoints anteriores. */
   auditorUnavailableReason: auditorUnavailableReasonSchema.optional(),
+  /** Design-First: §3/§4 selladas byte a byte desde el PAG (modo pinned). */
+  designFirstPinned: designFirstPinnedSchema.optional(),
 });
 
 export type MDDState = z.infer<typeof mddStateSchema>;
@@ -291,4 +302,5 @@ export const defaultMDDState: MDDState = {
   section5FormatSkipped: undefined,
   stackArchitectAttempt: undefined,
   auditorRan: undefined,
+  designFirstPinned: undefined,
 };

@@ -18,6 +18,7 @@ export type DesignFirstStageContext = {
   pag: ProjectArchitectureGraph | null;
   gates: DesignFirstPhaseGates;
   stale: boolean;
+  architectureGraphSourceHash: string | null;
 };
 
 export async function loadDesignFirstStageContext(
@@ -52,12 +53,18 @@ export async function loadDesignFirstStageContext(
     stage.architectureGraphSourceHash != null &&
     stage.architectureGraphSourceHash !== designSpecHash;
 
-  return { designSpec, designSpecHash, pag, gates, stale };
+  return { designSpec, designSpecHash, pag, gates, stale, architectureGraphSourceHash: stage.architectureGraphSourceHash };
 }
 
 export function assertDesignFirstMddJobGate(ctx: DesignFirstStageContext): void {
   if (!ctx.gates.phase2.ok) {
     throwDesignPhaseGate("Completa la fase 2 (datos) antes de iniciar el job MDD");
+  }
+  if (!ctx.gates.phase3.ok) {
+    throwDesignPhaseGate("Compila el contrato (PAG) antes de iniciar el job MDD (fase 3)");
+  }
+  if (ctx.stale) {
+    throwDesignStale();
   }
 }
 

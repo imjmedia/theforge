@@ -13,11 +13,13 @@ import {
 import {
   buildUpstreamChangeSummaryForPipeline,
   expandMddSectionsForSync,
+  parseDesignSpec,
   toMddUpstreamSyncStatus,
   type MddUpstreamBaseline,
   type MddUpstreamSyncAnalysis,
   type MddUpstreamSyncStatus,
 } from "@theforge/shared-types";
+import { hashDesignSpec } from "@theforge/shared-types/design-spec-hash.node";
 import { PrismaService } from "../../../prisma/prisma.service.js";
 import { pickPrimaryStage } from "../../projects/stage-helpers.js";
 import { ProjectsService } from "../../projects/projects.service.js";
@@ -128,11 +130,26 @@ export class MddUpstreamSyncService {
     stageId: string,
   ): Promise<MddUpstreamBaseline> {
     const docs = await this.loadUpstreamDocuments(projectId, stageId);
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { projectType: true },
+    });
+    let designSpecHash: string | undefined;
+    if (project?.projectType === "DESIGN_FIRST") {
+      const stage = await this.prisma.stage.findUnique({
+        where: { id: stageId },
+        select: { designSpec: true },
+      });
+      if (stage?.designSpec) {
+        designSpecHash = hashDesignSpec(parseDesignSpec(stage.designSpec));
+      }
+    }
     const baseline = buildMddUpstreamBaseline({
       dbgaContent: docs.dbgaContent,
       brdContent: docs.brdContent,
       benchmarkContent: docs.benchmarkContent,
       mddContent: docs.mddContent,
+      designSpecHash,
     });
     await this.prisma.stage.update({
       where: { id: stageId },

@@ -38,6 +38,11 @@ import {
   deduplicateMddDraftSections,
 } from "../utils/mdd-sanitize.js";
 import { repairMergeBaselineBeforeApiContractsMerge } from "../utils/mdd-api-contracts-merge.util.js";
+import {
+  buildDesignFirstPinnedSnapshots,
+  injectDesignFirstSealedSectionsIntoDraft,
+  isDesignFirstPinnedActive,
+} from "../utils/design-first-pinned.util.js";
 import { stripUnjustifiedPlatformTablesFromMdd } from "../../engine/mdd-platform-table-strip.util.js";
 import {
   architectScopePromptPrefix,
@@ -1200,6 +1205,9 @@ export function createMddSoftwareArchitectNode(
             LOG("ERROR §2 placeholder tras dedupe scope=stack — sin snapshot sustancial para restaurar");
           }
         }
+        if (isDesignFirstPinnedActive(state) && state.designFirstPinned) {
+          mddDraft = injectDesignFirstSealedSectionsIntoDraft(mddDraft, state.designFirstPinned);
+        }
       }
       const sum = getMddDraftSummary(mddDraft);
       logMddLlmMetrics(LOG, measureMddLlmCall(startedAt, prompt.length, text.length), {
@@ -1267,11 +1275,15 @@ export function createMddSoftwareArchitectNode(
       const dataModelSnapshotUpdate =
         scope === "data_model" && draftHasSubstantialSection3(mddDraft)
           ? { dataModelArchitectMddDraftSnapshot: mddDraft }
-          : {};
+          : scope === "stack" && isDesignFirstPinnedActive(state) && state.designFirstPinned
+            ? buildDesignFirstPinnedSnapshots(mddDraft, state.designFirstPinned)
+            : {};
       const apiContractsSnapshotUpdate =
         scope === "api_contracts" && draftHasPersistableSection4(mddDraft)
           ? { apiContractsArchitectMddDraftSnapshot: mddDraft }
-          : {};
+          : scope === "stack" && isDesignFirstPinnedActive(state) && state.designFirstPinned
+            ? buildDesignFirstPinnedSnapshots(mddDraft, state.designFirstPinned)
+            : {};
       const stackAttemptUpdate =
         scope === "stack"
           ? draftHasSubstantialSection2(mddDraft)
