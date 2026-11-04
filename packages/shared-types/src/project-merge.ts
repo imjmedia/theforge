@@ -67,7 +67,7 @@ export const projectMergePreviewSchema = z.object({
     z.object({
       id: z.string().uuid(),
       name: z.string(),
-      projectType: z.enum(["NEW", "LEGACY"]).optional(),
+      projectType: z.enum(["NEW", "LEGACY", "DESIGN_FIRST"]).optional(),
     }),
   ),
 });

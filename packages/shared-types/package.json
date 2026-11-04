@@ -138,6 +138,16 @@
         "default": "./dist-cjs/mdd-upstream-sync-node.js"
       }
     },
+    "./design-spec-hash.node": {
+      "import": {
+        "types": "./dist/design-first/design-spec-hash.node.d.ts",
+        "default": "./dist/design-first/design-spec-hash.node.js"
+      },
+      "require": {
+        "types": "./dist-cjs/design-first/design-spec-hash.node.d.ts",
+        "default": "./dist-cjs/design-first/design-spec-hash.node.js"
+      }
+    },
     "./document-ast": {
       "import": {
         "types": "./dist/document-ast/index.d.ts",

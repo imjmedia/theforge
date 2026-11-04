@@ -6,7 +6,7 @@ Scripts de utilidad para el monorepo.
 
 Re-cifra API keys BYOK almacenadas hacia `TOKEN_ACTIVE_KEY_VERSION`.
 
-**Tablas:** `user_provider_configs`, `provider_instances`.
+**Tablas:** `user_provider_configs`, `provider_instances`, `user_figma_credentials`, `ui_mcp_instances` (solo filas con token cifrado).
 
 **Requisitos de entorno:**
 

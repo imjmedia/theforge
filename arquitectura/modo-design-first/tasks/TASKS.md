@@ -372,24 +372,24 @@ Resultado esperado: en verde.
 - `docs/recovery/design-first-rollback.sql` [nuevo] — DESIGN_FIRST → NEW con tabla de auditoría.
 
 ### Subtareas
-- [ ] 5.1 Pedir y registrar la aprobación de Jorge (paso [A]).
-- [ ] 5.2 Migración A aislada (solo el `ALTER TYPE`; un `ADD VALUE` no comparte transacción con su uso).
-- [ ] 5.3 Migración B+C con `IF NOT EXISTS` en columnas, tabla e índice único de `userId`.
-- [ ] 5.4 Replicar en `safe-schema-sync.sql`.
-- [ ] 5.5 `schema.prisma`: enum, columnas, modelo y `@deprecated` en `Project.figmaMapping`/`uxDesignSource`.
-- [ ] 5.6 `rotate-master-key.ts`: incluir `UserFigmaCredential` y `UiMcpInstance`, sin imprimir tokens ni claves.
-- [ ] 5.7 shared-types: enum zod con DESIGN_FIRST, `@deprecated` en UX_FIRST, `isGreenfield(DESIGN_FIRST) === true`, `isDesignFirst` operativo y regla de merge.
-- [ ] 5.8 `project-merge.service.ts`: 409 si algún proyecto es DESIGN_FIRST (CL-26).
-- [ ] 5.9 Down-script `docs/recovery/design-first-rollback.sql`: crea tabla de auditoría, registra cada fila convertida y pasa DESIGN_FIRST → NEW. No se ejecuta en este paso.
-- [ ] 5.10 CHANGELOG: en `### Added`, "Valor `ProjectType.DESIGN_FIRST` (detrás de flag), columnas `Stage.designSpec`/`designSpecRevision` y tabla `UserFigmaCredential`"; en `### Fixed`, "`rotate-master-key.ts` ahora rota `UiMcpInstance`"; en `### Changed`, "`ProjectApproach.UX_FIRST` marcado `@deprecated`".
-- [ ] 5.11 Pruebas del paso: migraciones dos veces sin error (CL-24); `project-type.spec.ts` con DESIGN_FIRST greenfield y merge rechazado (CL-26); spec de merge con DESIGN_FIRST → 409; creación con `DESIGN_FIRST` aún rechazada.
+- [x] 5.1 Pedir y registrar la aprobación de Jorge (paso [A]).
+- [x] 5.2 Migración A aislada (solo el `ALTER TYPE`; un `ADD VALUE` no comparte transacción con su uso).
+- [x] 5.3 Migración B+C con `IF NOT EXISTS` en columnas, tabla e índice único de `userId`.
+- [x] 5.4 Replicar en `safe-schema-sync.sql`.
+- [x] 5.5 `schema.prisma`: enum, columnas, modelo y `@deprecated` en `Project.figmaMapping`/`uxDesignSource`.
+- [x] 5.6 `rotate-master-key.ts`: incluir `UserFigmaCredential` y `UiMcpInstance`, sin imprimir tokens ni claves.
+- [x] 5.7 shared-types: enum zod con DESIGN_FIRST, `@deprecated` en UX_FIRST, `isGreenfield(DESIGN_FIRST) === true`, `isDesignFirst` operativo y regla de merge.
+- [x] 5.8 `project-merge.service.ts`: 409 si algún proyecto es DESIGN_FIRST (CL-26).
+- [x] 5.9 Down-script `docs/recovery/design-first-rollback.sql`: crea tabla de auditoría, registra cada fila convertida y pasa DESIGN_FIRST → NEW. No se ejecuta en este paso.
+- [x] 5.10 CHANGELOG: en `### Added`, "Valor `ProjectType.DESIGN_FIRST` (detrás de flag), columnas `Stage.designSpec`/`designSpecRevision` y tabla `UserFigmaCredential`"; en `### Fixed`, "`rotate-master-key.ts` ahora rota `UiMcpInstance`"; en `### Changed`, "`ProjectApproach.UX_FIRST` marcado `@deprecated`".
+- [x] 5.11 Pruebas del paso: migraciones dos veces sin error (CL-24); `project-type.spec.ts` con DESIGN_FIRST greenfield y merge rechazado (CL-26); spec de merge con DESIGN_FIRST → 409; creación con `DESIGN_FIRST` aún rechazada.
 
 ### Criterios de aceptación
-- [ ] RNF-09: migraciones idempotentes, replicadas, forward-only y down-script documentado.
-- [ ] RNF-01 (parte): `UserFigmaCredential` entra en la rotación de claves.
-- [ ] RF-02 (parte): `ProjectApproach.UX_FIRST` anotado `@deprecated`.
-- [ ] CL-26: merge con DESIGN_FIRST → 409.
-- [ ] Ningún flujo crea DESIGN_FIRST todavía.
+- [x] RNF-09: migraciones idempotentes, replicadas, forward-only y down-script documentado.
+- [x] RNF-01 (parte): `UserFigmaCredential` entra en la rotación de claves.
+- [x] RF-02 (parte): `ProjectApproach.UX_FIRST` anotado `@deprecated`.
+- [x] CL-26: merge con DESIGN_FIRST → 409.
+- [x] Ningún flujo crea DESIGN_FIRST todavía.
 
 ### Verificación
 ```bash
@@ -406,7 +406,8 @@ Resultado esperado: todo en verde; la reaplicación no da error.
 - Usar `UserFigmaCredential` (paso 18).
 
 ### Notas de ejecución
-<!-- aprobación de Jorge (fecha), desvíos -->
+- Aprobación paso [A]: Jorge, 2026-11-04 (continuar tras merge PR #557).
+- Rama `feat/design-first-paso-5`; verificación local: `db:generate`, tests shared-types/api/database scripts; `db:migrate` + psql idempotente pendiente si no hay `DATABASE_URL` en el entorno del agente.
 
 ---
 
@@ -428,20 +429,20 @@ Resultado esperado: todo en verde; la reaplicación no da error.
 - `packages/shared-types/src/design-first/__fixtures__/three-screens.json` [nuevo] — golden de entrada (3 pantallas).
 
 ### Subtareas
-- [ ] 6.1 Esquemas `designSpecSchema`, `screenSchema` (id `/^[a-z][a-z0-9-]{1,63}$/`), `navigationSchema`, `dataNeedsSchema` y `entitySchema`, tal como en 03. Valor inicial `{schemaVersion:1, entities:[], screens:[], navigation:[], dataNeeds:[]}` exportado como constante.
-- [ ] 6.2 Validadores puros de I1 (ids de pantalla, componente y arista únicos; rutas únicas; aristas a pantallas existentes), I2 (referencias de `dataNeeds` y acciones a entidades) e I3 (tipos completos y no contradictorios), que devuelven `issues[]` con ruta.
-- [ ] 6.3 Hash canónico (JSON canónico independiente del orden de claves, sin `Date.now` ni `Math.random`).
-- [ ] 6.4 Adaptadores `toScreenSpecV1`/`fromScreenSpecV1` con roundtrip.
-- [ ] 6.5 Límites: tamaño máximo en bytes recibido por parámetro (el valor viene de config en la API) y ≤ 200 pantallas.
-- [ ] 6.6 Golden `three-screens.json`: 3 pantallas con navegación, entidades y `dataNeeds` válidos.
-- [ ] 6.7 CHANGELOG: en `### Added`, "Contratos zod de `designSpec` en `@theforge/shared-types/design-first`".
-- [ ] 6.8 Pruebas del paso: golden válido; ids o rutas duplicados → issue I1 (CL-12); arista a id inexistente → issue (RF-06); need sin tipo o con tipos contradictorios → issue I3 (CL-14); tamaño por encima del máximo → error de tamaño (CL-28); 201 pantallas → error; hash igual con claves reordenadas; roundtrip v1.
+- [x] 6.1 Esquemas `designSpecSchema`, `screenSchema` (id `/^[a-z][a-z0-9-]{1,63}$/`), `navigationSchema`, `dataNeedsSchema` y `entitySchema`, tal como en 03. Valor inicial `{schemaVersion:1, entities:[], screens:[], navigation:[], dataNeeds:[]}` exportado como constante.
+- [x] 6.2 Validadores puros de I1 (ids de pantalla, componente y arista únicos; rutas únicas; aristas a pantallas existentes), I2 (referencias de `dataNeeds` y acciones a entidades) e I3 (tipos completos y no contradictorios), que devuelven `issues[]` con ruta.
+- [x] 6.3 Hash canónico (JSON canónico independiente del orden de claves, sin `Date.now` ni `Math.random`).
+- [x] 6.4 Adaptadores `toScreenSpecV1`/`fromScreenSpecV1` con roundtrip.
+- [x] 6.5 Límites: tamaño máximo en bytes recibido por parámetro (el valor viene de config en la API) y ≤ 200 pantallas.
+- [x] 6.6 Golden `three-screens.json`: 3 pantallas con navegación, entidades y `dataNeeds` válidos.
+- [x] 6.7 CHANGELOG: en `### Added`, "Contratos zod de `designSpec` en `@theforge/shared-types/design-first`".
+- [x] 6.8 Pruebas del paso: golden válido; ids o rutas duplicados → issue I1 (CL-12); arista a id inexistente → issue (RF-06); need sin tipo o con tipos contradictorios → issue I3 (CL-14); tamaño por encima del máximo → error de tamaño (CL-28); 201 pantallas → error; hash igual con claves reordenadas; roundtrip v1.
 
 ### Criterios de aceptación
-- [ ] I1, I2 e I3 detectados con `issues[]` deterministas.
-- [ ] RNF-02: hash canónico independiente del orden de claves.
-- [ ] RNF-04: límites de tamaño y de 200 pantallas.
-- [ ] RF-06 (contrato): arista colgante detectada.
+- [x] I1, I2 e I3 detectados con `issues[]` deterministas.
+- [x] RNF-02: hash canónico independiente del orden de claves.
+- [x] RNF-04: límites de tamaño y de 200 pantallas.
+- [x] RF-06 (contrato): arista colgante detectada.
 
 ### Verificación
 ```bash
@@ -456,7 +457,7 @@ Resultado esperado: en verde.
 - Compilación a PAG (paso 7).
 
 ### Notas de ejecución
-<!-- -->
+- Implementado en rama `feat/design-first-paso-5` junto al paso 5 (misma PR pendiente).
 
 ---
 

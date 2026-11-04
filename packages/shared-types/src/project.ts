@@ -1,11 +1,13 @@
 import { z } from "zod";
 import { StatusEnum } from "./status.js";
 
-export const ProjectTypeEnum = z.enum(["NEW", "LEGACY"]);
+export const ProjectTypeEnum = z.enum(["NEW", "LEGACY", "DESIGN_FIRST"]);
 export type ProjectType = z.infer<typeof ProjectTypeEnum>;
 
-/** Enfoque metodológico del proyecto: Domain-First (actual) o UX-First (con traducción técnica). */
+/** Enfoque metodológico del proyecto: Domain-First (actual) o UX-First (traducción técnica). */
 export const ProjectApproachEnum = z.enum(["DOMAIN_FIRST", "UX_FIRST"]);
+/** @deprecated Sustituido por Design-First (`ProjectType.DESIGN_FIRST`); conservado por filas existentes. */
+export type DeprecatedProjectApproachUxFirst = "UX_FIRST";
 export type ProjectApproach = z.infer<typeof ProjectApproachEnum>;
 
 /** Alineado con Prisma `ComplexityLevel`: define semáforo y entregables obligatorios. */
@@ -44,7 +46,11 @@ export const createProjectSchema = z
       return true;
     },
     { message: "theforgeProjectId es obligatorio cuando projectType es LEGACY", path: ["theforgeProjectId"] },
-  );
+  )
+  .refine((data) => data.projectType !== "DESIGN_FIRST", {
+    message: "projectType DESIGN_FIRST aún no está disponible al crear proyectos",
+    path: ["projectType"],
+  });
 
 export const updateProjectSchema = z.object({
   name: z.string().min(1).optional(),

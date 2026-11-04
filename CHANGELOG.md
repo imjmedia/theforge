@@ -7,10 +7,13 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 > **Paquete Design-First (implementación en curso)** — Modo `ProjectType.DESIGN_FIRST`: pantallas y flujos primero, necesidades de datos, PAG determinista, OpenAPI 3.1, MDD con §3/§4 compiladas y repo-handoff MSW. Documentación de planificación en `arquitectura/modo-design-first/`; el código avanza por fichas en `tasks/TASKS.md`.
 
 ### Added
+- **Design-First paso 5:** valor `ProjectType.DESIGN_FIRST` en Prisma (detrás de flag en pasos posteriores), columnas `Stage.designSpec` / `designSpecRevision` y tabla `UserFigmaCredential` (token Figma BYOK cifrado).
+- **Contratos zod de `designSpec`** en `@theforge/shared-types/design-first` (invariantes I1–I3, hash canónico, adaptadores ScreenSpec v1).
 - **`arquitectura/modo-design-first/`**: README con decisiones, `01-PRD.md` (RF-01…RF-19, RNF-01…RNF-10), `02-estructura-de-archivos.md`, `03-arquitectura-y-diseno.md`, `04-plan-de-pruebas.md`, `05-casos-limite.md` (CL-01…CL-31), `06-riesgos-y-decisiones.md` y `tasks/HANDOFF.md` + `tasks/TASKS.md` con 28 fichas ejecutables en orden. Registra el falso negativo de Ariadne (`validate_change_plan` BLOCKED con índice `up_to_date`) y el defecto actual de `AiService.lastGeneratedPag` / `Stage.documentAst` que los pasos 2-3 corrigen.
 - **Config tipada Design-First** (`apps/api/src/config/env.schema.ts`): flags `DESIGN_FIRST_*`, `FIGMA_API_BASE_URL` (solo https) y límites RNF-04/RNF-05; helper `compiler-first.config.ts` para entregables compilados.
 
 ### Changed
+- **`ProjectApproach.UX_FIRST`** marcado `@deprecated` en Prisma y shared-types (sustituido por Design-First).
 - **Export OpenAPI:** `GET :id/openapi.json` y `openapi.yaml` leen `Stage.architectureGraph` primero, con fallback a `documentAst` cuando incluye `endpoints`.
 - **Enrutamiento por tipo de proyecto** centralizado en `@theforge/shared-types` (`project-type.ts`: `isGreenfield`, `isLegacy`, `isDesignFirst`, `assertNever`); módulo `projects` de la API deja de comparar literales `"NEW"`, sin cambio de comportamiento; también en `ai`, orquestador y supervisor, con test anti-literal `project-type-literals.spec.ts`; y en la web (`App`, integración, tiles, `complexityTabs`, store Workshop), que deja de duplicar el tipo.
 - **`COMPILER_FIRST_*`**: dejan de leerse con `process.env` en `AiService` y pasan por la config tipada y `ConfigService`.
@@ -18,6 +21,7 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 > **Calidad del MDD (lote 2): reparaciones que no inventan contenido, Auditor sin nota, lease por hilo que falla cerrado y telemetría por llamada** — Segundo lote de la auditoría global del 2026-11-02 (`docs/handoffs/2026-11-02-auditoria-global.md` §3: H1–H6, B8, O5, O10, O14), antes de la tercera corrida del eval. Deja de sustituir flowcharts válidos por un webhook inventado, deja de puntuar 0 cuando el Auditor no responde, evita que un turno se pierda en silencio al persistir y registra latencia, intentos, coste y modelo real por llamada. Cambia contratos de stream y de eval, y exige la migración de `TokenUsage` y un Redis disponible antes del deploy (ver `docs/handoffs/2026-11-03-calidad-mdd-lote2-handoff.md`).
 
 ### Fixed
+- **`rotate-master-key.ts`** ahora rota también `UserFigmaCredential` y `UiMcpInstance` (deuda de cifrado BYOK).
 - **Design-First / PAG:** fuga del PAG entre proyectos: se elimina `AiService.lastGeneratedPag`; el grafo viaja en el retorno de `generateApiContracts`, se persiste en `Stage.architectureGraph` y logic flows / infra reciben el PAG por argumento desde la etapa.
 - **Design-First / PAG:** nueva columna `Stage.architectureGraph` con backfill idempotente desde `documentAst` cuando incluye `endpoints` (migración `20261104090000`; lectores en paso 3).
 - **Eval: llamadas fallidas no cuentan como medidas** (`apps/api/src/modules/ai-analysis/eval/mdd-eval-nest-deps.ts`, `mdd-eval-runner.ts`): `llmCalls` solo cuenta filas `ok`/`invalid`; las `error|timeout|abort` van a `failedLlmCalls`/`totalFailedLlmCalls` y un caso con solo fallos queda sin coste en vez de aparecer medido con $0.

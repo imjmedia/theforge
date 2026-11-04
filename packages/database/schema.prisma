@@ -43,6 +43,7 @@ model User {
   providerConfigs UserProviderConfig[]
   providerInstancesCreated ProviderInstance[] @relation("ProviderInstanceCreatedBy")
   uiMcpInstancesCreated UiMcpInstance[] @relation("UiMcpInstanceCreatedBy")
+  figmaCredential UserFigmaCredential?
 }
 
 /// Preferencias de IA por usuario (proveedor activo, embeddings).
@@ -170,14 +171,29 @@ model UserProviderConfig {
   @@index([userId])
 }
 
+/// Token personal de Figma (BYOK) cifrado por usuario. Consumido en paso 18; paso 5 define schema y rotación.
+model UserFigmaCredential {
+  id               String    @id @default(uuid())
+  userId           String    @unique
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenCiphertext  String    @db.Text
+  tokenKeyVersion  Int
+  figmaHandle      String?
+  lastValidatedAt  DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
 enum ProjectType {
   NEW
   LEGACY
+  DESIGN_FIRST
 }
 
-/// Enfoque metodológico del proyecto: Domain-First (actual) o UX-First (con traducción técnica).
+/// Enfoque metodológico del proyecto: Domain-First (actual) o UX-First (traducción técnica; deprecado).
 enum ProjectApproach {
   DOMAIN_FIRST
+  /// @deprecated Sustituido por Design-First; conservado por compatibilidad de filas existentes.
   UX_FIRST
 }
 
@@ -235,6 +251,10 @@ model Stage {
   architectureGraph Json?
   /// Hash de la fuente usada al persistir `architectureGraph` (idempotencia / stale).
   architectureGraphSourceHash String?
+  /// Design-First: documento `designSpec` (pantallas, navegación, dataNeeds) por etapa.
+  designSpec Json?
+  /// CAS optimista sobre `designSpec` (incrementa en cada PUT válido).
+  designSpecRevision Int @default(0)
   documentVersion      Int          @default(0)
   apiContractsContent  String? @db.Text
   logicFlowsContent    String? @db.Text
@@ -351,12 +371,14 @@ model Project {
   /// Enfoque metodológico: DOMAIN_FIRST (arquitectura/backend primero) o UX_FIRST (pantallas -> contratos -> entidades).
   approach         ProjectApproach @default(DOMAIN_FIRST)
   /// Insumo de diseño UX para proyectos UX-First: especificación de wireframes, screens spec o URL/referencia visual.
+  /// @deprecated Design-First usa `Stage.designSpec`; conservado por compatibilidad.
   uxDesignSource   String?         @db.Text
   hasUxTeam        Boolean      @default(false)
   /// Referencia de diseño para la Guía UX/UI: slug del catálogo (ej. "stripe", "linear-app") o "auto" para matching automático
   uxGuideDesignRef String?
   stages           Stage[]
   sessions         Session[]
+  /// @deprecated Design-First usa Figma vía `UserFigmaCredential`; conservado por compatibilidad.
   figmaMapping     Json?
   dbgaContent          String?   @db.Text
   specContent          String?   @db.Text

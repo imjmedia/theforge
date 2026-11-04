@@ -1,7 +1,7 @@
 #!/usr/bin/env npx tsx
 /**
  * Re-cifra tokens BYOK hacia TOKEN_ACTIVE_KEY_VERSION.
- * Tablas: user_provider_configs, provider_instances.
+ * Tablas: user_provider_configs, provider_instances, user_figma_credentials, ui_mcp_instances.
  *
  * Requiere: DATABASE_URL, TOKEN_MASTER_KEYS, TOKEN_ACTIVE_KEY_VERSION
  * Uso: npm run rotate-master-key
@@ -50,7 +50,7 @@ function encryptBlob(plaintext: string, version: number, keys: Map<number, Buffe
   return [`v${version}`, iv.toString("base64"), tag.toString("base64"), enc.toString("base64")].join(":");
 }
 
-type TokenRow = { id: string; tokenCiphertext: string; tokenKeyVersion: number };
+type TokenRow = { id: string; tokenCiphertext: string; tokenKeyVersion: number | null };
 
 async function rotateTable(
   label: string,
@@ -62,6 +62,10 @@ async function rotateTable(
   let rotated = 0;
   let skipped = 0;
   for (const row of rows) {
+    if (!row.tokenCiphertext?.trim()) {
+      skipped++;
+      continue;
+    }
     if (row.tokenKeyVersion === targetVersion) {
       skipped++;
       continue;
@@ -90,6 +94,13 @@ async function main(): Promise<void> {
   const instances = await prisma.providerInstance.findMany({
     select: { id: true, tokenCiphertext: true, tokenKeyVersion: true },
   });
+  const figmaCreds = await prisma.userFigmaCredential.findMany({
+    select: { id: true, tokenCiphertext: true, tokenKeyVersion: true },
+  });
+  const uiMcpInstances = await prisma.uiMcpInstance.findMany({
+    where: { tokenCiphertext: { not: null } },
+    select: { id: true, tokenCiphertext: true, tokenKeyVersion: true },
+  });
 
   console.log(`rotate-master-key → target=v${targetVersion}`);
   const a = await rotateTable(
@@ -108,9 +119,29 @@ async function main(): Promise<void> {
     (id, tokenCiphertext, tokenKeyVersion) =>
       prisma.providerInstance.update({ where: { id }, data: { tokenCiphertext, tokenKeyVersion } }),
   );
+  const c = await rotateTable(
+    "user_figma_credentials",
+    figmaCreds,
+    targetVersion,
+    keys,
+    (id, tokenCiphertext, tokenKeyVersion) =>
+      prisma.userFigmaCredential.update({ where: { id }, data: { tokenCiphertext, tokenKeyVersion } }),
+  );
+  const d = await rotateTable(
+    "ui_mcp_instances",
+    uiMcpInstances.map((r) => ({
+      id: r.id,
+      tokenCiphertext: r.tokenCiphertext ?? "",
+      tokenKeyVersion: r.tokenKeyVersion,
+    })),
+    targetVersion,
+    keys,
+    (id, tokenCiphertext, tokenKeyVersion) =>
+      prisma.uiMcpInstance.update({ where: { id }, data: { tokenCiphertext, tokenKeyVersion } }),
+  );
 
   console.log(
-    `rotate-master-key: total rotated=${a.rotated + b.rotated} skipped=${a.skipped + b.skipped} target=v${targetVersion}`,
+    `rotate-master-key: total rotated=${a.rotated + b.rotated + c.rotated + d.rotated} skipped=${a.skipped + b.skipped + c.skipped + d.skipped} target=v${targetVersion}`,
   );
   await prisma.$disconnect();
 }

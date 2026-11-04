@@ -35,7 +35,7 @@ sólo lo necesario (turbo cache hit si no cambió nada).
 - **`theforge-doc-stamp.ts`:** peel/reattach del stamp `<!-- theforge-doc:created|updated -->` + blockquote 📅; `peelDocumentBodyForPersist`, `extractCanonicalMddBody` y `repairInlineHorizontalRuleSectionBreaks` limpian stamps pegados/corruptos (incl. §1–§2 inline en la zona de fechas) antes de persistir o mostrar en Workshop. El **MDD** ya no se persiste con stamp de fechas (`storeMddMarkdownForPersist`); el peel sigue limpiando MDD legado sellado.
 - **`repair-directory-tree.ts`:** árboles de directorios del Blueprint colapsados en una línea → bloque ` ```text ` multilínea (vía `repairPastedMarkdown`).
 - createProjectSchema, updateProjectSchema, sessionResponseSchema, etc.
-- **`project-type.ts`:** `isGreenfield`, `isLegacy`, `isDesignFirst`, `assertNever` — enrutamiento por `ProjectType` (greenfield incluirá `DESIGN_FIRST` en paso 5).
+- **`project-type.ts`:** `isGreenfield`, `isLegacy`, `isDesignFirst`, `isMergeBlockedByDesignFirst`, `assertNever` — enrutamiento por `ProjectType` (incluye `DESIGN_FIRST`; merge → 409 CL-26).
 - `ComplexityLevelEnum` (`LOW` | `MEDIUM` | `HIGH`): política de adopción SDD y semáforo (campo `complexity` en proyecto).
 - `orchestrator.ts`: `chatOrchestratorResponseSchema` (respuesta stream/orquestador; incluye `evaluatorCritique` opcional).
 - **`legacy-codebase-doc.ts`:** `codebaseDocResponseModeSchema`, `generateCodebaseDocRequestSchema` (body `POST …/legacy/generate-codebase-doc`).

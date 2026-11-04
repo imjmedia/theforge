@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -17,6 +18,8 @@ import {
   type ProjectMergePreview,
   type ProjectMergeResult,
   type ProjectType,
+  isMergeBlockedByDesignFirst,
+  MERGE_DESIGN_FIRST_CONFLICT_MESSAGE,
 } from "@theforge/shared-types";
 import { getRequestUserId } from "../../common/request-user.store.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
@@ -77,6 +80,8 @@ export class ProjectMergeService {
     const opts = defaultSourceOptions(parsed.sourceOptions);
     const sources = await this.loadSources(parsed.sourceProjectIds, userId, opts);
 
+    await this.assertMergeNotDesignFirst(parsed, sources, userId);
+
     if (parsed.targetMode === "existing" && parsed.targetProjectId) {
       await this.assertOwner(parsed.targetProjectId, userId);
     }
@@ -129,6 +134,30 @@ export class ProjectMergeService {
       suite,
       audit,
     };
+  }
+
+  private async assertMergeNotDesignFirst(
+    parsed: ProjectMergeBody,
+    sources: MergeSourceSnapshot[],
+    userId: string,
+  ): Promise<void> {
+    const types: ProjectType[] = sources.map((s) => s.projectType);
+    if (parsed.targetMode === "existing" && parsed.targetProjectId) {
+      const targetInSources = sources.some((s) => s.projectId === parsed.targetProjectId);
+      if (!targetInSources) {
+        const target = await this.prisma.project.findFirst({
+          where: { id: parsed.targetProjectId, userId, archivedAt: null },
+          select: { projectType: true },
+        });
+        if (!target) {
+          throw new NotFoundException("Proyecto destino no encontrado");
+        }
+        types.push(target.projectType as ProjectType);
+      }
+    }
+    if (isMergeBlockedByDesignFirst(types)) {
+      throw new ConflictException(MERGE_DESIGN_FIRST_CONFLICT_MESSAGE);
+    }
   }
 
   private async loadSources(
