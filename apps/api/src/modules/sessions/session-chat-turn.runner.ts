@@ -1,10 +1,14 @@
 import type { IntentRouteResult } from "../ai/intent-route.types.js";
 import type { WorkshopChatAction } from "../ai/intent-route.types.js";
 import type { ChatImagePart, ChatMessage } from "@theforge/shared-types";
+import { isUserExploringDbgaIntent } from "@theforge/shared-types";
 import type { ChatMessage as LlmChatMessage } from "../ai/interfaces/llm-provider.interface.js";
 import { benchmarkAssistantChatMessage, looksLikeDbgaEditRequest } from "./dbga-edit.util.js";
 import { normalizeDashes } from "./document-content.util.js";
-import type { DocPersistFlags } from "./orchestrator-doc-guard.util.js";
+import {
+  chatClaimsDocumentWasModified,
+  type DocPersistFlags,
+} from "./orchestrator-doc-guard.util.js";
 import type { SessionChatTurnOptions } from "./session-chat-llm-options.util.js";
 import type { ParsedWorkshopAssistantResponse } from "./session-chat-response-parse.util.js";
 import {
@@ -259,6 +263,33 @@ export function wantsDbgaDocumentProcessing(
   return looksLikeDbgaEditRequest(userMessageForDocHeuristics(userMessage, llmUserPrompt));
 }
 
+/**
+ * ¿Debe Fase 0 reintentar con el refinado dedicado tras una afirmación falsa de edición?
+ * Solo cuando el turno fue ruteado como chat (sin refinado previo), hay documento en el
+ * panel, el asistente afirma haberlo modificado y el usuario no estaba solo explorando
+ * ni el asistente espera confirmación de una propuesta.
+ */
+export function shouldRetryBenchmarkAfterFalseEditClaim(params: {
+  tab: string;
+  finalDbga: string | undefined;
+  processDbga: boolean;
+  intentAction: WorkshopChatAction;
+  currentDbgaContent: string | undefined;
+  rawChat: string;
+  userMessage: string;
+}): boolean {
+  const { tab, finalDbga, processDbga, intentAction, currentDbgaContent, rawChat, userMessage } =
+    params;
+  if (tab !== "benchmark") return false;
+  if (finalDbga?.trim()) return false;
+  if (processDbga) return false;
+  if (intentAction === "confirm_then_edit") return false;
+  if ((currentDbgaContent?.trim().length ?? 0) < 80) return false;
+  if (!chatClaimsDocumentWasModified(rawChat)) return false;
+  if (isUserExploringDbgaIntent(userMessage)) return false;
+  return true;
+}
+
 export function isDocumentTurnPersisted(tab: string, parts: TabDocumentParts): boolean {
   return Boolean(
     (tab === "mdd" && parts.finalMdd) ||
@@ -431,11 +462,37 @@ export async function processSessionChatTurnOutcome(
   const finalMdd = mddResolved.content;
   let docRetried = mddResolved.retried;
 
-  const finalDbga = await deps.resolveDbgaContentForReturn(
+  let finalDbga = await deps.resolveDbgaContentForReturn(
     effectiveUserMessage,
     { ...options, wantsDocumentEdit: processDbga },
     processDbga ? dbgaDocPart : undefined,
   );
+
+  // Red de seguridad Fase 0: el turno se ruteó como chat, pero el modelo afirma haber
+  // modificado el documento y nada se persistió. Antes el usuario recibía «No se guardaron
+  // cambios… reintentará automáticamente» sin ningún reintento real; ahora se ejecuta el
+  // refinado dedicado (BENCHMARK_REFINE) con el mismo pedido.
+  if (
+    shouldRetryBenchmarkAfterFalseEditClaim({
+      tab,
+      finalDbga,
+      processDbga,
+      intentAction: intentRoute.action,
+      currentDbgaContent: options?.currentDbgaContent,
+      rawChat,
+      userMessage: heuristicsUserMsg,
+    })
+  ) {
+    console.warn(
+      "[Sessions] Fase 0: el asistente afirma haber editado sin persistir; reintento con refinado dedicado",
+    );
+    finalDbga = await deps.resolveDbgaContentForReturn(
+      effectiveUserMessage,
+      { ...options, wantsDocumentEdit: true },
+      dbgaDocPart,
+    );
+    if (finalDbga) docRetried = true;
+  }
 
   const specResolved = await deps.resolveDeliverableContentForReturn(
     tab,

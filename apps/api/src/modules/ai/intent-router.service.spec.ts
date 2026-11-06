@@ -84,6 +84,27 @@ describe("IntentRouterService", () => {
     assert.equal(llmCalls, 1);
   });
 
+  it("afirmación de hecho con documento en el panel → edit_document sin LLM", async () => {
+    const router = buildRouter();
+    const route = await router.route("el sso corporativo se encuentra en sso.obp.mx", {
+      activeTab: "benchmark",
+      hasDocumentContent: true,
+    });
+    assert.equal(route.action, "edit_document");
+    assert.equal(route.source, "heuristic");
+    assert.equal(llmCalls, 0);
+  });
+
+  it("afirmación de hecho sin documento en el panel no fuerza edición", async () => {
+    llmResponse = JSON.stringify({ action: "chat_only", confidence: 0.9, reasoning: "sin doc" });
+    const router = buildRouter();
+    const route = await router.route("el sso corporativo se encuentra en sso.obp.mx", {
+      activeTab: "benchmark",
+      hasDocumentContent: false,
+    });
+    assert.equal(route.action, "chat_only");
+  });
+
   it("respeta INTENT_ROUTER_LLM=0", async () => {
     process.env.INTENT_ROUTER_LLM = "0";
     llmResponse = JSON.stringify({

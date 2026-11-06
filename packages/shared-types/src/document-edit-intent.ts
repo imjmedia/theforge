@@ -126,6 +126,35 @@ export function isUserExploringDbgaIntent(message: string): boolean {
   return false;
 }
 
+/** Verbos de ubicación / nombrado / uso que presentan un dato del proyecto. */
+const PROJECT_FACT_VERB_RE =
+  /\b(?:se\s+encuentra(?:n)?\s+en|est[aá](?:n)?\s+(?:en|alojad[oa]s?\s+en|ubicad[oa]s?\s+en|desplegad[oa]s?\s+en|publicad[oa]s?\s+en|hospedad[oa]s?\s+en)|viv(?:e|en)\s+en|corre(?:n)?\s+en|se\s+llama(?:n)?|se\s+(?:usa|usar[aá]|utiliza|utilizar[aá])\b|usamos|utilizamos|usaremos|utilizaremos|el\s+dominio\s+(?:es|ser[aá])|la\s+url\s+(?:es|ser[aá])|el\s+(?:host|servidor|endpoint|puerto|repositorio|repo)\s+(?:es|ser[aá]))\b/i;
+
+/** URL o dominio con TLD (sso.obp.mx, api.ejemplo.com, https://…). */
+const PROJECT_FACT_URL_RE =
+  /\bhttps?:\/\/\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:mx|com|net|org|io|dev|app|cloud|ai|co|es|lat|local|internal)\b/i;
+
+/** Opinión, duda o condicional: no es un hecho que persistir sin confirmar. */
+const PROJECT_FACT_HEDGE_RE =
+  /\b(?:creo|pienso|me\s+parece|supongo|quiz[aá]s?|tal\s+vez|a\s+lo\s+mejor|podr[ií]a(?:n|mos)?|deber[ií]a(?:n|mos)?|ser[ií]a|no\s+s[eé]|no\s+estoy\s+segur[oa]|si\s+(?:fuera|fuese)|probablemente|posiblemente)\b/i;
+
+/**
+ * Afirmación corta que aporta un dato concreto del proyecto («el SSO corporativo se
+ * encuentra en sso.obp.mx», «usamos Keycloak», «el dominio es app.acme.mx»).
+ * Con documento en el panel, el usuario espera que ese dato quede reflejado sin tener
+ * que añadir «haz los cambios al documento». No cubre preguntas, condicionales ni
+ * mensajes largos (esos los resuelve el router LLM).
+ */
+export function looksLikeProjectFactStatement(message: string): boolean {
+  const m = message.trim();
+  if (m.length < 12 || m.length > 400) return false;
+  if (/[?¿]/.test(m)) return false;
+  if ((m.match(/\n/g)?.length ?? 0) > 2) return false;
+  if (isUserExploringDbgaIntent(m)) return false;
+  if (PROJECT_FACT_HEDGE_RE.test(m)) return false;
+  return PROJECT_FACT_VERB_RE.test(m) || PROJECT_FACT_URL_RE.test(m);
+}
+
 /** El usuario pide persistir cambios en el DBGA/Fase 0 (no brainstorming ni Q&A). */
 export function looksLikeDbgaEditRequest(message: string): boolean {
   const m = message.trim();

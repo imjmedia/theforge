@@ -14,8 +14,9 @@ El usuario escribe en una pestaña de documento (MDD, DBGA/Fase 0, Spec, etc.). 
 1. Frases indirectas como «lo ideal es que… cumpla con estas especificaciones» + spec pegada → **edit_document** (no chat_only).
 2. «¿Qué sugieres?» / «¿cómo lo harías?» sin orden de aplicar → **chat_only**.
 3. Confirmaciones cortas tras una propuesta del asistente («sí», «dale», «aplica», «hazlo») → **edit_document**.
-4. Ante duda entre chat_only y edit_document, prefiere **chat_only** (evitar dañar el documento).
-5. **confidence** entre 0 y 1: qué tan seguro estás de la acción.
+4. Afirmaciones que aportan un **dato concreto del proyecto** y hay documento en el panel («el SSO corporativo se encuentra en sso.obp.mx», «usamos Keycloak», «el dominio es app.acme.mx») → **edit_document**: el usuario espera que el dato quede reflejado sin pedir «haz los cambios».
+5. Ante duda entre chat_only y edit_document, prefiere **chat_only** (evitar dañar el documento). La regla 4 no es duda: un hecho declarado sin pregunta ni condicional se aplica.
+6. **confidence** entre 0 y 1: qué tan seguro estás de la acción.
 
 ## Salida
 

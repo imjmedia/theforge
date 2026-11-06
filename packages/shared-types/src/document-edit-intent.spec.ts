@@ -8,6 +8,7 @@ import {
   looksLikeDbgaDocumentBody,
   looksLikeDbgaEditRequest,
   looksLikeDbgaSpecIntegrationRequest,
+  looksLikeProjectFactStatement,
 } from "./document-edit-intent.js";
 
 describe("looksLikeApiEndpointCatalog", () => {
@@ -151,6 +152,39 @@ describe("isHypotheticalDocumentEditOffer", () => {
       isHypotheticalDocumentEditOffer(
         "He actualizado el documento completo integrando la sección de adaptadores en el DBGA.",
       ),
+      false,
+    );
+  });
+});
+
+describe("looksLikeProjectFactStatement", () => {
+  it("detecta un dato con dominio («se encuentra en sso.obp.mx»)", () => {
+    assert.ok(looksLikeProjectFactStatement("el sso corporativo se encuentra en sso.obp.mx"));
+  });
+
+  it("detecta un dato con verbo de uso o nombrado", () => {
+    assert.ok(looksLikeProjectFactStatement("usamos Keycloak como proveedor de identidad"));
+    assert.ok(looksLikeProjectFactStatement("el módulo de cobros se llama Caja Central"));
+    assert.ok(looksLikeProjectFactStatement("el dominio es app.acme.mx"));
+  });
+
+  it("no toma preguntas ni condicionales como hechos", () => {
+    assert.equal(looksLikeProjectFactStatement("¿el sso corporativo está en sso.obp.mx?"), false);
+    assert.equal(
+      looksLikeProjectFactStatement("creo que el sso corporativo está en sso.obp.mx"),
+      false,
+    );
+    assert.equal(
+      looksLikeProjectFactStatement("tal vez deberíamos usar Keycloak como proveedor"),
+      false,
+    );
+  });
+
+  it("ignora charla sin dato del proyecto ni mensajes largos", () => {
+    assert.equal(looksLikeProjectFactStatement("gracias, me parece bien así"), false);
+    assert.equal(looksLikeProjectFactStatement("ok"), false);
+    assert.equal(
+      looksLikeProjectFactStatement(`${"el sso corporativo se encuentra en sso.obp.mx y ".repeat(12)}fin`),
       false,
     );
   });

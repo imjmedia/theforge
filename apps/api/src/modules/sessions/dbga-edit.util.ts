@@ -36,6 +36,8 @@ const DBGA_EDIT_STOPWORDS = new Set([
   "principal",
   "cambios",
   "cambio",
+  "encuentra",
+  "encuentran",
 ]);
 
 /** Acrónimos / etiquetas cortas que sí importan en renombres (PAT, SSO, API…). */
@@ -256,7 +258,7 @@ export const BENCHMARK_CHAT_ACK =
   "Fase 0 (DBGA) actualizado. Revisa el panel «Análisis (DBGA)».";
 
 export const BENCHMARK_CHAT_NO_CHANGE =
-  "No se guardaron cambios en Fase 0 (DBGA). El asistente no devolvió el documento completo listo para persistir (falta el cierre del documento o el cambio no quedó reflejado). Repite el pedido tal cual; The Forge reintentará automáticamente.";
+  "No se guardaron cambios en Fase 0 (DBGA). El asistente no devolvió el documento completo listo para persistir, ni siquiera tras el reintento automático. Vuelve a pedirlo indicando qué sección cambiar (p. ej. «en Arquitectura, agrega que el SSO corporativo está en sso.obp.mx»).";
 
 /** Evita mensaje de éxito en chat cuando el panel no se persistió. */
 export function benchmarkAssistantChatMessage(
