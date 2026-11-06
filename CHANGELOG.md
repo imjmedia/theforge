@@ -29,6 +29,8 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 
 ### Fixed
 
+- **Fase 0 (DBGA) — afirmaciones de hecho sin «haz los cambios al documento»:** una frase como «el SSO corporativo se encuentra en sso.obp.mx» se ruteaba como `chat_only`, el gate descartaba el documento y el usuario recibía «No se guardaron cambios…» aunque el asistente afirmara haber editado. Ahora `looksLikeProjectFactStatement` (`@theforge/shared-types`) la rutea a `edit_document` de forma determinística cuando hay documento en el panel (regla espejo en `WORKSHOP_INTENT_ROUTER_PROMPT`), y `session-chat-turn.runner` relanza el refinado dedicado (`shouldRetryBenchmarkAfterFalseEditClaim`) cuando el chat afirma un cambio que no se persistió. El aviso `BENCHMARK_CHAT_NO_CHANGE` ya no promete un reintento que no existía.
+
 - **Cifrado BYOK:** `rotate-master-key.ts` rota también `UserFigmaCredential` y `UiMcpInstance`.
 - **Design-First / PAG:** eliminado `AiService.lastGeneratedPag`; PAG en retorno de `generateApiContracts` y en `Stage.architectureGraph`; logic flows / infra reciben PAG por argumento.
 - **Design-First / esquema:** columna `Stage.architectureGraph` + backfill desde `documentAst` (`20261104090000`).

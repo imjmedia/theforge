@@ -5,6 +5,7 @@ import {
   looksLikeApiEndpointCatalog,
   looksLikeDbgaEditRequest,
   looksLikeDbgaSpecIntegrationRequest,
+  looksLikeProjectFactStatement,
 } from "@theforge/shared-types";
 import { AiService } from "./ai.service.js";
 import { IntentClassifierService, type ChatIntent } from "./intent-classifier.service.js";
@@ -146,6 +147,13 @@ export class IntentRouterService {
       // media para que el LLM de intención confirme (ruteo preferente post-refactor).
       const confidence = trimmed.length > 120 ? 0.78 : 0.9;
       return { intent: "direct_edit", action: "edit_document", confidence };
+    }
+
+    // Dato concreto del proyecto («el SSO está en sso.obp.mx») con documento en el panel:
+    // el usuario espera verlo reflejado sin tener que añadir «haz los cambios al documento».
+    // Gate determinístico: no se delega al LLM, que por su regla 4 sesga a chat_only.
+    if (context.hasDocumentContent && looksLikeProjectFactStatement(trimmed)) {
+      return { intent: "direct_edit", action: "edit_document", confidence: 0.88 };
     }
 
     const intent = this.intentClassifier.classify(trimmed);
