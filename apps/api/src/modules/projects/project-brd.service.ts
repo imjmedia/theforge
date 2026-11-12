@@ -19,6 +19,7 @@ import {
 import { PrismaService } from "../../prisma/prisma.service.js";
 import { loadAccessibleProjectWithStages } from "./project-access.util.js";
 import { pickPrimaryStage } from "./stage-helpers.js";
+import { StageSemaphoreSyncService } from "./stage-semaphore-sync.service.js";
 
 type StageWithEst = Stage & { estimation: Estimation | null };
 
@@ -27,6 +28,7 @@ export class ProjectBrdService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ai: AiService,
+    private readonly stageSemaphoreSync: StageSemaphoreSyncService,
   ) {}
 
   /**
@@ -121,6 +123,7 @@ export class ProjectBrdService {
       where: { id: stage.id },
       data: { brdContent: prependDocumentTimestamps(brd) },
     });
+    await this.stageSemaphoreSync.syncFromPersisted(projectId, stage.id, { reason: "brd-from-dbga" });
     return { brdContent: brd, stageId: stage.id };
   }
 }

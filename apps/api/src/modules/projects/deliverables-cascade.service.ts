@@ -76,6 +76,7 @@ import {
 } from "./deliverable-bundle-persist.util.js";
 import { pickPrimaryStage } from "./stage-helpers.js";
 import { ProjectsService } from "./projects.service.js";
+import { StageSemaphoreSyncService } from "./stage-semaphore-sync.service.js";
 import { resolveDomainInventory } from "../engine/domain-inventory-persist.util.js";
 import type { DomainInventory } from "@theforge/shared-types";
 
@@ -121,7 +122,22 @@ export class DeliverablesCascadeService {
     private readonly projects: ProjectsService,
     private readonly uiScreens: UiScreensService,
     private readonly conformance: ConformanceService,
+    private readonly stageSemaphoreSync: StageSemaphoreSyncService,
   ) {}
+
+  /** CL-15: sincroniza semáforo solo al cerrar la cascada (no durante convergencia). */
+  private async syncSemaphoreAfterCascade(projectId: string): Promise<void> {
+    const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
+    const stage = pickPrimaryStage(project.stages ?? []);
+    if (!stage?.id) return;
+    await this.stageSemaphoreSync
+      .syncFromPersisted(projectId, stage.id, { reason: "cascade-end" })
+      .catch((err) =>
+        this.logger.warn(
+          `[Cascade] sync semaphore: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+  }
 
   /** Sync pantallas tras W2; MCP opcional (fallback heurístico). No falla la cascada. */
   async syncUiScreens(projectId: string): Promise<void> {
@@ -208,7 +224,7 @@ export class DeliverablesCascadeService {
     });
     throwIfAbortedDelta();
     await this.runCascadeDeterministicConformancePass(projectId);
-    await this.projects.refreshStageSemaphoreFromProject(projectId).catch(() => undefined);
+    await this.syncSemaphoreAfterCascade(projectId);
 
     if (stage?.id) {
       const prev =
@@ -407,11 +423,7 @@ export class DeliverablesCascadeService {
     await this.runCascadeDeterministicConformancePass(projectId);
 
     throwIfAborted();
-    await this.projects.refreshStageSemaphoreFromProject(projectId).catch((err) =>
-      this.logger.warn(
-        `[Cascade] refresh semaphore: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-    );
+    await this.syncSemaphoreAfterCascade(projectId);
 
     onProgress?.({ step: "done", completedSteps: [...completedSteps], index: total - 1, total });
     if (errors.length > 0) {
@@ -840,7 +852,7 @@ export class DeliverablesCascadeService {
     const circuitBreaker = new CascadeCircuitBreaker();
     await this.runCascadeConvergenceLoop(projectId, circuitBreaker, options?.signal);
     if (options?.signal?.aborted) throw new Error("Cancelado por el usuario");
-    await this.projects.refreshStageSemaphoreFromProject(projectId).catch(() => undefined);
+    await this.syncSemaphoreAfterCascade(projectId);
     return this.projects.findOne(projectId);
   }
 
@@ -914,7 +926,6 @@ export class DeliverablesCascadeService {
             where: { id: stage.id },
             data: { mddContent: storeMddMarkdownForPersist(repaired.markdown) },
           });
-          await this.projects.refreshStageSemaphoreFromProject(projectId).catch(() => undefined);
         }
       }
 

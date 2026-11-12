@@ -4,6 +4,39 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 
 ## [Unreleased]
 
+## [v2.0.0] — 2026-11-12
+
+Release mayor: semáforo MDD alineado (P0–P16). Ver entradas por paso en `arquitectura/semaforo-alineacion/`.
+
+### Architecture
+
+- **Semáforo MDD alineado (Paso 0):** specs de caracterización para `calculateLiveMetrics`, `evaluateCompositeSemaphore` y paridad de costo en tres vías (`estimation-semaphore.characterization.spec.ts`, `project-semaphore-composite.util.spec.ts`, `cost-parity.characterization.spec.ts`).
+- **Semáforo MDD alineado (Paso 1a):** núcleo puro en `packages/shared-types/src/semaphore/` (contratos zod, escala 85/90, completitud por fase, `normalizeMddForHash`).
+- **Semáforo MDD alineado (Paso 1b):** `evaluateMddSemaphore` y `evaluateDeliverablesGate` en el núcleo compartido.
+
+### Added
+
+- **Semáforo MDD alineado (Paso 2):** `countCostDrivers` en `@theforge/business-rules` — contador único de entidades, pantallas y endpoints (§4 anclado).
+
+### Fixed
+
+- **Semáforo MDD alineado (Paso 3):** detectores anclados a headings `## N.`, PostgreSQL ≠ POST, paridad Mermaid en todos los bloques `erDiagram`, «fallo»/verify MFA según CL-09…CL-13.
+- **Semáforo MDD alineado (Paso 4a):** trazabilidad BRD→MDD sin Spec como destino; `isHumanGap` por prefijo.
+- **Semáforo MDD alineado (Paso 4b):** blocker del delivery gate = rojo; `resolveDeliveryGateContext`.
+- **Semáforo MDD alineado (Paso 5a):** `buildSemaphoreInputsFromLoaded`, `conformance-gaps` en `engine/`; specs CL-14/CL-21.
+- **Semáforo MDD alineado (Paso 5b):** `getLiveMetricsForProject` fachada núcleo (sin `conformancePenalty` ni topes >5/>8); `estimation-semaphore.spec.ts`; gate en `draft` persistido; `test:types` en detectores.
+- **Semáforo MDD alineado (Paso 6):** streams/regeneración con `evaluateForStream`, complejidad real y `clearLiveDraft` al cancelar; spec `estimation-stream-parity`.
+- **Semáforo MDD alineado (Paso 7):** composite adaptado al veredicto; `SemaphoreService` solo degradadores Figma/Constitución; pipeline sin fallback legacy.
+- **Semáforo MDD alineado (Paso 8a/8b):** `StageSemaphoreSyncService` (CAS); GET/POST sin escritura; `persistedStale`; sync en PATCH/MDD por etapa editada; specs P8b en `estimation-semaphore.spec.ts`.
+- **Semáforo MDD alineado (Paso 9a):** sync en BRD, cascada (solo fin), merge; `refreshStageSemaphoreFromProject` con `stageId`; inventario `stage-semaphore-writers.inventory.spec.ts`.
+- **Semáforo MDD alineado (Paso 9b):** hash Auditor con `normalizeMddForHash` en `hashMddDraft`.
+- **Semáforo MDD alineado (Paso 10):** `DELIVERABLES_GATE_REQUIRE_GREEN` en `env.schema`; puerta en `ProjectDeliverableGateService` con `evaluateDeliverablesGate` y 409 `ERR_DELIVERABLES_GATE`.
+- **Semáforo MDD alineado (Paso 11):** Workshop lee `semaphore` y `deliverablesGate`; sin `effectiveStatus`.
+- **Semáforo MDD alineado (Paso 12):** Design-First por `buildSemaphoreInputs` + `designFirstPhases`; eliminada rama paralela en `EstimationService`.
+- **Semáforo MDD alineado (Paso 13):** costo unificado — panel, web (`costCalculator.ts`) y `ProjectEstimationRecalcService` vía `countCostDrivers` + `computeCostEstimation`; goldens de paridad actualizados (fixtures `good-ecommerce*` ~171k–325k MXN con buffer rojo).
+- **Semáforo MDD alineado (Paso 14):** script CLI `recalc-stage-semaphores.ts`.
+- **Semáforo MDD alineado (Paso 15):** ADR [`0007`](docs/adr/0007-nucleo-unico-semaforo-mdd.md); READMEs `estimation/`, `engine/`, `projects/`; `THEFORGE-INDEX` §4–§5; MCP `mdd-semaforo.md`.
+
 > **Paquete Design-First** — Modo `ProjectType.DESIGN_FIRST`: pantallas y flujos primero, necesidades de datos, PAG determinista, OpenAPI 3.1, MDD con §3/§4 compiladas y repo-handoff MSW. Guía operativa: [`docs/notebooklm/DESIGN-FIRST.md`](docs/notebooklm/DESIGN-FIRST.md). Planificación: `arquitectura/modo-design-first/`; fichas en `arquitectura/modo-design-first/tasks/TASKS.md`. ADR: [`0005`](docs/adr/0005-mdd-compilado-desde-pantallas.md) (MDD pinned), [`0006`](docs/adr/0006-architecture-graph-separado.md) (`architectureGraph`). Despliegue en dos releases (`DESIGN_FIRST_ENABLED`; ver guía).
 
 ### Added

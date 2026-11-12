@@ -63,12 +63,8 @@ function extractJsonKeysFromSection(text: string): Set<string> {
   return set;
 }
 
-function extractMermaidEntityAndAttrNames(md: string): { entities: Set<string>; attributes: Set<string> } {
-  const entities = new Set<string>();
-  const attributes = new Set<string>();
-  const m = md.match(/```mermaid\s*([\s\S]*?)```/i);
-  const inner = m?.[1]?.trim() ?? "";
-  if (!/erDiagram/i.test(inner)) return { entities, attributes };
+function parseErDiagramBlock(inner: string, entities: Set<string>, attributes: Set<string>): void {
+  if (!/erDiagram/i.test(inner)) return;
   const lines = inner.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
@@ -88,6 +84,15 @@ function extractMermaidEntityAndAttrNames(md: string): { entities: Set<string>; 
       }
       continue;
     }
+  }
+}
+
+/** Recorre todos los bloques ```mermaid con erDiagram (p. ej. flowchart en §2 y ER en §3). */
+function extractMermaidEntityAndAttrNames(md: string): { entities: Set<string>; attributes: Set<string> } {
+  const entities = new Set<string>();
+  const attributes = new Set<string>();
+  for (const m of md.matchAll(/```mermaid\s*([\s\S]*?)```/gi)) {
+    parseErDiagramBlock(m[1]?.trim() ?? "", entities, attributes);
   }
   return { entities, attributes };
 }
@@ -190,7 +195,10 @@ export function computeTraceabilityGaps(md: string): {
       /\bmfa_secrets\b|\btotp_secret\b|\bmfa_secret\b|\botp_secret\b|\bwebauthn_credentials?\b|\bpasskeys?\b|create\s+table\s+\w*secret/i.test(
         sqlBlock,
       );
-    const hasVerifyEndpoint = /\/verify|\/totp|\/mfa|\/webauthn|\/passkeys?|verify.*totp/i.test(apiBlock);
+    const hasVerifyEndpoint =
+      /\/(?:mfa|totp|otp|2fa)\b|\/webauthn|\/passkeys?/i.test(apiBlock) ||
+      /(?:mfa|otp|totp|2fa)[\s\S]{0,48}\/verify/i.test(apiBlock) ||
+      /\/verify[\s\S]{0,48}(?:mfa|otp|totp|2fa)/i.test(apiBlock);
     const hasTotpInSecurity =
       /\b(totp|rfc\s*6238|algoritmo\s+totp|time-based|webauthn|passkeys?|fido2|authenticator)\b/i.test(securityBlock);
     const hasAnySupport = hasSecretTables || hasVerifyEndpoint || hasTotpInSecurity;
@@ -303,11 +311,12 @@ export function computeContractGaps(md: string): MddContractGaps {
     if (!infraReflectsNode) infraStackGap = 1;
   }
 
-  if (
-    /\b(bloqueo\s+de\s+cuenta|lock\s+account|intentos\s+fallidos|failed\s+attempts|máximo\s+de\s+intentos|fallos?\b)/i.test(
+  const logicNeedsAttemptsPolicy =
+    /\b(bloqueo\s+de\s+cuenta|lock\s+account|intentos\s+fallidos|failed\s+attempts|máximo\s+de\s+intentos)\b/i.test(
       logicBlock,
-    )
-  ) {
+    ) ||
+    /(?:^|[.!?\n]\s*)[^.!?\n]*\b(intentos|reintento|bloqueo|lock)\b[^.!?\n]*/im.test(logicBlock);
+  if (logicNeedsAttemptsPolicy) {
     if (!SECURITY_ATTEMPTS_DEFINED_RE.test(securityBlock)) {
       securityEdgeCaseGap = 1;
     }

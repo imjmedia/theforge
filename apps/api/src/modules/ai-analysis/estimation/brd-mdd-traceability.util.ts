@@ -23,10 +23,11 @@ export function evaluateBrdToMddTraceability(
     return { score: 100, gaps: [], missingGaps: [], blockers: [] };
   }
 
-  const { score, gaps } = computeCrossDocumentConsistency({
+  const { score: rawScore, gaps } = computeCrossDocumentConsistency({
     brdContent: brd,
     mddContent: mdd,
   });
+  const score = rawScore ?? 100;
   const missingGaps = gaps.filter((g) => g.severity === "missing");
   const blockers = missingGaps
     .slice(0, MAX_BRD_MDD_TRACEABILITY_BLOCKERS)

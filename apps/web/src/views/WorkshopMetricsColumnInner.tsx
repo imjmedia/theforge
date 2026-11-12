@@ -189,6 +189,8 @@ export function WorkshopMetricsColumnInner({
   }, [isLegacyProject, isLegacyBaselineStage, logicFlowsS5Coverage, logicFlowsDoc]);
 
   const canGenerate = useMemo(() => {
+    const gate = liveMetrics?.semaphore?.deliverablesGate;
+    if (gate != null) return gate.allowed;
     if (isLegacyProject) {
       const hasMdd = effectiveMddTrimmed.length > 0;
       const hasCodebaseDoc = (activeLegacyState?.codebaseDoc ?? "").trim().length > 0;
@@ -201,6 +203,7 @@ export function WorkshopMetricsColumnInner({
     }
     return semaphoreGreen && hasSpec;
   }, [
+    liveMetrics?.semaphore?.deliverablesGate,
     isLegacyProject,
     complexity,
     semaphoreGreen,
@@ -380,20 +383,10 @@ export function WorkshopMetricsColumnInner({
     return deliveryGateIssue || conformanceIssues || crossDoc;
   }, [deliveryGateOk, deliveryGate, conformance, crossDocumentGaps]);
 
-  const effectiveStatus = mddEmpty
-    ? "red"
-    : deliveryGate && !deliveryGate.ok
-      ? deliveryGate.blockers.length > 0
-        ? "red"
-        : "yellow"
-      : sddAuditSummary.derivativesPending && deliveryGateOk
-        ? "yellow"
-        : liveMetrics?.status ?? resolveWorkshopSemaphoreStatus(null, projectStatus);
-  const statusDiffersByDeliveryGate =
-    deliveryGate != null &&
-    !deliveryGate.ok &&
-    liveMetrics?.status != null &&
-    effectiveStatus !== liveMetrics.status;
+  const panelSemaphoreStatus = mddEmpty
+    ? ("red" as const)
+    : resolveWorkshopSemaphoreStatus(liveMetrics, projectStatus);
+  const persistedStale = liveMetrics?.persistedStale === true;
   const precisionFormulaBreakdown = useMemo(() => {
     if (mddEmpty) return null;
     const docsScore = liveMetrics?.completeness?.overall ?? documentCompleteness?.overall;
@@ -407,7 +400,7 @@ export function WorkshopMetricsColumnInner({
     };
   }, [mddEmpty, liveMetrics, documentCompleteness, consistencyScore]);
   const semaphoreConfig =
-    effectiveStatus === "red"
+    panelSemaphoreStatus === "red"
       ? {
           icon: Lock,
           color: "text-[color-mix(in_oklch,var(--destructive)_92%,var(--foreground))]",
@@ -415,7 +408,7 @@ export function WorkshopMetricsColumnInner({
           tint: "bg-[color-mix(in_oklch,var(--destructive)_7%,var(--card))]",
           label: "Bloqueado",
         }
-      : effectiveStatus === "yellow"
+      : panelSemaphoreStatus === "yellow"
         ? {
             icon: AlertTriangle,
             color: "text-[color-mix(in_oklch,var(--warning)_92%,var(--foreground))]",
@@ -550,19 +543,21 @@ export function WorkshopMetricsColumnInner({
                       .join(" · ")}
                   </p>
                 ) : null}
-                {statusDiffersByDeliveryGate ? (
-                  <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--destructive)_82%,var(--foreground))]">
-                    Bloqueado por gate de entrega
-                  </p>
-                ) : !mddEmpty && sddAuditSummary.derivativesPending && deliveryGateOk ? (
+                {persistedStale ? (
                   <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--warning)_82%,var(--foreground))]">
-                    MDD OK; genera entregables SDD (Docs bajo porque derivados vacíos)
+                    El semáforo guardado en la etapa puede estar desactualizado respecto al borrador mostrado.
+                  </p>
+                ) : !mddEmpty &&
+                  (liveMetrics?.semaphore?.notes?.some((n) => /genera entregables/i.test(n)) ||
+                    liveMetrics?.semaphore?.derivativesState === "none") ? (
+                  <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--warning)_82%,var(--foreground))]">
+                    MDD listo; genera entregables
                   </p>
                 ) : mddEmpty ? (
                   <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--muted-foreground)_92%,var(--foreground))]">
                     Sin MDD — genera el documento para desbloquear la cascada de entregables.
                   </p>
-                ) : effectiveStatus === "red" && precisionScore < SEMAPHORE_PRECISION_RED_MAX ? (
+                ) : panelSemaphoreStatus === "red" && precisionScore < SEMAPHORE_PRECISION_RED_MAX ? (
                   <p className="text-[10px] leading-snug text-[color-mix(in_oklch,var(--destructive)_82%,var(--foreground))]">
                     Precisión &lt; {SEMAPHORE_PRECISION_RED_MAX}%
                   </p>

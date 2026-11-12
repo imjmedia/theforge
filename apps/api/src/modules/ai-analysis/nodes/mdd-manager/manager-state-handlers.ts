@@ -196,7 +196,7 @@ export async function runDeterministicManagerHandlers(
     }
     const precision =
       precisionCalculator && (state.mddDraft ?? "").trim()
-        ? precisionCalculator.calculateLiveMetrics(state.mddDraft, {
+        ? precisionCalculator.evaluateForStream(state.mddDraft, {
           auditorGaps: state.auditorGaps ?? undefined,
           complexity: state.mddComplexity,
           projectId: state.projectId,
@@ -467,7 +467,7 @@ export async function runDeterministicManagerHandlers(
   if (askingWhatNeededFor85 && state.auditorFeedback?.trim()) {
     const precision =
       precisionCalculator && (state.mddDraft ?? "").trim()
-        ? precisionCalculator.calculateLiveMetrics(state.mddDraft, {
+        ? precisionCalculator.evaluateForStream(state.mddDraft, {
           auditorGaps: state.auditorGaps ?? undefined,
           complexity: state.mddComplexity,
           projectId: state.projectId,

@@ -35,6 +35,8 @@ export type MddChatStreamEvent = {
   markdown?: string;
   precision?: number;
   status?: "red" | "yellow" | "green";
+  semaphore?: import("@theforge/shared-types").MddSemaphoreVerdict;
+  persistedStale?: boolean;
   precisionBreakdown?: PrecisionBreakdown;
   auditorFeedback?: string;
   auditTrail?: string[];
@@ -372,12 +374,42 @@ export function createMddChatEventHandler(
         const auditorFeedback = event.auditorFeedback;
         const doneGate = deliveryGateFromStreamEvent(event as { deliveryGate?: MddDeliveryGateResult });
 
-        if (precisionBreakdown || auditTrail || auditorFeedback || doneGate) {
+        const doneSemaphore = (event as MddChatStreamEvent).semaphore;
+        const donePersistedStale = (event as MddChatStreamEvent).persistedStale;
+        if (
+          precisionBreakdown ||
+          auditTrail ||
+          auditorFeedback ||
+          doneGate ||
+          doneSemaphore ||
+          event.precision != null ||
+          event.status
+        ) {
+          const prev = get().liveMetrics;
           set({
             precisionBreakdown: precisionBreakdown ?? get().precisionBreakdown,
             auditTrail: auditTrail ?? get().auditTrail,
             auditorFeedback: auditorFeedback ?? get().auditorFeedback,
             ...(doneGate ? { deliveryGate: doneGate } : {}),
+            liveMetrics: {
+              ...(prev ?? {
+                precision: event.precision ?? 0,
+                totalMXN: 0,
+                totalMXNMarket: 0,
+                totalHours: 0,
+                roles: {},
+                rolesHours: {},
+                status: event.status ?? "yellow",
+                totalMXNIA: 0,
+                readinessHints: [],
+                mddReadinessHints: [],
+                traceabilityHints: [],
+              }),
+              ...(event.precision != null ? { precision: event.precision } : {}),
+              ...(event.status ? { status: event.status } : {}),
+              ...(doneSemaphore ? { semaphore: doneSemaphore } : {}),
+              ...(donePersistedStale != null ? { persistedStale: donePersistedStale } : {}),
+            },
           });
         }
 

@@ -6,6 +6,7 @@ import type {
   DesignFirstPhaseGates,
   DesignSpec,
   MddDeliveryGateResult,
+  MddSemaphoreVerdict,
   ProjectType,
 } from "@theforge/shared-types";
 import type { DesignProposalResponse } from "@/lib/design-first-api";
@@ -31,6 +32,10 @@ export interface Estimation {
 
 /** Métricas en vivo del EstimationService (Semáforo + nómina interna y precio mercado). */
 export interface LiveMetricsResult {
+  /** Veredicto único del núcleo compartido (API alineado). */
+  semaphore?: MddSemaphoreVerdict;
+  /** Hash persistido desactualizado respecto al borrador mostrado. */
+  persistedStale?: boolean;
   precision: number;
   totalMXN: number;
   totalMXNMarket: number;

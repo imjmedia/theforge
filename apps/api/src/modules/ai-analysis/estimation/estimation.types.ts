@@ -6,6 +6,7 @@ import {
   READINESS_CONSISTENCY_GREEN_MIN,
   READINESS_CROSS_GAP_GREEN_TOLERANCE,
   type MddDeliveryGateResult,
+  type MddSemaphoreVerdict,
 } from "@theforge/shared-types";
 export interface MDDReference {
   /** Modelo de datos / entidades */
@@ -49,6 +50,16 @@ export interface AuditorGaps {
 
 /** Contrato mínimo para que el Manager muestre la misma precisión que el semáforo. */
 export interface LivePrecisionCalculator {
+  evaluateForStream(
+    ctx: MDDContext,
+    options?: {
+      auditorGaps?: AuditorGaps;
+      complexity?: EstimationComplexity;
+      projectId?: string;
+      stageId?: string | null;
+      documents?: PlanningDocumentFields;
+    },
+  ): LiveMetricsResult;
   calculateLiveMetrics(
     ctx: MDDContext,
     options?: {
@@ -102,10 +113,15 @@ export interface PrecisionBreakdown {
 
 /** Salida exacta para la UI: Semáforo + Estimación (nómina interna y precio mercado). */
 export interface LiveMetricsResult {
+  /** Veredicto único del núcleo (semáforo alineado). */
+  semaphore: MddSemaphoreVerdict;
+  /** True cuando Stage.semaphoreSync.inputsHash no coincide con el cálculo actual (sin escribir). */
+  persistedStale?: boolean;
   /**
    * Métrica integral (completitud + consistencia + calidad MDD). Titular del panel cuando
    * `mddQualitySource !== "auditor"`; con Auditor vigente el titular es `auditorScore` e `precision` pasa a secundaria.
    * Con el atajo sin documentos auxiliares (sólo MDD) equivale a la nota MDD.
+   * @deprecated usar `semaphore.integral ?? semaphore.headline`
    */
   precision: number;
   /** Nómina interna ponderada (Σ horas rol × tarifa rol × riskFactor). */
@@ -120,6 +136,7 @@ export interface LiveMetricsResult {
   /**
    * Semáforo/titular. Con `mddQualitySource === "auditor"` se deriva de `auditorScore` (limitado por trazabilidad BRD→MDD,
    * delivery gate y conformance); si no, de la métrica integral.
+   * @deprecated usar `semaphore.status`
    */
   status: SemaphoreStatusLive;
   /** Costo estimado de generación con IA (USD → MXN ~ $20/USD). */
@@ -137,15 +154,18 @@ export interface LiveMetricsResult {
   /** Calidad MDD usada en la fórmula integral (45% del total). */
   mddQualityScore?: number;
   /** Nota del Auditor LLM (0–100) cuando sus gaps describen el contenido evaluado; titular del panel. */
+  /** @deprecated usar `semaphore.headline` cuando `headlineSource === 'auditor'` */
   auditorScore?: number;
   /**
    * Origen de `mddQualityScore`: "auditor" (gaps del Auditor LLM vigentes para este contenido) o
    * "regex" (heurística determinista; el Auditor no evaluó este contenido exacto).
+   * @deprecated usar `semaphore.headlineSource`
    */
   mddQualitySource?: "auditor" | "regex";
   /** Gaps estructurados BRD→MDD. */
   crossDocumentGaps?: CrossDocumentGap[];
   /** Gate bloqueante de entrega MDD (≥9/10); si ok=false, el semáforo no puede ser verde. */
+  /** @deprecated detalle en `semaphore.reasons`; gate persistido aparte */
   deliveryGate?: MddDeliveryGateResult;
   /** Conformidad heurística MDD ↔ cascada (API, Infra, Blueprint, Flujos). */
   conformanceSummary?: import("../../engine/mdd-quality-audit.util.js").ConformanceSummary;

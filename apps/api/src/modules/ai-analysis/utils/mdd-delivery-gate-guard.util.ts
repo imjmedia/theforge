@@ -8,6 +8,15 @@ import { validateMddForDelivery } from "./mdd-delivery-gate.util.js";
 import type { MddComplexityLevel } from "../state/mdd-state.schema.js";
 
 export const MDD_DELIVERY_GATE_ERR = "ERR_MDD_DELIVERY_GATE";
+export const DELIVERABLES_GATE_ERR = "ERR_DELIVERABLES_GATE";
+
+export type DeliverablesGateConflictDetail = {
+  allowed: boolean;
+  rule: import("@theforge/shared-types").DeliverablesGateRule;
+  reasons: string[];
+  semaphoreStatus: import("@theforge/shared-types").SemaphoreStatus;
+  hasSpec: boolean;
+};
 
 /**
  * Evalúa el gate tras el pipeline determinista de prepareMddForOutput (fixes seguros en mdd-sanitize).
@@ -35,9 +44,10 @@ export async function evaluateMddDeliveryGatePrepared(
 }
 
 export type MddDeliveryGateHttpErrorBody = {
-  code: typeof MDD_DELIVERY_GATE_ERR;
+  code: typeof MDD_DELIVERY_GATE_ERR | typeof DELIVERABLES_GATE_ERR;
   message: string;
   deliveryGate: MddDeliveryGateResult;
+  gate?: DeliverablesGateConflictDetail;
 };
 
 export type MddContentPersistMeta = {
@@ -58,11 +68,25 @@ export type MddPatchPipelineErrorBody = {
 export function buildMddDeliveryGateConflictBody(
   gate: MddDeliveryGateResult,
   fallbackMessage = "El MDD no aprueba el gate de entrega (≥90/100).",
+  options?: {
+    deliverablesGate?: DeliverablesGateConflictDetail;
+    code?: typeof MDD_DELIVERY_GATE_ERR | typeof DELIVERABLES_GATE_ERR;
+  },
 ): MddDeliveryGateHttpErrorBody {
+  const blockers = gate.blockers.join("; ");
+  const dg = options?.deliverablesGate;
+  const code =
+    options?.code ??
+    (dg && !blockers && dg.reasons.length > 0 ? DELIVERABLES_GATE_ERR : MDD_DELIVERY_GATE_ERR);
+  const message =
+    code === DELIVERABLES_GATE_ERR && dg
+      ? dg.reasons.join("; ") || fallbackMessage
+      : blockers || fallbackMessage;
   return {
-    code: MDD_DELIVERY_GATE_ERR,
-    message: gate.blockers.join("; ") || fallbackMessage,
+    code,
+    message,
     deliveryGate: gate,
+    ...(dg ? { gate: dg } : {}),
   };
 }
 

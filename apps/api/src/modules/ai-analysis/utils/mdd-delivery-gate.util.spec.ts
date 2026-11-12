@@ -418,9 +418,9 @@ describe("applyDeliveryGateToSemaphoreStatus", () => {
     assert.equal(applyDeliveryGateToSemaphoreStatus("green", gate), "red");
   });
 
-  it("degrada a amarillo con warnings sin blockers", () => {
-    const gate = { ok: false, score: 85, blockers: [] as string[], warnings: ["Advertencia menor"] };
-    assert.equal(applyDeliveryGateToSemaphoreStatus("green", gate), "yellow");
+  it("sin blockers no degrada el semáforo (warnings informativos)", () => {
+    const gate = { ok: true, score: 85, blockers: [] as string[], warnings: ["Advertencia menor"] };
+    assert.equal(applyDeliveryGateToSemaphoreStatus("green", gate), "green");
   });
 });
 

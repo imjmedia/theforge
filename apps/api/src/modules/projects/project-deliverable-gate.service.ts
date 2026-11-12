@@ -1,17 +1,20 @@
-import { ConflictException, Inject, Injectable, forwardRef } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, Logger, forwardRef } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { ComplexityLevel, type Project, type Stage } from "@theforge/database";
 import type { Estimation } from "@theforge/database";
-import type { MddDeliveryGateResult } from "@theforge/shared-types";
+import type { MddDeliveryGateResult, MddSemaphoreVerdict, SemaphoreStatus } from "@theforge/shared-types";
 import {
   buildMddDeliveryGateConflictBody,
+  DELIVERABLES_GATE_ERR,
   evaluateMddDeliveryGatePrepared,
+  type DeliverablesGateConflictDetail,
 } from "../ai-analysis/utils/mdd-delivery-gate-guard.util.js";
-import { EstimationService } from "../ai-analysis/estimation/estimation.service.js";
-import { liveSemaphoreToDbStatus } from "../ai-analysis/estimation/live-semaphore-status.util.js";
+import { buildSemaphoreInputs } from "../ai-analysis/estimation/semaphore-inputs.factory.js";
+import { ConformanceService } from "../engine/conformance.service.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
 import { loadAccessibleProjectWithStages } from "./project-access.util.js";
 import { pickMddFromStages } from "./constitution-markdown.util.js";
-import { ProjectEstimationRecalcService } from "./project-estimation-recalc.service.js";
+import { StageSemaphoreSyncService } from "./stage-semaphore-sync.service.js";
 import { ProjectMddPersistService } from "./project-mdd-persist.service.js";
 import { syncDomainInventoryForStage as persistDomainInventoryForStage } from "./sync-domain-inventory-stage.util.js";
 import { pickPrimaryStage } from "./stage-helpers.js";
@@ -24,44 +27,31 @@ type StageWithEst = Stage & { estimation: Estimation | null };
 
 @Injectable()
 export class ProjectDeliverableGateService {
+  private readonly logger = new Logger(ProjectDeliverableGateService.name);
+
   constructor(
     private readonly prisma: PrismaService,
-    private readonly estimation: EstimationService,
-    private readonly estimationRecalc: ProjectEstimationRecalcService,
+    private readonly conformance: ConformanceService,
+    private readonly config: ConfigService,
+    private readonly stageSemaphoreSync: StageSemaphoreSyncService,
     @Inject(forwardRef(() => ProjectMddPersistService))
     private readonly mddPersist: ProjectMddPersistService,
   ) {}
 
   /**
-   * Recalcula semáforo de la etapa principal con la métrica integral (misma que Workshop)
-   * cuando cambian entregables/complejidad sin tocar el MDD.
+   * @deprecated Usar `StageSemaphoreSyncService.syncFromPersisted` con la etapa editada.
    */
   async refreshStageSemaphoreFromProject(projectId: string): Promise<void> {
     const project = await this.prisma.project.findFirst({
       where: { id: projectId },
-      include: { stages: { orderBy: { ordinal: "asc" }, include: { estimation: true } } },
+      include: { stages: { orderBy: { ordinal: "asc" } } },
     });
     if (!project) return;
     const targetStage = pickPrimaryStage(project.stages);
     if (!targetStage) return;
-
-    // Fuente única con el panel Semáforo: EstimationService (docs + BRD→MDD + calidad MDD / nota del Auditor).
-    // getLiveMetricsForProject es el único escritor de Stage.status (sync interno); aquí sólo se reutiliza el status.
-    const metrics = await this.estimation.getLiveMetricsForProject(
-      projectId,
-      undefined,
-      targetStage.id,
-    );
-    const status = liveSemaphoreToDbStatus(metrics.status);
-
-    const mddForRecalc = targetStage.mddContent ?? null;
-    if (mddForRecalc != null) {
-      await this.estimationRecalc.recalcAndUpsert(targetStage.id, {
-        mddContent: mddForRecalc,
-        infraContent: project.infraContent ?? null,
-        status,
-      });
-    }
+    await this.stageSemaphoreSync.syncFromPersisted(projectId, targetStage.id, {
+      reason: "refreshStageSemaphoreFromProject",
+    });
   }
 
   /** Bloquea generación de entregables si el MDD no aprueba el gate (409 + ERR_MDD_DELIVERY_GATE). */
@@ -85,6 +75,20 @@ export class ProjectDeliverableGateService {
     await this.assertDeliverablesMddGate(project);
   }
 
+  private deliverablesGateDetail(
+    verdict: MddSemaphoreVerdict,
+    hasSpec: boolean,
+  ): DeliverablesGateConflictDetail {
+    const dg = verdict.deliverablesGate;
+    return {
+      allowed: dg.allowed,
+      rule: dg.rule,
+      reasons: dg.reasons,
+      semaphoreStatus: verdict.status as SemaphoreStatus,
+      hasSpec,
+    };
+  }
+
   private async assertDeliverablesMddGate(
     project: Project & { stages: StageWithEst[] },
     acknowledgeGaps = false,
@@ -92,6 +96,7 @@ export class ProjectDeliverableGateService {
     const stage = pickPrimaryStage(project.stages);
     const mdd = pickMddFromStages(project.stages).trim();
     const cx = project.complexity ?? ComplexityLevel.HIGH;
+    const requireGreen = this.config.get<boolean>("DELIVERABLES_GATE_REQUIRE_GREEN", false);
 
     if (!mdd) {
       if (cx !== ComplexityLevel.HIGH) return;
@@ -112,18 +117,66 @@ export class ProjectDeliverableGateService {
       return;
     }
 
-    const gate = await evaluateMddDeliveryGatePrepared(mdd, {
+    const legacyGate = await evaluateMddDeliveryGatePrepared(mdd, {
       brdMarkdown: stage?.brdContent,
       dbgaMarkdown: project.dbgaContent,
-      // Mismo perfil de umbrales que el panel (EstimationService) y el pipeline de persistencia.
       mddComplexity: cx,
     });
+
+    let verdict: MddSemaphoreVerdict | null = null;
+    let hasSpec = (project.specContent ?? "").trim().length >= 80;
     if (stage?.id) {
-      void this.mddPersist.persistMddDeliveryGateSnapshot(stage.id, gate);
+      const built = await buildSemaphoreInputs(this.prisma, this.conformance, {
+        projectId: project.id,
+        stageId: stage.id,
+        content: mdd,
+        source: "persisted",
+      });
+      verdict = built.verdict;
+      hasSpec = (built.deliverableSource.specContent ?? project.specContent ?? "").trim().length >= 80;
+      void this.mddPersist.persistMddDeliveryGateSnapshot(stage.id, legacyGate);
       void persistDomainInventoryForStage(this.prisma, project, stage.id);
     }
-    if (!gate.ok && !acknowledgeGaps) {
-      throw new ConflictException(buildMddDeliveryGateConflictBody(gate));
+
+    const dg = verdict?.deliverablesGate;
+    const gateDetail = verdict ? this.deliverablesGateDetail(verdict, hasSpec) : undefined;
+    const mddBlocked = !legacyGate.ok;
+    const skipMissingSpecWithAck =
+      dg?.reasons.some((r) => /falta Spec/i.test(r)) === true;
+
+    const canAcknowledgeMdd = acknowledgeGaps && mddBlocked;
+    const canAcknowledgeDeliverables =
+      acknowledgeGaps &&
+      requireGreen &&
+      dg != null &&
+      !dg.allowed &&
+      !skipMissingSpecWithAck &&
+      dg.reasons.every((r) => !/falta Spec/i.test(r));
+
+    if (canAcknowledgeMdd || canAcknowledgeDeliverables) {
+      this.logger.log(
+        `[Semaphore] gate-skip projectId=${project.id} acknowledgeGaps mddBlockers=${mddBlocked} rule=${dg?.rule ?? "mdd"}`,
+      );
+      return;
+    }
+
+    if (mddBlocked) {
+      this.logger.warn(
+        `[Semaphore] gate-block rule=mdd_delivery projectId=${project.id} reasons=${legacyGate.blockers.length}`,
+      );
+      throw new ConflictException(buildMddDeliveryGateConflictBody(legacyGate));
+    }
+
+    if (requireGreen && dg != null && !dg.allowed) {
+      this.logger.warn(
+        `[Semaphore] gate-block rule=${dg.rule} projectId=${project.id} reasons=${dg.reasons.join("|")}`,
+      );
+      throw new ConflictException(
+        buildMddDeliveryGateConflictBody(legacyGate, dg.reasons.join("; "), {
+          deliverablesGate: gateDetail,
+          code: DELIVERABLES_GATE_ERR,
+        }),
+      );
     }
   }
 }

@@ -225,6 +225,8 @@ export class AiAnalysisController {
         : snapshot?.precisionBreakdown;
     return {
       ...metrics,
+      semaphore: metrics.semaphore,
+      persistedStale: metrics.persistedStale,
       precisionBreakdown,
       auditTrail: snapshot?.auditTrail,
       mddAgentEditLog: snapshot?.mddAgentEditLog,
@@ -252,6 +254,8 @@ export class AiAnalysisController {
         : snapshot?.precisionBreakdown;
     return {
       ...metrics,
+      semaphore: metrics.semaphore,
+      persistedStale: metrics.persistedStale,
       precisionBreakdown,
       auditTrail: snapshot?.auditTrail,
       mddAgentEditLog: snapshot?.mddAgentEditLog,

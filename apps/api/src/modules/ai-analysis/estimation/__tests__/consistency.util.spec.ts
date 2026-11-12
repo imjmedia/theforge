@@ -60,25 +60,48 @@ describe("computeCrossDocumentConsistency", () => {
 
   it("usa Spec como fuente de trazabilidad cuando no hay BRD (greenfield)", () => {
     const docs = {
-      specContent: `## Capacidades
+      specContent: `## 3. Capacidades Funcionales del Producto
 ### Gestión de inquilinos multi-empresa
-- Aislar datos por tenant con RLS en PostgreSQL
+- **Aislar datos por tenant** con RLS en PostgreSQL
 `,
-      mddContent: `## 1. Contexto
-Plataforma multi-inquilino con aislamiento RLS por tenant.
+      mddContent: `## 1. Contexto y alcance
+Plataforma multi-empresa: **aislar datos por tenant** con políticas RLS en PostgreSQL.
 
 ## 4. Contratos de API
-GET /api/v1/tenants
+GET /api/v1/tenants — listar inquilinos
 
-## 5. Lógica
-RLS por tenant_id en todas las tablas de negocio.
+## 5. Lógica y Edge Cases
+RLS por tenant_id en todas las tablas de negocio; ningún query sin contexto de tenant.
 `,
     };
     const r = computeCrossDocumentConsistency(docs);
-    assert.ok(r.score >= 40);
+    assert.ok(r.score !== null && r.score >= 50);
     if (r.gaps.length > 0) {
       assert.equal(r.gaps[0]?.from, "Spec");
     }
+  });
+
+  it("RF-10: ítem BRD presente solo en Spec cuenta como gap (Spec no es destino)", () => {
+    const docs = {
+      brdContent: `## 3. Capacidades Funcionales del Producto
+### Cotización multi-moneda
+- **Facturación multi-moneda** con tipos de cambio diarios`,
+      specContent: `## Spec
+La facturación multi-moneda se documenta aquí para el equipo de producto.`,
+      mddContent: `## 1. Contexto
+Moneda única MXN.
+
+## 4. Contratos de API
+GET /api/health
+
+## 5. Lógica
+Healthcheck.
+`,
+    };
+    const r = computeCrossDocumentConsistency(docs);
+    const gap = r.gaps.find((g) => /multi-moneda|facturación/i.test(g.concept));
+    assert.ok(gap, JSON.stringify(r.gaps));
+    assert.equal(gap!.to, "MDD");
   });
 
   it("detecta cobertura BRD→MDD en §1/§4/§5", () => {
@@ -100,7 +123,7 @@ Si margen < umbral, bloquear hasta autorización de gerencia.
     const r = computeCrossDocumentConsistency(docs);
     assert.ok(r.score >= 50);
     assert.ok(r.gaps.every((g) => g.from === "BRD"));
-    assert.ok(r.gaps.every((g) => g.to === "MDD" || g.to === "Spec"));
+    assert.ok(r.gaps.every((g) => g.to === "MDD"));
   });
 
   it("marca gap con hint explícito cuando el MDD no refleja la capacidad", () => {
