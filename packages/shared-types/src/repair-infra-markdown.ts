@@ -2,11 +2,13 @@
  * Reparaciones para documentos de Infra (Dockerfile, compose, .env) mal formateados por LLM.
  */
 
+// Sensible a mayúsculas a propósito: la prosa en español ("Healthcheck de Docker…", "Copy…", "User…")
+// no debe confundirse con instrucciones de Dockerfile ni abrir un fence ```dockerfile sin cierre.
 const DOCKER_INSTR =
-  /^(FROM|WORKDIR|RUN|COPY|CMD|EXPOSE|USER|ENV|ARG|ADD|VOLUME|ENTRYPOINT|STOPSIGNAL|HEALTHCHECK|SHELL|ONBUILD|MAINTAINER)(\s|$)/i;
+  /^(FROM|WORKDIR|RUN|COPY|CMD|EXPOSE|USER|ENV|ARG|ADD|VOLUME|ENTRYPOINT|STOPSIGNAL|HEALTHCHECK|SHELL|ONBUILD|MAINTAINER)(\s|$)/;
 
 function isDockerfileLabelInstruction(trimmed: string): boolean {
-  return /^LABEL\s+\S/i.test(trimmed);
+  return /^LABEL\s+\S/.test(trimmed);
 }
 
 const COMPOSE_SERVICES = new Set([
