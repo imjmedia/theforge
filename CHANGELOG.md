@@ -4,6 +4,10 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 
 ## [Unreleased]
 
+### Fixed
+
+- **Clarificaciones (MDD y demás docs):** `resolveClarifications` y `clarifyDocument` llamaban al LLM sin tope de salida y caían al perfil `chat` (16K tokens); un MDD largo se truncaba y el guardia de persistencia respondía «El resultado borraría la mayor parte del MDD actual». Ahora usan el perfil `document` (65K).
+
 ## [v2.0.0] — 2026-11-12
 
 Release mayor: semáforo MDD alineado (P0–P16). Ver entradas por paso en `arquitectura/semaforo-alineacion/`.
