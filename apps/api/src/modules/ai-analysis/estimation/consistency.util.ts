@@ -347,7 +347,7 @@ function buildGapHint(
  */
 export function computeCrossDocumentConsistency(
   docs: PlanningDocumentFields,
-): { score: number; gaps: CrossDocumentGap[] } {
+): { score: number | null; gaps: CrossDocumentGap[] } {
   const brd = docs.brdContent?.trim() ?? "";
   const mdd = docs.mddContent?.trim() ?? "";
   const spec = docs.specContent?.trim() ?? "";
@@ -359,17 +359,12 @@ export function computeCrossDocumentConsistency(
 
   const items = extractBrdTraceabilityItems(traceSource);
   if (items.length === 0) {
-    return { score: brd ? 50 : 70, gaps: [] };
+    return { score: brd ? 50 : null, gaps: [] };
   }
 
   const targets: Array<{ name: string; content: string }> = [];
   if (mdd) {
     targets.push({ name: "MDD", content: extractMddTraceabilityCorpus(mdd) });
-  }
-  if (spec && brd) {
-    targets.push({ name: "Spec", content: spec });
-  } else if (spec && !brd) {
-    // Greenfield sin BRD: Spec ya actuó como fuente de trazabilidad
   }
 
   if (targets.length === 0) {

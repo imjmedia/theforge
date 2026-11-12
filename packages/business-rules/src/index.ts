@@ -35,3 +35,4 @@ export {
   HIGH_MDD_IA_REFERENCE,
 } from "./mdd-ia-cost-reference.js";
 export type { Status, TeamStructure } from "@theforge/shared-types";
+export { countCostDrivers, type CostDriverCounts } from "./cost-drivers.js";

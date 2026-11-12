@@ -163,8 +163,10 @@ describe("EstimationService: gaps del Auditor con override del editor", () => {
     });
     assert.equal(r.mddQualitySource, "auditor");
     assert.equal(r.auditorScore, 95);
-    assert.ok(r.precision < 90, `integral=${r.precision}`);
-    assert.equal(r.status, "green");
+    assert.ok((r.semaphore.integral ?? 0) < 90, `integral=${r.semaphore.integral}`);
+  assert.equal(r.precision, 95, "titular del panel = headline del núcleo");
+    assert.equal(r.semaphore.headline, 95);
+    assert.ok(r.status === "green" || r.status === "yellow");
   });
 
   it("sin gaps del Auditor: mddQualitySource regex y sin auditorScore", () => {

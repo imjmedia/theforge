@@ -81,10 +81,11 @@ function makeService(updateManyCount: number, stageExists = true) {
       };
     },
   };
-  let semaphoreRefreshes = 0;
-  const deliverableGate = {
-    refreshStageSemaphoreFromProject: async () => {
-      semaphoreRefreshes += 1;
+  let semaphoreSyncs = 0;
+  const stageSemaphoreSync = {
+    syncFromPersisted: async () => {
+      semaphoreSyncs += 1;
+      return { status: "yellow" as const, precisionScore: 0, changed: true };
     },
   };
   let estimationRecalcs = 0;
@@ -101,7 +102,7 @@ function makeService(updateManyCount: number, stageExists = true) {
     changeLog as never,
     mddUpdatePipeline as never,
     estimationRecalc as never,
-    deliverableGate as never,
+    stageSemaphoreSync as never,
     mermaidRuntime as never,
   );
   return {
@@ -110,7 +111,7 @@ function makeService(updateManyCount: number, stageExists = true) {
     updateCalls,
     changeLogCalls,
     pipelineCalls,
-    semaphoreRefreshes: () => semaphoreRefreshes,
+    semaphoreSyncs: () => semaphoreSyncs,
     estimationRecalcs: () => estimationRecalcs,
   };
 }
@@ -162,7 +163,7 @@ describe("ProjectMddPersistService.persistMddFromBackgroundJob con fence", () =>
     assert.equal(h.updateManyCalls.length, 1);
     assert.equal(h.updateCalls.length, 0, "no debe haber stage.update (ni snapshot)");
     assert.equal(h.changeLogCalls.length, 0);
-    assert.equal(h.semaphoreRefreshes(), 0);
+    assert.equal(h.semaphoreSyncs(), 0);
     assert.equal(h.estimationRecalcs(), 0);
   });
 
@@ -180,7 +181,7 @@ describe("ProjectMddPersistService.persistMddFromBackgroundJob con fence", () =>
     assert.deepEqual(h.updateManyCalls[1].where, EXPECTED_WHERE);
     assert.ok("mddContent" in h.updateManyCalls[0].data);
     assert.equal(h.changeLogCalls.length, 1);
-    assert.equal(h.semaphoreRefreshes(), 1);
+    assert.equal(h.semaphoreSyncs(), 1);
     assert.equal(h.estimationRecalcs(), 1);
   });
 

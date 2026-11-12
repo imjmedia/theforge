@@ -40,8 +40,11 @@ export type CompositeReadinessResult = {
 export const READINESS_CONSISTENCY_GREEN_MIN = 90;
 export const READINESS_CROSS_GAP_GREEN_TOLERANCE = 5;
 export const READINESS_HUMAN_GAP_GREEN_TOLERANCE = 3;
+/** @deprecated Sustituido por el núcleo del semáforo (escala 85/90, paso 7). */
 export const READINESS_CROSS_GAP_AMARILLO_CAP = 82;
+/** @deprecated Sustituido por el núcleo del semáforo (escala 85/90, paso 7). */
 export const READINESS_HUMAN_GAP_AMARILLO_CAP = 78;
+/** @deprecated Sustituido por el núcleo del semáforo (escala 85/90, paso 7). */
 export const READINESS_CONSISTENCY_AMARILLO_CAP = 85;
 export const UNIFIED_AUDIT_GAP_LIMIT = 100;
 
@@ -90,9 +93,17 @@ function extractGapPrefix(message: string): string {
   return m?.[0] ?? message.slice(0, 40);
 }
 
-function isHumanGap(message: string): boolean {
-  const lower = message.toLowerCase();
-  return HUMAN_PREFIXES.some((p) => lower.includes(p.toLowerCase()));
+/** Gap humano solo si el prefijo reconocido está al inicio del mensaje (RF-19). */
+export function isHumanGap(message: string): boolean {
+  const trimmed = message.trim();
+  for (const p of HUMAN_PREFIXES) {
+    if (p.startsWith("[")) {
+      if (trimmed.startsWith(p)) return true;
+      continue;
+    }
+    if (trimmed.toLowerCase().startsWith(p.toLowerCase())) return true;
+  }
+  return false;
 }
 
 function isAutoGap(message: string): boolean {

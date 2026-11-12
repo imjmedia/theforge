@@ -35,7 +35,7 @@ import { loadAccessibleProjectWithStages } from "./project-access.util.js";
 import { mergeProjectFieldsForSemaphore } from "./project-mdd-persist.util.js";
 import { ProjectMddPersistService } from "./project-mdd-persist.service.js";
 import { ProjectEstimationRecalcService } from "./project-estimation-recalc.service.js";
-import { ProjectDeliverableGateService } from "./project-deliverable-gate.service.js";
+import { StageSemaphoreSyncService } from "./stage-semaphore-sync.service.js";
 import { pickPrimaryStage } from "./stage-helpers.js";
 import { persistStageAndProjectDeliverables } from "./stage-deliverable-persist.util.js";
 import { ProjectsService } from "./projects.service.js";
@@ -55,7 +55,7 @@ export class ProjectUpdateService {
     private readonly pluginPipeline: PluginDocumentPipelineService,
     private readonly mddPersist: ProjectMddPersistService,
     private readonly estimationRecalc: ProjectEstimationRecalcService,
-    private readonly deliverableGate: ProjectDeliverableGateService,
+    private readonly stageSemaphoreSync: StageSemaphoreSyncService,
     @Inject(forwardRef(() => ProjectsService))
     private readonly projects: ProjectsService,
   ) {}
@@ -351,7 +351,7 @@ export class ProjectUpdateService {
         cpInput !== undefined ||
         clearComplexityPending === true);
     if (shouldRefreshSemaphoreWithoutMdd) {
-      await this.deliverableGate.refreshStageSemaphoreFromProject(id);
+      await this.stageSemaphoreSync.syncFromPersisted(id, targetStage.id, { reason: "project-patch" });
     }
 
     const project = await this.projects.findOne(id);
@@ -413,7 +413,9 @@ export class ProjectUpdateService {
     }
     await this.changeLog.log(projectId, "tasksContent", null);
 
-    await this.deliverableGate.refreshStageSemaphoreFromProject(projectId);
+    await this.stageSemaphoreSync.syncFromPersisted(projectId, targetStage.id, {
+      reason: "clear-mdd-dependent-deliverables",
+    });
     return this.projects.findOne(projectId);
   }
 }

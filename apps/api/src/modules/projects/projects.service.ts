@@ -21,6 +21,7 @@ import { ProjectStageService } from "./project-stage.service.js";
 import { ProjectUxGuideService } from "./project-ux-guide.service.js";
 import { ProjectDeliverableGeneratorsService } from "./project-deliverable-generators.service.js";
 import { ProjectDeliverableGateService } from "./project-deliverable-gate.service.js";
+import { StageSemaphoreSyncService } from "./stage-semaphore-sync.service.js";
 import { ProjectConformanceService } from "./project-conformance.service.js";
 import { ProjectBrdService } from "./project-brd.service.js";
 import { ProjectUpdateService } from "./project-update.service.js";
@@ -44,6 +45,7 @@ export class ProjectsService implements IOrchestratorProjectsPort {
     @Inject(forwardRef(() => ProjectDeliverableGeneratorsService))
     private readonly deliverableGenerators: ProjectDeliverableGeneratorsService,
     private readonly deliverableGate: ProjectDeliverableGateService,
+    private readonly stageSemaphoreSync: StageSemaphoreSyncService,
     private readonly projectConformance: ProjectConformanceService,
     private readonly projectBrd: ProjectBrdService,
     @Inject(forwardRef(() => ProjectUpdateService))
@@ -249,8 +251,16 @@ export class ProjectsService implements IOrchestratorProjectsPort {
     return this.uxGuide.repairUxUiGuideYaml(projectId);
   }
 
-  async refreshStageSemaphoreFromProject(projectId: string): Promise<void> {
-    return this.deliverableGate.refreshStageSemaphoreFromProject(projectId);
+  async refreshStageSemaphoreFromProject(projectId: string, stageId?: string): Promise<void> {
+    const sid =
+      stageId?.trim() ||
+      pickPrimaryStage(
+        (await loadAccessibleProjectWithStages(this.prisma, projectId)).stages ?? [],
+      )?.id;
+    if (!sid) return;
+    await this.stageSemaphoreSync.syncFromPersisted(projectId, sid, {
+      reason: "refreshStageSemaphoreFromProject",
+    });
   }
 
   async assertDeliverablesAllowed(

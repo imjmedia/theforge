@@ -1,8 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import { Status } from "@theforge/database";
+import { countCostDrivers } from "@theforge/business-rules";
 import { PrismaService } from "../../prisma/prisma.service.js";
 import { CostCalculatorService, parseInfraFixedHours } from "../engine/cost-calculator.service.js";
-import { normalizeMddContent, extractTechnicalMetadataTags } from "../engine/mdd-markdown-parser.js";
+import { extractTechnicalMetadataTags } from "../engine/mdd-markdown-parser.js";
 
 /**
  * Responsabilidad única: recalcular estimación (horas, MXN, team structure) a partir
@@ -33,16 +34,13 @@ export class ProjectEstimationRecalcService {
     const { mddContent, infraContent, status, consolidatedTaskCount } = params;
     if (mddContent == null) return;
 
-    const normalized = normalizeMddContent(mddContent);
-    let entityCount = normalized.db_entities?.length ?? 0;
-    let screenCount = normalized.screens?.length ?? 0;
+    let { entityCount, screenCount, extraEndpointCount } = countCostDrivers(mddContent);
     if (consolidatedTaskCount != null && consolidatedTaskCount > 0) {
       const floorFromTasks = Math.ceil(consolidatedTaskCount / 4);
       entityCount = Math.max(entityCount, floorFromTasks);
       const frontendFloor = Math.ceil(consolidatedTaskCount / 8);
       screenCount = Math.max(screenCount, frontendFloor);
     }
-    const extraEndpointCount = normalized.extra_endpoints ?? 0;
     const metadataTags = extractTechnicalMetadataTags(mddContent);
     const infraFixedHours = parseInfraFixedHours(infraContent);
 

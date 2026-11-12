@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, Logger, NotFoundException, forwardRef } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Prisma, type Status } from "@theforge/database";
 import type { MddDeliveryGateResult } from "@theforge/shared-types";
 import { computeMddCascadeDelta } from "@theforge/shared-types";
@@ -32,7 +32,7 @@ import {
   type SemaphoreProjectFields,
 } from "./project-mdd-persist.util.js";
 import { ProjectEstimationRecalcService } from "./project-estimation-recalc.service.js";
-import { ProjectDeliverableGateService } from "./project-deliverable-gate.service.js";
+import { StageSemaphoreSyncService } from "./stage-semaphore-sync.service.js";
 import { applyDeterministicMddRepairs } from "./mdd-deterministic-repair.util.js";
 import { resolveDomainInventory } from "../engine/domain-inventory-persist.util.js";
 import type { DomainInventory } from "@theforge/shared-types";
@@ -96,8 +96,7 @@ export class ProjectMddPersistService {
     private readonly changeLog: ChangeLogService,
     private readonly mddUpdatePipeline: MddUpdatePipelineService,
     private readonly estimationRecalc: ProjectEstimationRecalcService,
-    @Inject(forwardRef(() => ProjectDeliverableGateService))
-    private readonly deliverableGate: ProjectDeliverableGateService,
+    private readonly stageSemaphoreSync: StageSemaphoreSyncService,
     private readonly mermaidRuntime: MermaidRuntimeService,
   ) {}
 
@@ -326,7 +325,10 @@ export class ProjectMddPersistService {
       await evaluateMddDeliveryGatePrepared(finalMdd),
       fence,
     );
-    await this.deliverableGate.refreshStageSemaphoreFromProject(projectId);
+    await this.stageSemaphoreSync.syncFromPersisted(projectId, targetStage.id, {
+      reason: "mdd-persist-stream",
+      content: finalMdd,
+    });
     const refreshed = await this.prisma.stage.findUnique({
       where: { id: targetStage.id },
       select: { status: true, precisionScore: true },
@@ -453,7 +455,10 @@ export class ProjectMddPersistService {
       await evaluateMddDeliveryGatePrepared(ok.sanitizedMdd),
       fence,
     );
-    await this.deliverableGate.refreshStageSemaphoreFromProject(projectId);
+    await this.stageSemaphoreSync.syncFromPersisted(projectId, stageId, {
+      reason: "mdd-persist-patch",
+      content: ok.sanitizedMdd,
+    });
     const refreshed = await this.prisma.stage.findUnique({
       where: { id: stageId },
       select: { status: true, precisionScore: true },

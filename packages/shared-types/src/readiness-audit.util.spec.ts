@@ -13,6 +13,11 @@ test("classifyGap: BRD decision log → human", () => {
   assert.equal(g.kind, "human");
 });
 
+test("CL-32: «por validar» a mitad del mensaje → llm", () => {
+  const g = classifyGap("[Integración] Campo X por validar con el cliente en la próxima reunión");
+  assert.equal(g.kind, "llm");
+});
+
 test("classifyGap: API falta → llm api_contracts", () => {
   const g = classifyGap("[API falta] GET /api/v1/widgets");
   assert.equal(g.kind, "llm");

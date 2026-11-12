@@ -64,6 +64,9 @@ export const MDD_NODE_BUDGET_MIN_MS = 15_000;
 /** Default del flag global Design-First (CL-21: apagado hasta release N+1). */
 export const DEFAULT_DESIGN_FIRST_ENABLED = false;
 
+/** Puerta de entregables: exige verde + Spec (HIGH) tras backfill (J11: apagado al desplegar). */
+export const DEFAULT_DELIVERABLES_GATE_REQUIRE_GREEN = false;
+
 export const DEFAULT_FIGMA_API_BASE_URL = "https://api.figma.com";
 
 /** Timeout HTTP hacia la API de Figma (ms); el plan no fija valor — 60 s por operación batch. */
@@ -160,6 +163,7 @@ export const envSchema = z
         .optional(),
     ),
     DESIGN_FIRST_ENABLED: envBoolean(DEFAULT_DESIGN_FIRST_ENABLED),
+    DELIVERABLES_GATE_REQUIRE_GREEN: envBoolean(DEFAULT_DELIVERABLES_GATE_REQUIRE_GREEN),
     FIGMA_API_BASE_URL: httpsUrl(DEFAULT_FIGMA_API_BASE_URL),
     DESIGN_FIRST_FIGMA_TIMEOUT_MS: positiveInt(
       DEFAULT_DESIGN_FIRST_FIGMA_TIMEOUT_MS,

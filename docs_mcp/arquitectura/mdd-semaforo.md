@@ -2,47 +2,45 @@
 id: mdd-semaforo
 title: MDD y Semáforo
 category: Arquitectura
-last_updated: 2026-06-29
+last_updated: 2026-11-12
 ---
 
 # MDD y Semáforo
 
-> **AI Context Brief:** El MDD (Master Design Document) es la "constitución" SDD de 7 secciones de una etapa; el semáforo mide su calidad/listeza. Hay dos capas de semáforo: una viva (UI) y otra persistida (gate de entregables). Léelo antes de tocar scoring o gates.
+> **AI Context Brief:** Un único núcleo (`evaluateMddSemaphore` en `@theforge/shared-types/semaphore`) alimenta panel GET/POST, lista de proyectos, composite y puerta de entregables. `StageSemaphoreSyncService` es el único escritor de color en BD (CAS). Tercer indicador aparte: heurísticas en `sdd-integration.service.ts` (~731–746) para analyze/repo-handoff — fuera del semáforo del Workshop.
 
-## 1. Uso Básico (Quick Start)
-
-```typescript
-// Semáforo VIVO (calidad MDD + costo) — web pide a la API de estimación:
-//   POST /ai-analysis/estimation  -> liveMetrics.status: "red" | "yellow" | "green"
-import { useWorkshopStore } from "@/store/workshopStore";
-const status = useWorkshopStore((s) => s.liveMetrics?.status);
-
-// Gate PERSISTIDO (entregables SDD) — Prisma Stage.status:
-//   enum Status { ROJO, AMARILLO, VERDE }
-const stageStatus = useWorkshopStore((s) => s.project?.status);
-```
-
-## 2. API & Contrato de Tipos (Specs)
-
-| Capa                         | Archivo                                                          | Tipo / valores                                  | Comportamiento                                                  |
-| ---------------------------- | --------------------------------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------- |
-| **Viva (UI: calidad+costo)** | `apps/api/src/modules/ai-analysis/estimation/estimation.service.ts` (+ `.types.ts`) | `SemaphoreStatusLive = "red" \| "yellow" \| "green"` | `calculateLiveMetrics()` puntúa el MDD. Umbrales `PRECISION_RED_MAX=85`, `PRECISION_GREEN_MIN=90`; verde requiere trazabilidad ≥90% y `gapCount≤5` (`meetsIntegralLiveGreenCriteria`). |
-| **Persistida (gate SDD)**    | `apps/api/src/modules/engine/semaphore.service.ts`              | Prisma `enum Status { ROJO, AMARILLO, VERDE }`  | `SemaphoreService.evaluate()` gatea por `ComplexityLevel` + presencia de entregables + MDD JSON (HIGH). |
+## 1. Uso básico
 
 ```typescript
-// estimation.types.ts
-export type SemaphoreStatusLive = "red" | "yellow" | "green";
+// Panel Workshop — GET/POST /ai-analysis/estimation (no escriben Stage):
+const metrics = await fetchEstimation(projectId, stageId);
+// metrics.semaphore.status: "red" | "yellow" | "green"
+// metrics.persistedStale?: true si la lista puede estar desfasada
 
-// estimation.service.ts (regla de color)
-const hasGreenCriteria = meetsIntegralLiveGreenCriteria({ precision, consistencyScore, crossDocumentGapCount: gapCount });
-status = hasGreenCriteria ? "green" : precision >= PRECISION_RED_MAX ? "yellow" : "red";
+// Lista / gate — Prisma Stage.status: ROJO | AMARILLO | VERDE
+// Escrito solo por StageSemaphoreSyncService.syncFromPersisted
 ```
 
-**Prisma** (`packages/database/schema.prisma`): `Stage.status`, `Stage.precisionScore`, modelo `Estimation` (horas/MXN, no color). **UI:** `WorkshopView.tsx` (columna 3) + `WorkshopMetricsColumnInner.tsx`.
+## 2. Contratos
 
-## 3. Decisiones de Diseño y Restricciones
+| Capa | Fuente | Valores |
+| ---- | ------ | ------- |
+| **Viva (UI)** | `EstimationService.getLiveMetricsForProject` → núcleo | `semaphore.status`, `semaphore.headline`, `persistedStale` |
+| **Persistida** | `StageSemaphoreSyncService` | Prisma `Status`; `shortTermContext.semaphoreSync.inputsHash` |
+| **Costo** | `countCostDrivers` + `computeCostEstimation` | Misma fórmula en panel, web y `ProjectEstimationRecalcService` |
 
-- **Regla 1:** No confundas las dos capas: **viva** = `"red"/"yellow"/"green"` (calidad MDD en tiempo real); **persistida** = `ROJO/AMARILLO/VERDE` (gate de entregables en BD). Tienen fuentes y reglas distintas.
-- **Regla 2:** El umbral de "verde" exige `gapCount === 0`; no marques verde solo por precisión alta.
-- **Regla 3:** El MDD tiene 7 secciones (Blueprint, modelo §3, API §4, seguridad §5, integración/infra §6/§7…); respeta esa estructura al generarlo o editarlo.
-- **Regla 4:** El gate persistido depende de `ComplexityLevel` (LOW/MEDIUM/HIGH); HIGH exige MDD JSON estructurado.
+Escala única: verde ≥90 integral/titular según fase, amarillo ≥85 (`packages/shared-types/src/semaphore/scale.ts`). El color **no** exige `gapCount === 0`; los blockers del delivery gate fuerzan rojo vía núcleo.
+
+Alias `@deprecated` en respuestas: `status` = `semaphore.status`, `precision` = integral o titular.
+
+## 3. Restricciones
+
+- GET/POST estimación: **sin escrituras** en BD (RF-12).
+- PATCH MDD/BRD/entregables: sync con la **etapa editada**, no solo la primaria.
+- Durante cascada activa: no sync intermedio; una vez al final (`deliverables-cascade.service.ts`).
+- Inventario CI: `stage-semaphore-writers.inventory.spec.ts`.
+
+## 4. Referencias
+
+- ADR [`0007`](../../docs/adr/0007-nucleo-unico-semaforo-mdd.md)
+- Plan: `arquitectura/semaforo-alineacion/`

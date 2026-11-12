@@ -6,7 +6,6 @@ import {
   type ConformanceResult,
 } from "../engine/conformance.service.js";
 import { AiService } from "../ai/ai.service.js";
-import { SemaphoreService } from "../engine/semaphore.service.js";
 import { PrismaService } from "../../prisma/prisma.service.js";
 import { loadAccessibleProjectWithStages } from "./project-access.util.js";
 import { buildConstitutionMarkdown } from "./constitution-markdown.util.js";
@@ -24,8 +23,6 @@ import {
   computeConsistencyScoreForProject,
   evaluateCompositeSemaphore,
 } from "./project-semaphore-composite.util.js";
-import { buildSemaphoreBaseFromProject } from "./project-mdd-persist.util.js";
-import { mddJsonStringForSemaphore } from "./project-semaphore.util.js";
 import { UNIFIED_AUDIT_GAP_LIMIT } from "@theforge/shared-types";
 
 export type ConformanceLlmVerification = {
@@ -51,7 +48,6 @@ export class ProjectConformanceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly conformance: ConformanceService,
-    private readonly semaphore: SemaphoreService,
     private readonly ai: AiService,
   ) {}
 
@@ -118,12 +114,12 @@ export class ProjectConformanceService {
       complexity,
     );
     const consistencyScore = computeConsistencyScoreForProject(mdd, deliverableSource, complexity);
-    const compositeEval = evaluateCompositeSemaphore(this.semaphore, {
-      ...buildSemaphoreBaseFromProject(project),
-      mddJsonString: mddJsonStringForSemaphore(mdd),
+    const compositeEval = evaluateCompositeSemaphore(this.conformance, {
+      projectId,
+      complexity,
       mddMarkdown: mdd,
       project,
-      conformance: this.conformance,
+      stage,
       deliverableSource,
     });
 

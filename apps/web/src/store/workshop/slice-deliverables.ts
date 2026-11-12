@@ -1188,15 +1188,14 @@ export const createDeliverablesSlice: StateCreator<
         ...(crossDocumentGaps != null ? { crossDocumentGaps } : {}),
         ...(consistencyScore != null ? { consistencyScore } : {}),
         ...(auditTrail?.length ? { auditTrail } : {}),
-        // Alinea project.status/precisionScore con el semáforo integral (listado ↔ panel).
-        ...(get().project
+        ...(get().project && (metrics.semaphore?.source ?? "draft") === "persisted"
           ? {
               project: {
                 ...get().project!,
                 status:
-                  metrics.status === "green"
+                  (metrics.semaphore?.status ?? metrics.status) === "green"
                     ? "VERDE"
-                    : metrics.status === "yellow"
+                    : (metrics.semaphore?.status ?? metrics.status) === "yellow"
                       ? "AMARILLO"
                       : "ROJO",
                 precisionScore: Math.min(

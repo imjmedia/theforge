@@ -105,27 +105,18 @@ Lógica de conexión solo en `adapters/` y `llm-config.ts`.
 
 ## 4. Semáforo del MDD
 
-Servicio en backend (`SemaphoreService`) que combina **complejidad del proyecto** (`ComplexityLevel`), **entregables** (LOW/MEDIUM) y **JSON normalizado del MDD** de la **etapa activa** (`normalizeMddContent` → string JSON con `db_entities`, `business_core`, `edge_cases`, `field_types`, opcionalmente `constitution`). El API expone el MDD también como campos de primer nivel del proyecto por compatibilidad.
+**Núcleo único:** `evaluateMddSemaphore` en `packages/shared-types/src/semaphore/` (fábrica `buildSemaphoreInputs`, sync `StageSemaphoreSyncService`). Mismas entradas persistidas → panel GET = lista = composite = puerta de entregables (ADR 0007).
 
-### 4.1 Por complejidad
+| Pieza | Rol |
+| ----- | --- |
+| `EstimationService` | Fachada **solo lectura** en GET/POST; expone `semaphore` y `persistedStale`. |
+| `StageSemaphoreSyncService` | Único escritor de `Stage.status` / `precisionScore` (CAS + `inputsHash`). |
+| `ProjectDeliverableGateService` | `evaluateDeliverablesGate` + flag `DELIVERABLES_GATE_REQUIRE_GREEN`. |
+| `SemaphoreService` (engine) | Degradadores Figma/Constitución en rutas legacy; no escribe etapa. |
 
-| Nivel   | Resumen |
-| ------- | ------- |
-| **LOW** | Historias de usuario + tareas sustanciales; Figma si `hasUxTeam`. |
-| **MEDIUM** | Cinco gates: spec o casos de uso, contratos API, guía UX **o** flujos, **historias de usuario**, tareas. Los cinco cumplidos → VERDE (~95); 3–4 → AMARILLO (~70); menos → ROJO. |
-| **HIGH** | Ver §4.2. |
+Escala: titular/integral con umbrales **85 / 90**; completitud por fase (`pre_cascade` / `post_cascade`, `derivativesState`). Design-First usa el mismo evaluador con fases 1–3.
 
-### 4.2 HIGH (MDD canónico + alivio de grafo + Constitución Cursor)
-
-| Estado       | Condición (orden conceptual) |
-| ------------ | ---------------------------- |
-| **ROJO**     | Sin JSON válido; o sin entidades / sin `business_core` sustancial. |
-| **AMARILLO** | Hay entidades y núcleo de negocio pero faltan `edge_cases` o `field_types` **y** no hay alivio de grafo SDD; o falta Figma con equipo UX (~85); o incumplen puertas **Constitución Cursor** cuando `constitution.template_detected` (mapa de contextos, glosario, Gherkin §5, bloqueantes abiertos, «¿Por qué?»/ADR en §2 — ver `semaphore.service.ts`). |
-| **VERDE**    | Checklist MDD completo y Figma si aplica (~95). **O** faltan textos edge/field pero el **Grafo SDD** (Falkor) no reporta dependencias huérfanas entre endpoint de API y entidad de dominio (`sddDomainGraphOk`) → VERDE con precisión **92** (The Forge conserva esta señal frente a solo MaxPrime). |
-
-Las puertas de constitución **no** sustituyen ROJO por entidades vacías; pueden bajar un VERDE (p. ej. 95 o 92) a AMARILLO si la plantilla §1–§5 está incompleta. Si el resultado base ya es AMARILLO con score más bajo que el de constitución, se conserva el más estricto.
-
-El agente debe comprobar estado VERDE antes de generar código (architect-behavior).
+Invariante: GET/POST `/ai-analysis/estimation` **no escriben** BD. Si BRD u otro insumo cambió sin sync, `persistedStale=true`.
 
 ### 4.3 Figma: semáforo vs Design-First
 
@@ -139,9 +130,10 @@ El agente debe comprobar estado VERDE antes de generar código (architect-behavi
 
 ## 5. Motor de estimación (MXN, México 2026)
 
-- **Fórmula (detalle en código):** horas base = entidades×12 + pantallas×16 + endpoints extra×4; multiplicadores por etiquetas `TechnicalMetadata`; horas fijas (metadata + sección infra); si el semáforo **no** es VERDE, buffer **1.25**; **total MXN** = horas totales × **$1 050/h** (tarifa única del estimador). Las cifras **Architect $1 500, Back $950, Front $850, UX $750** son referencia por rol / vista de equipo (mismo paquete).
-- **Fuente única de verdad:** `packages/business-rules` (`computeCostEstimation`, constantes y multiplicadores). El servicio Nest `CostCalculatorService` delega allí; el front (`apps/web/src/utils/costCalculator.ts`) importa el mismo paquete para el panel del Workshop.
-- **Lógica pura; no IA.** No alterar fórmulas ni tarifas sin acuerdo explícito y sin actualizar este índice.
+- **Conteo:** `countCostDrivers(mdd)` — entidades (§3), pantallas derivadas y endpoints anclados a §4 (única fuente para las tres vías).
+- **Fórmula:** `computeCostEstimation` en `packages/business-rules` — horas base, multiplicadores `TechnicalMetadata`, infra fija, buffer **×1.25** si el color del veredicto ≠ verde; nómina por rol en `totalMxn`.
+- **Tres vías alineadas (RF-21):** panel (`EstimationService`), web (`costCalculator.ts`) y persistido (`ProjectEstimationRecalcService` + `CostCalculatorService`).
+- **Lógica pura; no IA.** Tarifas en `cost-estimation.ts` son zona protegida; cambios de fórmula requieren acuerdo y actualizar CHANGELOG + este índice.
 
 ---
 

@@ -13,79 +13,39 @@ import type {
   PrecisionBreakdown,
   SemaphoreStatusLive,
 } from "./estimation.types.js";
-import { liveSemaphoreToDbStatus } from "./live-semaphore-status.util.js";
 import {
-  MARKET_HOUR_RATE,
-  meetsIntegralLiveGreenCriteria,
   PRECISION_GREEN_MIN,
-  PRECISION_RED_MAX,
-  RISK_FACTOR_LOW_PRECISION,
-  RISK_PRECISION_THRESHOLD,
-  INTERNAL_HOUR_RATE,
   AI_TOKENS_PER_ENTITY,
   AI_TOKENS_PER_SCREEN,
   AI_TOKENS_PER_ENDPOINT,
   AI_BASE_OVERHEAD_TOKENS,
   AI_COST_PER_TOKEN_USD,
   MXN_PER_USD,
-  COMPLETENESS_WEIGHT,
-  CROSS_CONSISTENCY_WEIGHT,
-  MDD_QUALITY_WEIGHT,
 } from "./estimation.types.js";
-import {
-  allocateDeliveryRoleHours,
-  buildDeliveryTeamStructure,
-} from "@theforge/business-rules";
-import { ProjectTypeEnum } from "@theforge/shared-types";
+import { computeCostEstimation, countCostDrivers } from "@theforge/business-rules";
 import { extractTechnicalMetadataTags } from "../../engine/mdd-markdown-parser.js";
-import {
-  computeContractGaps,
-  computeTraceabilityGaps,
-  detectContextIntegrationContradiction,
-} from "../../engine/mdd-internal-audit.util.js";
+import { computeContractGaps, computeTraceabilityGaps } from "../../engine/mdd-internal-audit.util.js";
 import { hashMddDraft } from "./mdd-draft-hash.util.js";
 import { computeDocumentCompleteness } from "./completeness.util.js";
 import { computeCrossDocumentConsistency } from "./consistency.util.js";
-import { isCredentialStorageSatisfied } from "../utils/mdd-credential-storage.util.js";
-import {
-  applyDeliveryGateToSemaphoreStatus,
-  validateMddForDelivery,
-} from "../utils/mdd-delivery-gate.util.js";
-import {
-  designFirstCompletenessScore,
-  designFirstPhaseSemaphore,
-  hasEvaluableInput,
-  loadDesignFirstGatesFromStage,
-  minSemaphoreStatus,
-} from "./estimation-design-first.util.js";
+import { parseDesignSpec, EMPTY_DESIGN_SPEC, isDesignFirst } from "@theforge/shared-types";
 import {
   draftMeetsSection1Quality,
   minSection1BodyLength,
 } from "../utils/mdd-section1-quality.util.js";
-import { rebuildDomainInventoryPreferringBrd } from "../../engine/domain-inventory-persist.util.js";
-import {
-  checkApiVsMdd,
-  checkBlueprintVsMdd,
-  checkInfraVsMdd,
-  checkLogicFlowsVsMdd,
-} from "../../engine/conformance.service.js";
-import {
-  findApiSemanticAliasWarnings,
-  type ConformanceSummary,
-} from "../../engine/mdd-quality-audit.util.js";
 import { evaluateSection5TailTruncation } from "../utils/mdd-content-quality.util.js";
 import {
   extractBestSection5Body,
   isMddSectionPipelinePlaceholderBody,
 } from "../utils/mdd-sanitize/section-merge.js";
-
-/** Horas base por unidad (entidades, pantallas, endpoints) para derivar total. */
-const HOURS_PER_ENTITY = 12;
-const HOURS_PER_SCREEN = 16;
-const HOURS_PER_ENDPOINT = 4;
-
-/** Lookahead: siguiente ## (nivel 2) o fin del string. $(?!\n) evita que en modo "m" $ coincida con fin de línea. */
-const SECTION_BOUNDARY = /(?=\n##\s|$(?!\n))/;
+import { computeConsistencyGaps, detectReferenceSections } from "./mdd-section-detectors.util.js";
+import { ConformanceService } from "../../engine/conformance.service.js";
+import {
+  buildSemaphoreInputsFromLoaded,
+  type BuildSemaphoreInputsParams,
+} from "./semaphore-inputs.factory.js";
+import { computeCompletenessScore, resolveCompletenessPhase } from "@theforge/shared-types";
+import type { SemaphoreSource } from "@theforge/shared-types";
 
 /** Extrae el cuerpo de la primera sección cuyo título coincide con pattern (hasta el siguiente ##). */
 function extractSection(md: string, pattern: RegExp): string {
@@ -98,96 +58,6 @@ function extractSection(md: string, pattern: RegExp): string {
   const nextH2 = rest.match(/\n##\s/m);
   const end = nextH2 ? nextH2.index! + 1 : rest.length;
   return rest.slice(0, end).trim();
-}
-
-/**
- * Gaps de consistencia y completitud (agnóstico de dominio).
- * Alineado con "MDD Universal Audit Rules":
- * - Rule 1 Feature-Infrastructure: (cálculo scopeDataGap eliminado: no lo consumía ningún juez).
- * - Rule 2 Data Integrity: dataIntegrityGap (UUID PKs, created_at/updated_at TIMESTAMPTZ). No se exige ON DELETE (borrado puede ser lógico).
- * - Rule 3 API-Schema: no auto-check 1:1 (defer to agents); opcional apiErrorCodes en sección API.
- * - Rule 4 Inheritance: missingManifest + TechnicalMetadata/base template en proyectos derivados.
- * - Rule 5 Architectural: patrones y diagramas = SQL/API no se validan aquí (defer to agents/review).
- * - Contract gaps: apiSchemaGap, mermaidParityGap, infraStackGap, securityEdgeCaseGap.
- */
-function computeConsistencyGaps(md: string): {
-  contradictionGap: number;
-  securityCompletenessGap: number;
-  missingManifest: number;
-  dataIntegrityGap: number;
-  apiSchemaGap: number;
-  mermaidParityGap: number;
-  infraStackGap: number;
-  securityEdgeCaseGap: number;
-} {
-  const lower = (md || "").trim().toLowerCase();
-  // Estructura canónica MDD: 1 Contexto, 2 Arquitectura y Stack, 3 Modelo de Datos, 4 Contratos de API, 5 Lógica y Edge Cases, 6 Seguridad, 7 Infraestructura
-  const contextBlock = extractSection(
-    md,
-    /^#+\s*(?:1\.\s*)?(?:contexto\s+y\s+alcance|contexto\b)/im,
-  ).toLowerCase();
-  const dataModelBlock = extractSection(
-    md,
-    /^#+\s*(?:3\.\s*)?(?:modelo\s+de\s+datos|datos\s*\/\s*entidades)/im,
-  ).toLowerCase();
-  const integrationBlock = extractSection(
-    md,
-    /^#+\s*(?:7\.\s*)?(?:infraestructura|infra|integraci[oó]n)/im,
-  ).toLowerCase();
-  const sqlBlock =
-    (md.match(/```sql\s*([\s\S]*?)```/i)?.[1] ?? "") +
-    (dataModelBlock || lower);
-  const tablesAndColumns = sqlBlock;
-
-  const contractGaps = computeContractGaps(md);
-
-  // §1 niega implementar OAuth/OIDC/SAML y §7 lo afirma (misma oración; delegar a un IdP externo no cuenta).
-  const contradictionGap = detectContextIntegrationContradiction(contextBlock, integrationBlock) ? 1 : 0;
-
-  let securityCompletenessGap = 0;
-  const highSecurity = /\b(high_security|alta seguridad|seguridad crítica)\b/i.test(lower);
-  // Solo exigir columnas de auditoría (ip/user_agent) cuando el doc marca alta seguridad explícita
-  if (highSecurity) {
-    const needsAudit = /\b(ip_address|user_agent|ip\b|user_agent)\b/i.test(tablesAndColumns);
-    if (!needsAudit) securityCompletenessGap += 0.5;
-  }
-  // Alineado con prepareMddForOutput / isCredentialStorageSatisfied (§6 gestión de secretos cuenta).
-  if (!isCredentialStorageSatisfied(md)) {
-    securityCompletenessGap += 0.5;
-  }
-  securityCompletenessGap = Math.min(1, securityCompletenessGap);
-
-  // --- Rule 2: Data Integrity & Scalability (UUID PKs, timestamps). No se penaliza ON DELETE: no todos los proyectos usan delete físico. ---
-  let dataIntegrityGap = 0;
-  const hasTables = /\bcreate\s+table\b/i.test(sqlBlock);
-  if (hasTables) {
-    const hasUuidPk =
-      /(?:gen_random_uuid|uuid_generate_v4|default\s+gen_random_uuid)/i.test(sqlBlock) ||
-      /\buuid\s+primary\s+key\b/i.test(sqlBlock) ||
-      (/\buuid\b/i.test(sqlBlock) && /\bprimary\s+key\b/i.test(sqlBlock));
-    const hasTimestamps = /(?:created_at|updated_at)/i.test(sqlBlock) && /timestamptz/i.test(sqlBlock);
-    if (!hasUuidPk) dataIntegrityGap += 0.5;
-    if (!hasTimestamps) dataIntegrityGap += 0.5;
-  }
-  dataIntegrityGap = Math.min(1, dataIntegrityGap);
-
-  // --- Rule 4: Inheritance (Manifest / TechnicalMetadata / Base Template) ---
-  let missingManifest = 0;
-  const hasInfraSection = /\b(infraestructura|infra|despliegue|integraci[oó]n)\b/i.test(md) && (integrationBlock.length > 80 || /##\s*(?:7\.\s*)?(?:infra|integraci[oó]n)/i.test(md));
-  const hasManifestJson = /```json\s*[\s\S]*?(?:manifest|infra|services|stack)[\s\S]*?```/i.test(md);
-  const hasTechnicalMetadata = /technicalmetadata|technical\s+metadata|base\s+template|plantilla\s+base/i.test(lower);
-  const isDerivedOrMicro = /\b(microservice|microservicio|derived|hereda|plantilla\s+base)\b/i.test(lower);
-  if (hasInfraSection && !hasManifestJson && !hasTechnicalMetadata) {
-    missingManifest = isDerivedOrMicro ? 0.5 : 0.25;
-  }
-
-  return {
-    contradictionGap,
-    securityCompletenessGap,
-    missingManifest,
-    dataIntegrityGap,
-    ...contractGaps,
-  };
 }
 
 /** Calificación máxima cuando la sección está en Estado Inconsistente (matriz de trazabilidad). */
@@ -410,255 +280,6 @@ function computePrecisionBreakdown(md: string, complexity: EstimationComplexity 
   };
 }
 
-function looksLikeMddEvidenceJson(o: Record<string, unknown>): boolean {
-  return (
-    ("summary" in o || "openapi_spec" in o || "evidence_paths" in o) &&
-    ("entities" in o || "api_contracts" in o || "db_entities" in o || "evidence_paths" in o || "business_logic" in o)
-  );
-}
-
-/** JSON plano o embebido tras título tipo `# MDD de partida …` + bloque (legacy ingest). */
-function extractMddEvidenceJsonObject(md: string): Record<string, unknown> | null {
-  const t = md.trim();
-  const candidates: string[] = [];
-  if (t.startsWith("{")) candidates.push(t);
-  const fence = /```(?:json)?\s*(\{[\s\S]*?)\s*```/i.exec(t);
-  if (fence?.[1]?.trim().startsWith("{")) candidates.push(fence[1].trim());
-  const nl = t.indexOf("\n{");
-  if (nl !== -1) {
-    const rest = t.slice(nl + 1).trim();
-    if (rest.startsWith("{")) candidates.push(rest);
-  }
-  for (const c of candidates) {
-    try {
-      const o = JSON.parse(c) as Record<string, unknown>;
-      if (looksLikeMddEvidenceJson(o)) return o;
-    } catch {
-      /* siguiente candidato */
-    }
-  }
-  return null;
-}
-
-/**
- * Semáforo sobre JSON devuelto por ingest `evidence_first` (pocas claves rellenas pero muchas rutas de evidencia).
- */
-function detectReferenceSectionsFromIngestJson(parsed: Record<string, unknown>, rawLen: number): {
-  db: number;
-  endpoints: number;
-  endpointsWithPayloads: boolean;
-  security: number;
-  securitySubstantive: boolean;
-  infra: number;
-} {
-  const ent = (parsed.db_entities ?? parsed.entities) as unknown;
-  const entityN = Array.isArray(ent) ? ent.length : 0;
-  const apiC = parsed.api_contracts;
-  const apiN = Array.isArray(apiC) ? apiC.length : 0;
-  const ev = parsed.evidence_paths;
-  const evN = Array.isArray(ev) ? ev.length : 0;
-  const spec = parsed.openapi_spec as { found?: unknown } | undefined;
-  const summary = typeof parsed.summary === "string" ? parsed.summary : "";
-  const blob = JSON.stringify(parsed);
-
-  const hasIndexedMass = evN >= 12 || entityN > 0 || apiN > 0 || rawLen > 4000;
-  const db = entityN > 0 ? 1 : hasIndexedMass ? 1 : evN >= 6 ? 0.5 : 0;
-  const endpoints = apiN > 0 || (spec && spec.found === true) ? 1 : hasIndexedMass && evN >= 8 ? 1 : 0;
-  const endpointsWithPayloads =
-    apiN > 0 ||
-    (spec && spec.found === true) ||
-    /\b(payload|requestbody|responsebody)\b/i.test(blob) ||
-    /\b(POST|GET|PUT|PATCH|DELETE)\s+[/`"']/i.test(blob + summary);
-
-  const risk = parsed.risk_report as Record<string, unknown> | undefined;
-  const infraObj = parsed.infrastructure as Record<string, unknown> | undefined;
-  const security = risk != null && Object.keys(risk).length > 0 ? 0.5 : 0;
-  const securitySubstantive =
-    security > 0 &&
-    (/anti_patterns|complexity/i.test(blob) ||
-      (typeof risk?.complexity === "number" && risk.complexity > 0));
-  const infra =
-    infraObj != null && (Object.keys(infraObj).length > 0 || (Array.isArray(infraObj.env_vars) && infraObj.env_vars.length > 0))
-      ? 0.5
-      : 0;
-
-  return { db, endpoints, endpointsWithPayloads, security, securitySubstantive, infra };
-}
-
-function tryParseJsonMddCounts(md: string): { entityCount: number; screenCount: number; extraEndpointCount: number } | null {
-  const j = extractMddEvidenceJsonObject(md);
-  if (!j) return null;
-  try {
-    const ent = j.db_entities ?? j.entities;
-    let entityCount = Array.isArray(ent) ? ent.length : 0;
-    const scr = j.screens ?? j.pantallas;
-    let screenCount = Array.isArray(scr) ? scr.length : 0;
-    let extraEndpointCount =
-      typeof j.extra_endpoints === "number" && Number.isFinite(j.extra_endpoints) ? Math.max(0, j.extra_endpoints) : 0;
-    const apiC = j.api_contracts;
-    if (Array.isArray(apiC)) extraEndpointCount += apiC.length;
-
-    const ev = j.evidence_paths;
-    const evN = Array.isArray(ev) ? ev.length : 0;
-    if (entityCount === 0 && screenCount === 0 && extraEndpointCount === 0 && evN >= 10) {
-      extraEndpointCount = Math.min(72, Math.max(10, Math.ceil(evN / 11)));
-    }
-    if (entityCount === 0 && evN >= 40) {
-      entityCount = Math.min(18, Math.max(4, Math.ceil(evN / 45)));
-    }
-
-    const inferredScreensFromApi =
-      extraEndpointCount > 0 ? Math.min(28, Math.max(4, Math.ceil(extraEndpointCount * 0.55))) : 0;
-    const finalScreenCount =
-      extraEndpointCount > 0
-        ? Math.max(screenCount, inferredScreensFromApi)
-        : screenCount > 0
-          ? screenCount
-          : entityCount > 0
-            ? Math.min(entityCount * 2, 20)
-            : 0;
-    return { entityCount, screenCount: finalScreenCount, extraEndpointCount };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Detecta secciones de referencia del MDD en markdown (agnóstico de dominio).
- * Verde requiere: DB/entidades, Endpoints con payloads, Seguridad con contenido sustancial (decisiones documentadas).
- * Integración cuenta como infra (MDD estándar del proyecto incluye ## Integración).
- */
-function detectReferenceSections(md: string): {
-  db: number;
-  endpoints: number;
-  endpointsWithPayloads: boolean;
-  security: number;
-  securitySubstantive: boolean;
-  infra: number;
-} {
-  const trimmed = (md || "").trim();
-  const jsonObj = extractMddEvidenceJsonObject(trimmed);
-  if (jsonObj) {
-    return detectReferenceSectionsFromIngestJson(jsonObj, trimmed.length);
-  }
-
-  const content = trimmed.toLowerCase();
-  const scores = {
-    db: 0,
-    endpoints: 0,
-    endpointsWithPayloads: false,
-    security: 0,
-    securitySubstantive: false,
-    infra: 0,
-  };
-
-  const hasSection = (patterns: RegExp[], minLength = 80) => {
-    for (const p of patterns) {
-      const m = content.match(p);
-      if (m) {
-        const block = (m[1] ?? m[0] ?? "").trim();
-        return block.length >= minLength ? 1 : 0.5;
-      }
-    }
-    return 0;
-  };
-
-  // §3 Modelo de Datos
-  scores.db = hasSection(
-    [new RegExp("(?:#+\\s*)?(?:modelo\\s+de\\s+datos|datos\\s*\\/\\s*entidades|db_entities)[\\s\\S]*?" + SECTION_BOUNDARY.source, "i")],
-    60,
-  );
-  // §4 Contratos de API (no confundir con §7 Infraestructura)
-  scores.endpoints = hasSection(
-    [new RegExp("(?:#+\\s*)?(?:contratos\\s+de\\s+api|endpoints|api\\s+contracts)[\\s\\S]*?" + SECTION_BOUNDARY.source, "i")],
-    60,
-  );
-  scores.endpointsWithPayloads =
-    scores.endpoints > 0 &&
-    (/\bpayload\b|\brequest\s*body\b|\bresponse\s*body\b|json\s*:\s*\{|```json\s*\{/i.test(content) ||
-      /(?:post|put|patch)[\s\S]*?\{[\s\S]*\}/i.test(content));
-
-  const securityBlock =
-    content.match(
-      new RegExp("^##\\s+(?:\\d+\\.\\s*)?(?:seguridad|security)[\\s\\S]*?" + SECTION_BOUNDARY.source, "im"),
-    )?.[0] ?? "";
-  scores.security = securityBlock.length >= 40 ? 1 : securityBlock.length > 0 ? 0.5 : 0;
-  scores.securitySubstantive =
-    scores.security > 0 &&
-    (/autenticación|autorización|permisos|cifrado|token|sesión|hash|rbac|roles|mfa|argon2|2fa|two\-factor/i.test(securityBlock) ||
-      securityBlock.length >= 120);
-
-  scores.infra = hasSection(
-    [
-      new RegExp("(?:#+\\s*)?(?:infraestructura|infra|despliegue|integración)[\\s\\S]*?" + SECTION_BOUNDARY.source, "i"),
-    ],
-    40,
-  );
-
-  return scores;
-}
-
-/**
- * Parsea entidades, pantallas y endpoints desde markdown para asignar horas base.
- * Estructura canónica MDD: §3 Modelo de Datos, §4 Contratos de API.
- */
-function parseCountsFromMarkdown(md: string): {
-  entityCount: number;
-  screenCount: number;
-  extraEndpointCount: number;
-} {
-  const jsonCounts = tryParseJsonMddCounts(md);
-  if (jsonCounts && (jsonCounts.entityCount > 0 || jsonCounts.screenCount > 0 || jsonCounts.extraEndpointCount > 0)) {
-    return jsonCounts;
-  }
-
-  const lines = md.split(/\r?\n/);
-  const entities = new Set<string>();
-  let extraEndpointCount = 0;
-  let inDataModel = false;
-  let inApi = false;
-
-  for (const line of lines) {
-    const lower = line.toLowerCase();
-    if (/^#+\s*(?:\d\.\s*)?.*modelo de datos/i.test(line) || (lower.includes("modelo de datos") && /^#+\s*/.test(line))) {
-      inDataModel = true;
-      inApi = false;
-      continue;
-    }
-    if (/^#+\s*(?:\d\.\s*)?.*contratos de api|^#+\s*4\.|endpoints/i.test(line) || (lower.includes("contratos de api") && /^#+\s*/.test(line))) {
-      inDataModel = false;
-      inApi = true;
-      continue;
-    }
-    if (inDataModel) {
-      const m = line.match(/\*\*([A-Za-z][A-Za-z0-9_]*)\*\*|^-\s*\*\*([A-Za-z][A-Za-z0-9_]*)\*\*|^([A-Za-z][A-Za-z0-9_]*)\s*\(/);
-      if (m) {
-        const name = (m[1] ?? m[2] ?? m[3])?.trim();
-        if (name) entities.add(name);
-      }
-      const createTable = line.match(/\bcreate\s+table\s+(?:if\s+not\s+exists\s+)?["`]?([a-z_][a-z0-9_]*)["`]?/i);
-      if (createTable) entities.add(createTable[1].toLowerCase());
-    }
-    if (inApi && (/\/api\/|\/auth\//.test(line) || /\b(POST|GET|PUT|DELETE|PATCH)\s+(\/|https?)/i.test(line))) {
-      extraEndpointCount += 1;
-    }
-  }
-
-  const createTableGlobal = md.matchAll(/\bcreate\s+table\s+(?:if\s+not\s+exists\s+)?["`]?([a-z_][a-z0-9_]*)["`]?/gi);
-  for (const m of createTableGlobal) entities.add(m[1].toLowerCase());
-
-  const entityCount = entities.size;
-  const inferredScreensFromApi =
-    extraEndpointCount > 0 ? Math.min(28, Math.max(4, Math.ceil(extraEndpointCount * 0.55))) : 0;
-  const screenCount =
-    extraEndpointCount > 0
-      ? inferredScreensFromApi
-      : entityCount > 0
-        ? Math.min(entityCount * 2, 20)
-        : 0;
-  return { entityCount, screenCount, extraEndpointCount };
-}
-
 function buildReadinessHints(
   md: string,
   precision: number,
@@ -704,6 +325,7 @@ type StoredAuditorGaps = { gaps: AuditorGaps; auditedDraftHash?: string };
  */
 @Injectable()
 export class EstimationService {
+  private readonly conformanceService = new ConformanceService();
   private readonly liveDraftByProject = new Map<string, string>();
   /**
    * Gaps del Auditor LLM + hash del borrador que evaluaron. Se usan sólo si el contenido evaluado
@@ -953,38 +575,19 @@ export class EstimationService {
   }
 
   /**
-   * Persiste en `Stage` el semáforo integral (misma fuente que el panel Workshop)
-   * para que el listado de proyectos no quede en VERDE/95 por buckets de SemaphoreService.
-   */
-  private async syncStageSemaphoreFromLiveMetrics(
-    stageId: string,
-    status: SemaphoreStatusLive,
-    precision: number,
-  ): Promise<void> {
-    const dbStatus = liveSemaphoreToDbStatus(status);
-    const precisionScore = Math.min(100, Math.max(0, Math.round(precision)));
-    const current = await this.prisma.stage.findUnique({
-      where: { id: stageId },
-      select: { status: true, precisionScore: true },
-    });
-    if (
-      current &&
-      current.status === dbStatus &&
-      current.precisionScore === precisionScore
-    ) {
-      return;
-    }
-    await this.prisma.stage.update({
-      where: { id: stageId },
-      data: { status: dbStatus, precisionScore },
-    });
-  }
-
-  /**
    * Gaps del Auditor aplicables a `content`: sólo si el hash normalizado del contenido evaluado coincide con el del
    * borrador que auditó el Auditor (memoria o snapshot persistido). Sin gaps vigentes → `undefined` (regex).
    * Nunca lee la clave legacy `projectId` cuando hay `stageId` (evita cruzar etapas).
    */
+  /** Gaps del Auditor para sync persistido (API pública para `StageSemaphoreSyncService`). */
+  async resolveAuditorGapsForPersisted(
+    projectId: string,
+    stageId: string,
+    content: string,
+  ): Promise<AuditorGaps | undefined> {
+    return this.resolveAuditorGapsForContent(projectId, stageId, content, false);
+  }
+
   private async resolveAuditorGapsForContent(
     projectId: string,
     stageId: string | null | undefined,
@@ -1027,18 +630,15 @@ export class EstimationService {
    * Métricas para un proyecto. Si se pasa mddContent, se usa ese; sino liveDraft o DB.
    * Los gaps del Auditor (memoria o snapshot) se usan si su `auditedDraftHash` coincide con el contenido evaluado
    * (también con override del editor); si no, se cae a regex y `mddQualitySource` queda en "regex".
-   * Es el ÚNICO escritor de `Stage.status` / `precisionScore` del semáforo del MDD: sin live draft de streaming
-   * persiste el titular del panel Workshop (`SemaphoreService` sólo evalúa la ruta de entregables LOW/MEDIUM
-   * y el reporte de auditoría compuesto; ya no escribe `Stage.status`).
+   * No escribe en BD (RF-12). La persistencia del color vive en `StageSemaphoreSyncService`.
    */
   async getLiveMetricsForProject(
     projectId: string,
     mddContentOverride?: string,
     stageId?: string | null,
-    options?: {
+    _options?: {
       /**
-       * Si false, calcula sin escribir `Stage.status`/`precisionScore` (p. ej. pipeline PATCH antes de persistir el MDD).
-       * Por defecto true: este método es el ÚNICO escritor de `Stage.status` para el semáforo del MDD.
+       * @deprecated La escritura de etapa vive en `StageSemaphoreSyncService`.
        */
       syncStage?: boolean;
     },
@@ -1056,42 +656,56 @@ export class EstimationService {
       select: { complexity: true, projectType: true },
     });
     const cx = (proj?.complexity as EstimationComplexity) ?? "HIGH";
-    if (proj?.projectType === "DESIGN_FIRST") {
-      return this.getLiveMetricsForDesignFirstProject(
-        projectId,
-        mddContentOverride,
-        stageId,
-        cx,
-        options,
-        hasLiveDraft,
-        hasOverride,
-        content,
-        auditorGaps,
-      );
-    }
     this.cacheProjectComplexity(projectId, stageId, cx);
 
     // Cargar documentos de etapa + proyecto para métrica integral
     let documents: PlanningDocumentFields = {};
-    let dbgaContent: string | null | undefined;
+    let stageRow: {
+      brdContent: string | null;
+      designSpec: unknown;
+      architectureGraph: unknown;
+      architectureGraphSourceHash: string | null;
+    } | null = null;
     const sid = stageId?.trim();
     if (sid) {
-      const stage = await this.prisma.stage.findUnique({
+      stageRow = await this.prisma.stage.findUnique({
         where: { id: sid },
         select: {
           brdContent: true,
+          designSpec: true,
+          architectureGraph: true,
+          architectureGraphSourceHash: true,
         },
       });
-      if (stage) {
+      if (stageRow) {
         documents = {
-          brdContent: stage.brdContent ?? undefined,
+          brdContent: stageRow.brdContent ?? undefined,
         };
       }
     }
+    let projectRec: {
+      projectType: string;
+      specContent: string | null;
+      dbgaContent: string | null;
+      architectureContent: string | null;
+      useCasesContent: string | null;
+      userStoriesContent: string | null;
+      blueprintContent: string | null;
+      apiContractsContent: string | null;
+      logicFlowsContent: string | null;
+      infraContent: string | null;
+      tasksContent: string | null;
+      complexity: string | null;
+      uxUiGuideContent: string | null;
+      hasUxTeam: boolean | null;
+      approach: string | null;
+    } | null = null;
     try {
-      const projectRec = await this.prisma.project.findUnique({
+      projectRec = await this.prisma.project.findUnique({
         where: { id: projectId.trim() },
         select: {
+          projectType: true,
+          complexity: true,
           specContent: true,
           dbgaContent: true,
           architectureContent: true,
@@ -1102,10 +716,12 @@ export class EstimationService {
           logicFlowsContent: true,
           infraContent: true,
           tasksContent: true,
+          uxUiGuideContent: true,
+          hasUxTeam: true,
+          approach: true,
         },
       });
       if (projectRec) {
-        dbgaContent = (projectRec as { dbgaContent?: string | null }).dbgaContent;
         documents = {
           ...documents,
           mddContent: content || undefined,
@@ -1139,238 +755,64 @@ export class EstimationService {
       documents = { ...documents, mddContent: content };
     }
 
-    const metrics = this.calculateLiveMetrics(content, {
+    const semaphoreSource: SemaphoreSource =
+      hasOverride || hasLiveDraft ? "draft" : "persisted";
+
+    let designScreenCount: number | undefined;
+    if (projectRec && isDesignFirst(projectRec.projectType as import("@theforge/shared-types").ProjectType)) {
+      designScreenCount = parseDesignSpec(stageRow?.designSpec ?? EMPTY_DESIGN_SPEC).screens.length;
+    }
+
+    const result = this.calculateLiveMetrics(content, {
       auditorGaps,
       complexity: cx,
       projectId: projectId.trim(),
       stageId: stageId ?? null,
       documents,
+      semaphoreSource,
+      designScreenCount,
+      project: (projectRec ?? undefined) as BuildSemaphoreInputsParams["project"],
+      stage: (stageRow ?? undefined) as BuildSemaphoreInputsParams["stage"],
     });
-    const inventory = rebuildDomainInventoryPreferringBrd({
-      brdMarkdown: documents.brdContent,
-      dbgaMarkdown: dbgaContent,
-      mddMarkdown: content,
-    });
-    const deliveryGate = validateMddForDelivery(content, {
-      brdMarkdown: documents.brdContent,
-      dbgaMarkdown: dbgaContent,
-      specMarkdown: documents.specContent,
-      inventory,
-      // Mismo perfil que el pipeline de persistencia (antes el panel juzgaba sin complejidad).
-      mddComplexity: cx,
-    });
-    let status = applyDeliveryGateToSemaphoreStatus(metrics.status, deliveryGate);
 
-    let conformanceSummary: ConformanceSummary | undefined;
-    const mddForConf = content.trim();
-    if (mddForConf.length > 80 && (documents.apiContractsContent || documents.infraContent)) {
-      const apiCheck = checkApiVsMdd(mddForConf, documents.apiContractsContent ?? null);
-      const infraCheck = checkInfraVsMdd(mddForConf, documents.infraContent ?? null);
-      const bp = checkBlueprintVsMdd(mddForConf, documents.blueprintContent ?? null);
-      const lf = checkLogicFlowsVsMdd(mddForConf, documents.logicFlowsContent ?? null);
-      const aliasWarnings = findApiSemanticAliasWarnings(
-        mddForConf,
-        documents.apiContractsContent ?? "",
-      );
-      conformanceSummary = {
-        ok: apiCheck.ok && infraCheck.ok && bp.ok && lf.ok,
-        api: {
-          ok: apiCheck.ok,
-          missingCount: apiCheck.missingInApi.length,
-          extraCount: apiCheck.extraInApi.length,
-          aliasWarnings,
-        },
-        infra: {
-          ok: infraCheck.ok,
-          gapCount: infraCheck.gaps.length,
-          gaps: infraCheck.gaps.slice(0, 12),
-        },
-        blueprint: { ok: bp.ok },
-        logicFlows: { ok: lf.ok },
-      };
-      const hasSignificantConformanceGaps =
-        (!conformanceSummary.api.ok && conformanceSummary.api.missingCount > 5) ||
-        (!conformanceSummary.infra.ok && conformanceSummary.infra.gapCount > 3) ||
-        !conformanceSummary.blueprint.ok ||
-        !conformanceSummary.logicFlows.ok;
-      if (hasSignificantConformanceGaps && status === "green") {
-        status = "yellow";
-      }
-      if (
-        !conformanceSummary.api.ok &&
-        conformanceSummary.api.missingCount > 8 &&
-        status !== "red"
-      ) {
-        status = "red";
-      }
-    }
-
-    const result: LiveMetricsResult = {
-      ...metrics,
-      status,
-      deliveryGate,
-      ...(conformanceSummary ? { conformanceSummary } : {}),
-    };
-
-    let stageDesignSpecForSync: unknown = null;
     const syncStageId = await this.resolveStageId(projectId, stageId);
     if (syncStageId) {
-      const stageRow = await this.prisma.stage.findUnique({
+      const stageCtxRow = await this.prisma.stage.findUnique({
         where: { id: syncStageId },
-        select: { designSpec: true },
+        select: { shortTermContext: true },
       });
-      stageDesignSpecForSync = stageRow?.designSpec ?? null;
-    }
-
-    // Sincroniza Stage aunque venga override del editor: el listado debe reflejar el
-    // semáforo del panel. Solo se omite con borrador en streaming (live draft).
-    const shouldSyncStage =
-      options?.syncStage !== false &&
-      !hasLiveDraft &&
-      hasEvaluableInput(proj?.projectType ?? ProjectTypeEnum.enum.NEW, content, stageDesignSpecForSync);
-    if (shouldSyncStage && syncStageId) {
-        // Titular persistido = titular del panel (nota del Auditor cuando está vigente, si no la integral).
-        await this.syncStageSemaphoreFromLiveMetrics(syncStageId, result.status, result.auditorScore ?? result.precision);
+      const ctx = (stageCtxRow?.shortTermContext ?? {}) as {
+        semaphoreSync?: { inputsHash?: string };
+      };
+      const persistedHash = ctx.semaphoreSync?.inputsHash;
+      const liveHash = buildSemaphoreInputsFromLoaded(this.conformanceService, {
+        projectId: projectId.trim(),
+        stageId: syncStageId,
+        content,
+        source: semaphoreSource,
+        complexity: cx,
+        auditorGaps,
+        documents,
+        project: (projectRec ?? undefined) as BuildSemaphoreInputsParams["project"],
+        stage: (stageRow ?? undefined) as BuildSemaphoreInputsParams["stage"],
+      }).inputsHash;
+      if (persistedHash && liveHash && persistedHash !== liveHash) {
+        result.persistedStale = true;
+      }
     }
 
     return result;
   }
 
-  private async getLiveMetricsForDesignFirstProject(
-    projectId: string,
-    _mddContentOverride: string | undefined,
-    stageId: string | null | undefined,
-    cx: EstimationComplexity,
-    options: { syncStage?: boolean } | undefined,
-    hasLiveDraft: boolean,
-    _hasOverride: boolean,
-    content: string,
-    auditorGaps: AuditorGaps | undefined,
-  ): Promise<LiveMetricsResult> {
-    const syncStageId = await this.resolveStageId(projectId, stageId);
-    const stage = syncStageId
-      ? await this.prisma.stage.findUnique({
-          where: { id: syncStageId },
-          select: {
-            designSpec: true,
-            architectureGraph: true,
-            architectureGraphSourceHash: true,
-            mddContent: true,
-            brdContent: true,
-          },
-        })
-      : null;
-
-    const { designSpec, gates } = loadDesignFirstGatesFromStage(
-      stage ?? { designSpec: null, architectureGraph: null, architectureGraphSourceHash: null },
-    );
-    const hasMdd = content.trim().length > 0;
-    const phaseStatus = designFirstPhaseSemaphore(gates, hasMdd);
-    let precision = designFirstCompletenessScore(gates);
-    let status: SemaphoreStatusLive = phaseStatus;
-
-    const emptyMetrics: LiveMetricsResult = {
-      precision,
-      totalMXN: 0,
-      totalMXNMarket: 0,
-      totalHours: 0,
-      roles: {},
-      rolesHours: {},
-      status,
-      totalMXNIA: 0,
-      readinessHints: [],
-      mddReadinessHints: [],
-      traceabilityHints: [],
-    };
-
-    if (!hasMdd) {
-      const shouldSync =
-        options?.syncStage !== false &&
-        !hasLiveDraft &&
-        hasEvaluableInput("DESIGN_FIRST", content, designSpec);
-      if (shouldSync && syncStageId) {
-        await this.syncStageSemaphoreFromLiveMetrics(syncStageId, status, precision);
-      }
-      return emptyMetrics;
-    }
-
-    let documents: PlanningDocumentFields = { brdContent: stage?.brdContent ?? undefined };
-    const projectRec = await this.prisma.project.findUnique({
-      where: { id: projectId.trim() },
-      select: {
-        specContent: true,
-        dbgaContent: true,
-        architectureContent: true,
-        useCasesContent: true,
-        userStoriesContent: true,
-        blueprintContent: true,
-        apiContractsContent: true,
-        logicFlowsContent: true,
-        infraContent: true,
-        tasksContent: true,
-      },
+  /** Evalúa métricas de stream con `source:'stream'` (paridad con el panel POST persistido). */
+  evaluateForStream(
+    mddContext: MDDContext,
+    options?: Parameters<EstimationService["calculateLiveMetrics"]>[1],
+  ): LiveMetricsResult {
+    return this.calculateLiveMetrics(mddContext, {
+      ...options,
+      semaphoreSource: "stream",
     });
-    if (projectRec) {
-      documents = {
-        ...documents,
-        mddContent: content,
-        specContent: projectRec.specContent ?? undefined,
-        architectureContent: projectRec.architectureContent ?? undefined,
-        useCasesContent: projectRec.useCasesContent ?? undefined,
-        userStoriesContent: projectRec.userStoriesContent ?? undefined,
-        blueprintContent: projectRec.blueprintContent ?? undefined,
-        apiContractsContent: projectRec.apiContractsContent ?? undefined,
-        logicFlowsContent: projectRec.logicFlowsContent ?? undefined,
-        infraContent: projectRec.infraContent ?? undefined,
-        tasksContent: projectRec.tasksContent ?? undefined,
-      };
-    }
-
-    const mddMetrics = this.calculateLiveMetrics(content, {
-      auditorGaps,
-      complexity: cx,
-      projectId: projectId.trim(),
-      stageId: stageId ?? null,
-      documents,
-      designScreenCount: designSpec.screens.length,
-    });
-
-    status = minSemaphoreStatus(phaseStatus, mddMetrics.status);
-    if (!gates.phase3.ok || !gates.phase2.ok) {
-      status = minSemaphoreStatus(status, "yellow");
-    }
-    if (!hasMdd || !gates.phase3.ok) {
-      status = status === "green" ? "yellow" : status;
-    }
-
-    if (gates.phase3.ok && gates.phase2.ok) {
-      precision = mddMetrics.precision;
-    } else {
-      precision = Math.min(40, precision);
-    }
-
-    const result: LiveMetricsResult = {
-      ...mddMetrics,
-      precision,
-      status,
-      totalHours: gates.phase3.ok ? mddMetrics.totalHours : 0,
-      totalMXN: gates.phase3.ok ? mddMetrics.totalMXN : 0,
-      totalMXNMarket: gates.phase3.ok ? mddMetrics.totalMXNMarket : 0,
-    };
-
-    const shouldSync =
-      options?.syncStage !== false &&
-      !hasLiveDraft &&
-      hasEvaluableInput("DESIGN_FIRST", content, designSpec);
-    if (shouldSync && syncStageId) {
-      await this.syncStageSemaphoreFromLiveMetrics(
-        syncStageId,
-        result.status,
-        result.auditorScore ?? result.precision,
-      );
-    }
-
-    return result;
   }
 
   /** Desglose por sección/agente (0–100) para mostrar en la tabla del chat tras auditar. */
@@ -1427,6 +869,9 @@ export class EstimationService {
       stageId?: string | null;
       documents?: PlanningDocumentFields;
       designScreenCount?: number;
+      semaphoreSource?: SemaphoreSource;
+      project?: Parameters<typeof buildSemaphoreInputsFromLoaded>[1]["project"];
+      stage?: Parameters<typeof buildSemaphoreInputsFromLoaded>[1]["stage"];
     },
   ): LiveMetricsResult {
     const raw =
@@ -1437,205 +882,82 @@ export class EstimationService {
 
     const cx = this.resolveEstimationComplexity(options);
     const docs = options?.documents;
-    const hasDocs = docs && Object.values(docs).some(v => String(v ?? "").trim().length > 0);
+    const hasDocs = docs && Object.values(docs).some((v) => String(v ?? "").trim().length > 0);
+    const documents: PlanningDocumentFields =
+      hasDocs && docs ? { ...docs, mddContent: docs.mddContent ?? md } : { mddContent: md };
 
-    let precision: number;
-    let status: SemaphoreStatusLive;
-    let mddReadinessHints: string[];
-    let traceabilityHints: string[] = [];
-    let crossDocumentGaps: LiveMetricsResult["crossDocumentGaps"];
-    let consistencyScore: number | undefined;
+    const built = buildSemaphoreInputsFromLoaded(this.conformanceService, {
+      projectId: options?.projectId?.trim() ?? "synthetic",
+      stageId: options?.stageId,
+      content: md,
+      source: options?.semaphoreSource ?? "stream",
+      complexity: cx,
+      auditorGaps: options?.auditorGaps,
+      documents,
+      project: options?.project,
+      stage: options?.stage,
+    });
+
+    const { verdict, deliveryGateResult } = built;
+    const status = verdict.status as SemaphoreStatusLive;
+    const mddQualityScore = verdict.components.mddQuality;
+    const consistencyScore = verdict.components.consistency ?? undefined;
+    const mddQualitySource: "auditor" | "regex" =
+      verdict.headlineSource === "auditor" ? "auditor" : "regex";
+    const auditorScore =
+      verdict.headlineSource === "auditor" ? verdict.headline : undefined;
+
     let completeness: DocumentCompleteness | undefined;
-    let mddQualityScore: number | undefined;
-    // Gaps del Auditor SIN nota (Auditor no disponible: `score` null/ausente) no son titular: fallback a regex.
-    const auditorForQuality =
-      typeof options?.auditorGaps?.score === "number" ? options.auditorGaps : undefined;
-    const mddQualitySource: "auditor" | "regex" = auditorForQuality ? "auditor" : "regex";
-    const auditorScore = auditorForQuality
-      ? Math.min(100, Math.max(0, Math.round(auditorForQuality.score ?? 0)))
-      : undefined;
-
     if (hasDocs) {
-      // ── Métrica integral ──────────────────────────────────
-      // 1. Calidad MDD (path existente: auditor o regex)
-      let mddQuality: number;
-      if (auditorForQuality && typeof auditorForQuality.score === "number") {
-        mddQuality = Math.min(100, Math.max(0, auditorForQuality.score));
-      } else {
-        const sections = detectReferenceSections(md);
-        const gaps = adjustGapsForEstimationComplexity(computeConsistencyGaps(md), cx);
-        const traceability = computeTraceabilityGaps(md);
-        const traceabilityPenalty = traceability.inconsistentSections.length > 0 ? 15 : 0;
-        const basePrecisionRaw = (sections.db + sections.endpoints + sections.security + sections.infra) * 25;
-        const gapPenalty =
-          gaps.contradictionGap * 22 +
-          gaps.securityCompletenessGap * 12 +
-          gaps.missingManifest * 16 +
-          gaps.mermaidParityGap * 8 +
-          gaps.infraStackGap * 10 +
-          gaps.securityEdgeCaseGap * 8 +
-          traceabilityPenalty;
-        mddQuality = Math.min(100, Math.round(Math.max(0, basePrecisionRaw - gapPenalty)));
-      }
-
-      // 2. Completitud (todos los documentos)
-      completeness = computeDocumentCompleteness(docs!);
-      const completenessScore = completeness.overall;
-      mddQualityScore = mddQuality;
-
-      // 3. Consistencia transversal BRD→MDD
-      const consistency = computeCrossDocumentConsistency(docs!);
-      consistencyScore = consistency.score;
-
-      // 4. Fórmula ponderada
-      precision = Math.round(
-        completenessScore * COMPLETENESS_WEIGHT +
-        consistencyScore * CROSS_CONSISTENCY_WEIGHT +
-        mddQuality * MDD_QUALITY_WEIGHT
-      );
-
-      // 5. Semáforo
-      const gapCount = consistency.gaps.length;
-      let conformancePenalty = 0;
-      if (docs && md.trim().length > 80) {
-        if (docs.apiContractsContent?.trim()) {
-          const apiC = checkApiVsMdd(md, docs.apiContractsContent);
-          if (!apiC.ok) {
-            conformancePenalty += Math.min(15, apiC.missingInApi.length * 2 + apiC.extraInApi.length);
-          }
-        }
-        if (docs.infraContent?.trim()) {
-          const infC = checkInfraVsMdd(md, docs.infraContent);
-          if (!infC.ok) conformancePenalty += Math.min(12, infC.gaps.length * 2);
-        }
-      }
-      precision = Math.max(0, precision - conformancePenalty);
-
-      if (auditorForQuality && auditorScore != null) {
-        // Titular = nota del Auditor (lo que ve el usuario en el chat); sigue limitada por la trazabilidad BRD→MDD.
-        const strictInfra = cx === "HIGH";
-        const auditorClean =
-          auditorForQuality.critical_gaps.length === 0 &&
-          (!strictInfra || auditorForQuality.infrastructure_ready);
-        // consistencyScore 50 sin gaps = "sin datos de trazabilidad" (no hay BRD/Spec que cruzar): no bloquea el verde.
-        const traceabilityMeasured = !(consistencyScore === 50 && gapCount === 0);
-        const auditorGreen =
-          auditorClean &&
-          meetsIntegralLiveGreenCriteria({
-            precision: auditorScore,
-            consistencyScore: traceabilityMeasured ? consistencyScore : undefined,
-            crossDocumentGapCount: gapCount,
-          });
-        status = auditorGreen ? "green" : auditorScore >= PRECISION_RED_MAX ? "yellow" : "red";
-      } else {
-        const hasGreenCriteria = meetsIntegralLiveGreenCriteria({
-          precision,
-          consistencyScore,
-          crossDocumentGapCount: gapCount,
-        });
-        status = hasGreenCriteria ? "green" : precision >= PRECISION_RED_MAX ? "yellow" : "red";
-      }
-
-      // 6. Hints separados: MDD vs trazabilidad BRD→MDD
-      traceabilityHints =
-        consistency.gaps.length > 0
-          ? consistency.gaps.slice(0, 8).map((g) => g.hint ?? `[BRD→${g.to}] ${g.concept}`)
-          : [];
-      crossDocumentGaps = consistency.gaps;
-
-      mddReadinessHints = [];
-      try {
-        const sections = detectReferenceSections(md);
-        const gaps = adjustGapsForEstimationComplexity(computeConsistencyGaps(md), cx);
-        mddReadinessHints = buildReadinessHints(md, mddQuality, sections, gaps, cx).slice(0, 5);
-      } catch {
-        mddReadinessHints = [];
-      }
-
-    } else if (auditorForQuality) {
-      const g = auditorForQuality;
-      precision = Math.min(100, Math.max(0, g.score ?? 0));
-      mddQualityScore = precision;
-      const strictInfra = cx === "HIGH";
-      const hasGreenCriteria = strictInfra
-        ? precision >= PRECISION_GREEN_MIN && g.infrastructure_ready && g.critical_gaps.length === 0
-        : precision >= PRECISION_GREEN_MIN && g.critical_gaps.length === 0;
-      status = hasGreenCriteria ? "green" : precision >= PRECISION_RED_MAX ? "yellow" : "red";
-      mddReadinessHints =
-        g.critical_gaps.length > 0
-          ? g.critical_gaps
-              .slice(0, 5)
-              .map((x) => `[${(x.sections ?? []).join(" · ")}] ${x.issue}`)
-          : (g.syntax_errors?.length ?? 0) > 0
-            ? (g.syntax_errors ?? []).slice(0, 4)
-            : [
-                g.infrastructure_ready
-                  ? "Auditoría MDD sin gaps críticos: activa conformance con IA para cruzar entregables."
-                  : "Alinea §7 Infra con el stack de §2 (p. ej. Docker/Node) para marcar infra lista.",
-              ];
-      traceabilityHints = [];
+      completeness = computeDocumentCompleteness(documents);
     } else {
+      const phase = resolveCompletenessPhase(verdict.derivativesState);
+      const profile = built.evaluateInput.profile;
+      const overall = computeCompletenessScore(built.evaluateInput.documents, phase, profile);
+      completeness = { overall, mddContent: overall } as DocumentCompleteness;
+    }
+
+    const consistency = hasDocs ? computeCrossDocumentConsistency(documents) : { gaps: [] as const, score: consistencyScore ?? 50 };
+    const traceabilityHints =
+      consistency.gaps.length > 0
+        ? consistency.gaps.slice(0, 8).map((g) => g.hint ?? `[BRD→${g.to}] ${g.concept}`)
+        : [];
+    const crossDocumentGaps = consistency.gaps.length > 0 ? consistency.gaps : undefined;
+
+    let mddReadinessHints: string[] = [];
+    try {
       const sections = detectReferenceSections(md);
       const gaps = adjustGapsForEstimationComplexity(computeConsistencyGaps(md), cx);
-      const traceability = computeTraceabilityGaps(md);
-      const traceabilityPenalty = traceability.inconsistentSections.length > 0 ? 15 : 0;
-      const basePrecisionRaw =
-        (sections.db + sections.endpoints + sections.security + sections.infra) * 25;
-      const gapPenalty =
-        gaps.contradictionGap * 22 +
-        gaps.securityCompletenessGap * 12 +
-        gaps.missingManifest * 16 +
-        gaps.mermaidParityGap * 8 +
-        gaps.infraStackGap * 10 +
-        gaps.securityEdgeCaseGap * 8 +
-        traceabilityPenalty;
-      precision = Math.min(100, Math.round(Math.max(0, basePrecisionRaw - gapPenalty)));
-      mddQualityScore = precision;
-      const hasGreenCriteria =
-        cx === "HIGH"
-          ? sections.db > 0 && sections.endpointsWithPayloads && gaps.contradictionGap === 0
-          : cx === "MEDIUM"
-            ? sections.db > 0 && sections.endpointsWithPayloads && gaps.contradictionGap === 0
-            : sections.db > 0 && gaps.contradictionGap === 0;
-      status =
-        precision >= PRECISION_GREEN_MIN && hasGreenCriteria
-          ? "green"
-          : precision >= PRECISION_RED_MAX
-            ? "yellow"
-            : "red";
-      mddReadinessHints = buildReadinessHints(md, precision, sections, gaps, cx);
-      traceabilityHints = [];
+      mddReadinessHints = buildReadinessHints(md, mddQualityScore, sections, gaps, cx).slice(0, 5);
+    } catch {
+      mddReadinessHints = [];
+    }
+    if (options?.auditorGaps?.critical_gaps?.length) {
+      mddReadinessHints = options.auditorGaps.critical_gaps
+        .slice(0, 5)
+        .map((x) => `[${(x.sections ?? []).join(" · ")}] ${x.issue}`);
     }
 
     const readinessHints = mddReadinessHints;
 
-    const { entityCount, screenCount: parsedScreens, extraEndpointCount } = parseCountsFromMarkdown(md);
+    const { entityCount, screenCount: parsedScreens, extraEndpointCount } = countCostDrivers(md);
     const screenCount = options?.designScreenCount ?? parsedScreens;
     const metaTags = extractTechnicalMetadataTags(md);
-    const baseTotalHours =
-      entityCount * HOURS_PER_ENTITY +
-      screenCount * HOURS_PER_SCREEN +
-      extraEndpointCount * HOURS_PER_ENDPOINT;
-
-    const riskFactor =
-      precision < RISK_PRECISION_THRESHOLD ? RISK_FACTOR_LOW_PRECISION : 1.0;
-    const totalHours = baseTotalHours;
-    const roles =
-      baseTotalHours > 0
-        ? (buildDeliveryTeamStructure(
-            entityCount,
-            screenCount,
-            extraEndpointCount,
-            metaTags,
-          ) as Record<string, number>)
-        : {};
-    const rolesHours =
-      baseTotalHours > 0 ? allocateDeliveryRoleHours(totalHours, roles) : {};
-    // Nómina interna: todas las roles a tarifa fija ($185/hr)
-    const internalPayroll = baseTotalHours > 0 ? totalHours * INTERNAL_HOUR_RATE : 0;
-    const totalMXN = Math.round(internalPayroll * riskFactor * 100) / 100;
-    // Mercado: referencia a tarifa de mercado
-    const totalMXNMarket = Math.round(totalHours * MARKET_HOUR_RATE * riskFactor * 100) / 100;
+    const costStatus =
+      status === "green" ? ("VERDE" as const) : status === "yellow" ? ("AMARILLO" as const) : ("ROJO" as const);
+    const cost = computeCostEstimation({
+      entityCount,
+      screenCount,
+      extraEndpointCount,
+      metadataTags: metaTags,
+      infraFixedHours: 0,
+      status: costStatus,
+    });
+    const totalHours = cost.totalHours;
+    const roles = cost.teamStructure as Record<string, number>;
+    const rolesHours = cost.rolesHours;
+    const totalMXN = cost.totalMxn;
+    const totalMXNMarket = cost.referenceSaleMxn;
     // Costo IA: tokens de salida estimados a $1/M tokens, convertido a MXN
     const totalAITokens =
       AI_BASE_OVERHEAD_TOKENS +
@@ -1645,7 +967,8 @@ export class EstimationService {
     const totalMXNIA = Math.round(totalAITokens * AI_COST_PER_TOKEN_USD * MXN_PER_USD * 100) / 100;
 
     return {
-      precision,
+      semaphore: verdict,
+      precision: verdict.headline,
       totalMXN,
       totalMXNMarket,
       totalMXNIA,
@@ -1661,8 +984,14 @@ export class EstimationService {
       ...(mddQualityScore != null ? { mddQualityScore } : {}),
       mddQualitySource,
       ...(auditorScore != null ? { auditorScore } : {}),
-      ...(crossDocumentGaps != null ? { crossDocumentGaps } : {}),
+      ...(crossDocumentGaps && crossDocumentGaps.length > 0
+        ? { crossDocumentGaps: [...crossDocumentGaps] }
+        : {}),
+      deliveryGate: deliveryGateResult,
     };
   }
 
 }
+
+export { buildSemaphoreInputsFromLoaded, resolveSemaphoreProfile } from "./semaphore-inputs.factory.js";
+export type { BuildSemaphoreInputsParams, BuiltSemaphoreInputs } from "./semaphore-inputs.factory.js";

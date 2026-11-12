@@ -4,6 +4,7 @@
 
 import {
   computeCostEstimation,
+  countCostDrivers,
   getDefaultTeamStructure,
   KNOWN_METADATA_TAGS,
   parseInfraFixedHours,
@@ -57,68 +58,7 @@ export function parseMddCounts(mddContent: string | null): {
   screenCount: number;
   extraEndpointCount: number;
 } {
-  if (!mddContent?.trim()) return { entityCount: 0, screenCount: 0, extraEndpointCount: 0 };
-  try {
-    const json = JSON.parse(mddContent) as {
-      db_entities?: unknown[];
-      screens?: unknown[];
-      pantallas?: unknown[];
-      extra_endpoints?: number;
-    };
-    const entityCount = json.db_entities?.length ?? 0;
-    const screenCount = json.screens?.length ?? json.pantallas?.length ?? 0;
-    const extraEndpointCount = typeof json.extra_endpoints === "number" ? json.extra_endpoints : 0;
-    return { entityCount, screenCount, extraEndpointCount };
-  } catch {
-    return parseMarkdownMddCounts(mddContent);
-  }
-}
-
-function parseMarkdownMddCounts(md: string): {
-  entityCount: number;
-  screenCount: number;
-  extraEndpointCount: number;
-} {
-  const lines = md.split(/\r?\n/);
-  const entities = new Set<string>();
-  let extraEndpointCount = 0;
-  let inDataModel = false;
-  let inApi = false;
-
-  for (const line of lines) {
-    const lower = line.toLowerCase();
-    if (/^#+\s*(\d\.)?\s*modelo de datos/i.test(line) || /^#+\s*3\./i.test(line) || lower.includes("modelo de datos")) {
-      inDataModel = true;
-      inApi = false;
-      continue;
-    }
-    if (/^#+\s*(\d\.)?\s*contratos de api/i.test(line) || /^#+\s*4\./i.test(line) || lower.includes("contratos de api") || lower.includes("endpoints")) {
-      inDataModel = false;
-      inApi = true;
-      continue;
-    }
-    if (inDataModel) {
-      const m = line.match(/\*\*([A-Za-z][A-Za-z0-9_]*)\*\*\s*[:(]|^-\s*\*\*([A-Za-z][A-Za-z0-9_]*)\*\*|^([A-Za-z][A-Za-z0-9_]*)\s*\(/);
-      if (m) {
-        const name = (m[1] ?? m[2] ?? m[3])?.trim();
-        if (name) entities.add(name);
-      }
-    }
-    if (inApi && (/\/api\/|\/auth\//.test(line) || /\b(POST|GET|PUT|DELETE|PATCH)\b/.test(line))) {
-      extraEndpointCount += 1;
-    }
-  }
-
-  const entityCount = entities.size;
-  const inferredScreensFromApi =
-    extraEndpointCount > 0 ? Math.min(28, Math.max(4, Math.ceil(extraEndpointCount * 0.55))) : 0;
-  const screenCount =
-    extraEndpointCount > 0
-      ? inferredScreensFromApi
-      : entityCount > 0
-        ? Math.min(entityCount * 2, 20)
-        : 0;
-  return { entityCount, screenCount, extraEndpointCount };
+  return countCostDrivers(mddContent);
 }
 
 /**

@@ -43,6 +43,8 @@ import {
   type MergeSourceSnapshot,
 } from "./project-merge-conflicts.util.js";
 import { toApiProject } from "./project-api.util.js";
+import { StageSemaphoreSyncService } from "./stage-semaphore-sync.service.js";
+import { pickPrimaryStage } from "./stage-helpers.js";
 
 function defaultSourceOptions(input?: MergeSourceOptions): Required<MergeSourceOptions> {
   return {
@@ -72,6 +74,7 @@ export class ProjectMergeService {
     private readonly aiFactory: AIFactory,
     private readonly phase0Interview: Phase0InterviewService,
     private readonly projectGroups: ProjectGroupsService,
+    private readonly stageSemaphoreSync: StageSemaphoreSyncService,
   ) {}
 
   async merge(body: unknown): Promise<ProjectMergeResult> {
@@ -359,7 +362,12 @@ export class ProjectMergeService {
             },
           },
         },
+        include: { stages: true },
       });
+      const primary = pickPrimaryStage(created.stages);
+      if (primary?.id) {
+        await this.stageSemaphoreSync.syncFromPersisted(created.id, primary.id, { reason: "merge-create" });
+      }
       return created;
     }
 
@@ -387,6 +395,13 @@ export class ProjectMergeService {
         where: { projectId: targetId },
         data: { mddContent: null, status: Status.ROJO, precisionScore: 0, brdContent: null },
       });
+      const stages = await this.prisma.stage.findMany({
+        where: { projectId: targetId },
+        select: { id: true },
+      });
+      for (const s of stages) {
+        await this.stageSemaphoreSync.syncFromPersisted(targetId, s.id, { reason: "merge-reset" });
+      }
     }
 
     const updated = await this.prisma.project.findFirst({ where: { id: targetId } });

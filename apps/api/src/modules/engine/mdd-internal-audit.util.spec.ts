@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -6,6 +9,15 @@ import {
   detectContextIntegrationContradiction,
   mentionsMfaAffirmatively,
 } from "./mdd-internal-audit.util.js";
+
+const SEMAPHORE_FIXTURES = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../ai-analysis/estimation/__fixtures__/semaphore",
+);
+
+function loadSemaphoreFixture(name: string): string {
+  return readFileSync(path.join(SEMAPHORE_FIXTURES, name), "utf8");
+}
 
 function mdd(parts: { s1?: string; s2?: string; s4?: string; s5?: string; s6?: string; s7?: string; s3?: string }): string {
   return [
@@ -63,6 +75,21 @@ describe("computeContractGaps", () => {
     assert.equal(computeContractGaps(mdd({ ...base, s6: "Máximo de tres intentos." })).securityEdgeCaseGap, 0);
     assert.equal(computeContractGaps(mdd({ ...base, s6: "Bloqueo tras 5 intentos." })).securityEdgeCaseGap, 0);
     assert.equal(computeContractGaps(mdd({ ...base, s6: "Se bloquea la cuenta si hay demasiados fallos." })).securityEdgeCaseGap, 1);
+  });
+});
+
+describe("fixtures semáforo P3", () => {
+  it("CL-11: mermaid-flowchart-then-er → mermaidParityGap=1", () => {
+    const gaps = computeContractGaps(loadSemaphoreFixture("mermaid-flowchart-then-er.md"));
+    assert.equal(gaps.mermaidParityGap, 1);
+  });
+  it("CL-12: fallo-red-sin-bloqueo → securityEdgeCaseGap=0", () => {
+    const gaps = computeContractGaps(loadSemaphoreFixture("fallo-red-sin-bloqueo.md"));
+    assert.equal(gaps.securityEdgeCaseGap, 0);
+  });
+  it("CL-13: email-verify-sin-mfa → inconsistencia MFA", () => {
+    const g = computeTraceabilityGaps(loadSemaphoreFixture("email-verify-sin-mfa.md"));
+    assert.ok(g.inconsistentSections.length > 0);
   });
 });
 

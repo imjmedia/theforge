@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
+import { normalizeMddForHash } from "@theforge/shared-types";
 
 /**
- * Hash normalizado de un borrador MDD (trim + colapso de espacios en blanco + sha1).
- * Sirve para saber si las `auditorGaps` del Auditor LLM siguen describiendo el contenido que ve el usuario.
+ * Hash canónico del MDD persistido (mismo normalizador que el snapshot del Auditor).
  */
 export function hashMddDraft(md: string | null | undefined): string {
-  const normalized = (md ?? "").trim().replace(/\s+/g, " ");
+  const normalized = normalizeMddForHash(md ?? "");
   return createHash("sha1").update(normalized).digest("hex");
 }

@@ -479,7 +479,7 @@ export function applyDeliveryGateToSemaphoreStatus(
   gate: MddDeliveryGateResult,
 ): "red" | "yellow" | "green" {
   if (gate.ok) return status;
-  return gate.blockers.length > 0 ? "red" : "yellow";
+  return "red";
 }
 
 /** Campos SSE compartidos (done/draft/interrupt) a partir del gate y métricas. */

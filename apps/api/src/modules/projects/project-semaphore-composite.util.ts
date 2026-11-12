@@ -5,11 +5,14 @@
 import type { Project, Stage } from "@theforge/database";
 import { ComplexityLevel } from "@theforge/database";
 import {
-  applyCompositeReadinessGates,
   type CompositeReadinessResult,
   classifyGap,
 } from "@theforge/shared-types";
 import { ConformanceService } from "../engine/conformance.service.js";
+import {
+  buildSemaphoreInputsFromLoaded,
+  type BuildSemaphoreInputsParams,
+} from "../ai-analysis/estimation/semaphore-inputs.factory.js";
 import {
   buildConformanceSummary,
   collectConformanceGaps,
@@ -21,9 +24,7 @@ import {
 } from "../engine/low-medium-readiness.util.js";
 import { computeCrossDocumentConsistency } from "../ai-analysis/estimation/consistency.util.js";
 import type { PlanningDocumentFields } from "../ai-analysis/estimation/estimation.types.js";
-import { countSddPrecisionGaps } from "./project-semaphore.util.js";
-import { SemaphoreService, type SemaphoreEvaluationInput } from "../engine/semaphore.service.js";
-import type { Status } from "@theforge/database";
+import { Status } from "@theforge/database";
 
 export type CompositeSemaphoreEvaluation = {
   status: Status;
@@ -131,7 +132,7 @@ export function computeConsistencyScoreForProject(
     infraContent: source.infraContent ?? undefined,
     tasksContent: source.tasksContent ?? undefined,
   };
-  return computeCrossDocumentConsistency(docs).score;
+  return computeCrossDocumentConsistency(docs).score ?? 50;
 }
 
 function resolveReadinessProfile(
@@ -142,11 +143,31 @@ function resolveReadinessProfile(
   return "high_mdd";
 }
 
-/** Evalúa semáforo base + puertas compuestas según complejidad greenfield. */
+function verdictStatusToDb(status: import("@theforge/shared-types").SemaphoreStatus): Status {
+  if (status === "green") return Status.VERDE;
+  if (status === "yellow") return Status.AMARILLO;
+  return Status.ROJO;
+}
+
+function verdictToCompositeReadiness(verdict: {
+  status: import("@theforge/shared-types").SemaphoreStatus;
+  headline: number;
+  reasons: string[];
+}): CompositeReadinessResult {
+  return {
+    status: verdictStatusToDb(verdict.status) as CompositeReadinessResult["status"],
+    precisionScore: verdict.headline,
+    reasons: verdict.reasons,
+  };
+}
+
+/** Adaptador del veredicto del núcleo para lista de proyectos y auditoría unificada. */
 export function evaluateCompositeSemaphore(
-  semaphore: SemaphoreService,
-  input: SemaphoreEvaluationInput & {
+  conformance: ConformanceService,
+  input: {
+    complexity?: ComplexityLevel;
     mddMarkdown?: string;
+    projectId?: string;
     project?: Pick<
       Project,
       | "architectureContent"
@@ -160,70 +181,63 @@ export function evaluateCompositeSemaphore(
       | "phase0SummaryContent"
       | "uxUiGuideContent"
       | "specContent"
+      | "dbgaContent"
+      | "complexity"
+      | "projectType"
+      | "hasUxTeam"
+      | "approach"
     >;
+    stage?: Pick<Stage, "brdContent" | "mddContent"> | null;
     conformance?: ConformanceService;
     deliverableSource?: ProjectDeliverableSource;
   },
 ): CompositeSemaphoreEvaluation {
-  const complexity = input.complexity ?? ComplexityLevel.HIGH;
-  const mdd = input.mddMarkdown ?? "";
-  const source = input.deliverableSource;
-  const profile = source ? resolveReadinessProfile(complexity) : "high_mdd";
-  const useHighMddPath = profile === "high_mdd" && hasCanonicalMdd(source ?? {});
+  const complexity = input.complexity ?? input.project?.complexity ?? ComplexityLevel.HIGH;
+  const mdd = (input.mddMarkdown ?? "").trim();
+  const source =
+    input.deliverableSource ??
+    (input.project
+      ? buildProjectDeliverableSource(input.project as Project, (input.stage as Stage) ?? null)
+      : { mddContent: mdd });
 
-  const precisionGapCount =
-    input.sddCrossArtifactGapCount ??
-    (useHighMddPath && input.project && mdd.trim().length >= 120
-      ? countSddPrecisionGaps(input.project, mdd)
-      : 0);
+  const profile = resolveReadinessProfile(complexity);
+  const cx =
+    complexity === ComplexityLevel.LOW ? "LOW" : complexity === ComplexityLevel.MEDIUM ? "MEDIUM" : "HIGH";
 
-  let crossArtifactGapCount = precisionGapCount;
-  let conformanceOk = true;
-  let consistencyScore: number | undefined;
+  const built = buildSemaphoreInputsFromLoaded(conformance, {
+    projectId: input.projectId ?? "composite",
+    content: mdd,
+    source: "persisted",
+    complexity: cx,
+    project: input.project as BuildSemaphoreInputsParams["project"],
+    stage: input.stage as BuildSemaphoreInputsParams["stage"],
+    documents: {
+      mddContent: mdd,
+      brdContent: source.brdContent ?? undefined,
+      specContent: source.specContent ?? undefined,
+    },
+  });
+
+  const composite = verdictToCompositeReadiness(built.verdict);
+
+  let crossArtifactGapCount = 0;
   let humanRequiredGapCount = 0;
-  let conformanceReason = "Conformidad MDD↔derivados incompleta";
-  let traceReason = "Trazabilidad BRD→MDD";
+  let conformanceOk = built.evaluateInput.conformanceOk ?? true;
+  let consistencyScore = computeConsistencyScoreForProject(mdd, source, complexity);
 
-  if (input.conformance && source) {
-    if (useHighMddPath && mdd.trim()) {
-      const allGaps = collectConformanceGaps(input.conformance, mdd, source);
-      crossArtifactGapCount = allGaps.length;
-      humanRequiredGapCount = allGaps.filter((g) => classifyGap(g).kind === "human").length;
-      const summary = buildConformanceSummary(input.conformance, mdd, source);
+  if (mdd) {
+    const allGaps = collectFullCrossArtifactGaps(conformance, mdd, source, complexity);
+    crossArtifactGapCount = new Set(allGaps.map((g) => g.trim()).filter(Boolean)).size;
+    humanRequiredGapCount = allGaps.filter((g) => classifyGap(g).kind === "human").length;
+    if (profile === "high_mdd" && hasCanonicalMdd(source)) {
+      const summary = buildConformanceSummary(conformance, mdd, source);
       conformanceOk = summary.ok;
-      consistencyScore = computeConsistencyScoreForProject(mdd, source, complexity);
     } else if (profile === "low" || profile === "medium") {
-      const lmComplexity =
-        profile === "low" ? ComplexityLevel.LOW : ComplexityLevel.MEDIUM;
-      const allGaps = collectLowMediumReadinessGaps(lmComplexity, source);
-      crossArtifactGapCount = allGaps.length;
-      humanRequiredGapCount = allGaps.filter((g) => classifyGap(g).kind === "human").length;
-      const summary = buildLowMediumConformanceSummary(lmComplexity, source);
+      const lm = profile === "low" ? ComplexityLevel.LOW : ComplexityLevel.MEDIUM;
+      const summary = buildLowMediumConformanceSummary(lm, source);
       conformanceOk = summary.ok;
-      consistencyScore = computeConsistencyScoreForProject(mdd, source, complexity);
-      conformanceReason =
-        profile === "low"
-          ? "Conformidad HU↔Tasks incompleta"
-          : "Conformidad Spec↔API↔Tasks incompleta";
-      traceReason = profile === "low" ? "Trazabilidad BRD→Spec/HU" : "Trazabilidad BRD→Spec";
     }
   }
-
-  const base = semaphore.evaluate({
-    ...input,
-    sddCrossArtifactGapCount: useHighMddPath ? precisionGapCount : crossArtifactGapCount,
-  });
-
-  const composite = applyCompositeReadinessGates({
-    baseStatus: base.status as "ROJO" | "AMARILLO" | "VERDE",
-    basePrecisionScore: base.precisionScore,
-    conformanceOk,
-    crossArtifactGapCount,
-    consistencyScore,
-    humanRequiredGapCount,
-    conformanceReason,
-    traceReason,
-  });
 
   return {
     status: composite.status as Status,

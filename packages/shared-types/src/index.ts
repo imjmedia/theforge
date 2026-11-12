@@ -108,6 +108,7 @@ export * from "./design-system-defaults.js";
 export * from "./project-architecture-graph.js";
 export * from "./design-first/index.js";
 export * from "./document-compiler.js";
+export * from "./semaphore/index.js";
 
 export * from "./mdd-eval-api.js";
 export * from "./token-usage-api.js";

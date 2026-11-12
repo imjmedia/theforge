@@ -210,7 +210,13 @@ export function mddPersistBlockedEvent(
 
 export type StreamProgressEvent =
   | { type: "progress"; agent: string; message: string; phase?: "active" | "done" }
-  | { type: "draft"; markdown: string; deliveryGate?: MddDeliveryGateResult }
+  | {
+    type: "draft";
+    markdown: string;
+    deliveryGate?: MddDeliveryGateResult;
+    semaphore?: import("@theforge/shared-types").MddSemaphoreVerdict;
+    persistedStale?: boolean;
+  }
   | { type: "blocked"; code: string; message: string }
   | {
     type: "done";
@@ -228,6 +234,9 @@ export type StreamProgressEvent =
     auditorUnavailableReason?: AuditorUnavailableReason;
     status?: "red" | "yellow" | "green";
     deliveryGate?: MddDeliveryGateResult;
+    semaphore?: import("@theforge/shared-types").MddSemaphoreVerdict;
+    deliverablesGate?: import("@theforge/shared-types").MddSemaphoreVerdict["deliverablesGate"];
+    persistedStale?: boolean;
     auditorFeedback?: string;
     precisionBreakdown?: PrecisionBreakdown;
     auditTrail?: string[];
@@ -242,7 +251,13 @@ export type StreamProgressEvent =
 /** Eventos del flujo MDD con Manager; interrupt puede ser reply (conversación) o questions (entrevista). */
 export type StreamMddManagerEvent =
   | StreamProgressEvent
-  | { type: "draft"; markdown: string; deliveryGate?: MddDeliveryGateResult }
+  | {
+    type: "draft";
+    markdown: string;
+    deliveryGate?: MddDeliveryGateResult;
+    semaphore?: import("@theforge/shared-types").MddSemaphoreVerdict;
+    persistedStale?: boolean;
+  }
   | { type: "blocked"; code: string; message: string }
   | {
     type: "interrupt";
@@ -1430,7 +1445,7 @@ export class AiAnalysisService {
       logSection3Debug("final (stream done)", markdown);
       if (projectId?.trim()) this.estimationService.clearLiveDraft(projectId.trim(), estimationStage);
       const estOptsDone = estimationOpts(projectId, estimationStage, lastState);
-      const metrics = this.estimationService.calculateLiveMetrics(markdown, estOptsDone);
+      const metrics = this.estimationService.evaluateForStream(markdown, estOptsDone);
       const precisionBreakdown = this.estimationService.getPrecisionBreakdown(markdown, estOptsDone);
       this.persistMddAuditSnapshot(projectId, estimationStage, {
         auditTrail,
@@ -1721,7 +1736,7 @@ export class AiAnalysisService {
               draftOnInterrupt = await this.runPrepareMddForOutput(existingMdd, managerPrepareOpts);
             }
             const estOpts = estimationOpts(projectId, estimationStageId, lastState);
-            const metrics = this.estimationService.calculateLiveMetrics(draftOnInterrupt, estOpts);
+            const metrics = this.estimationService.evaluateForStream(draftOnInterrupt, estOpts);
             const precisionBreakdown = this.estimationService.getPrecisionBreakdown(draftOnInterrupt, estOpts);
             if (reply && /Estamos al \d+%/.test(reply)) {
               reply = reply.replace(/\bEstamos al \d+%/, `Estamos al ${metrics.precision}%`);
@@ -1826,7 +1841,7 @@ export class AiAnalysisService {
         this.estimationService.clearLiveDraft(projectId.trim(), estimationStageId);
       }
       const estOptsDone = estimationOpts(projectId, estimationStageId, lastState);
-      const metrics = this.estimationService.calculateLiveMetrics(markdown, estOptsDone);
+      const metrics = this.estimationService.evaluateForStream(markdown, estOptsDone);
       const precisionBreakdown = this.estimationService.getPrecisionBreakdown(markdown, estOptsDone);
       this.logger.log(`[MDD stream/manager] done markdownLen=${markdown.length} finalDraftLen=${finalDraft.length} lastNonEmptyLen=${lastNonEmptyDraft.length} auditTrail=${auditTrail.length}`);
       this.persistMddAuditSnapshot(projectId, estimationStageId, {
@@ -1881,7 +1896,7 @@ export class AiAnalysisService {
           draftOnInterrupt = await this.runPrepareMddForOutput(existingMdd, managerPrepareOpts);
         }
         const estOptsCatch = estimationOpts(projectId, estimationStageId, lastState);
-        const metrics = this.estimationService.calculateLiveMetrics(draftOnInterrupt, estOptsCatch);
+        const metrics = this.estimationService.evaluateForStream(draftOnInterrupt, estOptsCatch);
         const precision = metrics.precision;
         const catchGateFields = mddStreamDeliveryGateFields(managerGateRef.current, metrics.status);
         const precisionBreakdown = this.estimationService.getPrecisionBreakdown(draftOnInterrupt, estOptsCatch);
@@ -2172,7 +2187,7 @@ export class AiAnalysisService {
               draftOnInterrupt = await this.runPrepareMddForOutput(lastNonEmptyDraft.trim(), resumePrepareOpts);
             }
             const estOptsResume = estimationOpts(projectId, estimationStage, stateForMarkdown ?? lastState);
-            const metrics = this.estimationService.calculateLiveMetrics(draftOnInterrupt, estOptsResume);
+            const metrics = this.estimationService.evaluateForStream(draftOnInterrupt, estOptsResume);
             const precisionBreakdown = this.estimationService.getPrecisionBreakdown(draftOnInterrupt, estOptsResume);
             const resumeInterruptGate = mddStreamDeliveryGateFields(resumeGateRef.current, metrics.status);
             if (reply && /Estamos al \d+%/.test(reply)) {
@@ -2304,7 +2319,7 @@ export class AiAnalysisService {
           this.estimationService.clearLiveDraft(projectId.trim(), estimationStage);
         }
         const estOptsResumeDone = estimationOpts(projectId, estimationStage, lastState);
-        const metrics = this.estimationService.calculateLiveMetrics(markdown, estOptsResumeDone);
+        const metrics = this.estimationService.evaluateForStream(markdown, estOptsResumeDone);
         const precisionBreakdown = this.estimationService.getPrecisionBreakdown(markdown, estOptsResumeDone);
         this.logger.log(`[MDD stream/resume] done markdownLen=${markdown.length} finalDraftLen=${finalDraft.length}`);
         this.logger.log(`[MDD stream/resume] Audit Trail: ${auditTrail.join(" -> ")}`);
@@ -2369,7 +2384,7 @@ export class AiAnalysisService {
           resumePrepareOpts,
         );
         const estOptsResumeCatch = estimationOpts(projectId, estimationStage, stateForMarkdown ?? lastState);
-        const metrics = this.estimationService.calculateLiveMetrics(draftOnInterrupt, estOptsResumeCatch);
+        const metrics = this.estimationService.evaluateForStream(draftOnInterrupt, estOptsResumeCatch);
         const precision = metrics.precision;
         const resumeCatchGate = mddStreamDeliveryGateFields(resumeGateRef.current, metrics.status);
         const precisionBreakdown = this.estimationService.getPrecisionBreakdown(draftOnInterrupt, estOptsResumeCatch);
@@ -2507,8 +2522,8 @@ export class AiAnalysisService {
     });
 
     // regenEstimationStage desde pid + stageId (To-Be/As-Is eliminados)
-    const regenCx = "HIGH" as EstimationComplexity;
     const regenEstimationStage = stageId?.trim() || undefined;
+    const regenCx = await this.estimationService.ensureProjectComplexity(pid, regenEstimationStage ?? null);
     const regenBrdContent = regenEstimationStage
       ? await tracer.step("fetch-brd", async () => {
         const r = await this.prisma.stage.findUnique({ where: { id: regenEstimationStage }, select: { brdContent: true } });
@@ -2516,7 +2531,6 @@ export class AiAnalysisService {
       })
       : null;
 
-    this.estimationService.cacheProjectComplexity(pid, regenEstimationStage ?? null, regenCx);
     const regenEstOpts = { projectId: pid, stageId: regenEstimationStage ?? null, complexity: regenCx };
 
     let llm: Awaited<ReturnType<typeof createDbgaLLM>>;
@@ -2611,7 +2625,7 @@ export class AiAnalysisService {
             return;
           }
         }
-        const metrics = await tracer.step("metrics", async () => this.estimationService.calculateLiveMetrics(markdown, regenEstOpts));
+        const metrics = await tracer.step("metrics", async () => this.estimationService.evaluateForStream(markdown, regenEstOpts));
         const regenGate1 = mddStreamDeliveryGateFields(regenGateRef.current, metrics.status);
         tracer.summary(true, {
           mddLen: markdown.length,
@@ -2667,7 +2681,7 @@ export class AiAnalysisService {
           { mddStructured: result.mddStructured, mddDraft: finalDraft },
           regenPrepareOpts,
         ), { draftLen: finalDraft.length });
-        const metrics = await tracer.step("metrics", async () => this.estimationService.calculateLiveMetrics(markdown, regenEstOpts));
+        const metrics = await tracer.step("metrics", async () => this.estimationService.evaluateForStream(markdown, regenEstOpts));
         const regenGate7 = mddStreamDeliveryGateFields(regenGateRef.current, metrics.status);
         tracer.summary(true, { mddLen: markdown.length, precision: metrics.precision });
         yield {
@@ -2702,7 +2716,7 @@ export class AiAnalysisService {
           };
           return;
         }
-        const metrics = await tracer.step("metrics", async () => this.estimationService.calculateLiveMetrics(markdown, regenEstOpts));
+        const metrics = await tracer.step("metrics", async () => this.estimationService.evaluateForStream(markdown, regenEstOpts));
         const regenGate6 = mddStreamDeliveryGateFields(regenGateRef.current, metrics.status);
         tracer.summary(true, { mddLen: markdown.length, precision: metrics.precision });
         yield {
@@ -2809,7 +2823,7 @@ export class AiAnalysisService {
           };
           return;
         }
-        const metrics = await tracer.step("metrics", async () => this.estimationService.calculateLiveMetrics(markdown, regenEstOpts));
+        const metrics = await tracer.step("metrics", async () => this.estimationService.evaluateForStream(markdown, regenEstOpts));
         const regenGate5 = mddStreamDeliveryGateFields(regenGateRef.current, metrics.status);
         tracer.summary(true, { mddLen: markdown.length, precision: metrics.precision });
         yield {
@@ -2866,7 +2880,7 @@ export class AiAnalysisService {
           { mddStructured: result.mddStructured, mddDraft: finalDraft },
           regenPrepareOpts,
         ), { draftLen: finalDraft.length });
-        const metrics = await tracer.step("metrics", async () => this.estimationService.calculateLiveMetrics(markdown, regenEstOpts));
+        const metrics = await tracer.step("metrics", async () => this.estimationService.evaluateForStream(markdown, regenEstOpts));
         const regenGate25 = mddStreamDeliveryGateFields(regenGateRef.current, metrics.status);
         tracer.summary(true, { mddLen: markdown.length, precision: metrics.precision });
         yield {
@@ -3020,7 +3034,7 @@ export class AiAnalysisService {
     markdown = await this.reviewMddConsistency(pid, markdown);
     const estStage = sid || undefined;
     const estOpts = { projectId: pid, stageId: estStage ?? null, complexity: "HIGH" as const };
-    const metrics = this.estimationService.calculateLiveMetrics(markdown, estOpts);
+    const metrics = this.estimationService.evaluateForStream(markdown, estOpts);
     yield {
       type: "done",
       markdown,

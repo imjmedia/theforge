@@ -31,6 +31,7 @@ import { ProjectStageService } from "./project-stage.service.js";
 import { ProjectUxGuideService } from "./project-ux-guide.service.js";
 import { ProjectDeliverableGeneratorsService } from "./project-deliverable-generators.service.js";
 import { ProjectDeliverableGateService } from "./project-deliverable-gate.service.js";
+import { StageSemaphoreSyncService } from "./stage-semaphore-sync.service.js";
 import { ProjectConformanceService } from "./project-conformance.service.js";
 import { ProjectBrdService } from "./project-brd.service.js";
 import { ProjectUpdateService } from "./project-update.service.js";
@@ -79,6 +80,7 @@ import { PluginModule } from "../../plugins/plugin.module.js";
     ProjectUxGuideService,
     ProjectDeliverableGeneratorsService,
     ProjectDeliverableGateService,
+    StageSemaphoreSyncService,
     ProjectConformanceService,
     ProjectBrdService,
     ProjectUpdateService,
