@@ -191,3 +191,19 @@ RUN yarn build
     assert.equal(alignDockerfilePackageManager(infra, "yarn"), infra);
   });
 });
+
+describe("repairInfraMarkdown — prosa que parece instrucción Dockerfile", () => {
+  it("no envuelve en ```dockerfile una línea de prosa que empieza con 'Healthcheck'", () => {
+    const md = [
+      "### 7.3 Resiliencia",
+      "",
+      "Healthcheck de Docker cada 30 segundos contra `GET /api/v1/health`.",
+      "Reinicio automático con `restart: unless-stopped`.",
+      "",
+      "### 7.4 Infraestructura",
+      "",
+      "Texto.",
+    ].join("\n");
+    assert.ok(!repairInfraMarkdown(md).includes("```"));
+  });
+});

@@ -7,6 +7,7 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 ### Fixed
 
 - **Clarificaciones (MDD y demás docs):** `resolveClarifications` y `clarifyDocument` llamaban al LLM sin tope de salida y caían al perfil `chat` (16K tokens); un MDD largo se truncaba y el guardia de persistencia respondía «El resultado borraría la mayor parte del MDD actual». Ahora usan el perfil `document` (65K).
+- **Formateo de markdown (visor MDD):** `repairOrphanDockerfileBlocks` trataba cualquier línea que empezara con `Healthcheck`, `Copy`, `User`, etc. (sin distinguir mayúsculas) como instrucción de Dockerfile y abría un fence ```` ```dockerfile ```` sin cierre, así que el resto de la sección (§7.3 en adelante) se pintaba como código. Las instrucciones ahora exigen mayúsculas.
 
 ## [v2.0.0] — 2026-11-12
 
