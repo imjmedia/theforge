@@ -1237,6 +1237,8 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
     ];
     return this.generateResponse(parts.filter(Boolean).join("\n"), [], {
       systemPrompt: CLARIFY_DOCUMENT_PROMPT,
+      // Devuelve el documento completo: sin esto cae al perfil "chat" (16K) y se trunca.
+      maxTokensOverride: resolveLlmMaxTokensForPurpose("document"),
     });
   }
 
@@ -1257,7 +1259,12 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
       `${docLabel} actual:\n---\n${doc}\n---\n`,
       `Respuestas del usuario:\n---\n${qaBlock}\n---`,
     ].join("\n");
-    return this.generateResponse(prompt, [], { systemPrompt: RESOLVE_CLARIFICATIONS_PROMPT });
+    // Regenera el documento completo: sin este tope cae al perfil "chat" (16K), se trunca
+    // y validateDocumentForPersist lo rechaza como "borraría la mayor parte".
+    return this.generateResponse(prompt, [], {
+      systemPrompt: RESOLVE_CLARIFICATIONS_PROMPT,
+      maxTokensOverride: resolveLlmMaxTokensForPurpose("document"),
+    });
   }
 
   /**
