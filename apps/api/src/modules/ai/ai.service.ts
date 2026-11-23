@@ -315,6 +315,8 @@ export interface LegacyGenerateOptions {
   abortSignal?: AbortSignal;
   /** Doc. partida Ariadne (legacyFlowState.codebaseDoc) — mapeo determinista de Flujos etapa 1. */
   codebaseDoc?: string | null;
+  /** Feedback de brechas SDD para regeneración dirigida (convergencia / repair-sdd-gaps). */
+  gapsFeedback?: string | null;
 }
 
 export interface AgentGovernanceGenerateOptions extends LegacyGenerateOptions {
@@ -1184,6 +1186,12 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
         `\n\n**Journeys (ProcessInventory — incluir como user journeys en Spec):**\n${journeys}\n` +
         "Cubre cada journey en sección de journeys/criterios; no inventes journeys ajenos al inventario.\n";
     }
+    if (options?.gapsFeedback?.trim()) {
+      prompt +=
+        "\n\n**Los siguientes puntos deben corregirse o incorporarse:**\n---\n" +
+        options.gapsFeedback.trim() +
+        "\n---";
+    }
     prompt = appendLegacyBaselineDetailPrompt(prompt, options?.legacyBaselineStage);
     const systemPrompt =
       SPEC_PROMPT + (legacyAsIsSpec ? LEGACY_AS_IS_SPEC_SYSTEM_APPENDIX : "");
@@ -1582,6 +1590,12 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
     prompt = appendGreenfieldCoverageChecklist(prompt, mddRaw, "Use Cases", options);
     if (options?.theforgeContext?.trim()) prompt = prependTheForgePrompt(prompt, options.theforgeContext);
     if (!legacyAsIsUseCases) prompt = appendMddGovernancePatternsToPrompt(prompt, mdd);
+    if (options?.gapsFeedback?.trim()) {
+      prompt +=
+        "\n\n**Los siguientes puntos deben corregirse o incorporarse:**\n---\n" +
+        options.gapsFeedback.trim() +
+        "\n---";
+    }
     prompt = appendLegacyBaselineDetailPrompt(prompt, options?.legacyBaselineStage);
     const systemPrompt =
       USE_CASES_PROMPT + (legacyAsIsUseCases ? LEGACY_AS_IS_USE_CASES_SYSTEM_APPENDIX : "");
@@ -1650,6 +1664,12 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
         "**Handoff de integración (obligatorio en el backlog):**\n" +
         rows +
         "\n";
+    }
+    if (options?.gapsFeedback?.trim()) {
+      prompt +=
+        "\n\n**Los siguientes puntos deben corregirse o incorporarse:**\n---\n" +
+        options.gapsFeedback.trim() +
+        "\n---";
     }
     if (mdd.length > 0 && !legacyAsIsUserStories) prompt = appendMddGovernancePatternsToPrompt(prompt, mdd);
     prompt = appendLegacyBaselineDetailPrompt(prompt, options?.legacyBaselineStage);

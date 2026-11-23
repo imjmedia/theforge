@@ -723,7 +723,7 @@ export const createDeliverablesSlice: StateCreator<
           if (j.status === "completed") break;
         }
       }
-      const proj = await get().fetchProject(pid);
+      const proj = await get().fetchProject(pid, { preferServerMdd: true });
       await get().fetchConformance(pid).catch(() => {});
       await get().fetchEstimation(pid).catch(() => {});
       set({ agentProgress: [] });

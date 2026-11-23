@@ -275,7 +275,7 @@ function extractKeywords(text: string): string[] {
   return [...new Set([...fallback, ...acronyms])];
 }
 
-function conceptCoverageDetail(
+export function conceptCoverageDetail(
   concept: string,
   targetText: string,
 ): { ratio: number; matched: string[]; missing: string[] } {

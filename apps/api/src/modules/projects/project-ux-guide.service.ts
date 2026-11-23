@@ -60,7 +60,7 @@ export class ProjectUxGuideService {
   ) {}
 
   /** Guía UX/UI generada por LLM (mismo criterio que legacy, sin Relic). */
-  async generateUxUiGuide(projectId: string, signal?: AbortSignal) {
+  async generateUxUiGuide(projectId: string, signal?: AbortSignal, gapsFeedback?: string | null) {
     const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
     const mdd = buildConstitutionMarkdown(project);
     const bp = (project.blueprintContent ?? "").trim();
@@ -73,8 +73,12 @@ export class ProjectUxGuideService {
       project.uxGuideDesignRef = "auto";
     }
 
+    const feedbackBlock = gapsFeedback?.trim()
+      ? `\n\n**Los siguientes puntos deben corregirse o incorporarse:**\n---\n${gapsFeedback.trim()}\n---`
+      : "";
     const uxPrompt =
-      "Genera la Guía UX/UI completa en markdown según tu rol. El contexto (resumen MDD, Blueprint y documentos SDD) está en el system prompt. Termina el documento con la línea exacta ---FIN_UX_UI--- y deja un mensaje breve para el usuario después.";
+      "Genera la Guía UX/UI completa en markdown según tu rol. El contexto (resumen MDD, Blueprint y documentos SDD) está en el system prompt. Termina el documento con la línea exacta ---FIN_UX_UI--- y deja un mensaje breve para el usuario después." +
+      feedbackBlock;
     const mddBrief = buildMddContextForUxGuide(mdd);
     const raw = await this.ai.generateUxUiGuide(
       uxPrompt,

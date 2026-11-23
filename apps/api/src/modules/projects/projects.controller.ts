@@ -1009,7 +1009,9 @@ export class ProjectsController {
         return this.projects.generateAem(projectId, { marketScope });
       }
       case "repair-sdd-gaps":
-        return this.projects.repairReadinessGaps(projectId);
+        return this.projects.repairReadinessGaps(projectId, {
+          acknowledgeGaps: extra.acknowledgeGaps === true,
+        });
       case "cascade":
       case "cascade-delta":
         throw new Error(`Tipo ${type} no soporta sync directo; usa la cola`);

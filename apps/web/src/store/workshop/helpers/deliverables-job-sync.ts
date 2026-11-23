@@ -147,7 +147,10 @@ export async function pollDeliverablesJobInBackground(
         cascadeCompleted: Math.max(s.cascadeCompleted, allStepLabels.length),
       }));
     }
-    await get().fetchProject(pid);
+    await get().fetchProject(pid, isRepair ? { preferServerMdd: true } : undefined);
+    if (isRepair) {
+      await get().fetchConformance(pid).catch(() => {});
+    }
     await get().fetchEstimation(pid).catch(() => {});
     await get().fetchGenerationStatus(pid);
     get().bumpDocumentationGapsRefresh();

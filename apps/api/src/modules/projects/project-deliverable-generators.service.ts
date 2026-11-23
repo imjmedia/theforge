@@ -257,13 +257,13 @@ export class ProjectDeliverableGeneratorsService {
     case "mdd_canonical":
       return;
     case "spec":
-      await this.generateSpec(projectId, signal);
+      await this.generateSpec(projectId, signal, gaps);
       return;
     case "architecture":
       await this.generateArchitecture(projectId, gaps, signal);
       return;
     case "use_cases":
-      await this.generateUseCases(projectId, signal);
+      await this.generateUseCases(projectId, signal, gaps);
       return;
     case "blueprint":
       await this.generateBlueprint(projectId, gaps, signal);
@@ -280,10 +280,10 @@ export class ProjectDeliverableGeneratorsService {
       await this.generateLogicFlows(projectId, gaps, signal);
       return;
     case "ux_ui_guide":
-      await this.uxGuide.generateUxUiGuide(projectId, signal);
+      await this.uxGuide.generateUxUiGuide(projectId, signal, gaps);
       return;
     case "user_stories":
-      await this.generateUserStories(projectId, signal);
+      await this.generateUserStories(projectId, signal, gaps);
       return;
     case "agent_governance":
       await this.generateAgentGovernance(projectId, undefined, undefined, signal);
@@ -368,7 +368,7 @@ export class ProjectDeliverableGeneratorsService {
   return updated;
   }
 
-  async generateSpec(projectId: string, signal?: AbortSignal) {
+  async generateSpec(projectId: string, signal?: AbortSignal, gapsFeedback?: string | null) {
   this.throwIfAborted(signal);
   const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
   if ((project as { projectType?: string }).projectType === "LEGACY") {
@@ -383,7 +383,11 @@ export class ProjectDeliverableGeneratorsService {
     inputContent,
     project.phase0SummaryContent,
     dbga.length === 0 && rawMdd.length > 0 ? "mdd" : "dbga",
-    this.withHookGenerateOpts(project, undefined, signal),
+    this.withHookGenerateOpts(
+      project,
+      gapsFeedback?.trim() ? { gapsFeedback: gapsFeedback.trim() } : undefined,
+      signal,
+    ),
   );
   const cleaned = cleanSpecDocumentContent(specContent);
   const updated = await this.projects.update(projectId, { specContent: cleaned });
@@ -871,13 +875,15 @@ export class ProjectDeliverableGeneratorsService {
   return { content: cleanDocumentContent(content) };
   }
 
-  async generateUseCases(projectId: string, signal?: AbortSignal) {
+  async generateUseCases(projectId: string, signal?: AbortSignal, gapsFeedback?: string | null) {
   this.throwIfAborted(signal);
   const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
+  const baseOpts =
+    (await this.resolveLegacyGenerateOptions(project)) ??
+    this.buildDomainCascadeGenerateOptions(project);
   const opts = this.withHookGenerateOpts(
     project,
-    (await this.resolveLegacyGenerateOptions(project)) ??
-      this.buildDomainCascadeGenerateOptions(project),
+    gapsFeedback?.trim() ? { ...baseOpts, gapsFeedback: gapsFeedback.trim() } : baseOpts,
     signal,
   );
   const content = await this.ai.generateUseCases(
@@ -905,12 +911,20 @@ export class ProjectDeliverableGeneratorsService {
   return { content: cleanDocumentContent(content + appendix) };
   }
 
-  async generateUserStories(projectId: string, signal?: AbortSignal) {
+  async generateUserStories(projectId: string, signal?: AbortSignal, gapsFeedback?: string | null) {
   this.throwIfAborted(signal);
   const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
   const intOpts = await this.buildIntegrationGenerateOptions(projectId);
   const domainOpts = this.buildDomainCascadeGenerateOptions(project);
-  const hookOpts = this.withHookGenerateOpts(project, { ...domainOpts, ...intOpts }, signal);
+  const hookOpts = this.withHookGenerateOpts(
+    project,
+    {
+      ...domainOpts,
+      ...intOpts,
+      ...(gapsFeedback?.trim() ? { gapsFeedback: gapsFeedback.trim() } : {}),
+    },
+    signal,
+  );
   const content = await this.ai.generateUserStories(
     buildConstitutionMarkdown(project),
     project.specContent,

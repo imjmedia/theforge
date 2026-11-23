@@ -589,7 +589,10 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
         break;
       case "repair-sdd-gaps":
         this.throwIfAborted(signal);
-        result = await this.projects.repairReadinessGaps(projectId, { signal });
+        result = await this.projects.repairReadinessGaps(projectId, {
+          signal,
+          acknowledgeGaps: acknowledgeGaps === true,
+        });
         break;
       case "blueprint":
         if (preview) {
