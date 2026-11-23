@@ -78,6 +78,7 @@ import { pickPrimaryStage } from "./stage-helpers.js";
 import { ProjectsService } from "./projects.service.js";
 import { StageSemaphoreSyncService } from "./stage-semaphore-sync.service.js";
 import { resolveDomainInventory } from "../engine/domain-inventory-persist.util.js";
+import { computeCrossDocumentConsistency } from "../ai-analysis/estimation/consistency.util.js";
 import type { DomainInventory } from "@theforge/shared-types";
 
 export type DeliverablesCascadeProgress = {
@@ -91,6 +92,12 @@ export type DeliverablesCascadeProgress = {
 export const MAX_GLOBAL_CASCADE_RETRIES = Math.max(
   1,
   parseInt(process.env.CASCADE_MAX_PROJECT_RETRIES_TOTAL ?? "3", 10) || 3,
+);
+
+/** Presupuesto de reintentos LLM en reparación manual bajo demanda (`POST /repair-sdd-gaps`). */
+export const REPAIR_SDD_GAPS_MAX_RETRIES = Math.max(
+  MAX_GLOBAL_CASCADE_RETRIES,
+  parseInt(process.env.REPAIR_SDD_GAPS_MAX_RETRIES ?? "6", 10) || 6,
 );
 
 export class CascadeCircuitBreaker {
@@ -219,7 +226,10 @@ export class DeliverablesCascadeService {
       if (err instanceof Error && err.message.includes("Cancelado por el usuario")) throw err;
     });
     throwIfAbortedDelta();
-    await this.runCascadeConvergenceLoop(projectId, circuitBreaker, options?.signal).catch((err) => {
+    await this.runCascadeConvergenceLoop(projectId, circuitBreaker, {
+      signal: options?.signal,
+      acknowledgeGaps: options?.acknowledgeGaps,
+    }).catch((err) => {
       if (err instanceof Error && err.message.includes("Cancelado por el usuario")) throw err;
     });
     throwIfAbortedDelta();
@@ -412,7 +422,10 @@ export class DeliverablesCascadeService {
     });
 
     throwIfAborted();
-    await this.runCascadeConvergenceLoop(projectId, circuitBreaker, options?.signal).catch((err) => {
+    await this.runCascadeConvergenceLoop(projectId, circuitBreaker, {
+      signal: options?.signal,
+      acknowledgeGaps: options?.acknowledgeGaps,
+    }).catch((err) => {
       if (err instanceof Error && err.message.includes("Cancelado por el usuario")) throw err;
       this.logger.warn(
         `[Cascade] convergence loop: ${err instanceof Error ? err.message : String(err)}`,
@@ -845,13 +858,22 @@ export class DeliverablesCascadeService {
   }
 
   /**
-   * Ciclo verify → reparación/regen dirigida → verify (máx. 1 iteración por defecto, con circuit breaker).
-   * Cierra gaps auto-fixables y dispara regeneración LLM por artefacto.
+   * Ciclo verify → reparación/regen dirigida → verify bajo demanda (`Corregir auto/LLM`).
+   * Sin tolerancia de 5 gaps (intenta cerrar todas las brechas auto/LLM y trazabilidad BRD→MDD).
    */
-  async repairReadinessGaps(projectId: string, options?: { signal?: AbortSignal }) {
-    const circuitBreaker = new CascadeCircuitBreaker();
-    await this.runCascadeConvergenceLoop(projectId, circuitBreaker, options?.signal);
+  async repairReadinessGaps(
+    projectId: string,
+    options?: { signal?: AbortSignal; acknowledgeGaps?: boolean },
+  ) {
+    const circuitBreaker = new CascadeCircuitBreaker(REPAIR_SDD_GAPS_MAX_RETRIES);
+    await this.runCascadeConvergenceLoop(projectId, circuitBreaker, {
+      signal: options?.signal,
+      gapTolerance: 0,
+      includeBrdTraceabilityRepair: true,
+      acknowledgeGaps: options?.acknowledgeGaps,
+    });
     if (options?.signal?.aborted) throw new Error("Cancelado por el usuario");
+    await this.runCascadeDeterministicConformancePass(projectId);
     await this.syncSemaphoreAfterCascade(projectId);
     return this.projects.findOne(projectId);
   }
@@ -859,13 +881,21 @@ export class DeliverablesCascadeService {
   private async runCascadeConvergenceLoop(
     projectId: string,
     circuitBreaker: CascadeCircuitBreaker,
-    signal?: AbortSignal,
+    options?: {
+      signal?: AbortSignal;
+      gapTolerance?: number;
+      includeBrdTraceabilityRepair?: boolean;
+      acknowledgeGaps?: boolean;
+    },
   ): Promise<void> {
+    const signal = options?.signal;
+    const GAP_TOLERANCE = options?.gapTolerance ?? 5;
+    const includeBrdTraceabilityRepair = options?.includeBrdTraceabilityRepair === true;
+    const acknowledgeGaps = options?.acknowledgeGaps === true;
     const MAX_ITERATIONS = Math.max(
       1,
       parseInt(process.env.CASCADE_CONVERGENCE_MAX_ITERATIONS ?? "1", 10) || 1,
     );
-    const GAP_TOLERANCE = 5;
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       if (signal?.aborted) throw new Error("Cancelado por el usuario");
@@ -891,13 +921,38 @@ export class DeliverablesCascadeService {
         gaps = collectConformanceGaps(this.conformance, mdd, source);
       }
 
-      if (gaps.length <= GAP_TOLERANCE) {
-        this.logger.log(`[Cascade] Convergence OK en iteración ${iteration + 1}/${MAX_ITERATIONS} (${gaps.length} gap(s) ≤ tolerancia ${GAP_TOLERANCE})`);
+      const brdTraceabilityGaps =
+        !useLowMedium &&
+        includeBrdTraceabilityRepair &&
+        (stage?.brdContent ?? "").trim().length >= 200 &&
+        mdd.trim().length > 0
+          ? computeCrossDocumentConsistency({
+              brdContent: stage?.brdContent ?? undefined,
+              mddContent: mdd,
+            }).gaps
+          : [];
+
+      if (gaps.length <= GAP_TOLERANCE && brdTraceabilityGaps.length === 0) {
+        this.logger.log(
+          `[Cascade] Convergence OK en iteración ${iteration + 1}/${MAX_ITERATIONS} (${gaps.length} gap(s) ≤ tolerancia ${GAP_TOLERANCE})`,
+        );
         return;
       }
 
       const plan = buildConvergenceRetryPlan(gaps);
-      if (!plan.autoRepairMdd && plan.deliverables.length === 0) {
+      const shouldAutoRepairMdd =
+        !useLowMedium && (plan.autoRepairMdd || brdTraceabilityGaps.length > 0);
+      const shouldSyncUiScreens = plan.deliverables.includes("ui_screens_sync");
+      const regenSteps = orderConvergenceDeliverables(
+        [...new Set(plan.deliverables)].filter(
+          (s) =>
+            s !== "mdd_canonical" &&
+            s !== "ui_screens_sync" &&
+            s !== DELIVERABLE_DESIGN_SCREENS_RENDER_STEP,
+        ),
+      );
+
+      if (!shouldAutoRepairMdd && !shouldSyncUiScreens && regenSteps.length === 0) {
         this.logger.debug(
           `[Cascade] Convergence detenida — ${gaps.length} gap(s) requieren HITL o sin plan`,
         );
@@ -905,10 +960,10 @@ export class DeliverablesCascadeService {
       }
 
       this.logger.warn(
-        `[Cascade] Convergence iter ${iteration + 1}/${MAX_ITERATIONS}: ${gaps.length} gap(s), plan=${plan.deliverables.join(",") || "mdd-repair"}`,
+        `[Cascade] Convergence iter ${iteration + 1}/${MAX_ITERATIONS}: ${gaps.length} gap(s), brdTrace=${brdTraceabilityGaps.length}, plan=${regenSteps.join(",") || (shouldAutoRepairMdd ? "mdd-repair" : "ui-screens")}`,
       );
 
-      if (!useLowMedium && plan.autoRepairMdd && stage?.id) {
+      if (shouldAutoRepairMdd && stage?.id) {
         const inventory = resolveDomainInventory({
           persisted: stage?.domainInventory as DomainInventory | null | undefined,
           brdMarkdown: stage?.brdContent,
@@ -929,14 +984,10 @@ export class DeliverablesCascadeService {
         }
       }
 
-      const regenSteps = orderConvergenceDeliverables(
-        [...new Set(plan.deliverables)].filter(
-          (s) =>
-            s !== "mdd_canonical" &&
-            s !== "ui_screens_sync" &&
-            s !== DELIVERABLE_DESIGN_SCREENS_RENDER_STEP,
-        ),
-      );
+      if (shouldSyncUiScreens) {
+        if (signal?.aborted) throw new Error("Cancelado por el usuario");
+        await this.syncUiScreens(projectId);
+      }
 
       for (const step of regenSteps) {
         if (signal?.aborted) throw new Error("Cancelado por el usuario");
@@ -951,6 +1002,7 @@ export class DeliverablesCascadeService {
         await this.projects
           .generateDocument(step as DeliverableKind, projectId, {
             gapsFeedback: feedback,
+            acknowledgeGaps,
             signal,
           })
           .catch((e) =>

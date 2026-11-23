@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   applyCompositeReadinessGates,
+  buildConvergenceFeedbackForDeliverable,
   buildConvergenceRetryPlan,
   classifyGap,
   summarizeClassifiedGaps,
@@ -117,4 +118,51 @@ test("summarizeClassifiedGaps respeta límite", () => {
   assert.equal(s.total, 120);
   assert.equal(s.items.length, 50);
   assert.equal(s.truncated, true);
+});
+
+test("classifyGap: [Events] logic-flows → logic_flows (no tasks)", () => {
+  const g = classifyGap(
+    "[Events] Blueprint menciona RabbitMQ/EDA pero logic-flows no documenta eventos",
+  );
+  assert.equal(g.kind, "llm");
+  assert.equal(g.targetDeliverable, "logic_flows");
+  assert.deepEqual(g.targetDeliverables, ["logic_flows"]);
+});
+
+test("classifyGap: [Events] tasks.md → tasks", () => {
+  const g = classifyGap("[Events] Falta task publisher/consumer RabbitMQ en tasks.md");
+  assert.equal(g.kind, "llm");
+  assert.equal(g.targetDeliverable, "tasks");
+  assert.deepEqual(g.targetDeliverables, ["tasks"]);
+});
+
+test("classifyGap + buildConvergenceRetryPlan: [Integración] multi-artefacto", () => {
+  const gap =
+    "[Integración websocket_gateway] En alcance DBGA/BRD pero falta en: API contracts, Architecture, Infra";
+  const g = classifyGap(gap);
+  assert.equal(g.kind, "llm");
+  assert.deepEqual(g.targetDeliverables, ["api_contracts", "architecture", "infra"]);
+
+  const plan = buildConvergenceRetryPlan([
+    gap,
+    "[Events] Blueprint menciona RabbitMQ/EDA pero logic-flows no documenta eventos",
+    "[BRD decision log] BRD: placeholder sin decision log — Por validar suelto",
+  ]);
+  assert.deepEqual(plan.deliverables.sort(), [
+    "api_contracts",
+    "architecture",
+    "infra",
+    "logic_flows",
+  ]);
+  assert.equal(plan.autoRepairMdd, false);
+
+  assert.ok(buildConvergenceFeedbackForDeliverable([gap], "architecture").includes("websocket_gateway"));
+  assert.ok(buildConvergenceFeedbackForDeliverable([gap], "infra").includes("websocket_gateway"));
+  assert.ok(buildConvergenceFeedbackForDeliverable([gap], "api_contracts").includes("websocket_gateway"));
+  assert.equal(buildConvergenceFeedbackForDeliverable([gap], "blueprint"), "");
+});
+
+test("classifyGap: [Pantallas] con historias incluye ui_screens_sync y user_stories", () => {
+  const g = classifyGap("[Pantallas] Watchlist no referenciada en pantallas ni historias");
+  assert.deepEqual(g.targetDeliverables, ["ui_screens_sync", "user_stories"]);
 });

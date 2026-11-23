@@ -1044,9 +1044,12 @@ export function WorkshopMetricsColumnInner({
                   </div>
                 </div>
               ) : null}
-              {readinessAudit && readinessAudit.gapSummary.total > 0 ? (
+              {(readinessAudit && readinessAudit.gapSummary.total > 0) ||
+              (crossDocumentGaps && crossDocumentGaps.length > 0) ? (
                 <div className="flex flex-col gap-1.5">
-                  {readinessAudit.gapSummary.auto + readinessAudit.gapSummary.llm > 0 ? (
+                  {(readinessAudit?.gapSummary.auto ?? 0) +
+                    (readinessAudit?.gapSummary.llm ?? 0) >
+                    0 || (crossDocumentGaps?.length ?? 0) > 0 ? (
                     <button
                       type="button"
                       disabled={!projectId || brechasBusy}
@@ -1068,7 +1071,7 @@ export function WorkshopMetricsColumnInner({
                       )}
                     </button>
                   ) : null}
-                  {readinessAudit.gapSummary.human > 0 ? (
+                  {(readinessAudit?.gapSummary.human ?? 0) > 0 ? (
                     <button
                       type="button"
                       onClick={() => setWorkshopActiveDocPanel("brd")}

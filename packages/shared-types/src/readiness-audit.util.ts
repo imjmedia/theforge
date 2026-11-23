@@ -9,6 +9,7 @@ export type ClassifiedGap = {
   kind: GapResolutionKind;
   prefix: string;
   targetDeliverable?: string;
+  targetDeliverables?: string[];
 };
 
 export type ReadinessGapSummary = {
@@ -110,38 +111,68 @@ function isAutoGap(message: string): boolean {
   return AUTO_PREFIXES.some((p) => message.startsWith(p));
 }
 
-function resolveDeliverable(message: string): string | undefined {
+function resolveDeliverables(message: string): string[] {
   if (/^\[Entregables\]/i.test(message)) {
-    if (/Historias de usuario/i.test(message)) return "user_stories";
-    if (/Spec/i.test(message)) return "spec";
-    if (/Contratos API/i.test(message)) return "api_contracts";
-    if (/Guía UX|UX/i.test(message)) return "ux_ui_guide";
-    if (/Flujos/i.test(message)) return "logic_flows";
-    if (/Tasks/i.test(message)) return "tasks";
-    return "tasks";
+    if (/Historias de usuario/i.test(message)) return ["user_stories"];
+    if (/Spec/i.test(message)) return ["spec"];
+    if (/Contratos API/i.test(message)) return ["api_contracts"];
+    if (/Guía UX|UX/i.test(message)) return ["ux_ui_guide"];
+    if (/Flujos/i.test(message)) return ["logic_flows"];
+    if (/Tasks/i.test(message)) return ["tasks"];
+    return ["tasks"];
+  }
+  if (/^\[Events\]/i.test(message)) {
+    const targets: string[] = [];
+    if (/logic[- ]?flows|\bflujos\b/i.test(message)) targets.push("logic_flows");
+    if (/tasks\.md|\btasks?\b/i.test(message)) targets.push("tasks");
+    return targets.length > 0 ? targets : ["logic_flows", "tasks"];
+  }
+  if (/^\[Integraci[oó]n/i.test(message)) {
+    const targets: string[] = [];
+    if (/API\s*contracts|api_contracts|\bAPI\b/i.test(message)) targets.push("api_contracts");
+    if (/Architecture|arquitectura/i.test(message)) targets.push("architecture");
+    if (/\bInfra\b|infraestructura/i.test(message)) targets.push("infra");
+    return targets.length > 0 ? targets : ["api_contracts"];
+  }
+  if (/^\[Pantallas\]/i.test(message)) {
+    const targets = ["ui_screens_sync"];
+    if (/historias|user[- ]?stories/i.test(message)) targets.push("user_stories");
+    return targets;
+  }
+  if (/^\[Research M\*\]/i.test(message)) {
+    if (/API\s*\/\s*tasks/i.test(message)) return ["api_contracts", "tasks"];
+    return ["api_contracts"];
   }
   for (const { re, deliverable } of LLM_PREFIX_TO_DELIVERABLE) {
-    if (re.test(message)) return deliverable;
+    if (re.test(message)) return [deliverable];
   }
-  if (/entidad inventario|tabla §3 sin endpoint/i.test(message)) return "mdd_canonical";
-  if (/BRD→MDD|trazabilidad/i.test(message)) return "mdd_canonical";
-  return undefined;
+  if (/entidad inventario|tabla §3 sin endpoint/i.test(message)) return ["mdd_canonical"];
+  if (/BRD→MDD|trazabilidad/i.test(message)) return ["mdd_canonical"];
+  return [];
 }
 
 /** Clasifica un gap en auto-fixable (determinista), LLM (regeneración) o humano (HITL). */
 export function classifyGap(message: string): ClassifiedGap {
   const prefix = extractGapPrefix(message);
   if (isHumanGap(message)) {
-    return { message, kind: "human", prefix, targetDeliverable: undefined };
+    return { message, kind: "human", prefix, targetDeliverable: undefined, targetDeliverables: [] };
   }
   if (isAutoGap(message)) {
-    return { message, kind: "auto", prefix, targetDeliverable: "mdd_canonical" };
+    return {
+      message,
+      kind: "auto",
+      prefix,
+      targetDeliverable: "mdd_canonical",
+      targetDeliverables: ["mdd_canonical"],
+    };
   }
+  const targets = resolveDeliverables(message);
   return {
     message,
     kind: "llm",
     prefix,
-    targetDeliverable: resolveDeliverable(message),
+    targetDeliverable: targets[0],
+    targetDeliverables: targets,
   };
 }
 
@@ -245,7 +276,11 @@ export function buildConvergenceFeedbackForDeliverable(
   const classified = gaps.map(classifyGap);
   const auto = classified.filter((g) => g.kind === "auto").map((g) => g.message);
   const llm = classified
-    .filter((g) => g.kind === "llm" && g.targetDeliverable === deliverable)
+    .filter(
+      (g) =>
+        g.kind === "llm" &&
+        (g.targetDeliverables?.includes(deliverable) || g.targetDeliverable === deliverable),
+    )
     .map((g) => g.message);
   return [...auto.slice(0, 8), ...llm.slice(0, limit)].join("\n");
 }
@@ -272,7 +307,15 @@ export function buildConvergenceRetryPlan(gaps: string[]): ConvergenceRetryPlan 
       continue;
     }
     if (g.kind === "human") continue;
-    if (g.targetDeliverable) deliverables.add(g.targetDeliverable);
+    const targets =
+      g.targetDeliverables && g.targetDeliverables.length > 0
+        ? g.targetDeliverables
+        : g.targetDeliverable
+          ? [g.targetDeliverable]
+          : [];
+    for (const t of targets) {
+      deliverables.add(t);
+    }
   }
 
   const llmMessages = classified.filter((g) => g.kind === "llm").map((g) => g.message);

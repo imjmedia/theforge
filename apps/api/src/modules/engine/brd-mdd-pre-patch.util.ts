@@ -2,7 +2,11 @@
  * Pre-parche BRD→MDD: inyecta reglas, permisos y fórmulas faltantes en §1/§5 antes del pipeline.
  */
 
-import { extractBrdTraceabilityItems } from "../ai-analysis/estimation/consistency.util.js";
+import {
+  conceptCoverageDetail,
+  extractBrdTraceabilityItems,
+  extractMddTraceabilityCorpus,
+} from "../ai-analysis/estimation/consistency.util.js";
 import { extractSectionByNumber } from "./mdd-markdown-parser.js";
 
 function replaceSectionBody(md: string, sectionNum: number, newSectionBody: string): string {
@@ -21,24 +25,6 @@ function replaceSectionBody(md: string, sectionNum: number, newSectionBody: stri
   return `${md.slice(0, start)}${newSectionBody.trim()}\n${md.slice(end)}`.trim();
 }
 
-function corpusForTrace(mdd: string): string {
-  const s1 = extractSectionByNumber(mdd, 1) ?? "";
-  const s4 = extractSectionByNumber(mdd, 4) ?? "";
-  const s5 = extractSectionByNumber(mdd, 5) ?? "";
-  return `${s1}\n${s4}\n${s5}`.toLowerCase();
-}
-
-function tokenOverlap(label: string, corpus: string): number {
-  const words = label
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .split(/\s+/)
-    .filter((w) => w.length > 3);
-  if (words.length === 0) return 1;
-  const hits = words.filter((w) => corpus.includes(w));
-  return hits.length / words.length;
-}
-
 function injectBlock(sectionMarkdown: string, heading: string, body: string): string {
   if (sectionMarkdown.includes(body.slice(0, 40))) return sectionMarkdown;
   return `${sectionMarkdown.trim()}\n\n### ${heading}\n\n${body}\n`;
@@ -49,7 +35,7 @@ export type BrdMddPrePatchResult = {
   injected: string[];
 };
 
-/** Añade al MDD conceptos BRD con cobertura parcial o ausente (< 40% tokens). */
+/** Añade al MDD conceptos BRD con cobertura parcial o ausente (< 40% tokens según consistency.util). */
 export function patchMddFromBrdTraceability(
   mddMarkdown: string,
   brdMarkdown: string | null | undefined,
@@ -60,11 +46,11 @@ export function patchMddFromBrdTraceability(
   }
 
   const items = extractBrdTraceabilityItems(brd);
-  const corpus = corpusForTrace(mddMarkdown);
+  const corpus = extractMddTraceabilityCorpus(mddMarkdown);
   const injected: string[] = [];
   let markdown = mddMarkdown;
 
-  const missing = items.filter((item) => tokenOverlap(item.label, corpus) < 0.4);
+  const missing = items.filter((item) => conceptCoverageDetail(item.label, corpus).ratio < 0.4);
   if (missing.length === 0) {
     return { markdown, injected };
   }
@@ -72,7 +58,7 @@ export function patchMddFromBrdTraceability(
   let s1 = extractSectionByNumber(markdown, 1) || "## 1. Contexto\n";
   let s5 = extractSectionByNumber(markdown, 5) || "## 5. Lógica de Negocio\n";
 
-  for (const item of missing.slice(0, 12)) {
+  for (const item of missing.slice(0, 25)) {
     const kind = item.kind ?? "rule";
     const label = item.label.slice(0, 200);
     const note = `*(Auto-trazabilidad BRD: ${item.brdSection ?? "BRD"} / ${item.brdSubsection ?? "—"})*`;
