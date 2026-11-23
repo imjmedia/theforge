@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { DeliverablesQueueService } from "./deliverables-queue.service.js";
+import {
+  DeliverablesQueueService,
+  resolveDeliverablesJobMaxAttempts,
+} from "./deliverables-queue.service.js";
 
 type FakeJob = {
   data: Record<string, unknown>;
@@ -47,5 +50,13 @@ describe("DeliverablesQueueService.getJobStatus (estado BullMQ terminal)", () =>
   it("waiting se reporta queued", async () => {
     const status = await makeService(makeJob("waiting", { attemptsMade: 0 })).getJobStatus("j1");
     assert.equal(status.status, "queued");
+  });
+
+  it("jobs de cascada/reparación usan attempts=1; documentos individuales conservan default", () => {
+    assert.equal(resolveDeliverablesJobMaxAttempts("cascade"), 1);
+    assert.equal(resolveDeliverablesJobMaxAttempts("cascade-delta"), 1);
+    assert.equal(resolveDeliverablesJobMaxAttempts("repair-sdd-gaps"), 1);
+    assert.equal(resolveDeliverablesJobMaxAttempts("api-contracts"), 4);
+    assert.equal(resolveDeliverablesJobMaxAttempts("blueprint"), 4);
   });
 });

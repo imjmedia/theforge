@@ -3,7 +3,12 @@ import { Check } from "lucide-react";
 import { AiGenerativeDots } from "@/components/AiGenerationLoader";
 import { cn } from "@/lib/utils";
 import { useWorkshopStore } from "@/store/workshopStore";
-import { isAgentProgressActive, type AgentProgressItem } from "@/utils/agentProgress";
+import {
+  findActiveAgentProgressStep,
+  isAgentProgressActive,
+  resolveAgentProgressDisplayLabel,
+  type AgentProgressItem,
+} from "@/utils/agentProgress";
 
 export type WorkshopAgentProgressPanelProps = {
   /** Encabezado del panel (default: «Progreso del flujo»). */
@@ -31,19 +36,6 @@ function StepIcon({ item }: { item: AgentProgressItem }) {
       aria-hidden
     />
   );
-}
-
-function agentDisplayLabel(
-  items: readonly AgentProgressItem[],
-  index: number,
-  active: boolean,
-): string {
-  const agent = items[index]?.agent ?? "";
-  if (!active) return agent;
-  const priorSame = items.slice(0, index).filter((p) => p.agent === agent).length;
-  if (priorSame === 0) return agent;
-  // Solo el paso activo: indicar revisión sin numerar (evita «5ª pasada» alarmante).
-  return `${agent} (revisión)`;
 }
 
 function ProgressStepRow({
@@ -109,7 +101,7 @@ export function WorkshopAgentProgressPanel({
 
   if (items.length === 0 && !loading) return null;
 
-  const activeStep = items.find((p) => isAgentProgressActive(p));
+  const activeStep = findActiveAgentProgressStep(items);
   const completedSteps = items.filter((p) => !isAgentProgressActive(p));
   const phaseHeading =
     activeStep?.phaseGroup != null
@@ -155,15 +147,19 @@ export function WorkshopAgentProgressPanel({
               <ProgressStepRow
                 key={`done-${p.step ?? p.agent}-${index}-${p.message.slice(0, 24)}`}
                 item={p}
-                label={agentDisplayLabel(completedSteps, index, false)}
+                label={resolveAgentProgressDisplayLabel(completedSteps, index, false)}
               />
             );
           })}
           {activeStep ? (
             <ProgressStepRow
-              key={`active-${activeStep.agent}-${items.length - 1}`}
+              key={`active-${activeStep.step ?? activeStep.agent}-${items.indexOf(activeStep)}`}
               item={activeStep}
-              label={usePhaseMode ? activeStep.message : agentDisplayLabel(items, items.indexOf(activeStep), true)}
+              label={
+                usePhaseMode
+                  ? activeStep.message
+                  : resolveAgentProgressDisplayLabel(items, items.indexOf(activeStep), true)
+              }
             />
           ) : null}
           {loading && !activeStep ? (

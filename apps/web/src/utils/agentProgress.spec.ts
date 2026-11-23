@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import {
   appendAgentProgressDone,
   agentProgressFromMddJobProgress,
+  findActiveAgentProgressStep,
   mergeAgentProgressFromMddEvent,
+  resolveAgentProgressDisplayLabel,
 } from "./agentProgress.js";
 
 describe("appendAgentProgressDone", () => {
@@ -103,5 +105,36 @@ describe("mergeAgentProgressFromMddEvent", () => {
     });
     assert.equal(next.length, 1);
     assert.equal(next[0]?.status, "generando");
+  });
+});
+
+describe("resolveAgentProgressDisplayLabel & findActiveAgentProgressStep", () => {
+  it("muestra el nombre del documento en cascadas de entregables sin «(revisión)» falso", () => {
+    const items = [
+      { agent: "Entregables", step: "MDD Canonical", message: "✅ MDD Canonical — Terminado", status: "terminado" as const },
+      { agent: "Entregables", step: "Spec", message: "✅ Spec — Terminado", status: "terminado" as const },
+      { agent: "Entregables", step: "Arquitectura", message: "⚡ Arquitectura — Generando…", status: "generando" as const },
+      { agent: "Entregables", step: "Blueprint", message: "⚪ Blueprint — Generando…", status: "generando" as const },
+    ];
+    assert.equal(resolveAgentProgressDisplayLabel(items, 0, false), "MDD Canonical");
+    assert.equal(resolveAgentProgressDisplayLabel(items, 2, true), "Arquitectura");
+  });
+
+  it("mantiene «(revisión)» cuando el mismo agente del grafo MDD reaparece activo", () => {
+    const items = [
+      { agent: "Arquitecto de Software", message: "Schema SQL definido", status: "done" as const },
+      { agent: "Auditor (calidad MDD)", message: "Calidad evaluada", status: "done" as const },
+      { agent: "Arquitecto de Software", message: "Refinando §4…", status: "generando" as const },
+    ];
+    assert.equal(resolveAgentProgressDisplayLabel(items, 2, true), "Arquitecto de Software (revisión)");
+  });
+
+  it("prioriza el paso con ⚡ en ejecución sobre pasos ⚪ pendientes", () => {
+    const items = [
+      { agent: "Entregables", step: "Casos de Uso", message: "⚪ Casos de Uso — Generando…", status: "generando" as const },
+      { agent: "Entregables", step: "Contratos API", message: "⚡ Contratos API — Generando…", status: "generando" as const },
+    ];
+    const active = findActiveAgentProgressStep(items);
+    assert.equal(active?.step, "Contratos API");
   });
 });
