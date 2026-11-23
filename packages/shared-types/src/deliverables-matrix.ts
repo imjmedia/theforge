@@ -125,7 +125,8 @@ export const DELIVERABLE_WAVES_BY_COMPLEXITY: Record<ComplexityLevel, Deliverabl
   HIGH: [
     ["mdd_canonical"],
     ["spec", "architecture"],
-    ["use_cases", "user_stories", "api_contracts", "logic_flows", "ux_ui_guide", "blueprint"],
+    ["blueprint"],
+    ["use_cases", "user_stories", "api_contracts", "logic_flows", "ux_ui_guide"],
     ["ui_screens_sync"],
     ["tasks", "infra", "agent_governance"],
   ],

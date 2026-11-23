@@ -212,3 +212,40 @@ export function appendAgentProgressDone(
 export function isAgentProgressActive(item: AgentProgressItem): boolean {
   return item.status === "active" || item.status === "generando";
 }
+
+/**
+ * Selecciona el paso activo a mostrar: en cascadas de entregables prioriza el paso
+ * marcado en ejecución (`⚡`) sobre los que aún esperan (`⚪`).
+ */
+export function findActiveAgentProgressStep(
+  items: readonly AgentProgressItem[],
+): AgentProgressItem | undefined {
+  return (
+    items.find((p) => isAgentProgressActive(p) && p.message.startsWith("⚡")) ??
+    items.find((p) => isAgentProgressActive(p))
+  );
+}
+
+/**
+ * Etiqueta visible del paso en el panel «Progreso del flujo».
+ * En cascadas de entregables muestra el nombre del documento (`item.step`) en lugar
+ * de repetir «Entregables» / «Entregables (revisión)».
+ */
+export function resolveAgentProgressDisplayLabel(
+  items: readonly AgentProgressItem[],
+  index: number,
+  active: boolean,
+): string {
+  const item = items[index];
+  const agent = item?.agent ?? "";
+  if (agent === "Entregables" && item?.step?.trim()) {
+    return item.step.trim();
+  }
+  if (!active) return agent;
+  const priorSame = items
+    .slice(0, index)
+    .filter((p) => p.agent === agent && (!item?.step || p.step === item.step)).length;
+  if (priorSame === 0) return agent;
+  // Solo el paso activo: indicar revisión sin numerar (evita «5ª pasada» alarmante).
+  return `${agent} (revisión)`;
+}

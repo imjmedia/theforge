@@ -57,8 +57,10 @@ describe("DELIVERABLE_WAVES_BY_COMPLEXITY", () => {
   it("HIGH runs tasks in last LLM wave after blueprint wave", () => {
     const waves = DELIVERABLE_WAVES_BY_COMPLEXITY.HIGH;
     const blueprintWaveIdx = waves.findIndex((w) => w.includes("blueprint"));
+    const apiWaveIdx = waves.findIndex((w) => w.includes("api_contracts"));
     const tasksWaveIdx = waves.findIndex((w) => w.includes("tasks"));
-    assert.ok(blueprintWaveIdx >= 0 && tasksWaveIdx > blueprintWaveIdx);
+    assert.ok(blueprintWaveIdx >= 0 && apiWaveIdx > blueprintWaveIdx, "blueprint debe completarse antes de api_contracts para evitar doble generación");
+    assert.ok(tasksWaveIdx > apiWaveIdx);
   });
 
   it("flattenDeliverableWaves includes ui_screens_sync for HIGH", () => {

@@ -75,6 +75,25 @@ export type GenerateJobType =
 /** Prefijo del jobId (BullMQ rechaza ":" en ids personalizados). */
 const DELIVERABLES_JOB_ID_PREFIX = "deliv-";
 
+/**
+ * Jobs de orquestación multi-documento no deben reintentarse enteros en BullMQ:
+ * cada paso interno ya gestiona sus propios reintentos/errores, y reiniciar una
+ * cascada desde cero duplica llamadas LLM y reinicia el progreso en UI.
+ */
+const SINGLE_ATTEMPT_JOB_TYPES = new Set<GenerateJobType>([
+  "cascade",
+  "cascade-delta",
+  "repair-sdd-gaps",
+]);
+
+export function resolveDeliverablesJobMaxAttempts(
+  type: GenerateJobType | null | undefined,
+  defaultAttempts = 4,
+): number {
+  if (type && SINGLE_ATTEMPT_JOB_TYPES.has(type)) return 1;
+  return defaultAttempts;
+}
+
 export interface GenerateJobData {
   type: GenerateJobType;
   projectId: string;
@@ -885,9 +904,11 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
     const payload: GenerateJobData = { ...data, userId };
 
     if (this.queue) {
+      const attempts = resolveDeliverablesJobMaxAttempts(data.type, this.MAX_ATTEMPTS);
       // jobId no adivinable (los IDs secuenciales de BullMQ permitían leer jobs ajenos).
       const job = await this.queue.add(data.type, payload, {
         jobId: `${DELIVERABLES_JOB_ID_PREFIX}${randomUUID()}`,
+        attempts,
       });
       return String(job.id);
     }
@@ -923,7 +944,7 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
         result: mem.result,
         error: mem.error,
         attemptsMade: mem.status === "failed" ? 1 : 0,
-        maxAttempts: this.MAX_ATTEMPTS,
+        maxAttempts: resolveDeliverablesJobMaxAttempts(mem.data.type, this.MAX_ATTEMPTS),
         createdAt: mem.createdAt,
         finishedAt: mem.finishedAt,
       };
@@ -967,7 +988,10 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
       result: job.returnvalue ?? undefined,
       error: job.failedReason ?? undefined,
       attemptsMade: job.attemptsMade,
-      maxAttempts: this.MAX_ATTEMPTS,
+      maxAttempts:
+        typeof job.opts?.attempts === "number"
+          ? job.opts.attempts
+          : resolveDeliverablesJobMaxAttempts(data?.type, this.MAX_ATTEMPTS),
       createdAt: job.timestamp ?? Date.now(),
       finishedAt: job.finishedOn ?? undefined,
     };
