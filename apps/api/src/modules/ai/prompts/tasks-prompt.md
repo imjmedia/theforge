@@ -277,3 +277,4 @@ Cuando el mensaje incluye **Manifiesto de contratos** y/o **Context Anchors** (J
 - **Context Anchor** por HU: `story_id`, `feature`, `business_rules[]`, `tech_stack`, `contracts.endpoints[]`, `contracts.ui_components[]`, `acceptance_criteria[]`.
 - **Map-reduce por capa:** Backend (API+Spec+MDD), Frontend (Pantallas+DS+Flujos+HU), Infra (Blueprint+Infra+Gobernanza), QA (Casos+Flujos+HU), Integración (API+Spec+externos).
 - Cada tarea debe citar `story_ref` del anchor cuando aplique y endpoints exactos de `contracts.endpoints` (no inventar rutas).
+- **Lote map-reduce estricto:** Cuando el mensaje indique `MODO LOTE MAP-REDUCE (ALCANCE ESTRICTO)`, genera **ÚNICAMENTE** las tareas de los ítems incluidos en `PLAN JSON DE ESTE LOTE` para la capa activa; no agregues secciones de otras capas ni ítems fuera del lote.

@@ -4,15 +4,21 @@
  */
 
 import type {
+  DomainInventory,
   TasksContextAnchor,
   TasksContractManifest,
   TasksGenerationLayer,
+  TasksGenerationPlan,
   TasksPlanItem,
 } from "@theforge/shared-types";
 import {
   matchBusinessRulesForStory,
   matchEndpointsForStory,
 } from "./tasks-contract-layers.util.js";
+import {
+  flattenJourneyPartitions,
+  partitionTasksPlanByJourney,
+} from "./tasks-journey-partition.util.js";
 
 function layerContract(manifest: TasksContractManifest, layer: "domain" | "architecture" | "experience" | "integration") {
   return manifest.layers.find((l) => l.layer === layer);
@@ -110,3 +116,115 @@ export const TASKS_GENERATION_LAYER_ORDER: TasksGenerationLayer[] = [
   "Integración",
   "QA",
 ];
+
+export type TasksRedactorSlice = {
+  layer: TasksGenerationLayer;
+  layerBatchIndex: number;
+  layerBatchCount: number;
+  items: TasksPlanItem[];
+};
+
+const LAYER_CANONICAL_HEADING: Record<TasksGenerationLayer, string> = {
+  Backend: "Backend tasks",
+  Frontend: "Frontend tasks",
+  Infra: "Infraestructura tasks",
+  Integración: "Integración tasks",
+  QA: "QA tasks",
+};
+
+const LAYER_HEADING_REGEX: Record<TasksGenerationLayer, RegExp> = {
+  Backend: /^##\s+Backend\s+tasks\b/im,
+  Frontend: /^##\s+Frontend\s+tasks\b/im,
+  Infra: /^##\s+Infra(?:estructura)?\s+tasks\b/im,
+  Integración: /^##\s+Integraci[oó]n\s+tasks\b/im,
+  QA: /^##\s+(?:QA|Testing)\s+tasks\b/im,
+};
+
+export function canonicalTasksLayerHeading(layer: TasksGenerationLayer): string {
+  return LAYER_CANONICAL_HEADING[layer];
+}
+
+/**
+ * Construye lotes planos (capa × batchSize) evitando la explosión multiplicativa journeys × capas.
+ * Dentro de cada capa conserva la cercanía de ítems por journey/proceso cuando hay inventario.
+ */
+export function buildTasksRedactorSlices(
+  plan: TasksGenerationPlan,
+  batchSize: number,
+  inventory?: DomainInventory | null,
+): TasksRedactorSlice[] {
+  const safeBatchSize = Math.max(1, Math.trunc(batchSize));
+  const byLayer = partitionPlanItemsByGenerationLayer(plan.items);
+  const slices: TasksRedactorSlice[] = [];
+
+  for (const layer of TASKS_GENERATION_LAYER_ORDER) {
+    const rawItems = byLayer.get(layer);
+    if (!rawItems?.length) continue;
+
+    let orderedItems = rawItems;
+    if ((inventory?.processes?.length ?? 0) > 0) {
+      const journeyOrdered = flattenJourneyPartitions(
+        partitionTasksPlanByJourney({ sections: plan.sections, items: rawItems }, inventory),
+      ).items;
+      if (journeyOrdered.length === rawItems.length) {
+        orderedItems = journeyOrdered;
+      }
+    }
+
+    const layerBatchCount = Math.max(1, Math.ceil(orderedItems.length / safeBatchSize));
+    for (let bi = 0; bi < layerBatchCount; bi += 1) {
+      slices.push({
+        layer,
+        layerBatchIndex: bi,
+        layerBatchCount,
+        items: orderedItems.slice(bi * safeBatchSize, (bi + 1) * safeBatchSize),
+      });
+    }
+  }
+
+  return slices;
+}
+
+/** Normaliza encabezados de un lote map-reduce para concatenar un único tasks.md limpio. */
+export function normalizeTasksRedactorSliceMarkdown(
+  raw: string,
+  slice: Pick<TasksRedactorSlice, "layer" | "layerBatchIndex">,
+  globalIndex: number,
+  isFirstChunk = true,
+): string {
+  let text = (raw ?? "").trim();
+  if (!text) return "";
+
+  const isDocStart = globalIndex === 0 && isFirstChunk;
+  const heading = canonicalTasksLayerHeading(slice.layer);
+
+  if (!isDocStart) {
+    text = text.replace(/^#\s+Tasks[^\n]*\n+/im, "").trim();
+  }
+
+  if (slice.layerBatchIndex > 0) {
+    text = text
+      .replace(/^(?:>\s*[^\n]*\n+)+/, "")
+      .replace(
+        /^##\s+(?:Backend|Frontend|Infra(?:estructura)?|Integraci[oó]n|QA|Testing)\s+tasks[^\n]*\n+/im,
+        "",
+      )
+      .trim();
+    return text;
+  }
+
+  const hasLayerHeading = LAYER_HEADING_REGEX[slice.layer].test(text);
+  if (isDocStart) {
+    if (!/^#\s+Tasks\b/im.test(text)) {
+      text = hasLayerHeading ? `# Tasks\n\n${text}` : `# Tasks\n\n## ${heading}\n\n${text}`;
+    } else if (!hasLayerHeading) {
+      text = text.replace(/^(#\s+Tasks[^\n]*)\n*/im, `$1\n\n## ${heading}\n\n`);
+    }
+    return text.trim();
+  }
+
+  if (!hasLayerHeading) {
+    text = `## ${heading}\n\n${text}`;
+  }
+  return text.trim();
+}
