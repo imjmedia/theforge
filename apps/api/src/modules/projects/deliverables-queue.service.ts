@@ -245,8 +245,10 @@ export class DeliverablesQueueService implements OnModuleInit, OnModuleDestroy {
         async (job: Job<GenerateJobData>, token?: string) => {
           const { userId } = job.data;
           return runWithRequestUserAsync(userId ?? "system", async () => {
+            const maxAttempts =
+              job.opts.attempts ?? resolveDeliverablesJobMaxAttempts(job.data.type, this.MAX_ATTEMPTS);
             this.logger.log(
-              `BullMQ worker: iniciando job ${job.id} type=${job.data.type} projectId=${job.data.projectId} attempt=${job.attemptsMade + 1}/${this.MAX_ATTEMPTS}`,
+              `BullMQ worker: iniciando job ${job.id} type=${job.data.type} projectId=${job.data.projectId} attempt=${job.attemptsMade + 1}/${maxAttempts}`,
             );
             await job.updateProgress(0);
             return this.executeJob(String(job.id), job.data, (p) => {

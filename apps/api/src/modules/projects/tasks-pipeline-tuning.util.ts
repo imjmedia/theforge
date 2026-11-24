@@ -20,9 +20,9 @@ export function resolveTasksRedactorBatchSize(): number {
   return clampInt(readEnvInt("TASKS_REDACTOR_BATCH_SIZE", 24), 8, 36);
 }
 
-/** Lotes de redacción en paralelo (default 2; subir con rate limits holgados). */
+/** Lotes de redacción en paralelo (default 3; subir/bajar vía TASKS_REDACTOR_CONCURRENCY). */
 export function resolveTasksRedactorConcurrency(): number {
-  return clampInt(readEnvInt("TASKS_REDACTOR_CONCURRENCY", 2), 1, 4);
+  return clampInt(readEnvInt("TASKS_REDACTOR_CONCURRENCY", 3), 1, 4);
 }
 
 export function resolveTasksPipelineMaxRepairs(options: {

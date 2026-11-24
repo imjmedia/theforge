@@ -290,7 +290,12 @@ export interface LegacyGenerateOptions {
   tasksContractContext?: string | null;
   /** Capa map-reduce activa (Backend | Frontend | Infra | QA | Integración). */
   tasksGenerationLayer?: string | null;
-  /** Pre-fetched Technology Docs MCP block (Context7). When absent, AiService may resolve from MDD. */
+  /**
+   * Lote estricto map-reduce/batch: restringe la salida a `tasksPlanJson.items`
+   * y omite el checklist global greenfield para evitar regenerar todo el proyecto en cada lote.
+   */
+  tasksSliceMode?: boolean;
+  /** Pre-fetched Technology Docs MCP block (Context7). Empty string means pre-resolved empty. */
   techDocsContext?: string | null;
   /** BRD stage — domain inventory injection in greenfield checklists. */
   brdContent?: string | null;
@@ -515,13 +520,16 @@ export class AiService {
   }
 
   /** Resolves optional Technology Docs MCP snippets; never throws. */
-  private async resolveTechDocsContext(
+  async resolveTechDocsContext(
     mddContent: string,
     blueprintContent: string | null | undefined,
     options?: LegacyGenerateOptions,
   ): Promise<string | null> {
-    const preset = options?.techDocsContext?.trim();
-    if (preset) return preset;
+    if (options?.abortSignal?.aborted) return null;
+    if (typeof options?.techDocsContext === "string") {
+      const preset = options.techDocsContext.trim();
+      return preset ? preset : null;
+    }
     try {
       return await this.techDocsMcp.buildContextForMdd(mddContent, blueprintContent);
     } catch (e) {
@@ -1298,8 +1306,12 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
       coordinatesMode?: boolean;
     },
   ): Promise<string> {
+    if (options?.abortSignal?.aborted) {
+      throw new Error("Cancelado por el usuario");
+    }
     const techDocsContext = await this.resolveTechDocsContext(mddContent, blueprintContent, options);
     const contractMode = Boolean(options?.tasksContractContext?.trim());
+    const strictSliceMode = Boolean(options?.tasksSliceMode && options?.tasksPlanJson?.trim());
 
     const mdd = buildMddContextForTasks(mddContent?.trim() ?? "", mddDeliverableCtx(options));
     const blueprint = capTextForLegacyBaseline(blueprintContent ?? "", 15000, options?.legacyBaselineStage);
@@ -1319,8 +1331,12 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
       const layerHint = options?.tasksGenerationLayer?.trim()
         ? `Capa activa: **${options.tasksGenerationLayer.trim()}**. `
         : "";
+      const sliceHint = strictSliceMode
+        ? "MODO LOTE MAP-REDUCE (ALCANCE ESTRICTO): genera ÚNICAMENTE las tareas correspondientes a los ítems del PLAN JSON DE ESTE LOTE para la capa activa. NO generes secciones de otras capas ni tareas fuera de este lote. "
+        : "";
       prompt =
         layerHint +
+        sliceHint +
         "Genera el documento Tasks según las instrucciones del system prompt. " +
         "Usa ÚNICAMENTE el manifiesto de contratos y context anchors — no inventes fuera del JSON.\n\n" +
         options!.tasksContractContext!.trim();
@@ -1381,7 +1397,9 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
         prompt;
     }
     prompt = appendPhase0ResearchBlock(prompt, options);
-    prompt = appendGreenfieldCoverageChecklist(prompt, mddContent?.trim() ?? "", "Tasks", options, blueprintContent);
+    if (!strictSliceMode) {
+      prompt = appendGreenfieldCoverageChecklist(prompt, mddContent?.trim() ?? "", "Tasks", options, blueprintContent);
+    }
     if (options?.gapsFeedback?.trim()) {
       prompt +=
         "\n\n**Los siguientes puntos deben corregirse o incorporarse:**\n---\n" +
@@ -1389,11 +1407,16 @@ REGLAS ESTRICTAS DE REPARACIÓN (1 SOLA PASADA):
         "\n---";
     }
     if (options?.tasksPlanJson?.trim()) {
-      prompt +=
-        "\n\n**PLAN JSON APROBADO (cobertura mínima obligatoria — expande CADA ítem en markdown YAML v2 completo; " +
-        "si el CHECKLIST DE COBERTURA exige endpoints, pantallas, Testing o Deploy no listados en el plan, inclúyelos igual):**\n---\n" +
-        options.tasksPlanJson.trim() +
-        "\n---";
+      prompt += strictSliceMode
+        ? "\n\n**PLAN JSON DE ESTE LOTE (ALCANCE ESTRICTO — expande ÚNICAMENTE los ítems listados en `items` en markdown YAML v2 completo; " +
+          "NO agregues tareas para endpoints, pantallas, fases, capas ni journeys fuera de este JSON; " +
+          "NO repitas encabezados globales ni secciones de otras capas):**\n---\n" +
+          options.tasksPlanJson.trim() +
+          "\n---"
+        : "\n\n**PLAN JSON APROBADO (cobertura mínima obligatoria — expande CADA ítem en markdown YAML v2 completo; " +
+          "si el CHECKLIST DE COBERTURA exige endpoints, pantallas, Testing o Deploy no listados en el plan, inclúyelos igual):**\n---\n" +
+          options.tasksPlanJson.trim() +
+          "\n---";
     }
     if (options?.tasksAuditorFeedback?.trim()) {
       prompt +=
