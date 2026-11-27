@@ -331,6 +331,7 @@ export const createProjectSlice: StateCreator<WorkshopState, [], [], ProjectSlic
           ? {
               loading: false,
               loadingReason: null,
+              lastRepairSummary: null,
               pendingPlanApproval: null,
               evaluatorCritique: null,
               designLoading: false,

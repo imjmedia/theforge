@@ -65,6 +65,7 @@ import { applyDeterministicMddRepairs } from "./mdd-deterministic-repair.util.js
 import {
   buildConvergenceFeedbackForDeliverable,
   buildConvergenceRetryPlan,
+  classifyGap,
   orderConvergenceDeliverables,
 } from "@theforge/shared-types";
 import { storeMddMarkdownForPersist } from "../ai-analysis/utils/mdd-sanitize.js";
@@ -116,6 +117,43 @@ export class CascadeCircuitBreaker {
     this.retriesUsed = this.maxRetries;
     return false;
   }
+}
+
+/** Error no fatal al regenerar un entregable durante la convergencia. */
+export type ConvergenceLoopError = { step: string; message: string };
+
+/** Motivo por el que terminó el bucle de convergencia. */
+export type ConvergenceStoppedReason =
+  | "converged"
+  | "human_only"
+  | "max_iterations"
+  | "budget"
+  | "no_mdd";
+
+/** Resultado del bucle de convergencia (`initialGaps` = medición de la primera iteración). */
+export type ConvergenceLoopResult = {
+  initialGaps: string[];
+  regenSteps: string[];
+  errors: ConvergenceLoopError[];
+  stoppedReason: ConvergenceStoppedReason;
+};
+
+/** Resumen de «Corregir auto/LLM» expuesto en `result.repair` del job repair-sdd-gaps. */
+export type RepairReadinessSummary = {
+  fixed: string[];
+  remaining: { auto: number; llm: number; human: number };
+  errors: ConvergenceLoopError[];
+  stoppedReason: ConvergenceStoppedReason;
+};
+
+/**
+ * Clave estable de un gap para comparar antes/después de reparar. Los gaps agregados
+ * (`[Integración x] … falta en: …`, `[BRD decision log] … N ítem(s)`) varían su mensaje al corregirse
+ * solo una parte; se identifican por su prefijo. El resto se compara por mensaje exacto.
+ */
+function stableGapKey(message: string): string {
+  const m = /^\[(Integraci[oó]n [^\]]+|BRD decision log)\]/i.exec(message);
+  return m ? m[0].toLowerCase() : message;
 }
 
 @Injectable()
@@ -237,11 +275,16 @@ export class DeliverablesCascadeService {
     await this.syncSemaphoreAfterCascade(projectId);
 
     if (stage?.id) {
+      // Relee el contexto: `syncSemaphoreAfterCascade` acaba de refrescar `semaphoreSync.inputsHash`
+      // y escribir con el snapshot inicial lo pisaría.
+      const fresh = await this.prisma.stage.findUnique({
+        where: { id: stage.id },
+        select: { shortTermContext: true },
+      });
+      const freshCtx = fresh?.shortTermContext;
       const prev =
-        stage.shortTermContext &&
-        typeof stage.shortTermContext === "object" &&
-        !Array.isArray(stage.shortTermContext)
-          ? (stage.shortTermContext as Record<string, unknown>)
+        freshCtx && typeof freshCtx === "object" && !Array.isArray(freshCtx)
+          ? (freshCtx as Record<string, unknown>)
           : {};
       await this.prisma.stage.update({
         where: { id: stage.id },
@@ -866,7 +909,7 @@ export class DeliverablesCascadeService {
     options?: { signal?: AbortSignal; acknowledgeGaps?: boolean },
   ) {
     const circuitBreaker = new CascadeCircuitBreaker(REPAIR_SDD_GAPS_MAX_RETRIES);
-    await this.runCascadeConvergenceLoop(projectId, circuitBreaker, {
+    const loop = await this.runCascadeConvergenceLoop(projectId, circuitBreaker, {
       signal: options?.signal,
       gapTolerance: 0,
       includeBrdTraceabilityRepair: true,
@@ -875,7 +918,50 @@ export class DeliverablesCascadeService {
     if (options?.signal?.aborted) throw new Error("Cancelado por el usuario");
     await this.runCascadeDeterministicConformancePass(projectId);
     await this.syncSemaphoreAfterCascade(projectId);
-    return this.projects.findOne(projectId);
+    const project = await this.projects.findOne(projectId);
+    const finalGaps = this.measureConvergenceGaps(project);
+    const finalSet = new Set(finalGaps ?? []);
+    // Comparación por clave estable: un gap agregado (p. ej. «falta en: A, B») que solo se corrige
+    // en parte cambia de mensaje pero sigue pendiente, así que no cuenta como corregido.
+    const finalKeys = new Set((finalGaps ?? []).map(stableGapKey));
+    const fixed =
+      finalGaps === null
+        ? []
+        : loop.initialGaps.filter((g) => !finalSet.has(g) && !finalKeys.has(stableGapKey(g)));
+    const remaining = { auto: 0, llm: 0, human: 0 };
+    for (const g of finalGaps ?? []) {
+      remaining[classifyGap(g).kind]++;
+    }
+    const repair: RepairReadinessSummary = {
+      fixed,
+      remaining,
+      errors: loop.errors,
+      stoppedReason: loop.stoppedReason,
+    };
+    return { project, repair };
+  }
+
+  /**
+   * Mide las brechas actuales con el mismo recolector del bucle de convergencia.
+   * Devuelve `null` si no hay MDD medible (alta complejidad sin constitución).
+   */
+  private measureConvergenceGaps(
+    project: Awaited<ReturnType<ProjectsService["findOne"]>>,
+  ): string[] | null {
+    const complexity = project.complexity ?? ComplexityLevel.HIGH;
+    const stage = pickPrimaryStage(project.stages ?? []);
+    const mdd = buildConstitutionMarkdown(project);
+    const source = {
+      ...project,
+      brdContent: stage?.brdContent ?? null,
+      dbgaContent: project.dbgaContent ?? null,
+      domainInventory: stage?.domainInventory ?? null,
+    };
+    if (complexity === ComplexityLevel.LOW || complexity === ComplexityLevel.MEDIUM) {
+      return collectLowMediumReadinessGaps(complexity, source);
+    }
+    if (!mdd.trim()) return null;
+    return collectConformanceGaps(this.conformance, mdd, source);
   }
 
   private async runCascadeConvergenceLoop(
@@ -887,7 +973,12 @@ export class DeliverablesCascadeService {
       includeBrdTraceabilityRepair?: boolean;
       acknowledgeGaps?: boolean;
     },
-  ): Promise<void> {
+  ): Promise<ConvergenceLoopResult> {
+    const errors: ConvergenceLoopError[] = [];
+    let initialGaps: string[] = [];
+    let regenSteps: string[] = [];
+    let stoppedReason: ConvergenceStoppedReason = "max_iterations";
+    const done = (): ConvergenceLoopResult => ({ initialGaps, regenSteps, errors, stoppedReason });
     const signal = options?.signal;
     const GAP_TOLERANCE = options?.gapTolerance ?? 5;
     const includeBrdTraceabilityRepair = options?.includeBrdTraceabilityRepair === true;
@@ -903,23 +994,17 @@ export class DeliverablesCascadeService {
       const complexity = project.complexity ?? ComplexityLevel.HIGH;
       const stage = pickPrimaryStage(project.stages ?? []);
       const mdd = buildConstitutionMarkdown(project);
-      const source = {
-        ...project,
-        brdContent: stage?.brdContent ?? null,
-        dbgaContent: project.dbgaContent ?? null,
-        domainInventory: stage?.domainInventory ?? null,
-      };
 
       const useLowMedium =
         complexity === ComplexityLevel.LOW || complexity === ComplexityLevel.MEDIUM;
 
-      let gaps: string[];
-      if (useLowMedium) {
-        gaps = collectLowMediumReadinessGaps(complexity, source);
-      } else {
-        if (!mdd.trim()) return;
-        gaps = collectConformanceGaps(this.conformance, mdd, source);
+      const measured = this.measureConvergenceGaps(project);
+      if (measured === null) {
+        stoppedReason = "no_mdd";
+        return done();
       }
+      const gaps: string[] = measured;
+      if (iteration === 0) initialGaps = [...gaps];
 
       const brdTraceabilityGaps =
         !useLowMedium &&
@@ -936,14 +1021,15 @@ export class DeliverablesCascadeService {
         this.logger.log(
           `[Cascade] Convergence OK en iteración ${iteration + 1}/${MAX_ITERATIONS} (${gaps.length} gap(s) ≤ tolerancia ${GAP_TOLERANCE})`,
         );
-        return;
+        stoppedReason = "converged";
+        return done();
       }
 
       const plan = buildConvergenceRetryPlan(gaps);
       const shouldAutoRepairMdd =
         !useLowMedium && (plan.autoRepairMdd || brdTraceabilityGaps.length > 0);
       const shouldSyncUiScreens = plan.deliverables.includes("ui_screens_sync");
-      const regenSteps = orderConvergenceDeliverables(
+      regenSteps = orderConvergenceDeliverables(
         [...new Set(plan.deliverables)].filter(
           (s) =>
             s !== "mdd_canonical" &&
@@ -956,7 +1042,8 @@ export class DeliverablesCascadeService {
         this.logger.debug(
           `[Cascade] Convergence detenida — ${gaps.length} gap(s) requieren HITL o sin plan`,
         );
-        return;
+        stoppedReason = "human_only";
+        return done();
       }
 
       this.logger.warn(
@@ -995,7 +1082,8 @@ export class DeliverablesCascadeService {
           this.logger.warn(
             `[Cascade] Convergence loop: Circuit breaker alcanzado (${circuitBreaker.retriesUsed}/${circuitBreaker.maxRetries}), omitiendo regeneración de ${step}`,
           );
-          return;
+          stoppedReason = "budget";
+          return done();
         }
         const feedback =
           buildConvergenceFeedbackForDeliverable(gaps, step) || plan.feedback || undefined;
@@ -1005,14 +1093,15 @@ export class DeliverablesCascadeService {
             acknowledgeGaps,
             signal,
           })
-          .catch((e) =>
-            this.logger.warn(
-              `[Cascade] Convergence regen ${step}: ${e instanceof Error ? e.message : e}`,
-            ),
-          );
+          .catch((e) => {
+            const message = e instanceof Error ? e.message : String(e);
+            errors.push({ step, message });
+            this.logger.warn(`[Cascade] Convergence regen ${step}: ${message}`);
+          });
         await this.runCascadeDeterministicConformancePass(projectId);
       }
       if (signal?.aborted) throw new Error("Cancelado por el usuario");
     }
+    return done();
   }
 }

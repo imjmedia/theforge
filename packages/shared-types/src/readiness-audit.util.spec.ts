@@ -12,6 +12,13 @@ import { computeMddCascadeDelta } from "./mdd-cascade-delta.util.js";
 test("classifyGap: BRD decision log → human", () => {
   const g = classifyGap("[BRD decision log] 2 ítem(s) abiertos — Montos exactos");
   assert.equal(g.kind, "human");
+  assert.deepEqual(g.targetDeliverables, ["brd"]);
+});
+
+test("buildConvergenceRetryPlan: la brecha humana de BRD no entra al plan", () => {
+  const plan = buildConvergenceRetryPlan(["[BRD decision log] 2 ítem(s) abiertos — Montos exactos"]);
+  assert.equal(plan.deliverables.includes("brd"), false);
+  assert.equal(plan.deliverables.length, 0);
 });
 
 test("CL-32: «por validar» a mitad del mensaje → llm", () => {

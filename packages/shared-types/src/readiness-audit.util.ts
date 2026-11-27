@@ -9,6 +9,11 @@ export type ClassifiedGap = {
   kind: GapResolutionKind;
   prefix: string;
   targetDeliverable?: string;
+  /**
+   * Entregables destino de la brecha. Las brechas humanas (todas de BRD: decision log,
+   * «Por validar», montos, periodos) apuntan a `["brd"]` solo para informar a quién
+   * corresponde; el reparador automático nunca las edita (ver `buildConvergenceRetryPlan`).
+   */
   targetDeliverables?: string[];
 };
 
@@ -155,7 +160,8 @@ function resolveDeliverables(message: string): string[] {
 export function classifyGap(message: string): ClassifiedGap {
   const prefix = extractGapPrefix(message);
   if (isHumanGap(message)) {
-    return { message, kind: "human", prefix, targetDeliverable: undefined, targetDeliverables: [] };
+    // Todas las brechas humanas (HUMAN_PREFIXES) son del BRD; el reparador no las toca.
+    return { message, kind: "human", prefix, targetDeliverable: "brd", targetDeliverables: ["brd"] };
   }
   if (isAutoGap(message)) {
     return {

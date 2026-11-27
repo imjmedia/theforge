@@ -3,6 +3,7 @@
  */
 import type { ChatImagePart, MddDeliveryGateResult, PlanValidationPersisted, ProjectGenerationStatus, WorkshopChatScope } from "@theforge/shared-types";
 import type { AgentProgressItem } from "../../utils/agentProgress";
+import type { RepairSummary } from "../../utils/repairSummary";
 import type { WorkshopDocumentTimestamps } from "../../utils/workshop-document-content.util";
 import type {
   ApiConformanceResult,
@@ -55,12 +56,7 @@ export const workshopInitialState = {
       llm: number;
       human: number;
       truncated: boolean;
-      items: Array<{
-        message: string;
-        kind: "auto" | "llm" | "human";
-        prefix: string;
-        targetDeliverable?: string;
-      }>;
+      items: import("@theforge/shared-types").ClassifiedGap[];
     };
     compositeReadiness?: { reasons: string[] };
     consistencyScore?: number;
@@ -101,6 +97,7 @@ export const workshopInitialState = {
   synced: true,
   error: null as string | null,
   notice: null as string | null,
+  lastRepairSummary: null as RepairSummary | null,
   modelsUnavailableModalOpen: false,
   auditTrail: null as string[] | null,
   precisionBreakdown: null as PrecisionBreakdown | null,

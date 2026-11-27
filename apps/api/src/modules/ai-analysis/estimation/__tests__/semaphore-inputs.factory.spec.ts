@@ -44,4 +44,17 @@ describe("buildSemaphoreInputsFromLoaded", () => {
     });
     assert.equal(built.verdict.derivativesState, "partial");
   });
+
+  it("S4: el inputsHash no depende de la fuente (draft vs persisted)", () => {
+    const mdd = "# MDD\n".padEnd(200, "x");
+    const base = {
+      projectId: "p3",
+      content: mdd,
+      complexity: "HIGH" as const,
+      documents: { mddContent: mdd },
+    };
+    const draft = buildSemaphoreInputsFromLoaded(conformance, { ...base, source: "draft" });
+    const persisted = buildSemaphoreInputsFromLoaded(conformance, { ...base, source: "persisted" });
+    assert.equal(draft.inputsHash, persisted.inputsHash);
+  });
 });
