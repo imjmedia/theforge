@@ -47,7 +47,7 @@ function upgradePathsToV1(content: string): string {
 function prefixBareRoutes(content: string, prefix: string): string {
   const normalized = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
   return content.replace(
-    /(\|\s*(?:GET|POST|PUT|DELETE|PATCH)\s*\|\s*)(`?)(\/(?!api\/)([a-z0-9_/-]+))(`?)/gi,
+    /(\|\s*(?:GET|POST|PUT|DELETE|PATCH)\s*\|\s*)(`?)(\/(?!api\/)[a-z0-9_/-]+)(`?)/gi,
     (_m, lead: string, q1: string, path: string, q2: string) =>
       `${lead}${q1}${normalized}${path.startsWith("/") ? path : `/${path}`}${q2}`,
   );

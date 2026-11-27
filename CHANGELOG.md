@@ -4,6 +4,22 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 
 ## [Unreleased]
 
+### Fixed
+
+- **Regeneración de entregables (GhostDoc: Flujos, API Contracts e Infra dañados tras «Corregir auto/LLM» + regenerar):** los documentos quedaban con la cabecera de fechas conteniendo el cuerpo, changelog duplicado, secciones «Contratos API (MDD §4)» repetidas con tablas vacías y YAML de Infra roto. Causas corregidas:
+  - **Stamp `theforge-doc`:** ya no absorbe el H1 ni los bloques mermaid en documentos compilados con flechas `-->` / `-->>` (destruía el cuerpo en cada guardado). La regex se unificó en `THEFORGE_DOC_META_COMMENT_RE`, exportada de `@theforge/shared-types`.
+  - **Registro de cambios:** `ensureDocumentChangelog` ya no duplica «Registro de cambios del documento» en Flujos/Infra compilados (encabezado numerado, tabla de 4 columnas, separador `|:---|`); `appendDocumentChangelogEntry` respeta las columnas de la tabla; `parseLatestDocumentVersion` ignora tablas ajenas al changelog (ya no lee «13» de una tabla de Tasks).
+  - **API Contracts:** `reconcileApiContractsToMdd` es idempotente y no acumula bloques «Contratos API (MDD §4)»; sana documentos ya duplicados conservando las descripciones reales. Reconoce filas con método en negritas (`**GET**`) del compilador PAG y detecta la tabla de endpoints por cabecera Método/Ruta (ya no confunde tablas de convenciones o errores). Elimina endpoints extra solo en tablas de catálogo y deduplica la fila por defecto frente a la real. Sin tabla de endpoints inserta el bloque en el lugar del eliminado y conserva el resto del documento (Autenticación, §2 Esquemas, §3 Códigos…). Toma los endpoints de MDD §4 con la misma extracción que el chequeo (`extractMddSection4EndpointsForConformance`). La conformidad del reparador y del reintento LLM se decide solo por tablas (`checkApiVsMdd` con `tablesOnly`) y la conformidad determinista ya no emite parches no-op.
+  - **Prefijo de API:** `prefixBareRoutes` (`api-prefix-unify.util.ts`) ya no convierte `/health` en `/api/healthhealth`.
+  - **Infra:** la reparación ya no rompe compose YAML bien formado (incl. `command: >`, flow multilínea, secuencia de mapas, anchors/merge keys y sangrado base) ni convierte en bloque de código la tabla de variables de entorno.
+
+### Changed
+
+- **Regenerar con PAG sin endpoints:** Flujos e Infra avisan en el log y en el `changeLog` (aviso `pag-sin-endpoints`) cuando se regeneran con un PAG sin endpoints, porque regenerar no cambia el documento. El aviso se omite si hay uno del mismo campo entre las últimas 30 entradas del proyecto, para no duplicarlo con el «Actualizó…» del persist.
+- **`stampMarkdownIfBodyChanged`** admite `{ force }`, y `update` / persistencia de entregables aceptan `forceRestampDeliverables`. Aún no está activado en ninguna ruta (pendiente cablear la regeneración explícita).
+- **Limitación conocida (API):** el reparador y el reintento LLM evalúan la conformidad de API con `tablesOnly`, pero el semáforo y la cascada usan el chequeo completo; una sección `### DELETE /x` de detalle que no figure en MDD §4 puede seguir marcando brecha en el semáforo (decisión pendiente).
+- **Nota de operación:** los MDD que el stamp había corrompido pueden cambiar de hash una sola vez y mostrar el semáforo «desactualizado». Los documentos ya dañados de GhostDoc se recuperan regenerándolos tras desplegar.
+
 ## [v2.0.1] — 2026-11-27
 
 ### Fixed

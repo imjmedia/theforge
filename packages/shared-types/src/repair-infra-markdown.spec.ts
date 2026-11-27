@@ -12,6 +12,9 @@ import {
   repairUnfencedYamlDesignBlock,
 } from "./repair-infra-markdown.js";
 import { formatDocumentMarkdown } from "./format-document-markdown.js";
+import { compilePagToInfraMarkdown } from "./document-compiler.js";
+import { repairPastedMarkdown } from "./repair-pasted-markdown.js";
+import type { ProjectArchitectureGraph } from "./project-architecture-graph.js";
 
 const fixtureDir = dirname(fileURLToPath(import.meta.url));
 const infraFixture = readFileSync(join(fixtureDir, "repair-infra-markdown.fixture.txt"), "utf8");
@@ -205,5 +208,119 @@ describe("repairInfraMarkdown — prosa que parece instrucción Dockerfile", () 
       "Texto.",
     ].join("\n");
     assert.ok(!repairInfraMarkdown(md).includes("```"));
+  });
+});
+
+describe("repairInfraMarkdown — no rehace Markdown ya válido (salida del compilador PAG)", () => {
+  const basePag = (database: string, withContent: boolean): ProjectArchitectureGraph => ({
+    version: "1.0.0",
+    projectName: "Proyecto Demo",
+    description: "Demo",
+    stack: {
+      runtime: "Node.js 20",
+      backendFramework: "NestJS",
+      frontendFramework: "React 18 + Vite",
+      database,
+      orm: "Prisma",
+      cache: "Redis 7",
+    },
+    entities: [],
+    endpoints: withContent
+      ? [
+          { path: "/api/v1/a", method: "GET", description: "A", authRequired: false, errorCodes: [404], rolesAllowed: [] },
+          { path: "/api/v1/b", method: "POST", description: "B", authRequired: true, errorCodes: [400], rolesAllowed: ["ADMIN"] },
+        ]
+      : [],
+    services: withContent
+      ? [
+          { name: "AModule", layer: "backend_module", handledEndpoints: ["/api/v1/a"], dependencies: [] },
+          { name: "BModule", layer: "backend_module", handledEndpoints: ["/api/v1/b"], dependencies: ["AModule"] },
+        ]
+      : [],
+  });
+
+  for (const [etiqueta, pag] of [
+    ["PAG sin endpoints ni servicios", basePag("PostgreSQL 16", false)],
+    ["PAG con 2 endpoints y 2 servicios", basePag("PostgreSQL 16", true)],
+    ["PAG con MongoDB", basePag("MongoDB 7", true)],
+  ] as const) {
+    it(`es idempotente sobre ${etiqueta}`, () => {
+      const md = compilePagToInfraMarkdown(pag);
+      assert.equal(repairInfraMarkdown(md), md);
+    });
+
+    it(`repairPastedMarkdown conserva yaml byte a byte y tabla env sin fence (${etiqueta})`, () => {
+      const md = compilePagToInfraMarkdown(pag);
+      const yamlOriginal = md.match(/```yaml\n([\s\S]*?)\n```/)![1];
+      const out = repairPastedMarkdown(md);
+      assert.ok(out.includes(`\`\`\`yaml\n${yamlOriginal}\n\`\`\``));
+      assert.doesNotMatch(out, /```env/);
+      assert.match(out, /\|:-+\|:-+/);
+    });
+  }
+
+  it("sigue reparando un compose realmente roto (viñetas sin indentación)", () => {
+    const roto = `## 2. Definición Docker Compose (\`docker-compose.yml\`)
+
+\`\`\`yaml
+services:
+  postgres:
+- image: postgres:16-alpine
+- restart: always
+\`\`\`
+
+## 3. Matriz de Variables de Entorno
+
+\`\`\`env
+A=1
+\`\`\`
+`;
+    const out = repairInfraMarkdown(roto);
+    assert.match(out, /^\s+image: postgres:16-alpine/m);
+    assert.notEqual(out, roto);
+  });
+
+  it("una sección de variables sin tabla GFM sigue envolviéndose en env", () => {
+    const sucio = `## 3. Variables de entorno
+
+A=1
+B=2
+`;
+    assert.match(repairInfraMarkdown(sucio), /```env\nA=1\nB=2\n```/);
+  });
+});
+
+describe("repairInfraMarkdown — YAML compose válido con escalares de bloque y flow multilínea", () => {
+  const wrap = (yaml: string) =>
+    `## 1. Dockerfile\n\n\`\`\`dockerfile\nFROM node:20\n\`\`\`\n\n## 2. docker-compose.yml\n\n\`\`\`yaml\n${yaml}\n\`\`\`\n\n## 3. Variables de entorno\n\n\`\`\`env\nA=1\n\`\`\`\n`;
+
+  it("command con escalar plegado `>` se conserva byte a byte", () => {
+    const doc = wrap("services:\n  api:\n    image: x\n    command: >\n      sh -c \"npm run migrate &&\n      node dist/main.js\"\n    restart: always");
+    assert.equal(repairInfraMarkdown(doc), doc);
+  });
+
+  it("escalar literal `|-` se conserva", () => {
+    const doc = wrap("services:\n  api:\n    image: x\n    command: |-\n      echo a\n      echo b\n    restart: always");
+    assert.equal(repairInfraMarkdown(doc), doc);
+  });
+
+  it("healthcheck test flow multilínea se conserva", () => {
+    const doc = wrap("services:\n  api:\n    image: x\n    healthcheck:\n      test: [\"CMD\",\n        \"curl\", \"-f\",\n        \"http://localhost/health\"]\n      interval: 10s");
+    assert.equal(repairInfraMarkdown(doc), doc);
+  });
+
+  it("secuencia de mapas (`- type: bind` con source/target a +2 del guion) se conserva", () => {
+    const doc = wrap("services:\n  api:\n    image: node:20\n    volumes:\n      - type: bind\n        source: ./data\n        target: /data");
+    assert.equal(repairInfraMarkdown(doc), doc);
+  });
+
+  it("anchors y merge keys (`x-common: &common`, `<<: *common`) se conservan", () => {
+    const doc = wrap("x-common: &common\n  restart: unless-stopped\nservices:\n  api:\n    <<: *common\n    image: node:20");
+    assert.equal(repairInfraMarkdown(doc), doc);
+  });
+
+  it("sangrado base uniforme de 6 espacios se conserva", () => {
+    const doc = wrap("      services:\n        api:\n          image: x");
+    assert.equal(repairInfraMarkdown(doc), doc);
   });
 });

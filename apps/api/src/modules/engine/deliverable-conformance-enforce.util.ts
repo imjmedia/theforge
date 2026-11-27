@@ -36,7 +36,7 @@ export function buildDeterministicDeliverableConformancePatches(
   const api = (source.apiContractsContent ?? "").trim();
   if (api.length >= MIN_DOC) {
     const fixed = repairApiProgrammaticGaps(mdd, api);
-    if (fixed !== api && checkApiVsMdd(mdd, fixed).ok) {
+    if (fixed.trim() !== api && checkApiVsMdd(mdd, fixed, { tablesOnly: true }).ok) {
       patches.apiContractsContent = fixed;
     }
   }
@@ -44,7 +44,7 @@ export function buildDeterministicDeliverableConformancePatches(
   const blueprint = (source.blueprintContent ?? "").trim();
   if (blueprint.length >= MIN_DOC) {
     const fixed = repairBlueprintProgrammaticGaps(mdd, blueprint);
-    if (fixed !== blueprint) patches.blueprintContent = fixed;
+    if (fixed.trim() !== blueprint) patches.blueprintContent = fixed;
   }
 
   const flows = (source.logicFlowsContent ?? "").trim();
@@ -56,7 +56,7 @@ export function buildDeterministicDeliverableConformancePatches(
     if (built) patches.logicFlowsContent = built;
   } else if (flows.length >= MIN_DOC) {
     const fixed = repairLogicFlowsProgrammaticGaps(mdd, flows);
-    if (fixed !== flows) patches.logicFlowsContent = fixed;
+    if (fixed.trim() !== flows) patches.logicFlowsContent = fixed;
   }
 
   return patches;

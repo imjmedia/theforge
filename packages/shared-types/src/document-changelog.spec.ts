@@ -13,6 +13,38 @@ import {
   isChangelogOnlyDocument,
   parseLatestDocumentVersion,
 } from "./document-changelog.js";
+import {
+  compilePagToInfraMarkdown,
+  compilePagToLogicFlowsMarkdown,
+} from "./document-compiler.js";
+import type { ProjectArchitectureGraph } from "./project-architecture-graph.js";
+
+const minimalPag = {
+  version: "1.0.0",
+  projectName: "Demo",
+  description: "Demo",
+  stack: {
+    runtime: "Node.js 20",
+    backendFramework: "NestJS",
+    frontendFramework: "React 18 + Vite",
+    database: "PostgreSQL 16",
+    orm: "Prisma",
+  },
+  entities: [],
+  endpoints: [],
+} as unknown as ProjectArchitectureGraph;
+
+const countChangelogHeadings = (md: string): number =>
+  (md.match(/^#{1,3}\s+(?:\d+\.\s+)?Registro de cambios del documento\s*$/gim) ?? [])
+    .length;
+
+const TABLE_4_COLS = `# Doc
+
+## 3. Registro de cambios del documento
+
+| Versión | Fecha | Autor | Descripción |
+|:--------|:------|:------|:------------|
+| 1.0 | 2026-10-22 | DocumentCompiler (PAG) | Compilación inicial |`;
 
 describe("document-changelog", () => {
   it("formatDocumentChangelogDate usa mes en español", () => {
@@ -113,5 +145,82 @@ Alcance MVP con entregables, criterios de aceptación y dependencias técnicas d
   it("isChangelogOnlyDocument detecta shell vacío post ensureDocumentChangelog", () => {
     const shell = ensureDocumentChangelog("");
     assert.equal(isChangelogOnlyDocument(shell), true);
+  });
+
+  it("ensureDocumentChangelog no duplica el changelog en Flujos compilado (## 3.)", () => {
+    const md = compilePagToLogicFlowsMarkdown(minimalPag);
+    const out = ensureDocumentChangelog(md);
+    assert.equal(countChangelogHeadings(out), 1);
+    assert.equal(hasDocumentChangelogSection(md), true);
+  });
+
+  it("ensureDocumentChangelog no duplica el changelog en Infra compilado (## 4.)", () => {
+    const md = compilePagToInfraMarkdown(minimalPag);
+    const out = ensureDocumentChangelog(md);
+    assert.equal(countChangelogHeadings(out), 1);
+    // La fila 1.0 de 4 celdas conserva el Autor tras corregir la fecha.
+    assert.match(out, /\| 1\.0 \| [^|]+ \| DocumentCompiler \(PAG\) \| [^|]+ \|/);
+  });
+
+  it("appendDocumentChangelogEntry añade fila de 4 celdas sobre tabla de 4 columnas", () => {
+    const out = appendDocumentChangelogEntry(TABLE_4_COLS, {
+      version: "1.1",
+      date: "Noviembre 2026",
+      description: "Ajuste de flujos",
+    });
+    assert.equal(countChangelogHeadings(out), 1);
+    assert.match(out, /^\| 1\.1 \| Noviembre 2026 \| — \| Ajuste de flujos \|$/m);
+  });
+
+  it("appendDocumentChangelogEntry mantiene 3 celdas en tabla de 3 columnas", () => {
+    const doc = ensureDocumentChangelog("# X\n\nCuerpo.", { initialDate: "Mayo 2026" });
+    const out = appendDocumentChangelogEntry(doc, {
+      version: "1.1",
+      date: "Junio 2026",
+      description: "Cambio",
+    });
+    assert.match(out, /^\| 1\.1 \| Junio 2026 \| Cambio \|$/m);
+  });
+
+  it("parseLatestDocumentVersion lee la versión de una tabla de 4 columnas", () => {
+    const doc = `${TABLE_4_COLS}\n| 1.2 | 2026-11-01 | — | Otro |`;
+    assert.equal(parseLatestDocumentVersion(doc), "1.2");
+  });
+
+  it("parseLatestDocumentVersion ignora una tabla de Tasks de 4 celdas fuera del changelog", () => {
+    const doc = "# Tasks\n\n| # | Tarea | Horas | Prioridad |\n|---|---|---|---|\n| 12 | Login | 3 | Alta |\n| 13 | Logout | 1 | Baja |\n\n## Registro de cambios del documento\n\n| Versión | Fecha | Descripción del cambio |\n| --- | --- | --- |\n| 1.0 | Nov 2026 | Inicial |\n";
+    assert.equal(parseLatestDocumentVersion(doc), "1.0");
+  });
+
+  it("encabezado sin número sigue reconocido", () => {
+    const doc = "# A\n\n## Registro de cambios del documento\n\n| Versión | Fecha | Descripción del cambio |\n| --- | --- | --- |\n| 1.0 | Mayo 2026 | x |";
+    assert.equal(hasDocumentChangelogSection(doc), true);
+    assert.equal(countChangelogHeadings(ensureDocumentChangelog(doc)), 1);
+    assert.equal(parseLatestDocumentVersion(doc), "1.0");
+  });
+
+  it("separador `|:---` del compilador PAG con sección posterior: la fila queda dentro de la tabla", () => {
+    const doc = `# A
+
+## Registro de cambios del documento
+
+| Versión | Fecha | Descripción del cambio |
+|:--------|:------|:-----------------------|
+| 1.0 | Mayo 2026 | x |
+
+## Cumplimiento
+
+Texto posterior.`;
+    const out = appendDocumentChangelogEntry(doc, {
+      version: "1.1",
+      date: "Junio 2026",
+      description: "Cambio",
+    });
+    const lines = out.split("\n");
+    const rowIdx = lines.findIndex((l) => l.startsWith("| 1.1 |"));
+    const prevIdx = lines.findIndex((l) => l.startsWith("| 1.0 |"));
+    assert.equal(rowIdx, prevIdx + 1);
+    assert.ok(rowIdx < lines.findIndex((l) => l.startsWith("## Cumplimiento")));
+    assert.match(out, /Texto posterior\.$/);
   });
 });

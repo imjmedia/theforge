@@ -1,4 +1,7 @@
-import { peelDocumentBodyForPersist } from "@theforge/shared-types";
+import {
+  peelDocumentBodyForPersist,
+  THEFORGE_DOC_META_COMMENT_RE,
+} from "@theforge/shared-types";
 import {
   ensureMddGovernanceSection,
   extractGovernanceSection,
@@ -24,9 +27,6 @@ import {
  * On first call, `created = updated = now`. On subsequent calls the original
  * `created` is preserved from the existing content and only `updated` changes.
  */
-
-const META_COMMENT_RE =
-  /^<!--\s*theforge-doc:created=([^|]+)\|updated=([^|]+)\s*-->\s*\n?/;
 
 const LOCALE = "es-MX";
 
@@ -78,7 +78,7 @@ export function extractDocumentTimestamps(content: string): {
   created?: Date;
   updated?: Date;
 } {
-  const match = content.match(META_COMMENT_RE);
+  const match = content.match(THEFORGE_DOC_META_COMMENT_RE);
   if (!match) return {};
   return {
     created: new Date(match[1].trim()),
@@ -127,18 +127,33 @@ export function documentMarkdownBodiesEqual(a: string, b: string): boolean {
   return stripDocumentStampHeader(a).trim() === stripDocumentStampHeader(b).trim();
 }
 
+/** Opciones de {@link stampMarkdownIfBodyChanged}. */
+export interface StampIfBodyChangedOptions {
+  /**
+   * Regeneración explícita: reestampa `updated` aunque el cuerpo coincida (conserva `created`
+   * y el cuerpo), para que el sondeo del cliente detecte que la operación terminó.
+   */
+  force?: boolean;
+}
+
 /**
  * Re-stampa solo si el cuerpo cambió; evita PATCH en bucle que solo actualizan «Última modificación».
+ * Con `opts.force` reestampa siempre (solo para regeneraciones explícitas, no guardados normales).
  */
 export function stampMarkdownIfBodyChanged(
   existing: string | null | undefined,
   incoming: string,
   now: Date = new Date(),
+  opts?: StampIfBodyChangedOptions,
 ): string {
   const inc = incoming.trim();
   if (!inc) return inc;
   const ex = (existing ?? "").trim();
-  if (ex && documentMarkdownBodiesEqual(ex, inc)) return ex;
+  if (ex && documentMarkdownBodiesEqual(ex, inc)) {
+    if (!opts?.force) return ex;
+    // Reestampa sobre el documento existente: conserva `created` y el cuerpo.
+    return prependDocumentTimestamps(ex, now);
+  }
   return prependDocumentTimestamps(incoming, now);
 }
 
