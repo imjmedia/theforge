@@ -67,6 +67,33 @@ function compileSafe(re: string): RegExp {
   return new RegExp(re, "i");
 }
 
+/**
+ * Neutraliza palabras que `resolveDeliverables` interpreta como artefacto destino
+ * (API, Architecture, Infra) para que el texto citado no añada destinos falsos.
+ */
+function neutralizeTargetWords(text: string): string {
+  // Mismos criterios que `resolveDeliverables` (readiness-audit.util.ts): architecture/arquitectura/
+  // infraestructura sin límite de palabra (también matchean en plurales y compuestos).
+  return text.replace(
+    /api\s*contracts|api_contracts|architecture|arquitectura|infraestructura|\bapi\b|\binfra\b/gi,
+    "…",
+  );
+}
+
+/** Extracto (~80 caracteres alrededor del match) del corpus, en una sola línea. */
+function extractExcerpt(corpus: string, index: number, length: number): string {
+  const pad = 40;
+  const start = Math.max(0, index - pad);
+  const end = Math.min(corpus.length, index + length + pad);
+  const raw = corpus.slice(start, end).replace(/\s+/g, " ").trim();
+  return neutralizeTargetWords(raw);
+}
+
+/** Patrón en texto legible: sin `\\b` y con el alias `/…/i`. */
+function formatPattern(pattern: string): string {
+  return neutralizeTargetWords(`/${pattern.replace(/\\b/g, "")}/i`);
+}
+
 /** Gaps cuando el alcance declara una integración pero falta en artefactos downstream. */
 export function collectExternalIntegrationGapsFromRegistry(
   input: ExternalIntegrationCheckInput,
@@ -80,19 +107,28 @@ export function collectExternalIntegrationGapsFromRegistry(
   const gaps: string[] = [];
 
   for (const sig of registry) {
-    const scopeRe = compileSafe(sig.scopePattern);
-    if (!scopeRe.test(input.scopeCorpus)) continue;
+    const scopeMatch = compileSafe(sig.scopePattern).exec(input.scopeCorpus);
+    if (!scopeMatch) continue;
 
-    const missing: string[] = [];
-    if (!compileSafe(sig.apiPattern).test(input.apiMarkdown)) missing.push("API contracts");
-    if (!compileSafe(sig.architecturePattern).test(input.architectureMarkdown)) {
-      missing.push("Architecture");
+    const missing: { label: string; pattern: string }[] = [];
+    if (!compileSafe(sig.apiPattern).test(input.apiMarkdown)) {
+      missing.push({ label: "API contracts", pattern: sig.apiPattern });
     }
-    if (!compileSafe(sig.infraPattern).test(input.infraMarkdown)) missing.push("Infra");
+    if (!compileSafe(sig.architecturePattern).test(input.architectureMarkdown)) {
+      missing.push({ label: "Architecture", pattern: sig.architecturePattern });
+    }
+    if (!compileSafe(sig.infraPattern).test(input.infraMarkdown)) {
+      missing.push({ label: "Infra", pattern: sig.infraPattern });
+    }
 
     if (missing.length > 0) {
+      const excerpt = extractExcerpt(input.scopeCorpus, scopeMatch.index, scopeMatch[0].length);
+      const criteria = missing
+        .map((m) => `${m.label} debe mencionar ${formatPattern(m.pattern)}`)
+        .join("; ");
       gaps.push(
-        `[Integración ${sig.id}] En alcance DBGA/BRD pero falta en: ${missing.join(", ")}`,
+        `[Integración ${sig.id}] En alcance DBGA/BRD pero falta en: ${missing.map((m) => m.label).join(", ")}. ` +
+          `Disparado por: «${excerpt}». Criterio: ${criteria}`,
       );
     }
   }

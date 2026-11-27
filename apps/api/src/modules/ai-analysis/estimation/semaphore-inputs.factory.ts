@@ -81,6 +81,10 @@ export type BuiltSemaphoreInputs = {
   verdict: MddSemaphoreVerdict;
   deliverableSource: ProjectDeliverableSource;
   deliveryGateResult: ReturnType<typeof validateMddForDelivery>;
+  /**
+   * Hash del contenido evaluado (MDD, BRD, spec y perfil). Es independiente de la fuente
+   * (`draft` / `persisted`): el mismo contenido produce el mismo hash por cualquier canal.
+   */
   inputsHash: string;
 };
 
@@ -286,7 +290,6 @@ export function buildSemaphoreInputsFromLoaded(
       brd: (planningDocs.brdContent ?? "").slice(0, 500),
       spec: (planningDocs.specContent ?? "").slice(0, 500),
       profile,
-      source: params.source,
     }),
   );
 

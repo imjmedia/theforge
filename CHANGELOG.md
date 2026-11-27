@@ -4,10 +4,26 @@ Todas las notas relevantes de este repositorio se documentan aquí. El formato s
 
 ## [Unreleased]
 
+## [v2.0.1] — 2026-11-27
+
 ### Fixed
 
+- **Panel Semáforo / Auditoría SDD (refresco tras la cascada):** el panel refresca la conformidad al terminar la generación de entregables en cascada, tanto síncrona como por cola (`deliverables-job-sync.ts`).
+- **Auditoría SDD («Por validar» sin decision log):** el aviso aislado ya no se duplica, indica el conteo y la ubicación (sección o línea), y se corrigió el arrastre de `lastIndex` de las regex globales de `PLACEHOLDER_PATTERNS`.
+- **Semáforo guardado «desactualizado» (falso positivo):** el aviso salía casi siempre. El hash de inputs ya no incluye la fuente (draft/persisted), `StageSemaphoreSyncService` refresca `inputsHash` aunque estado y puntaje no cambien, y la cascada delta ya no lo pisa. Los hashes guardados cambian una vez; el aviso puede reaparecer hasta el siguiente sync.
+- **«Corregir auto/LLM»:** ya no cuenta como corregidas las brechas corregidas solo en parte.
 - **Clarificaciones (MDD y demás docs):** `resolveClarifications` y `clarifyDocument` llamaban al LLM sin tope de salida y caían al perfil `chat` (16K tokens); un MDD largo se truncaba y el guardia de persistencia respondía «El resultado borraría la mayor parte del MDD actual». Ahora usan el perfil `document` (65K).
 - **Formateo de markdown (visor MDD):** `repairOrphanDockerfileBlocks` trataba cualquier línea que empezara con `Healthcheck`, `Copy`, `User`, etc. (sin distinguir mayúsculas) como instrucción de Dockerfile y abría un fence ```` ```dockerfile ```` sin cierre, así que el resto de la sección (§7.3 en adelante) se pintaba como código. Las instrucciones ahora exigen mayúsculas.
+
+### Added
+
+- **Auditoría SDD — ubicación de brechas:** chips «en: API · Arquitectura · …» por brecha transversal que abren el documento (`gapLocation.ts`); las brechas humanas de BRD apuntan a `brd` (`ClassifiedGap.targetDeliverables`).
+- **Reparación de brechas — resultado:** el job `repair-sdd-gaps` expone `result.repair` (`{ fixed, remaining, errors, stoppedReason }`) y el panel muestra un mensaje bajo «Corregir auto/LLM» (`repairSummary.ts`).
+- **Integraciones externas:** el mensaje `[Integración id]` cita la frase de alcance que lo disparó y el criterio esperado por artefacto.
+
+### Changed
+
+- **`repairReadinessGaps`** devuelve `{ project, repair }` en lugar del proyecto; **`runCascadeConvergenceLoop`** devuelve un resultado.
 
 ## [v2.0.0] — 2026-11-12
 

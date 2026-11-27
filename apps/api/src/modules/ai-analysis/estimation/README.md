@@ -16,7 +16,7 @@ Módulo de estimación en vivo: semáforo del MDD, costo MXN y desglose de preci
 ## Contratos HTTP
 
 - `GET /ai-analysis/estimation` y `POST /ai-analysis/estimation` devuelven `semaphore`, `persistedStale`, métricas de costo y alias históricos.
-- `persistedStale=true` cuando `shortTermContext.semaphoreSync.inputsHash` difiere del hash actual (p. ej. BRD cambiado sin sync).
+- `persistedStale=true` cuando `shortTermContext.semaphoreSync.inputsHash` difiere del hash actual (p. ej. BRD cambiado sin sync). El hash de inputs no incluye la fuente (draft/persisted) y `StageSemaphoreSyncService` lo refresca aunque estado y puntaje no cambien.
 
 ## Pruebas
 

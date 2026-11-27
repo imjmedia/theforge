@@ -156,6 +156,7 @@ describe("estimation-semaphore (P8b GET/POST)", () => {
       content: MDD_MIN,
       source: "persisted",
       complexity: "HIGH",
+      projectType: "NEW" as never,
     }).inputsHash;
     return {
       prisma: {
@@ -225,5 +226,12 @@ describe("estimation-semaphore (P8b GET/POST)", () => {
     const svc = new EstimationService(prisma as never);
     const r = await svc.getLiveMetricsForProject("p1", undefined, "s1");
     assert.equal(r.persistedStale, true);
+  });
+
+  it("S4: borrador igual al persistido → persistedStale false", async () => {
+    const { prisma } = makePrismaForGetPost();
+    const svc = new EstimationService(prisma as never);
+    const r = await svc.getLiveMetricsForProject("p1", MDD_MIN, "s1");
+    assert.notEqual(r.persistedStale, true);
   });
 });

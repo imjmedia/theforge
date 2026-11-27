@@ -82,12 +82,7 @@ export interface WorkshopState {
       llm: number;
       human: number;
       truncated: boolean;
-      items: Array<{
-        message: string;
-        kind: "auto" | "llm" | "human";
-        prefix: string;
-        targetDeliverable?: string;
-      }>;
+      items: import("@theforge/shared-types").ClassifiedGap[];
     };
     compositeReadiness?: { reasons: string[] };
     consistencyScore?: number;
@@ -151,6 +146,8 @@ export interface WorkshopState {
   error: string | null;
   /** Avisos informativos (p. ej. patrones SSOT); no bloquean ni marcan «Sin conexión». */
   notice: string | null;
+  /** Resumen del último «Corregir auto/LLM» (`result.repair` del job); null si no hubo o se está reintentando. */
+  lastRepairSummary: import("../../utils/repairSummary").RepairSummary | null;
   /** Modal: ningún modelo de la cadena (principal + respaldos) respondió. */
   modelsUnavailableModalOpen: boolean;
   setModelsUnavailableModalOpen: (open: boolean) => void;

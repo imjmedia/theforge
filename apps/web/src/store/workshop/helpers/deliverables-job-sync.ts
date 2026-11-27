@@ -12,6 +12,7 @@ import {
   isDeliverablesCascadeLoadingReason,
   loadingReasonForDeliverablesJobType,
 } from "../../../utils/deliverablesCascadeUi";
+import { parseRepairSummary } from "../../../utils/repairSummary";
 import type { WorkshopState } from "../workshop-state.types";
 
 type WorkshopGetSet = {
@@ -22,6 +23,31 @@ type WorkshopGetSet = {
       | ((state: WorkshopState) => Partial<WorkshopState>),
   ) => void;
 };
+
+/**
+ * Refresca proyecto, conformidad (Semáforo/Auditoría SDD), estimación y estado de generación
+ * tras terminar una corrida de entregables (cascada o reparación). La conformidad se pide siempre.
+ * @returns el proyecto devuelto por `fetchProject`.
+ */
+export async function refreshAfterDeliverablesRun(
+  get: () => Pick<
+    WorkshopState,
+    | "fetchProject"
+    | "fetchConformance"
+    | "fetchEstimation"
+    | "fetchGenerationStatus"
+    | "bumpDocumentationGapsRefresh"
+  >,
+  pid: string,
+  opts: { isRepair?: boolean } = {},
+) {
+  const project = await get().fetchProject(pid, opts.isRepair ? { preferServerMdd: true } : undefined);
+  await get().fetchConformance(pid).catch(() => {});
+  await get().fetchEstimation(pid).catch(() => {});
+  await get().fetchGenerationStatus(pid);
+  get().bumpDocumentationGapsRefresh();
+  return project;
+}
 
 export const deliverablesJobPoll = {
   projectId: null as string | null,
@@ -107,6 +133,7 @@ export async function pollDeliverablesJobInBackground(
     const deadline = Date.now() + 45 * 60 * 1000;
     const completedSteps = new Set<string>();
     const lastReportedStep = { current: null as string | null };
+    let completedResult: unknown;
 
     while (Date.now() < deadline) {
       if (deliverablesJobPoll.projectId !== pid || deliverablesJobPoll.jobId !== jid) return;
@@ -121,13 +148,17 @@ export async function pollDeliverablesJobInBackground(
         status: string;
         progress?: { step?: string; index?: number; total?: number; completedSteps?: string[] };
         error?: string;
+        result?: unknown;
       };
 
       if (j.status === "failed") {
         if (j.error?.includes("Cancelado por el usuario")) return;
         throw new Error(j.error ?? "Cascada de entregables fallida");
       }
-      if (j.status === "completed") break;
+      if (j.status === "completed") {
+        completedResult = j.result;
+        break;
+      }
 
       if (!isRepair && j.progress != null) {
         await applyDeliverablesJobProgressTick(
@@ -147,13 +178,8 @@ export async function pollDeliverablesJobInBackground(
         cascadeCompleted: Math.max(s.cascadeCompleted, allStepLabels.length),
       }));
     }
-    await get().fetchProject(pid, isRepair ? { preferServerMdd: true } : undefined);
-    if (isRepair) {
-      await get().fetchConformance(pid).catch(() => {});
-    }
-    await get().fetchEstimation(pid).catch(() => {});
-    await get().fetchGenerationStatus(pid);
-    get().bumpDocumentationGapsRefresh();
+    if (isRepair) set({ lastRepairSummary: parseRepairSummary(completedResult) });
+    await refreshAfterDeliverablesRun(get, pid, { isRepair });
     set({ agentProgress: [] });
   } catch (e) {
     set({

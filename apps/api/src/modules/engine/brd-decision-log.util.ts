@@ -11,13 +11,37 @@ export type BrdDecisionLogFinding = {
 const DECISION_LOG_HEADING_RE =
   /^##+\s*(?:pendientes de validaci[oó]n|decision log|registro de decisiones)/im;
 
+const POR_VALIDAR_LABEL = "Por validar suelto";
+
 const PLACEHOLDER_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /\$\s*N\s*\$/gi, label: "latencia $N$" },
-  { re: /\bpor\s+validar\b/gi, label: "Por validar suelto" },
+  { re: /\bpor\s+validar\b/gi, label: POR_VALIDAR_LABEL },
   { re: /impuesto\s+fiscal\s*%\s*sin\s+dato/gi, label: "fiscal % sin cerrar" },
   { re: /(?:tokens?|plan)\s*(?:\/|\s+)(?:tokens?|plan)\s*(?:sin\s+dato|tbd|por\s+definir|pendiente)/gi, label: "tokens/plan sin cerrar" },
   { re: /%\s*(?:fiscal|impuesto)\s*(?:tbd|por\s+validar|\?\?)/gi, label: "porcentaje fiscal abierto" },
 ];
+
+/**
+ * Cuenta las ocurrencias de «Por validar» y nombra hasta 3 ubicaciones distintas:
+ * el heading `##`/`###` más cercano por encima o, si no hay, el número de línea.
+ */
+function locatePorValidar(text: string): { count: number; locations: string[]; more: boolean } {
+  const lines = text.split("\n");
+  const re = /\bpor\s+validar\b/gi;
+  let count = 0;
+  const all: string[] = [];
+  let heading: string | null = null;
+  lines.forEach((line, i) => {
+    const h = /^(#{2,3})\s+(.+?)\s*#*\s*$/.exec(line);
+    if (h) heading = h[2].trim();
+    const n = (line.match(re) ?? []).length;
+    if (n === 0) return;
+    count += n;
+    const loc = heading ? `§${heading}` : `línea ${i + 1}`;
+    if (!all.includes(loc)) all.push(loc);
+  });
+  return { count, locations: all.slice(0, 3), more: all.length > 3 };
+}
 
 function extractDecisionLogSection(brdMarkdown: string): string | null {
   const text = (brdMarkdown ?? "").trim();
@@ -58,19 +82,27 @@ export function checkBrdDecisionLogClosure(brdMarkdown: string): {
 
   const decisionSection = extractDecisionLogSection(text);
   if (!decisionSection) {
+    const porValidar = locatePorValidar(text);
     for (const { re, label } of PLACEHOLDER_PATTERNS) {
+      // Con /g, test() arrastra lastIndex entre llamadas: se resetea siempre.
+      re.lastIndex = 0;
+      // «Por validar suelto» lo cubre el aviso huérfano (un solo aviso por hecho).
+      if (porValidar.count > 0 && label === POR_VALIDAR_LABEL) continue;
       if (re.test(text)) {
         findings.push({ kind: "unresolved_placeholder", ref: label });
         warnings.push(`BRD: placeholder sin decision log — ${label}`);
       }
     }
-    if (/\bpor\s+validar\b/i.test(text)) {
+    if (porValidar.count > 0) {
       findings.push({
         kind: "orphan_por_validar",
         ref: "Por validar",
         detail: "Sin sección «Pendientes de validación»",
       });
-      warnings.push("BRD: «Por validar» en cuerpo sin decision log estructurado.");
+      const where = porValidar.locations.length
+        ? ` (en ${porValidar.locations.join(", ")}${porValidar.more ? ", …" : ""})`
+        : "";
+      warnings.push(`BRD: ${porValidar.count} «Por validar» sin sección «Pendientes de validación»${where}`);
     }
     return { blockers, warnings, findings };
   }

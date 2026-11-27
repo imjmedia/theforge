@@ -26,6 +26,7 @@ import { mergeAgentProgressFromMddEvent } from "../../utils/agentProgress";
 import { readNdjsonStream } from "../../utils/http-stream";
 import { hasDeliveryGateBlockers } from "./helpers/delivery-gate";
 import { persistField } from "./helpers/persist-field";
+import { refreshAfterDeliverablesRun } from "./helpers/deliverables-job-sync";
 import { errorStateFromCaught, friendlyFetchError, throwStreamHttpError } from "./helpers/store-errors";
 import { workshopStateFromProjectStage } from "./helpers/stage-focus";
 import { resolveWorkshopHeadlineScore, type LiveMetricsAuditorFields } from "../../utils/workshopSemaphoreStatus";
@@ -44,6 +45,7 @@ import type {
   Project,
 } from "./types";
 import type { WorkshopState } from "./workshop-state.types";
+import { parseRepairSummary } from "../../utils/repairSummary";
 
 type DeliverablesSliceActions = Pick<
   WorkshopState,
@@ -655,10 +657,7 @@ export const createDeliverablesSlice: StateCreator<
           agentProgress: markAllAgentProgressTerminated(s.agentProgress),
           cascadeCompleted: Math.max(s.cascadeCompleted, allStepLabels.length),
         }));
-        const projQueued = await get().fetchProject(pid);
-        await get().fetchEstimation(pid).catch(() => {});
-        await get().fetchGenerationStatus(pid);
-        get().bumpDocumentationGapsRefresh();
+        const projQueued = await refreshAfterDeliverablesRun(get, pid);
         set({ agentProgress: [] });
         return projQueued;
       }
@@ -666,10 +665,7 @@ export const createDeliverablesSlice: StateCreator<
         agentProgress: markAllAgentProgressTerminated(s.agentProgress),
         cascadeCompleted: Math.max(s.cascadeCompleted, allStepLabels.length),
       }));
-      const projSync = await get().fetchProject(pid);
-      await get().fetchEstimation(pid).catch(() => {});
-      await get().fetchGenerationStatus(pid);
-      get().bumpDocumentationGapsRefresh();
+      const projSync = await refreshAfterDeliverablesRun(get, pid);
       set({ agentProgress: [] });
       return projSync;
     } catch (e) {
@@ -688,6 +684,7 @@ export const createDeliverablesSlice: StateCreator<
       loading: true,
       loadingReason: "repair-sdd-gaps",
       error: null,
+      lastRepairSummary: null,
       agentProgress: [
         {
           agent: "Brechas SDD",
@@ -715,12 +712,15 @@ export const createDeliverablesSlice: StateCreator<
             const err = await st.json().catch(() => ({}));
             throw new Error((err as { message?: string }).message ?? "Error al consultar reparación SDD");
           }
-          const j = (await st.json()) as { status: string; error?: string };
+          const j = (await st.json()) as { status: string; error?: string; result?: unknown };
           if (j.status === "failed") {
             if (j.error?.includes("Cancelado por el usuario")) return null;
             throw new Error(j.error ?? "Reparación de brechas SDD fallida");
           }
-          if (j.status === "completed") break;
+          if (j.status === "completed") {
+            set({ lastRepairSummary: parseRepairSummary(j.result) });
+            break;
+          }
         }
       }
       const proj = await get().fetchProject(pid, { preferServerMdd: true });
@@ -822,12 +822,7 @@ export const createDeliverablesSlice: StateCreator<
               llm: number;
               human: number;
               truncated: boolean;
-              items?: Array<{
-                message: string;
-                kind: "auto" | "llm" | "human";
-                prefix: string;
-                targetDeliverable?: string;
-              }>;
+              items?: import("@theforge/shared-types").ClassifiedGap[];
             };
             compositeReadiness?: { reasons: string[] };
             consistencyScore?: number;

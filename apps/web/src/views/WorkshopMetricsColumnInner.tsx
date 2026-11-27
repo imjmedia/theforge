@@ -36,6 +36,8 @@ import { AnalyzeDashboard } from "@/components/AnalyzeDashboard";
 import { TokenUsageCard } from "@/components/TokenUsageCard";
 import type { SddAnalyzeReport, MddDeliveryGateResult } from "@theforge/shared-types";
 import { agentGovernanceScaffoldHasContent, isDesignFirst } from "@theforge/shared-types";
+import { getGapLocationChips } from "@/utils/gapLocation";
+import { formatRepairSummary } from "@/utils/repairSummary";
 import { useWorkshopStore, type Status } from "../store/workshopStore";
 import { isDeliverablesCascadeUiActive } from "../utils/deliverablesCascadeUi";
 import { calculateCostFromMdd } from "../utils/costCalculator";
@@ -317,6 +319,7 @@ export function WorkshopMetricsColumnInner({
   const legacyGenerateDeliverables = useWorkshopStore((s) => s.legacyGenerateDeliverables);
   const generateDeliverablesCascade = useWorkshopStore((s) => s.generateDeliverablesCascade);
   const repairSddGaps = useWorkshopStore((s) => s.repairSddGaps);
+  const lastRepairSummary = useWorkshopStore((s) => s.lastRepairSummary);
   const setWorkshopActiveDocPanel = useWorkshopStore((s) => s.setWorkshopActiveDocPanel);
 
   const mddEmpty = !((mddContent ?? "").trim() || (project?.mddContent ?? "").trim());
@@ -1018,8 +1021,35 @@ export function WorkshopMetricsColumnInner({
                         >
                           {item.kind}
                         </span>
-                        <span className="min-w-0 line-clamp-3" title={item.message}>
-                          {item.message}
+                        <span className="min-w-0">
+                          <span className="line-clamp-3" title={item.message}>
+                            {item.message}
+                          </span>
+                          {getGapLocationChips(item).length > 0 ? (
+                            <span className="mt-0.5 flex flex-wrap items-center gap-1 text-[var(--muted-foreground)]">
+                              <span>en:</span>
+                              {getGapLocationChips(item).map((chip) =>
+                                chip.panelId ? (
+                                  <button
+                                    key={chip.deliverable}
+                                    type="button"
+                                    onClick={() => setWorkshopActiveDocPanel(chip.panelId!)}
+                                    title={`Abrir ${chip.label}`}
+                                    className="rounded border border-[var(--border)] px-1 py-px font-medium text-[var(--foreground)] hover:bg-[var(--muted)]"
+                                  >
+                                    {chip.label}
+                                  </button>
+                                ) : (
+                                  <span
+                                    key={chip.deliverable}
+                                    className="rounded border border-[var(--border)] px-1 py-px"
+                                  >
+                                    {chip.label}
+                                  </span>
+                                ),
+                              )}
+                            </span>
+                          ) : null}
                         </span>
                       </li>
                     ))}
@@ -1070,6 +1100,11 @@ export function WorkshopMetricsColumnInner({
                         "Corregir auto/LLM"
                       )}
                     </button>
+                  ) : null}
+                  {lastRepairSummary && !repairSddRunning ? (
+                    <p className="text-[11px] leading-snug text-[var(--muted-foreground)]" role="status">
+                      {formatRepairSummary(lastRepairSummary)}
+                    </p>
                   ) : null}
                   {(readinessAudit?.gapSummary.human ?? 0) > 0 ? (
                     <button

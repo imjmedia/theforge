@@ -66,11 +66,35 @@ export class StageSemaphoreSyncService {
 
       const unchanged =
         stageRow.status === dbStatus && stageRow.precisionScore === precisionScore;
+      const shortTermContext = (stageRow.shortTermContext ?? {}) as Record<string, unknown>;
       if (unchanged) {
+        // Estado y puntaje iguales: solo refrescar el hash guardado si quedó desactualizado
+        // (evita el aviso persistente de "semáforo desactualizado"). Mismo CAS por updatedAt.
+        const storedHash = (shortTermContext.semaphoreSync as { inputsHash?: string } | undefined)
+          ?.inputsHash;
+        if (storedHash !== inputsHash) {
+          const hashWrite = await this.prisma.stage.updateMany({
+            where: { id: sid, updatedAt: stageRow.updatedAt },
+            data: {
+              shortTermContext: {
+                ...shortTermContext,
+                semaphoreSync: {
+                  version: 1,
+                  inputsHash,
+                  computedAt: new Date().toISOString(),
+                },
+              } as object,
+            },
+          });
+          if (hashWrite.count === 0) {
+            this.logger.debug(
+              `[Semaphore] cas-miss (solo hash) projectId=${pid} stageId=${sid} reason=${opts?.reason ?? "sync"}`,
+            );
+          }
+        }
         return { status: liveStatus, precisionScore, changed: false };
       }
 
-      const shortTermContext = (stageRow.shortTermContext ?? {}) as Record<string, unknown>;
       const nextContext = {
         ...shortTermContext,
         semaphoreSync: {
