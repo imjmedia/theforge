@@ -13,8 +13,20 @@
  * ```
  */
 
-const META_COMMENT_RE =
-  /^<!--\s*theforge-doc:created=([^|]+)\|updated=([^|]+)\s*-->\s*\n?/;
+/**
+ * Comentario HTML máquina-legible del stamp, anclado al inicio del texto:
+ * `<!-- theforge-doc:created=ISO|updated=ISO -->` (más salto de línea opcional).
+ *
+ * Grupos: 1 = `created`, 2 = `updated`.
+ *
+ * Los valores excluyen `\n` (el stamp vive en una sola línea) y `updated` además
+ * excluye `>` (no puede cruzar el cierre `-->`). Sin esas exclusiones, un cuerpo
+ * con flechas Mermaid (`-->`, `-->>`) antes de la primera tabla era absorbido como
+ * parte del stamp, destruyendo H1 y diagramas al guardar. El cierre solo consume
+ * espacios/tabuladores y un único salto de línea, nunca líneas en blanco del cuerpo.
+ */
+export const THEFORGE_DOC_META_COMMENT_RE =
+  /^<!--\s*theforge-doc:created=([^|\n]+?)\|updated=([^|\n>]+?)\s*-->[ \t]*\n?/;
 
 /** Cierre huérfano si falta `<!-- theforge-doc:created=…|updated=` (p. ej. tras formateo parcial). */
 const ORPHAN_COMMENT_CLOSE_RE =
@@ -159,7 +171,7 @@ export type TheforgeDocTimestamps = {
 
 /** ISO timestamps from the HTML comment (machine-readable stamp). */
 export function parseTheforgeDocTimestamps(text: string): Partial<TheforgeDocTimestamps> {
-  const match = (text ?? "").match(META_COMMENT_RE);
+  const match = (text ?? "").match(THEFORGE_DOC_META_COMMENT_RE);
   if (!match) return {};
   const created = match[1]?.trim();
   const updated = match[2]?.trim();
@@ -209,7 +221,7 @@ export function peelTheforgeDocStamp(text: string): { stamp: string; body: strin
   let body = text;
   let stamp = "";
 
-  const meta = body.match(META_COMMENT_RE);
+  const meta = body.match(THEFORGE_DOC_META_COMMENT_RE);
   if (meta?.[0]) {
     stamp += meta[0];
     body = body.slice(meta[0].length);

@@ -566,11 +566,112 @@ export function repairBulletedYamlLines(yaml: string): string {
   );
 }
 
-/** Sección ## 2. docker-compose → ```yaml. */
+/**
+ * Indica si el cuerpo de la sección compose ya está bien formado: exactamente un fence
+ * ```yaml cerrado, nada de texto fuera de él y un YAML sin viñetas en columna 0 y con
+ * indentación coherente (síntomas de salida LLM sucia). `depends on:` no cuenta: lo introduce
+ * `repairGluedSqlTokens` sobre un `depends_on:` válido y se revierte al saltar la reparación. Se decide por contenido, no por origen.
+ */
+function isWellFormedComposeBody(body: string): boolean {
+  const fences = body.match(/^[ \t]*```/gm) ?? [];
+  if (fences.length !== 2) return false;
+  const m = body.match(/^\s*```yaml[ \t]*\n([\s\S]*?)\n```[ \t]*\s*$/i);
+  if (!m) return false;
+  const yaml = m[1]!;
+  if (!yaml.trim()) return false;
+  if (/^-\s/m.test(yaml)) return false;
+  return hasConsistentYamlIndentation(yaml);
+}
+
+/**
+ * Comprueba que la indentación del YAML sea coherente: sin tabs, líneas de primer nivel con
+ * forma `clave:` (o `<<:`) en un sangrado base uniforme (el de la primera línea útil), cada
+ * sangrado nuevo (máx. 4 espacios) cuelga de una línea que termina en `:` (o en `: &ancla`),
+ * una secuencia de mapas (`- clave: valor`) admite continuación a +2 del guion, y cada dedent
+ * vuelve a un nivel ya abierto. La salida LLM sucia rompe alguna de estas reglas.
+ */
+function hasConsistentYamlIndentation(yaml: string): boolean {
+  let base = -1;
+  const stack: number[] = [0];
+  let prevTrimmed = "";
+  // Sangrado de continuación del mapa abierto por la última línea `- clave: valor`.
+  let seqContentIndent = -1;
+  // Continuación de un escalar de bloque (`>`, `|`) o de una secuencia/mapa flow multilínea.
+  let blockIndent = -1;
+  let flowDepth = 0;
+  for (const raw of yaml.split("\n")) {
+    if (blockIndent >= 0) {
+      const ind = raw.length - raw.trimStart().length;
+      if (!raw.trim() || ind > blockIndent) continue;
+      blockIndent = -1;
+    }
+    if (flowDepth > 0) {
+      flowDepth += flowBracketDelta(raw);
+      if (flowDepth < 0) flowDepth = 0;
+      continue;
+    }
+    if (!raw.trim() || raw.trim().startsWith("#")) continue;
+    if (/\t/.test(raw)) return false;
+    const indent = raw.length - raw.trimStart().length;
+    const trimmed = raw.trim();
+    if (base < 0) {
+      base = indent;
+      stack[0] = base;
+    }
+    if (indent === base && !/^(?:[\w.-]+|<<):(\s|$)/.test(trimmed)) return false;
+    const top = stack[stack.length - 1]!;
+    if (indent > top) {
+      const opensChild = /:\s*(?:[&!]\S+\s*)*$/.test(prevTrimmed) && indent - top <= 4;
+      if (!opensChild && indent !== seqContentIndent) return false;
+      stack.push(indent);
+    } else if (indent < top) {
+      while (stack.length > 1 && stack[stack.length - 1]! > indent) stack.pop();
+      if (stack[stack.length - 1] !== indent) return false;
+    }
+    prevTrimmed = trimmed;
+    const seqItem = /^(-\s+)[\w.-]+:(\s|$)/.exec(trimmed);
+    seqContentIndent = seqItem ? indent + seqItem[1]!.length : -1;
+    if (/:\s*[>|][+-]?\d?\s*$/.test(trimmed) || /^-\s*[>|][+-]?\d?\s*$/.test(trimmed)) {
+      blockIndent = indent;
+    } else {
+      const delta = flowBracketDelta(trimmed.replace(/^[^:]*:\s*/, ""));
+      if (delta > 0) flowDepth = delta;
+    }
+  }
+  return true;
+}
+
+/** Balance de `[`/`{` menos `]`/`}` fuera de comillas en una línea (para flow multilínea). */
+function flowBracketDelta(line: string): number {
+  let delta = 0;
+  let quote = "";
+  for (const ch of line) {
+    if (quote) {
+      if (ch === quote) quote = "";
+    } else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === "[" || ch === "{") delta++;
+    else if (ch === "]" || ch === "}") delta--;
+  }
+  return delta;
+}
+
+/** Indica si el cuerpo ya contiene una tabla GFM (fila con `|` seguida de separador `|:?-+`). */
+function hasGfmTable(body: string): boolean {
+  const lines = body.split("\n");
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (lines[i]!.includes("|") && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(lines[i + 1]!) && lines[i + 1]!.includes("|")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Sección ## 2. docker-compose → ```yaml. Respeta un compose ya bien formado. */
 export function repairComposeYamlSection(text: string): string {
   return text.replace(
     /(##\s*2\.[^\n]*(?:docker-compose|compose)[^\n]*\n)([\s\S]*?)(?=\n---\s*\n|\n##\s*3\.|\n##\s*4\.|\n##\s+Cumplimiento|$)/i,
     (_full, heading: string, body: string) => {
+      if (isWellFormedComposeBody(body)) return _full.replace(/\bdepends on:/gi, "depends_on:");
       let yaml = body;
       yaml = yaml.replace(/```yaml\s*/gi, "");
       yaml = yaml.replace(/```\s*/g, "");
@@ -581,12 +682,13 @@ export function repairComposeYamlSection(text: string): string {
   );
 }
 
-/** Sección ## 3. Variables de entorno → ```env. */
+/** Sección ## 3. Variables de entorno → ```env. Respeta una tabla GFM ya existente. */
 export function repairEnvExampleSection(text: string): string {
   return text.replace(
     /(##\s*3\.[^\n]*(?:Variables de entorno|\.env)[^\n]*\n)([\s\S]*?)(?=\n---\s*\n|\n##\s*4\.|\n##\s+Cumplimiento|$)/i,
     (_full, heading: string, body: string) => {
       if (/```env/i.test(body) && !/```dockerfile/i.test(body)) return _full;
+      if (hasGfmTable(body)) return _full;
       let env = body.replace(/```(?:dockerfile|env)?\s*/gi, "");
       env = env.replace(/^\s*```\s*$/gm, "").trim();
       if (!env) return _full;

@@ -71,6 +71,7 @@ export async function persistStageAndProjectDeliverables(
   stageId: string,
   projectId: string,
   fields: PersistStageDeliverablesInput,
+  opts?: { forceRestamp?: boolean },
 ): Promise<void> {
   const { tasksJson: explicitTasksJson, ...deliverableFields } = fields;
   const picked = pickDeliverableFieldsFromSource(deliverableFields);
@@ -109,7 +110,9 @@ export async function persistStageAndProjectDeliverables(
           (projectRow as Record<string, unknown> | null)?.[key] ??
           "",
       );
-      const stamped = stampMarkdownIfBodyChanged(existing, val, now);
+      const stamped = stampMarkdownIfBodyChanged(existing, val, now, {
+        force: opts?.forceRestamp === true,
+      });
       if (key in stageData) stageData[key] = stamped;
       projectData[key] = stamped;
     }

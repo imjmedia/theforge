@@ -1354,6 +1354,40 @@ export class ProjectDeliverableGeneratorsService {
   return updated;
   }
 
+  /**
+   * Avisa (log + changelog) cuando el documento se compilará de un PAG guardado sin endpoints:
+   * regenerar produciría el mismo cuerpo y no cambiaría nada.
+   * El changeLog se deduplica: no se añade fila si entre las últimas 30 entradas del proyecto ya hay
+   * un aviso `pag-sin-endpoints` de ese `field`. No se exige que sea la última entrada: el persist de
+   * la propia regeneración (`projects.update`) registra «Actualizó …» para el mismo campo justo después
+   * del aviso (cascada, cola, doc-reconcile y controller invocan el método repetidamente). Si la
+   * consulta falla, se registra igualmente.
+   */
+  private async warnIfPagWithoutEndpoints(
+    projectId: string,
+    field: "logicFlowsContent" | "infraContent",
+    label: string,
+    stagePag: { endpoints?: unknown[] } | null | undefined,
+  ): Promise<void> {
+    if (!stagePag || (stagePag.endpoints?.length ?? 0) !== 0) return;
+    const msg =
+      "PAG sin endpoints: regenerar no cambiará el documento; regenera Contratos API o compila el PAG";
+    this.logger.warn(`[${label}] ${msg}`);
+    const recientes = await this.changeLog
+      .listByProject(projectId, { limit: 30 })
+      .catch(() => [] as Array<{ field: string; summary: string }>);
+    if (recientes.some((e) => e.field === field && e.summary.includes("pag-sin-endpoints"))) return;
+    await this.changeLog
+      .log(
+        projectId,
+        field,
+        field === "infraContent"
+          ? JSON.stringify({ type: "pag-sin-endpoints", message: msg })
+          : `[pag-sin-endpoints] ${msg}`,
+      )
+      .catch(() => {});
+  }
+
   async generateLogicFlows(projectId: string, gapsFeedback?: string | null, signal?: AbortSignal) {
   this.throwIfAborted(signal);
   const project = await loadAccessibleProjectWithStages(this.prisma, projectId);
@@ -1364,6 +1398,7 @@ export class ProjectDeliverableGeneratorsService {
   );
   const mdd = buildConstitutionMarkdown(project);
   const stagePag = resolveStageProjectArchitectureGraph(pickPrimaryStage(project.stages ?? []));
+  await this.warnIfPagWithoutEndpoints(projectId, "logicFlowsContent", "Flujos", stagePag);
   let content = await this.ai.generateLogicFlows(mdd, gapsFeedback, legacyOpts, stagePag);
   let cleaned = cleanDocumentContent(this.ai.resolveLogicFlowsLlmFallback(mdd, content, legacyOpts));
 
@@ -1476,6 +1511,7 @@ export class ProjectDeliverableGeneratorsService {
   );
   const mdd = buildConstitutionMarkdown(project);
   const stagePag = resolveStageProjectArchitectureGraph(pickPrimaryStage(project.stages ?? []));
+  await this.warnIfPagWithoutEndpoints(projectId, "infraContent", "Infra", stagePag);
   let content = await this.ai.generateInfra(
     mdd,
     project.blueprintContent,

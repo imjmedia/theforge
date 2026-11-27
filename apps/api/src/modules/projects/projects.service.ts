@@ -165,8 +165,15 @@ export class ProjectsService implements IOrchestratorProjectsPort {
     };
   }
 
-  async update(id: string, data: UpdateProjectDto) {
-    return this.projectUpdate.update(id, data);
+  /**
+   * Actualiza un proyecto.
+   * @param id - Id del proyecto.
+   * @param data - Campos a actualizar.
+   * @param opts - Opciones: `forceRestampDeliverables` fuerza el re-estampado (cabecera `updated`) de los
+   *   entregables aunque su cuerpo no haya cambiado.
+   */
+  async update(id: string, data: UpdateProjectDto, opts?: { forceRestampDeliverables?: boolean }) {
+    return this.projectUpdate.update(id, data, opts);
   }
 
   async clearMddDependentDeliverables(

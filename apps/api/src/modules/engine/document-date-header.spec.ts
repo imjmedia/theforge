@@ -5,7 +5,13 @@ import {
   extractDocumentTimestamps,
   stampMarkdownIfBodyChanged,
   documentMarkdownBodiesEqual,
+  stripDocumentStampHeader,
 } from "./document-date-header.util.js";
+import {
+  compilePagToInfraMarkdown,
+  compilePagToLogicFlowsMarkdown,
+  type ProjectArchitectureGraph,
+} from "@theforge/shared-types";
 
 describe("document-date-header", () => {
   const fixed = new Date("2026-07-15T10:30:45.000Z");
@@ -106,5 +112,78 @@ describe("document-date-header", () => {
     const out = prependDocumentTimestamps(corrupted, later);
     assert.equal(selectedPatternIdsFromMdd(out).size, 1);
     assert.match(out, /\[ARQUITECTURA - SECCIÓN INMUTABLE\]/);
+  });
+});
+
+/** PAG mínimo (sin endpoints) para compilar documentos con flechas Mermaid. */
+const MINIMAL_PAG = {
+  version: "1.0.0",
+  projectName: "Demo Stamp",
+  description: "Proyecto de prueba",
+  stack: {
+    runtime: "Node.js 20",
+    backendFramework: "NestJS",
+    frontendFramework: "React 18 + Vite",
+    database: "PostgreSQL 16",
+    orm: "Prisma",
+  },
+  entities: [],
+  endpoints: [],
+  services: [],
+} as unknown as ProjectArchitectureGraph;
+
+describe("document-date-header: documentos compilados con flechas Mermaid", () => {
+  const t0 = new Date("2026-07-15T10:30:45.000Z");
+  const t1 = new Date("2026-07-16T14:45:30.000Z");
+
+  it("Flujos: stamp + re-stamp conserva H1, mermaid `-->>` y created", () => {
+    const compiled = compilePagToLogicFlowsMarkdown(MINIMAL_PAG);
+    const first = prependDocumentTimestamps(compiled, t0);
+    const second = prependDocumentTimestamps(first, t1);
+    assert.equal(extractDocumentTimestamps(second).created?.toISOString(), t0.toISOString());
+    assert.equal(extractDocumentTimestamps(second).updated?.toISOString(), t1.toISOString());
+    assert.equal(stripDocumentStampHeader(second), compiled.trim());
+    assert.ok(second.includes("API-->>User: 200 OK"));
+  });
+
+  it("Infra: el cuerpo empieza en `# ` y conserva el YAML tras dos stamps", () => {
+    const compiled = compilePagToInfraMarkdown(MINIMAL_PAG);
+    const twice = prependDocumentTimestamps(prependDocumentTimestamps(compiled, t0), t1);
+    const body = stripDocumentStampHeader(twice);
+    assert.ok(body.startsWith("# Especificación de Infraestructura y Despliegue — Demo Stamp"));
+    assert.ok(body.includes("```yaml"));
+    assert.equal(body, compiled.trim());
+  });
+
+  it("prependDocumentTimestamps dos veces conserva created y el cuerpo íntegro", () => {
+    const first = prependDocumentTimestamps("# Doc\n\nA --> B\n", t0);
+    const second = prependDocumentTimestamps(first, t1);
+    assert.equal(extractDocumentTimestamps(second).created?.toISOString(), t0.toISOString());
+    assert.equal(stripDocumentStampHeader(second), "# Doc\n\nA --> B");
+  });
+});
+
+describe("stampMarkdownIfBodyChanged — force", () => {
+  const t0 = new Date("2026-07-15T10:30:45.000Z");
+  const t1 = new Date("2026-07-16T14:45:30.000Z");
+
+  it("sin force conserva el documento si el cuerpo no cambió", () => {
+    const first = prependDocumentTimestamps("# Doc\n\nCuerpo", t0);
+    assert.equal(stampMarkdownIfBodyChanged(first, "# Doc\n\nCuerpo", t1), first.trim());
+  });
+
+  it("con force actualiza updated, conserva created y el cuerpo", () => {
+    const first = prependDocumentTimestamps("# Doc\n\nCuerpo", t0);
+    const out = stampMarkdownIfBodyChanged(first, "# Doc\n\nCuerpo", t1, { force: true });
+    const ts = extractDocumentTimestamps(out);
+    assert.equal(ts.created?.toISOString(), t0.toISOString());
+    assert.equal(ts.updated?.toISOString(), t1.toISOString());
+    assert.equal(stripDocumentStampHeader(out), "# Doc\n\nCuerpo");
+  });
+
+  it("con force y cuerpo distinto sigue estampando el contenido nuevo", () => {
+    const first = prependDocumentTimestamps("# Doc\n\nA", t0);
+    const out = stampMarkdownIfBodyChanged(first, "# Doc\n\nB", t1, { force: true });
+    assert.equal(stripDocumentStampHeader(out), "# Doc\n\nB");
   });
 });

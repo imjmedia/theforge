@@ -224,14 +224,14 @@ function parseEndpointLine(
   options?: { tablesOnly?: boolean },
 ): void {
   const tableMethodFirst = line.match(
-    new RegExp(`\\|\\s*(${HTTP_METHODS})\\s*\\|\\s*${API_PATH_CAPTURE}`, "i"),
+    new RegExp(`\\|\\s*\\**\\s*(${HTTP_METHODS})\\s*\\**\\s*\\|\\s*${API_PATH_CAPTURE}`, "i"),
   );
   if (tableMethodFirst) {
     add(tableMethodFirst[1]!, tableMethodFirst[2]!);
     return;
   }
   const tablePathFirst = line.match(
-    new RegExp(`\\|\\s*${API_PATH_CAPTURE}\\s*\\|\\s*(${HTTP_METHODS})`, "i"),
+    new RegExp(`\\|\\s*${API_PATH_CAPTURE}\\s*\\|\\s*\\**\\s*(${HTTP_METHODS})`, "i"),
   );
   if (tablePathFirst) {
     add(tablePathFirst[2]!, tablePathFirst[1]!);
@@ -297,6 +297,21 @@ export function extractMddSection4Endpoints(mddContent: string): Array<{ method:
     /^#+\s*(?:4\.\s*)?(?:contratos\s+de\s+api|api\s+contracts|endpoints)/im,
   );
   return extractEndpoints(section4);
+}
+
+/**
+ * Endpoints de MDD §4 con la MISMA vara que usa {@link checkApiVsMdd}: filas de tabla primero y
+ * H3/prosa solo si la sección no tiene tabla. Lo usa el reparador para no añadir filas que el chequeo
+ * contaría como extra.
+ */
+export function extractMddSection4EndpointsForConformance(
+  mddContent: string,
+): Array<{ method: string; path: string }> {
+  const section4 = extractSection(
+    mddContent,
+    /^#+\s*(?:4\.\s*)?(?:contratos\s+de\s+api|api\s+contracts|endpoints)/im,
+  );
+  return extractMddSection4ForConformance(section4);
 }
 
 /** Normaliza endpoint para comparación (sin trailing slash, lowercase path, params unificados). */
@@ -698,8 +713,15 @@ export function checkBlueprintVsMdd(mddContent: string | null, blueprintContent:
 
 /**
  * Comprueba conformidad del documento de API con el MDD (§4 Contratos de API).
+ *
+ * @param options.tablesOnly - Si es `true`, solo cuentan las filas de tablas GFM del documento API
+ *   (ignora prosa y encabezados `### GET /x`). Por defecto se consideran todas las menciones.
  */
-export function checkApiVsMdd(mddContent: string | null, apiContent: string | null): ApiConformanceResult {
+export function checkApiVsMdd(
+  mddContent: string | null,
+  apiContent: string | null,
+  options?: { tablesOnly?: boolean },
+): ApiConformanceResult {
   const missingInApi: string[] = [];
   const extraInApi: string[] = [];
   if (!mddContent?.trim()) {
@@ -719,7 +741,9 @@ export function checkApiVsMdd(mddContent: string | null, apiContent: string | nu
       extraInApi: [],
     };
   }
-  const apiEndpoints = new Set(extractEndpoints(apiContent).map(normEp));
+  const apiEndpoints = new Set(
+    (options?.tablesOnly ? extractTableEndpoints(apiContent) : extractEndpoints(apiContent)).map(normEp),
+  );
   for (const ep of mddEndpoints) {
     const match =
       apiEndpoints.has(ep) ||

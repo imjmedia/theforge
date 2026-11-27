@@ -41,6 +41,7 @@ import {
 import {
   peelDocumentBodyForPersist,
   peelTheforgeDocStamp,
+  THEFORGE_DOC_META_COMMENT_RE,
   reattachTheforgeDocStamp,
 } from "./theforge-doc-stamp.js";
 
@@ -178,7 +179,7 @@ function formatDocumentBody(text: string, preserveMermaid: boolean): string {
   const docStamp = initialPeel.stamp.includes("theforge-doc:created=")
     && !/\s---\s+#{1,6}\s/.test(initialPeel.stamp)
     ? initialPeel.stamp
-    : trimmed.match(/^<!--\s*theforge-doc:created=[^>]+\s*-->\s*\n?/)?.[0] ?? "";
+    : trimmed.match(THEFORGE_DOC_META_COMMENT_RE)?.[0] ?? "";
   trimmed = peelDocumentBodyForPersist(trimmed);
 
   const hadOuterMarkdownFence =

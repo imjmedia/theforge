@@ -130,7 +130,11 @@ export class ProjectUpdateService {
     throw new BadRequestException(`Restauración no implementada para ${snap.field}.`);
   }
 
-  async update(id: string, data: UpdateProjectDto) {
+  /**
+   * @param opts.forceRestampDeliverables Regeneración explícita: reestampa `updated` de los
+   *   entregables del patch aunque el cuerpo no cambie (no usar en guardados normales ni cascada).
+   */
+  async update(id: string, data: UpdateProjectDto, opts?: { forceRestampDeliverables?: boolean }) {
     const parsed = updateProjectSchema.partial().parse(data);
     const existing = await loadAccessibleProjectWithStages(this.prisma, id);
     const existingRaw = existing as Project & { stages: StageWithEst[] };
@@ -311,7 +315,9 @@ export class ProjectUpdateService {
       });
 
       if (hasDeliverablePatch) {
-        await persistStageAndProjectDeliverables(this.prisma, targetStage.id, id, deliverablePatch);
+        await persistStageAndProjectDeliverables(this.prisma, targetStage.id, id, deliverablePatch, {
+          forceRestamp: opts?.forceRestampDeliverables === true,
+        });
       }
       const documentFields = [
         "dbgaContent",

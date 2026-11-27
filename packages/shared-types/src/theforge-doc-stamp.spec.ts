@@ -1,5 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { compilePagToInfraMarkdown, compilePagToLogicFlowsMarkdown } from "./document-compiler.js";
+import type { ProjectArchitectureGraph } from "./project-architecture-graph.js";
 import { formatDocumentMarkdown } from "./format-document-markdown.js";
 import {
   formatTheforgeDocTimestampsForDisplay,
@@ -8,7 +10,28 @@ import {
   peelDocumentBodyForPersist,
   peelTheforgeDocStamp,
   reattachTheforgeDocStamp,
+  THEFORGE_DOC_META_COMMENT_RE,
 } from "./theforge-doc-stamp.js";
+
+/** PAG mínimo (sin endpoints) para compilar documentos con flechas Mermaid. */
+const MINIMAL_PAG = {
+  version: "1.0.0",
+  projectName: "Demo Stamp",
+  description: "Proyecto de prueba",
+  stack: {
+    runtime: "Node.js 20",
+    backendFramework: "NestJS",
+    frontendFramework: "React 18 + Vite",
+    database: "PostgreSQL 16",
+    orm: "Prisma",
+  },
+  entities: [],
+  endpoints: [],
+  services: [],
+} as unknown as ProjectArchitectureGraph;
+
+const META = "<!-- theforge-doc:created=2026-07-15T10:30:45.000Z|updated=2026-07-16T14:45:30.000Z -->";
+const STAMP_HUMAN = "> 📅 Creado: 15 de julio de 2026 · Última regeneración: 16 de julio de 2026\n\n---\n\n";
 
 const STAMPED = `<!-- theforge-doc:created=2026-07-15T10:30:45.000Z|updated=2026-07-16T14:45:30.000Z -->
 > 📅 Creado: 15 de julio de 2026, 10:30:45 UTC · Última regeneración: 16 de julio de 2026, 14:45:30 UTC
@@ -257,5 +280,44 @@ Texto.
     );
     assert.match(parrafo, /^Sistema de reservas de salas\.$/m);
     assert.doesNotMatch(parrafo, /^# Sistema/m);
+  });
+  describe("stamp acotado (flechas Mermaid)", () => {
+    it("la regex del comentario no cruza saltos de línea ni `>`", () => {
+      const m = `${META}\n# H1`.match(THEFORGE_DOC_META_COMMENT_RE);
+      assert.equal(m?.[1], "2026-07-15T10:30:45.000Z");
+      assert.equal(m?.[2], "2026-07-16T14:45:30.000Z");
+      assert.equal(m?.[0], `${META}\n`);
+      // Comentario sin cierre en su línea: la `-->` de Mermaid del cuerpo no debe cerrarlo.
+      const abierto = "<!-- theforge-doc:created=A|updated=B\n# H1\n```mermaid\nA-->B\n```\n";
+      assert.equal(abierto.match(THEFORGE_DOC_META_COMMENT_RE), null);
+    });
+
+    it("parseTheforgeDocTimestamps no absorbe el cuerpo", () => {
+      const abierto = "<!-- theforge-doc:created=A|updated=B\n# H1\nA-->B\n";
+      assert.deepEqual(parseTheforgeDocTimestamps(abierto), {});
+    });
+
+    it("Flujos compilado conserva H1 y mermaid con `-->>` tras el peel", () => {
+      const compiled = compilePagToLogicFlowsMarkdown(MINIMAL_PAG);
+      assert.ok(compiled.includes("API-->>User"));
+      const stamped = `${META}\n${STAMP_HUMAN}${compiled}`;
+      const { body } = peelTheforgeDocStamp(stamped);
+      assert.ok(body.startsWith("# Flujos Lógicos y Secuencias de Negocio — Demo Stamp"));
+      assert.ok(body.includes("```mermaid"));
+      assert.ok(body.includes("API-->>User: 200 OK"));
+      const persist = peelDocumentBodyForPersist(stamped);
+      assert.equal(persist, compiled.trim());
+    });
+
+    it("Infra compilado empieza en `# ` y conserva el YAML y el mermaid", () => {
+      const compiled = compilePagToInfraMarkdown(MINIMAL_PAG);
+      assert.ok(compiled.includes("-->"));
+      const stamped = `${META}\n${STAMP_HUMAN}${compiled}`;
+      const persist = peelDocumentBodyForPersist(stamped);
+      assert.ok(persist.startsWith("# Especificación de Infraestructura y Despliegue — Demo Stamp"));
+      assert.ok(persist.includes("```yaml"));
+      assert.ok(persist.includes("WebApp --> API"));
+      assert.equal(persist, compiled.trim());
+    });
   });
 });

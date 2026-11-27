@@ -7,11 +7,13 @@ export const DOCUMENT_CHANGELOG_HEADING = "## Registro de cambios del documento"
 export const DOCUMENT_CHANGELOG_TABLE_HEADER =
   "| Versión | Fecha | Descripción del cambio |\n| --- | --- | --- |";
 
+/** Encabezado del changelog; acepta numeración opcional («## 3. Registro…») del compilador PAG. */
 const CHANGELOG_HEADING_RE =
-  /^#{1,3}\s+Registro de cambios del documento\s*$/im;
+  /^#{1,3}\s+(?:\d+\.\s+)?Registro de cambios del documento\s*$/im;
 
+/** Fila de versión con 3 celdas (Versión|Fecha|Descripción) o 4 (con Autor). */
 const VERSION_ROW_RE =
-  /^\|\s*(\d+(?:\.\d+)?)\s*\|\s*[^|]+\|\s*[^|]+\|\s*$/gm;
+  /^\|\s*(\d+(?:\.\d+)?)\s*\|(?:[^|]*\|){2,3}\s*$/gm;
 
 const SPANISH_MONTHS = [
   "Enero",
@@ -88,10 +90,23 @@ export function isChangelogOnlyDocument(content: string, minBodyChars = 80): boo
   return documentBodyWithoutChangelog(content).length < minBodyChars;
 }
 
-/** Última versión semver simple (major.minor) encontrada en la tabla, o null. */
+/**
+ * Acota el texto donde buscar filas de versión: la sección posterior al encabezado del
+ * changelog (hasta el siguiente heading), para no confundir tablas ajenas (p. ej. Tasks con
+ * `| 13 | Logout | 1 | Baja |`) con versiones. Sin encabezado se devuelve el documento completo.
+ */
+function changelogSectionForVersionScan(content: string): string {
+  const heading = CHANGELOG_HEADING_RE.exec(content);
+  if (!heading) return content;
+  const after = content.slice(heading.index + heading[0].length);
+  const next = /^#{1,6}\s/m.exec(after);
+  return next ? after.slice(0, next.index) : after;
+}
+
+/** Última versión semver simple (major.minor) encontrada en la tabla del changelog, o null. */
 export function parseLatestDocumentVersion(content: string): string | null {
   let latest: { major: number; minor: number; raw: string } | null = null;
-  for (const match of content.matchAll(VERSION_ROW_RE)) {
+  for (const match of changelogSectionForVersionScan(content).matchAll(VERSION_ROW_RE)) {
     const raw = match[1] ?? "";
     const parts = raw.split(".");
     const major = Number.parseInt(parts[0] ?? "0", 10);
@@ -125,12 +140,26 @@ export function bumpDocumentMinorVersion(version: string): string {
   return `${major + 1}.0`;
 }
 
-function formatChangelogRow(entry: DocumentChangelogEntry): string {
-  return `| ${entry.version} | ${entry.date} | ${entry.description} |`;
+/** Formatea una fila; con `columns = 4` añade la celda Autor («—»). */
+function formatChangelogRow(
+  entry: DocumentChangelogEntry,
+  columns: 3 | 4 = 3,
+): string {
+  return columns === 4
+    ? `| ${entry.version} | ${entry.date} | — | ${entry.description} |`
+    : `| ${entry.version} | ${entry.date} | ${entry.description} |`;
+}
+
+/** Fila separadora de tabla GFM (`| ---`, `|:-----|`, `|---|`). */
+const CHANGELOG_TABLE_SEPARATOR_RE = /^\|\s*:?-{3,}/;
+
+/** Cuenta las celdas de una línea de tabla markdown. */
+function countTableCells(line: string): number {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").length;
 }
 
 function buildChangelogSection(rows: DocumentChangelogEntry[]): string {
-  const body = rows.map(formatChangelogRow).join("\n");
+  const body = rows.map((r) => formatChangelogRow(r)).join("\n");
   return `${DOCUMENT_CHANGELOG_HEADING}\n\n${DOCUMENT_CHANGELOG_TABLE_HEADER}\n${body}`;
 }
 
@@ -179,8 +208,8 @@ function inferInitialDescription(content: string): string {
   return "Creación inicial del documento";
 }
 
-const INITIAL_VERSION_ROW_RE =
-  /^\|\s*1\.0\s*\|\s*[^|]+\s*\|\s*([^|]+)\s*\|/gm;
+/** Fila 1.0 de 3 o 4 celdas: captura el prefijo, la fecha y el resto de la fila. */
+const INITIAL_VERSION_ROW_RE = /^(\|\s*1\.0\s*\|)[^|\n]+(\|.*)$/gm;
 
 /** Corrige la columna Fecha de la fila 1.0 al mes/año del sistema (o el indicado). */
 export function fixDocumentChangelogInitialDate(
@@ -188,8 +217,9 @@ export function fixDocumentChangelogInitialDate(
   date: string = formatDocumentChangelogDate(),
 ): string {
   if (!hasDocumentChangelogSection(content)) return content;
-  return content.replace(INITIAL_VERSION_ROW_RE, (_match, description: string) =>
-    `| 1.0 | ${date} | ${description.trim()} |`,
+  return content.replace(
+    INITIAL_VERSION_ROW_RE,
+    (_match, prefix: string, rest: string) => `${prefix} ${date} ${rest}`,
   );
 }
 
@@ -252,7 +282,8 @@ export function appendDocumentChangelogEntry(
   let i = 0;
   for (; i < lines.length; i++) {
     tableLines.push(lines[i] ?? "");
-    if ((lines[i] ?? "").trim().startsWith("| ---")) break;
+    // Separador GFM: `| ---`, `|:---|` (compilador PAG), `|---|`, etc.
+    if (CHANGELOG_TABLE_SEPARATOR_RE.test((lines[i] ?? "").trim())) break;
   }
   for (i++; i < lines.length; i++) {
     const line = lines[i] ?? "";
@@ -260,7 +291,10 @@ export function appendDocumentChangelogEntry(
     if (line.trim().startsWith("|")) tableLines.push(line);
     else break;
   }
-  tableLines.push(formatChangelogRow(entry));
+  // La cabecera es la primera línea de tabla; define cuántas celdas lleva la fila nueva.
+  const headerLine = tableLines.find((l) => l.trim().startsWith("|")) ?? "";
+  const columns = countTableCells(headerLine) >= 4 ? 4 : 3;
+  tableLines.push(formatChangelogRow(entry, columns));
   const rest = lines.slice(i).join("\n").trim();
   const section = [tableLines.join("\n"), rest].filter(Boolean).join("\n\n");
   return before ? `${before}\n\n${section}` : section;
